@@ -115,7 +115,6 @@ export const en = {
 	'offsite.form.need.password': 'the password, typed twice',
 
 	'offsite.form.save': 'Save and test',
-	'offsite.form.saving': 'Testing...',
 	'offsite.form.saved': 'Saved: the copy repository answered.',
 	'offsite.form.saveFailed': 'Could not save the settings of the copy',
 	'offsite.form.forget': 'Forget this target',
@@ -302,7 +301,6 @@ export const ru: Translation<typeof en> = {
 	'offsite.form.need.password': 'пароль, введённый дважды',
 
 	'offsite.form.save': 'Сохранить и проверить',
-	'offsite.form.saving': 'Проверка...',
 	'offsite.form.saved': 'Сохранено: хранилище копий ответило.',
 	'offsite.form.saveFailed': 'Не удалось сохранить настройки копии',
 	'offsite.form.forget': 'Забыть это хранилище',

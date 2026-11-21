@@ -83,7 +83,6 @@ export const en = {
 	'apps.installed.stop': 'Stop',
 	'apps.installed.restart': 'Restart',
 	'apps.installed.uninstall': 'Uninstall',
-	'apps.installed.uninstallOne': 'Uninstall {name}',
 	'apps.installed.busy': 'Wait until the install, update or rollback of this app ends.',
 	// {n} is the number of the app's containers that Docker has.
 	'apps.installed.uninstallTitle': 'Uninstall {name}?',
@@ -292,7 +291,6 @@ export const en = {
 	'apps.job.state.cancelled': 'Cancelled',
 	'apps.job.step.cleaning': 'Removing what the install made',
 	'apps.job.cancel': 'Cancel install',
-	'apps.job.cancelling': 'Cancelling...',
 	'apps.job.cancelTitle': 'Cancel the install of {name}?',
 	'apps.job.confirmCancel': 'What it made so far is removed; its data folders and the downloaded images are kept.',
 	'apps.job.cancelAction': 'Cancel install',
@@ -369,7 +367,6 @@ export const ru: Translation<typeof en> = {
 	'apps.installed.restart': 'Перезапустить',
 	'apps.installed.uninstall': 'Удалить',
 	'apps.installed.uninstallTitle': 'Удалить приложение {name}?',
-	'apps.installed.uninstallOne': 'Удалить {name}',
 	'apps.installed.busy': 'Дождитесь окончания установки, обновления или отката этого приложения.',
 	'apps.installed.confirmUninstall': {
 		one: 'Его контейнер будет удалён, а папки с данными останутся.',
@@ -552,7 +549,6 @@ export const ru: Translation<typeof en> = {
 	'apps.job.state.cancelled': 'Отменено',
 	'apps.job.step.cleaning': 'Удаление сделанного установкой',
 	'apps.job.cancel': 'Отменить установку',
-	'apps.job.cancelling': 'Отмена...',
 	'apps.job.cancelTitle': 'Отменить установку приложения {name}?',
 	'apps.job.confirmCancel': 'Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
 	'apps.job.cancelAction': 'Отменить установку',

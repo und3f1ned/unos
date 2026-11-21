@@ -6,11 +6,10 @@
 	import { enableTOTP, setupTOTP, type TOTPSetupResponse } from '$lib/api/auth';
 	import { isSetupOnly, loadCurrentUser, signOut as endSession, user } from '$lib/stores/auth';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/stores/stats';
-	import { Alert, Button, Card, Input } from '$lib/components/ui';
+	import { Alert, Button, Card, HelpText, Input } from '$lib/components/ui';
 	import { AuthCard } from '$lib/components/auth';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
-	import { CheckCircle } from 'lucide-svelte';
 
 	// The page of an account without two-factor authentication while every account must have it
 	// (ADR-0386). During the account's grace period the sign-in leads here, and Later goes on to the
@@ -112,11 +111,8 @@
 {#snippet content()}
 	{#if done}
 		<div class="space-y-4">
-			<p class="flex items-center gap-2 font-medium text-status-success">
-				<CheckCircle class="w-5 h-5 shrink-0" />
-				{$t('twofactor.done')}
-			</p>
-			<p class="text-sm text-content-secondary">{$t('twofactor.doneHint')}</p>
+			<!-- The end of the setup, which leads on: it stays to be read, no toast (ADR-0432). -->
+			<Alert variant="success" title={$t('twofactor.done')}>{$t('twofactor.doneHint')}</Alert>
 			<div class="flex flex-wrap gap-3">
 				<Button href="/account#security">{$t('twofactor.recoveryCodes')}</Button>
 				<Button variant="secondary" href="/">{$t('twofactor.continue')}</Button>
@@ -144,7 +140,7 @@
 					</div>
 				{/if}
 				<div class="text-center min-w-0">
-					<p class="text-xs text-content-muted mb-2">{$t('account.totp.manual')}</p>
+					<HelpText text={$t('account.totp.manual')} class="mb-2" />
 					<code class="bg-surface-muted px-3 py-1 rounded font-mono text-sm break-all">{setup.secret}</code>
 				</div>
 				<form

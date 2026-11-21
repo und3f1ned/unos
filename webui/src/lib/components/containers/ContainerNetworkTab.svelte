@@ -28,7 +28,7 @@
 				<tr class="table-row">
 					<td class="mono">{port.host_port || $t('containers.drawer.notPublished')}</td>
 					<td class="mono">{port.container_port}</td>
-					<td><Badge variant="neutral">{labelOf(PROTOCOLS, port.protocol, $t)}</Badge></td>
+					<td><Badge variant="outline">{labelOf(PROTOCOLS, port.protocol, $t)}</Badge></td>
 				</tr>
 			{/each}
 		</tbody>

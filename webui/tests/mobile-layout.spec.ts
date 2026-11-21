@@ -1183,7 +1183,7 @@ const VIEWS: View[] = [
     name: 'App Store (installed)',
     path: '/apps',
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
-    open: (page) => page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click(),
+    open: (page) => page.getByRole('tab', { name: /^(Installed|Установленные) \(2\)$/ }).click(),
     shows: (page) => page.getByText('immich-machine-learning').first(),
   },
   {
@@ -1367,14 +1367,14 @@ const VIEWS: View[] = [
     name: 'System: Network (routes)',
     path: '/system#network',
     fake: (page) => fakeNetworkApi(page),
-    open: (page) => page.locator('main').getByRole('button', { name: /^(Routes|Маршруты)$/ }).click(),
+    open: (page) => page.locator('main').getByRole('tab', { name: /^(Routes|Маршруты)$/ }).click(),
     shows: (page) => page.getByText('2001:db8:1::/64').first(),
   },
   {
     name: 'System: Network (connections)',
     path: '/system#network',
     fake: (page) => fakeNetworkApi(page),
-    open: (page) => page.locator('main').getByRole('button', { name: /^(Connections|Подключения)$/ }).click(),
+    open: (page) => page.locator('main').getByRole('tab', { name: /^(Connections|Подключения)$/ }).click(),
     shows: (page) => page.getByText('192.168.1.20:51515'),
   },
   {
@@ -1764,7 +1764,7 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, { '/api/v1/apps/installed': [INSTALLED_JELLYFIN] }),
     open: async (page) => {
       await page.getByRole('button', { name: /Immich/ }).first().click();
-      await page.getByRole('dialog').getByRole('button', { name: /^(Variables|Переменные) \(\d+\)$/ }).click();
+      await page.getByRole('dialog').getByRole('tab', { name: /^(Variables|Переменные) \(\d+\)$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByLabel('MACHINE_LEARNING_MODEL_REVISION'),
     // Opened on a tab that the click scrolled to: the view above checks the title as the dialog opens.
@@ -1777,7 +1777,7 @@ const VIEWS: View[] = [
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS }),
     open: async (page) => {
       await page.getByRole('button', { name: /Immich/ }).first().click();
-      await page.getByRole('dialog').getByRole('button', { name: /^(Volumes|Тома) \(\d+\)$/ }).click();
+      await page.getByRole('dialog').getByRole('tab', { name: /^(Volumes|Тома) \(\d+\)$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByRole('group', { name: 'immich-machine-learning' }),
     // Opened on a tab that the click may scroll to, as the view of the variables.
@@ -1789,7 +1789,7 @@ const VIEWS: View[] = [
     path: '/apps',
     fake: (page) => serve(page, { '/api/v1/apps/installed': INSTALLED_APPS, '/api/v1/apps/limits': LIMIT_BOUNDS }),
     open: async (page) => {
-      await page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('tab', { name: /^(Installed|Установленные) \(2\)$/ }).click();
       await page.getByRole('listitem', { name: 'immich-machine-learning', exact: true }).getByRole('button').click();
     },
     shows: (page) => page.getByRole('dialog').getByRole('textbox').last(),
@@ -1805,7 +1805,7 @@ const VIEWS: View[] = [
       '/api/v1/apps/installed': UPDATABLE_APPS, '/api/v1/apps/installed/e2e-immich-id/update': UPDATE_PLAN,
     }),
     open: async (page) => {
-      await page.getByRole('button', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('tab', { name: /^(Installed|Установленные) \(2\)$/ }).click();
       await page.getByRole('button', { name: /^(Update to|Обновить до) v3\.5\.0$/ }).click();
     },
     shows: (page) => page.getByRole('dialog').getByText(/data\.previous/),

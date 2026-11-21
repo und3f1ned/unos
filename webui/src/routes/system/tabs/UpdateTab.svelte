@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { ArrowRight, ExternalLink, RefreshCw } from "lucide-svelte";
   import { checkForUpdates, getCurrentVersion, type CurrentVersion, type UpdateCheck } from "$lib/api/updates";
-  import { Alert, Badge, Button, Card, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, Skeleton, Switch, HelpText } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDate } from "$lib/time";
 
@@ -75,7 +75,7 @@
         {:else if current}
           <span class="mono text-content">{versionLabel(current.version)}</span>
           {#if current.is_development}
-            <Badge variant="neutral">{$t("updates.current.dev")}</Badge>
+            <Badge variant="outline">{$t("updates.current.dev")}</Badge>
           {/if}
           {#if check?.update_available && release}
             <ArrowRight class="h-4 w-4 text-content-muted" aria-hidden="true" />
@@ -131,14 +131,9 @@
         <Button variant="secondary" size="sm" icon={RefreshCw} loading={checking} onclick={runCheck}>
           {$t("updates.latest.checkAgain")}
         </Button>
+        <!-- It checks again at once: a Switch (ADR-0432). -->
         <label class="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            bind:checked={includePrereleases}
-            onchange={runCheck}
-            disabled={checking}
-            class="form-checkbox h-4 w-4"
-          />
+          <Switch bind:checked={includePrereleases} onchange={runCheck} disabled={checking} />
           {$t("updates.latest.includePrereleases")}
         </label>
       </div>
@@ -147,10 +142,9 @@
         <h4 id="updates-how-title" class="font-semibold text-content">{$t("updates.how.title")}</h4>
         <p class="text-content-secondary">{$t("updates.how.run")}</p>
         <p class="card-nested py-2"><code class="mono select-all break-all">{UPDATE_COMMAND}</code></p>
-        <details class="text-[13px] leading-[18px] text-content-secondary">
-          <summary class="link w-fit cursor-pointer">{$t("updates.how.more")}</summary>
-          <p class="mt-2">{$t("updates.how.details")}</p>
-        </details>
+        <HelpText text="" moreLabel={$t("updates.how.more")}>
+          {#snippet more()}<p>{$t("updates.how.details")}</p>{/snippet}
+        </HelpText>
       </section>
     </div>
   </Card>

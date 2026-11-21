@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ChannelKind } from "$lib/api/notifications";
-  import { Alert, Button, Input, Modal, Select } from "$lib/components/ui";
+  import { Alert, Button, Input, Modal, Select, Checkbox, HelpText } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import type { ChannelForm } from "./channelForm.svelte";
   import { EXAMPLES, KIND_ORDER, METHODS, kindName } from "./channels";
@@ -19,7 +19,7 @@
 
   let kindOptions = $derived(KIND_ORDER.map((kind) => ({ value: kind, label: kindName($t, kind) })));
 
-  // What a disabled Save waits for, in the words of the page: said beside it.
+  // What a disabled Save waits for, in the words of the page: its disabledReason.
   let missing = $derived(
     new Intl.ListFormat($intlLocale, { type: "conjunction" }).format(form.missing.map((key) => $t(key)))
   );
@@ -67,7 +67,7 @@
             autocomplete="new-password"
           />
         </div>
-        <p class="form-hint">{$t("notifications.email.loginHint")}</p>
+        <HelpText text={$t("notifications.email.loginHint")} class="mt-1.5" />
       </div>
       <Input
         label={$t("notifications.email.from")}
@@ -83,22 +83,14 @@
         hint={$t("notifications.email.toHint")}
         required
       />
-      <div class="space-y-2">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" class="form-checkbox" bind:checked={form.emailTls} />
-          {$t("notifications.email.tls")}
-        </label>
-        <label class="flex items-center gap-2 {form.plainSmtp ? 'opacity-60' : 'cursor-pointer'}">
-          <input
-            type="checkbox"
-            class="form-checkbox"
-            bind:checked={form.emailVerifyTls}
-            disabled={form.plainSmtp}
-            aria-describedby="verify-tls-hint"
-          />
-          {$t("notifications.email.verify")}
-        </label>
-        <p id="verify-tls-hint" class="form-hint">{$t("notifications.email.verifyHint")}</p>
+      <div class="space-y-2.5">
+        <Checkbox bind:checked={form.emailTls} label={$t("notifications.email.tls")} />
+        <Checkbox
+          bind:checked={form.emailVerifyTls}
+          disabled={form.plainSmtp}
+          label={$t("notifications.email.verify")}
+          description={$t("notifications.email.verifyHint")}
+        />
         {#if form.plainSmtp}
           <Alert variant="warning">{$t("notifications.email.plain")}</Alert>
         {/if}
@@ -134,28 +126,23 @@
       {/if}
     {/if}
 
-    <div>
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input type="checkbox" class="form-checkbox" bind:checked={form.enabled} />
-        {$t("notifications.form.enabled")}
-      </label>
-      <p class="form-hint">{$t("notifications.form.enabledHint")}</p>
-    </div>
+    <Checkbox
+      bind:checked={form.enabled}
+      label={$t("notifications.form.enabled")}
+      description={$t("notifications.form.enabledHint")}
+    />
 
     {#if form.saveError}
       <div role="alert">
         <Alert variant="error" title={$t("notifications.form.saveError")}>{form.saveError}</Alert>
       </div>
     {/if}
-    {#if !form.complete}
-      <p id="channel-save-why" class="text-[13px] text-content-muted">{$t("notifications.form.needs", { what: missing })}</p>
-    {/if}
   </div>
 
   {#snippet footer()}
     <Button variant="secondary" class="flex-1" disabled={form.saving} onclick={() => form.close()}>{$t("common.cancel")}</Button>
     <Button class="flex-1" loading={form.saving} disabled={!form.complete}
-      aria-describedby={form.complete ? undefined : "channel-save-why"} onclick={onsave}>
+      disabledReason={form.complete ? "" : $t("notifications.form.needs", { what: missing })} onclick={onsave}>
       {$t(form.editing ? "notifications.form.save" : "notifications.form.add")}
     </Button>
   {/snippet}

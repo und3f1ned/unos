@@ -5,7 +5,7 @@
 	// after, what the pulls write to the system disk, the copy of the database on the pool) or why
 	// it cannot run; Update now starts its job, whose progress the App Store's job cards show.
 	import { untrack } from 'svelte';
-	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
+	import { Alert, Badge, Button, Modal, Skeleton } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatSize as formatSizeIn } from './size';
 	import {
@@ -107,7 +107,11 @@
 >
 	<div class="space-y-4">
 		{#if loading}
-			<p class="text-center text-content-muted py-8">{$t('appUpdates.loading')}</p>
+			<!-- The plan's shape until it is read (ADR-0430): its versions and facts. -->
+			<div class="space-y-4" aria-busy="true">
+				<Skeleton size="base" class="w-2/3" />
+				<Skeleton count={3} />
+			</div>
 		{/if}
 		{#if error}
 			<!-- Read out as it appears: the server's reason why the update cannot run. -->

@@ -7,7 +7,6 @@
     CertificatesCard,
     FirewallCard,
     GenerateCertificateDialog,
-    ServeCertificateDialog,
     TwoFactorRequirementCard
   } from "$lib/components/system/security";
   import { t } from "$lib/i18n";
@@ -51,8 +50,5 @@
 
   <CertificatesCard {certificates} />
 </div>
-
-<!-- Serve a stored certificate, or Caddy's local CA again: every browser sees a new certificate (ADR-0404). -->
-<ServeCertificateDialog {certificates} />
 
 <GenerateCertificateDialog {certificates} />

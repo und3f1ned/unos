@@ -4,7 +4,7 @@
   import { formatBytes } from "$lib/api/backup";
   import type { OffsiteStatus } from "$lib/api/offsite";
   import type { ScheduledTask } from "$lib/api/scheduler";
-  import { Button } from "$lib/components/ui";
+  import { Button, TechDetails } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
   import { Play, RefreshCw } from "lucide-svelte";
@@ -108,10 +108,7 @@
       <!-- A plain sentence, and restic's own words on demand. -->
       <div data-testid="copy-error">
         <p class="text-status-error break-words">{$t("offsite.state.failedAt", { step: stepText(lastCopy.step) })}</p>
-        <details class="text-content-secondary">
-          <summary class="link w-fit cursor-pointer text-xs">{$t("offsite.details")}</summary>
-          <p class="mt-1 font-mono text-xs break-words select-all">{lastCopy.error}</p>
-        </details>
+        <TechDetails text={lastCopy.error} summary={$t("offsite.details")} class="mt-1" />
       </div>
     {/if}
     {#if lastCopy.note}

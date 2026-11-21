@@ -70,7 +70,7 @@ async function addKey(page: Page, name: string) {
   await dialog.getByLabel('Current password').fill(USER.password);
   await dialog.getByRole('button', { name: 'Add key' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(part.getByText(`Security key “${name}” added.`)).toBeVisible();
+  await expect(page.getByText(`Security key “${name}” added.`)).toBeVisible();
 }
 
 /** The password step of the sign-in page at `base`: the code step follows. */

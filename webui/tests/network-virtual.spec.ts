@@ -44,7 +44,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
     await expect(dialog).toBeHidden();
-    await expect(card).toContainText('br0 was created.');
+    await expect(page.getByText('br0 was created.')).toBeVisible();
     const list = card.getByRole('list', { name: 'Bonds, VLANs and bridges made in UNOS' });
     await expect(list).toContainText('br0');
     await expect(list).toContainText('Bridge');
@@ -83,7 +83,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await expect(card).toContainText('The network settings of eth0');
     await keep.click();
 
-    await expect(card).toContainText('The change was kept: it comes back after a reboot.');
+    await expect(page.getByText('The change was kept: it comes back after a reboot.')).toBeVisible();
     await expect(countdown(page, 'Create bond bond0')).toBeHidden();
     expect(fake.writes).toEqual([
       { method: 'POST', path: '/virtual-interfaces/bonds',
@@ -128,7 +128,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await expect(dialog).toContainText('it is kept at once');
     await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 
-    await expect(card).toContainText('eth1.10 was created.');
+    await expect(page.getByText('eth1.10 was created.')).toBeVisible();
     await expect(card).toContainText('198.51.100.10/24, 2001:db8:10::10/64');
     expect(fake.writes).toEqual([{
       method: 'POST', path: '/virtual-interfaces/vlans',
@@ -183,9 +183,9 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await card.getByRole('button', { name: 'Delete br0' }).click();
     const dialog = page.getByRole('dialog', { name: 'Delete br0' });
     await expect(dialog).toContainText("Its ports get the settings of the host's own configuration back.");
-    await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Delete br0', exact: true }).click();
 
-    await expect(card).toContainText('br0 was deleted.');
+    await expect(page.getByText('br0 was deleted.')).toBeVisible();
     await expect(card).toContainText('UNOS has made no bond, VLAN or bridge.');
     expect(fake.writes).toEqual([{ method: 'DELETE', path: '/virtual-interfaces/br0' }]);
   });

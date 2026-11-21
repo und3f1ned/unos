@@ -142,7 +142,7 @@ test.describe('Off-device copy', () => {
       await expect(section.getByText('nobody, UNOS included, can read the copies')).toBeVisible();
       await section.getByRole('button', { name: 'Save and test' }).click();
 
-      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      await expect(page.getByText('Saved: the copy repository answered')).toBeVisible();
       // One filesystem holds the stand-in: the copy is on the disk it copies.
       await expect(section.getByText('This copy is on a disk it copies')).toBeVisible();
       await expect(section.getByText('Last copy: never')).toBeVisible();
@@ -175,7 +175,7 @@ test.describe('Off-device copy', () => {
 
       // The configuration goes into the backup list, where it is restored as a backup is.
       await configuration.getByRole('button', { name: 'Restore configuration' }).click();
-      await expect(section.getByText(/In the backup list as offsite_\d{8}_\d{6}\.tar\.gz/)).toBeVisible();
+      await expect(page.getByText(/In the backup list as offsite_\d{8}_\d{6}\.tar\.gz/)).toBeVisible();
       await expect(page.getByText(/^offsite_\d{8}_\d{6}\.tar\.gz$/)).toBeVisible();
 
       // The files go into a new folder at the top of the pool.
@@ -267,7 +267,7 @@ test.describe('Off-device copy', () => {
       await section.getByLabel('Password of the REST server').fill('the REST password');
       await expect(section.getByLabel('Check of the server’s certificate')).toHaveValue('system');
       await save.click();
-      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      await expect(page.getByText('Saved: the copy repository answered')).toBeVisible();
       // The stored password is kept: the field stays empty and says so.
       await expect(section.getByText('Leave it empty to keep the stored password.')).toBeVisible();
 
@@ -321,14 +321,14 @@ test.describe('Off-device copy', () => {
       await expect(save).toBeDisabled();
 
       await section.getByRole('button', { name: 'Make a key pair' }).click();
-      await expect(section.getByText('A new key pair is made')).toBeVisible();
+      await expect(page.getByText('A new key pair is made')).toBeVisible();
       const publicKey = (await section.getByTestId('sftp-public-key').innerText()).trim();
       expect(publicKey).toMatch(/^ssh-ed25519 [A-Za-z0-9+/]+=* unos-off-device-copy$/);
       // The server takes only that key.
       writeFileSync(join(server, 'authorized_keys'), `${publicKey}\n`);
 
       await save.click();
-      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      await expect(page.getByText('Saved: the copy repository answered')).toBeVisible();
       const pinned = section.getByTestId('sftp-pinned');
       await expect(pinned).toHaveText(/^Pinned host key: SHA256:[A-Za-z0-9+/]{43}$/);
       const first = await pinned.innerText();
@@ -347,7 +347,10 @@ test.describe('Off-device copy', () => {
       await failure.getByText('Details', { exact: true }).click();
       await expect(failure.getByText(/Host key verification failed/)).toBeVisible();
       // The listing of the snapshots meets the same refusal.
-      await expect(section.getByText(/^The snapshots could not be read: .*Host key verification failed/)).toBeVisible();
+      // ErrorState (ADR-0432): the title, then the server's reason (folded when technical).
+      const failed = section.locator('[data-error-state]', { hasText: 'The snapshots could not be read' });
+      await expect(failed).toBeVisible();
+      await expect(failed).toContainText(/Host key verification failed/);
       await save.click();
       await expect(section.locator('.alert-error')).toContainText('is not the one pinned at its first test');
       // Trusting it needs the new key's fingerprint, as the server prints it.
@@ -355,7 +358,7 @@ test.describe('Off-device copy', () => {
       await expect(save).toBeDisabled();
       await section.getByLabel('Fingerprint of the server’s new host key').fill(fingerprintOf(second));
       await save.click();
-      await expect(section.getByText('Saved: the copy repository answered')).toBeVisible();
+      await expect(page.getByText('Saved: the copy repository answered')).toBeVisible();
       await expect(pinned).toHaveText(`Pinned host key: ${fingerprintOf(second)}`);
       expect(await pinned.innerText()).not.toBe(first);
       await section.getByRole('button', { name: 'Run now' }).click();

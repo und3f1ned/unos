@@ -38,7 +38,7 @@ export const en = {
 	'virtual.addressing.static': 'Static',
 	'virtual.copiedFrom': 'The network settings of {name}',
 	'virtual.mtuOf': 'MTU {mtu}',
-	'virtual.delete': 'Delete',
+	'virtual.delete': 'Delete {name}',
 	'virtual.deleteLabel': 'Delete {name}',
 	'virtual.mode.lacp': 'LACP (802.3ad)',
 	'virtual.mode.roundRobin': 'Round robin (balance-rr)',
@@ -79,7 +79,7 @@ export const en = {
 	'virtual.createFailed': 'The interface could not be created',
 	'virtual.deleteFailed': 'The interface could not be deleted',
 
-	'virtual.deleteTitle': 'Delete {name}',
+	'virtual.deleteTitle': 'Delete {name}?',
 	'virtual.deleteText': 'UNOS removes {name} and its files. Its ports get the settings of the host\'s own configuration back.',
 
 	'virtual.waiting':
@@ -127,7 +127,7 @@ export const ru: Translation<typeof en> = {
 	'virtual.addressing.static': 'Статические',
 	'virtual.copiedFrom': 'Сетевые настройки {name}',
 	'virtual.mtuOf': 'MTU {mtu}',
-	'virtual.delete': 'Удалить',
+	'virtual.delete': 'Удалить {name}',
 	'virtual.deleteLabel': 'Удалить {name}',
 	'virtual.mode.lacp': 'LACP (802.3ad)',
 	'virtual.mode.roundRobin': 'Поочерёдно (balance-rr)',
@@ -168,7 +168,7 @@ export const ru: Translation<typeof en> = {
 	'virtual.createFailed': 'Не удалось создать интерфейс',
 	'virtual.deleteFailed': 'Не удалось удалить интерфейс',
 
-	'virtual.deleteTitle': 'Удаление {name}',
+	'virtual.deleteTitle': 'Удалить {name}?',
 	'virtual.deleteText': 'UNOS удалит {name} и его файлы. Его порты вернутся к собственным настройкам хоста.',
 
 	'virtual.waiting':

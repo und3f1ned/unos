@@ -18,6 +18,8 @@
 		message?: string;
 		/** What will happen, each a short sentence. */
 		consequences?: string[];
+		/** A risk to weigh before the action, as a warning. */
+		warning?: string;
 		/** The action's button: a verb and its object. */
 		confirmLabel: string;
 		cancelLabel?: string;
@@ -45,6 +47,7 @@
 		title,
 		message = '',
 		consequences = [],
+		warning = '',
 		confirmLabel,
 		cancelLabel = '',
 		tone = 'danger',
@@ -87,14 +90,17 @@
 <Modal {open} {title} size="sm" tone={tone === 'neutral' ? null : tone} closable={!busy} onclose={oncancel}>
 	<form id={formId} class="space-y-4" onsubmit={submit}>
 		{#if message}
-			<p class="text-content-soft">{message}</p>
+			<p class="text-content-soft break-words">{message}</p>
+		{/if}
+		{#if warning}
+			<Alert variant="warning" size="sm"><p class="break-words">{warning}</p></Alert>
 		{/if}
 		{#if consequences.length}
 			<div>
 				<p class="eyebrow mb-1.5">{$t('ui.confirm.consequences')}</p>
 				<ul class="confirm-consequences">
 					{#each consequences as consequence, index (index)}
-						<li>{consequence}</li>
+						<li class="break-words">{consequence}</li>
 					{/each}
 				</ul>
 			</div>

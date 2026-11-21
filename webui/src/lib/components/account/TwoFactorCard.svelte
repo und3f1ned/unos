@@ -1,12 +1,11 @@
 <script lang="ts">
   import { toDataURL } from "qrcode";
-  import { CheckCircle, Smartphone } from "lucide-svelte";
+  import { Smartphone } from "lucide-svelte";
   import RecoveryCodes from "./RecoveryCodes.svelte";
   import SecurityKeys from "./SecurityKeys.svelte";
   import { setupTOTP } from "$lib/api/auth";
-  import { Alert, Button, Skeleton } from "$lib/components/ui";
+  import { Alert, Button, Skeleton, Badge } from "$lib/components/ui";
   import { t } from "$lib/i18n";
-  import Notice from "./Notice.svelte";
   import type { TwoFactor } from "./twoFactor.svelte";
 
   // The account's two-factor authentication: its status, and Enable or Disable, which open the
@@ -57,12 +56,8 @@
     {$t("account.totp.title")}
   </h3>
 
-  {#if twoFactor.success}
-    <Notice variant="success" message={twoFactor.success} />
-  {/if}
-
   {#if twoFactor.error && !twoFactor.setupOpen && !twoFactor.disableOpen}
-    <Notice variant="error" message={twoFactor.error} />
+    <Alert variant="error" class="mb-4">{twoFactor.error}</Alert>
   {/if}
 
   <div class="flex flex-wrap items-center justify-between gap-3">
@@ -78,19 +73,14 @@
           <span aria-busy="true"><Skeleton shape="block" class="h-7 w-28" /></span>
         {/if}
       {:else if twoFactor.enabled}
-        <span class="px-3 py-1 bg-status-success/20 text-status-success rounded-lg text-sm flex items-center gap-1">
-          <CheckCircle class="w-4 h-4" />
-          {$t("account.totp.on")}
-        </span>
+        <Badge variant="success" dot>{$t("account.totp.on")}</Badge>
         <Button variant="danger" onclick={openDisable}>
           {$t("account.totp.disable")}
         </Button>
       {:else}
-        <span class="px-3 py-1 bg-surface-overlay text-content-secondary rounded-lg text-sm">
-          {$t("account.totp.off")}
-        </span>
-        <Button variant="primary" onclick={startSetup} disabled={twoFactor.loading}>
-          {twoFactor.loading ? $t("account.totp.settingUp") : $t("account.totp.enable")}
+        <Badge variant="neutral" dot>{$t("account.totp.off")}</Badge>
+        <Button variant="primary" onclick={startSetup} loading={twoFactor.loading}>
+          {$t("account.totp.enable")}
         </Button>
       {/if}
     </div>

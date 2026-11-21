@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Download, Layers, RotateCw, Trash2 } from 'lucide-svelte';
-	import { Alert, Button, Card, EmptyState, Input, Modal, Skeleton } from '$lib/components/ui';
+	import { Download, Layers, Trash2 } from 'lucide-svelte';
+	import { Alert, Button, Card, EmptyState, Input, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { getImages, pullImage, removeImage, type Image } from '$lib/api/containers';
 	import { formatBytes } from '$lib/stores/stats';
 	import { intlLocale, t } from '$lib/i18n';
@@ -14,15 +14,18 @@
 
 	let images = $state<Image[]>([]);
 	let loading = $state(true);
+	// The first load has answered: until then the list is its skeleton (ADR-0430).
+	let loaded = $state(false);
 	let loadError = $state('');
 
 	let imageName = $state('');
 	let pulling = $state('');
 	let pullError = $state('');
-	let notice = $state('');
 
-	let imageToRemove = $state<Image | null>(null);
-	let removing = $state(false);
+	// The image whose removal runs: its button waits.
+	let removing = $state('');
+	// Why the last removal was refused, such as the containers that use the image: on the page,
+	// above the list, until the next removal, to act on.
 	let removeError = $state('');
 
 	onMount(refresh);
@@ -42,6 +45,7 @@
 			loadError = messageOf(e);
 		} finally {
 			loading = false;
+			loaded = true;
 		}
 	}
 
@@ -50,10 +54,9 @@
 		if (!name || pulling) return;
 		pulling = name;
 		pullError = '';
-		notice = '';
 		try {
 			await pullImage(name);
-			notice = $t('containers.images.pulled', { name });
+			toast.success($t('containers.images.pulled', { name }));
 			imageName = '';
 			await refresh();
 		} catch (e) {
@@ -63,33 +66,32 @@
 		}
 	}
 
-	function askRemove(image: Image) {
-		imageToRemove = image;
-		removeError = '';
-	}
-
-	function closeRemove() {
+	/**
+	 * Remove an image once confirmed, with all its tags. Never forced: the server refuses an image
+	 * that a container uses and names the containers; Docker's own refusals come with Docker's
+	 * reason, which stays above the list.
+	 */
+	async function askRemove(image: Image) {
 		if (removing) return;
-		imageToRemove = null;
-		removeError = '';
-	}
-
-	async function handleRemove() {
-		if (!imageToRemove || removing) return;
-		const image = imageToRemove;
-		removing = true;
+		const name = nameOf(image);
+		const others = image.tags.slice(1);
+		const yes = await confirm({
+			title: $t('containers.images.removeTitleOf', { name }),
+			message: $t('containers.images.removeNote'),
+			consequences: others.length > 0 ? [$t('containers.images.otherTags', { tags: others.join(', ') })] : [],
+			confirmLabel: $t('containers.images.remove')
+		});
+		if (!yes) return;
+		removing = image.id;
 		removeError = '';
 		try {
-			// Never forced: the server refuses an image that a container uses and names the
-			// containers; Docker's own refusals come with Docker's reason.
 			await removeImage(image.id);
-			notice = $t('containers.images.removed', { name: nameOf(image) });
-			imageToRemove = null;
+			toast.success($t('containers.images.removed', { name }));
 			await refresh();
 		} catch (e) {
 			removeError = messageOf(e);
 		} finally {
-			removing = false;
+			removing = '';
 		}
 	}
 
@@ -142,29 +144,29 @@
 		{/if}
 	</Card>
 
-	{#if notice}
-		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
+	{#if removeError}
+		<div role="alert">
+			<Alert variant="error" title={$t('containers.images.notRemoved')} dismissible ondismiss={() => (removeError = '')}>
+				<p class="break-words">{removeError}</p>
+			</Alert>
+		</div>
 	{/if}
 
-	{#if loading && images.length === 0 && !loadError}
-		<!-- The first load (ADR-0430): the table's rows; a refresh keeps the list. -->
-		<div class="card" aria-busy="true">
-			<Skeleton shape="row" columns={5} count={4} />
-		</div>
-	{:else if loadError}
-		<Alert variant="error" title={$t('containers.images.loadError')}>
-			<p class="mono-xs break-words">{loadError}</p>
-			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" {loading} onclick={refresh}>
-				{$t('common.retry')}
-			</Button>
-		</Alert>
-	{:else if images.length === 0}
-		<EmptyState
-			icon={Layers}
-			title={$t('containers.images.empty')}
-			description={$t('containers.images.emptyHint')}
-		/>
-	{:else}
+	<LoadState
+		loading={!loaded}
+		error={loadError}
+		errorTitle={$t('containers.images.loadError')}
+		empty={images.length === 0}
+		onretry={refresh}
+		retrying={loading}
+	>
+		{#snippet skeleton()}
+			<!-- The first load (ADR-0430): the table's rows; a refresh keeps the list. -->
+			<div class="card"><Skeleton shape="row" columns={5} count={4} /></div>
+		{/snippet}
+		{#snippet emptyState()}
+			<EmptyState icon={Layers} title={$t('containers.images.empty')} description={$t('containers.images.emptyHint')} />
+		{/snippet}
 		<Card flush>
 			<div class="table-frame">
 				<table class="table" aria-label={$t('containers.images.list')}>
@@ -197,6 +199,8 @@
 										<Button
 											variant="ghost-danger"
 											size="icon-sm"
+											loading={removing === image.id}
+											disabled={removing !== ''}
 											onclick={() => askRemove(image)}
 											title={$t('containers.images.removeOne', { name: nameOf(image) })}
 										>
@@ -213,40 +217,5 @@
 				</table>
 			</div>
 		</Card>
-	{/if}
+	</LoadState>
 </div>
-
-<Modal
-	open={imageToRemove !== null}
-	title={$t('containers.images.removeTitle')}
-	danger
-	closable={!removing}
-	onclose={closeRemove}
->
-	{#if imageToRemove}
-		<div class="space-y-4">
-			<p class="text-sm">
-				{$t('containers.images.removeQuestion')}
-				<span class="font-semibold break-all">{nameOf(imageToRemove)}</span>
-				(<span class="mono-xs break-all">{imageToRemove.id}</span>)?
-				{#if imageToRemove.tags.length > 1}
-					{$t('containers.images.otherTags')}
-					<span class="mono-xs break-all">{imageToRemove.tags.slice(1).join(', ')}</span>.
-				{/if}
-				{$t('containers.images.removeNote')}
-			</p>
-			{#if removeError}
-				<Alert variant="error" title={$t('containers.images.notRemoved')}>{removeError}</Alert>
-			{/if}
-		</div>
-	{/if}
-
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={removing} onclick={closeRemove}>
-			{$t('common.cancel')}
-		</Button>
-		<Button variant="danger" class="flex-1" icon={Trash2} loading={removing} onclick={handleRemove}>
-			{$t('containers.images.remove')}
-		</Button>
-	{/snippet}
-</Modal>

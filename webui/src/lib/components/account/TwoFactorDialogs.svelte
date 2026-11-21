@@ -2,7 +2,7 @@
   import { AlertCircle, Copy, Lock } from "lucide-svelte";
   import { loadCurrentUser } from "$lib/stores/auth";
   import { disableTOTP, enableTOTP } from "$lib/api/auth";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, HelpText, toast } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import TotpCodeDialog from "./TotpCodeDialog.svelte";
   import type { TwoFactor } from "./twoFactor.svelte";
@@ -27,7 +27,7 @@
     try {
       await enableTOTP(twoFactor.code);
       twoFactor.enabled = true;
-      twoFactor.success = $t("account.totp.enabled");
+      toast.success($t("account.totp.enabled"));
       onchange?.();
       twoFactor.setupOpen = false;
       twoFactor.setupData = null;
@@ -51,7 +51,7 @@
     try {
       await disableTOTP(twoFactor.disableCode);
       twoFactor.enabled = false;
-      twoFactor.success = $t("account.totp.disabled");
+      toast.success($t("account.totp.disabled"));
       onchange?.();
       twoFactor.disableOpen = false;
       twoFactor.disableCode = "";
@@ -82,8 +82,7 @@
   async function copySecret() {
     if (twoFactor.setupData?.secret) {
       await navigator.clipboard.writeText(twoFactor.setupData.secret);
-      twoFactor.secretCopied = true;
-      setTimeout(() => (twoFactor.secretCopied = false), 2000);
+      toast.success($t("account.totp.copied"));
     }
   }
 </script>
@@ -100,7 +99,6 @@
     error={twoFactor.error}
     loading={twoFactor.loading}
     confirmLabel={$t("account.totp.enable2fa")}
-    busyLabel={$t("account.totp.verifying")}
     oncancel={cancelSetup}
     onconfirm={confirmEnable}
   >
@@ -117,18 +115,16 @@
     {/if}
 
     <div class="text-center">
-      <p class="text-xs text-content-muted mb-2">{$t("account.totp.manual")}</p>
+      <HelpText text={$t("account.totp.manual")} class="mb-2" />
       <div class="flex items-center justify-center gap-2">
         <code class="bg-surface-overlay px-3 py-1 rounded font-mono text-sm">
           {setupData.secret}
         </code>
         <Button variant="ghost" size="icon-sm" type="button" onclick={copySecret} title={$t("account.totp.copy")}>
-          <Copy class="w-4 h-4" />
+          <Copy class="w-4 h-4" aria-hidden="true" />
+          <span class="sr-only">{$t("account.totp.copy")}</span>
         </Button>
       </div>
-      {#if twoFactor.secretCopied}
-        <p class="text-xs text-status-success mt-1">{$t("account.totp.copied")}</p>
-      {/if}
     </div>
   </TotpCodeDialog>
 {/if}
@@ -145,7 +141,6 @@
     error={twoFactor.error}
     loading={twoFactor.loading}
     confirmLabel={$t("account.totp.disable2fa")}
-    busyLabel={$t("account.totp.disabling")}
     oncancel={cancelDisable}
     onconfirm={confirmDisable}
   >

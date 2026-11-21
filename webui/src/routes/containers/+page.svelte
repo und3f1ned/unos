@@ -2,8 +2,8 @@
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { getContainers, createContainer, type Container } from '$lib/api/containers';
-	import { Plus, RefreshCw, RotateCw } from 'lucide-svelte';
-	import { Button, Alert, Skeleton, confirm } from '$lib/components/ui';
+	import { Plus, RefreshCw } from 'lucide-svelte';
+	import { Button, Alert, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import {
 		BulkStatus,
 		BulkToolbar,
@@ -16,7 +16,7 @@
 		type TabId
 	} from '$lib/components/containers';
 	import { containerAction } from '$lib/components/containers/actions';
-	import { BulkRun, Selection, type BulkAction } from '$lib/components/containers/bulk.svelte';
+	import { BULK_DONE, BulkRun, Selection, type BulkAction } from '$lib/components/containers/bulk.svelte';
 	import { ContainerForm } from '$lib/components/containers/containerForm.svelte';
 	import {
 		countByGroup,
@@ -107,6 +107,13 @@
 		error = '';
 		const items = await bulk.run(action, targets, () => left);
 		if (items === null) return;
+		// A run that did everything says so in a toast; one that did not keeps its list of what
+		// failed and why on the page (BulkStatus).
+		const ok = items.filter((item) => item.state !== undefined).length;
+		if (ok === items.length) {
+			toast.success($t(BULK_DONE[action], { ok, n: items.length }));
+			bulk.result = null;
+		}
 		// What was not done stays selected.
 		selection.set(items.filter((item) => item.state === undefined).map((item) => item.id));
 		await loadData();
@@ -172,8 +179,7 @@
 		}
 	}
 
-	async function handleQuickAction(e: Event, containerId: string, action: QuickAction) {
-		e.stopPropagation();
+	async function handleQuickAction(containerId: string, action: QuickAction) {
 		if (bulk.running) return;
 
 		if (action === 'remove') {
@@ -215,11 +221,11 @@
 			<Button
 				variant="secondary"
 				size="icon"
+				icon={RefreshCw}
 				onclick={refresh}
-				disabled={activeTab === 'containers' && loading}
+				loading={activeTab === 'containers' && loading}
 				title={$t('common.refresh')}
 			>
-				<RefreshCw class="w-4 h-4 {activeTab === 'containers' && loading ? 'animate-spin' : ''}" />
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			{#if activeTab === 'containers' && !loadError}
@@ -239,75 +245,79 @@
 		hidden={activeTab !== 'containers'}
 		class="space-y-6"
 	>
-		{#if !loaded}
-			<!-- The first load (ADR-0430): the toolbar (on a phone the filter has a row of its own)
-			     and the list, swapped at once; the cards with their Select all shown. -->
-			<div class="space-y-6" aria-busy="true">
-				<div class="space-y-3">
-					<Skeleton shape="block" class="h-9 w-full" />
-					<Skeleton shape="block" class="h-9 w-full sm:hidden" />
-				</div>
-				{#if viewMode === 'cards'}
-					<!-- A phone's cards (the view it starts in). -->
+		<!-- The first load's skeleton (ADR-0430), then a failed load alone, with what it means, the
+		     server's reason and Retry: no counts, list or Create (webui.ux-apps). "Docker is not
+		     answering" only for Docker's own 503 (ADR-0323). -->
+		<LoadState
+			loading={!loaded}
+			error={loadError}
+			errorTitle={$t(dockerDown ? 'containers.loadError.title' : 'containers.loadFailed.title')}
+			errorDescription={$t(dockerDown ? 'containers.loadError.hint' : 'containers.loadFailed.hint')}
+			onretry={loadData}
+			retrying={loading}
+			class="space-y-6"
+		>
+			{#snippet skeleton()}
+				<!-- The toolbar (on a phone the filter has a row of its own) and the list, swapped at
+				     once; the cards with their Select all shown. -->
+				<div class="space-y-6">
 					<div class="space-y-3">
-						<Skeleton shape="block" class="h-5 w-40" />
-						{#each [0, 1, 2] as card (card)}
-							<Skeleton shape="card" count={2} />
-						{/each}
+						<Skeleton shape="block" class="h-9 w-full" />
+						<Skeleton shape="block" class="h-9 w-full sm:hidden" />
 					</div>
-				{:else}
-					<div class="card"><Skeleton shape="row" columns={6} count={4} size="control" /></div>
-				{/if}
-			</div>
-		{:else if loadError}
-			<!-- A plain title, the server's reason, and Retry; no counts, list or Create (webui.ux-apps).
-			     "Docker is not answering" only for Docker's own 503 (ADR-0323). -->
-			<Alert variant="error" title={$t(dockerDown ? 'containers.loadError.title' : 'containers.loadFailed.title')}>
-				<p>{$t(dockerDown ? 'containers.loadError.hint' : 'containers.loadFailed.hint')}</p>
-				<p class="mt-1 mono-xs break-words text-content-secondary">{loadError}</p>
-				<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={loading} onclick={loadData}>
-					{$t('common.retry')}
-				</Button>
-			</Alert>
-		{:else}
-		{#if error}
-			<Alert variant="error">{error}</Alert>
-		{/if}
+					{#if viewMode === 'cards'}
+						<!-- A phone's cards (the view it starts in). -->
+						<div class="space-y-3">
+							<Skeleton shape="block" class="h-5 w-40" />
+							{#each [0, 1, 2] as card (card)}
+								<Skeleton shape="card" count={2} />
+							{/each}
+						</div>
+					{:else}
+						<div class="card"><Skeleton shape="row" columns={6} count={4} size="control" /></div>
+					{/if}
+				</div>
+			{/snippet}
+			{#if error}
+				<Alert variant="error">{error}</Alert>
+			{/if}
 
-		<BulkStatus progress={bulk.progress} result={bulk.result} ondismiss={() => (bulk.result = null)} />
+			<BulkStatus result={bulk.result} ondismiss={() => (bulk.result = null)} />
 
-		<ContainerToolbar
-			bind:search={searchQuery}
-			bind:filter={stateFilter}
-			{counts}
-			view={viewMode}
-			onview={(view) => (chosenView = view)}
-		/>
+			<ContainerToolbar
+				bind:search={searchQuery}
+				bind:filter={stateFilter}
+				{counts}
+				view={viewMode}
+				onview={(view) => (chosenView = view)}
+			/>
 
-		<!-- Container List -->
-		<ContainerList
-			containers={filteredContainers}
-			filtered={!!searchQuery || stateFilter !== 'all'}
-			view={viewMode}
-			selected={selection.ids}
-			busy={bulk.running}
-			onopen={openDrawer}
-			onselect={(id, on) => selection.toggle(id, on)}
-			ontoggleall={(on) => selection.set(on ? filteredContainers.map((c) => c.id) : [])}
-			onaction={handleQuickAction}
-			onclear={() => {
-				searchQuery = '';
-				stateFilter = 'all';
-			}}
-		/>
+			<!-- Container List -->
+			<ContainerList
+				containers={filteredContainers}
+				filtered={!!searchQuery || stateFilter !== 'all'}
+				view={viewMode}
+				selected={selection.ids}
+				busy={bulk.running}
+				onopen={openDrawer}
+				onselect={(id, on) => selection.toggle(id, on)}
+				ontoggleall={(on) => selection.set(on ? filteredContainers.map((c) => c.id) : [])}
+				onaction={handleQuickAction}
+				onclear={() => {
+					searchQuery = '';
+					stateFilter = 'all';
+				}}
+			/>
 
-		<BulkToolbar
-			selectedCount={selection.size}
-			busy={bulk.running}
-			onclear={() => selection.set([])}
-			onbulk={runBulk}
-		/>
-		{/if}
+			<!-- The selection's actions, after the list (ADR-0437). -->
+			<BulkToolbar
+				selectedCount={selection.size}
+				progress={bulk.progress}
+				busy={bulk.running}
+				onclear={() => selection.set([])}
+				onbulk={runBulk}
+			/>
+		</LoadState>
 	</div>
 
 	<div
@@ -332,7 +342,7 @@
 	oncreate={handleCreate}
 />
 
-<!-- Container Detail Drawer -->
+<!-- A container's details (a Sheet) -->
 <ContainerDetailDrawer
 	bind:open={showDrawer}
 	container={selectedContainer}

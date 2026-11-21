@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { CheckCircle, History, RefreshCw, XCircle } from "lucide-svelte";
-  import { Badge, Button, EmptyState, Sheet } from "$lib/components/ui";
+  import { CheckCircle, History, XCircle } from "lucide-svelte";
+  import { Badge, Button, EmptyState, Sheet, Alert, StatusDot } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { apiTime, formatDateTime } from "$lib/time";
   import type { TaskHistory } from "./history.svelte";
@@ -70,7 +70,8 @@
               {:else if run.status === "failed"}
                 <XCircle class="w-4 h-4 shrink-0 text-status-error" aria-hidden="true" />
               {:else}
-                <RefreshCw class="w-4 h-4 shrink-0 text-status-warning animate-spin" aria-hidden="true" />
+                <!-- Running: the pulse of the design system's live state (StatusDot). -->
+                <span class="w-4 h-4 shrink-0 grid place-items-center"><StatusDot status="warning" pulse /></span>
               {/if}
               <span class="font-medium text-sm break-words min-w-0">{run.task_name}</span>
               <Badge variant={STATUS_VARIANTS[run.status] ?? "neutral"}>{getStatusLabel(run.status)}</Badge>
@@ -84,9 +85,7 @@
             {/if}
           </div>
           {#if run.error}
-            <div class="mt-2 p-2 bg-status-error/10 rounded text-xs text-status-error font-mono break-all">
-              {run.error}
-            </div>
+            <Alert variant="error" size="sm" class="mt-2"><p class="mono text-xs break-all">{run.error}</p></Alert>
           {/if}
           {#if run.output}
             <details class="mt-2">

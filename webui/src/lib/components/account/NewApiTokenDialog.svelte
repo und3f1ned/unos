@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { TOKEN_AREAS } from '$lib/api/auth';
-	import { Alert, Button, Checkbox, Input, Modal, RadioGroup, Select } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, Input, Modal, RadioGroup, Select, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { ApiTokenForm } from './apiTokenForm.svelte';
 	import { AREA_LABELS, pathOf } from './apiTokens';
@@ -94,13 +94,13 @@
 					{/each}
 				</ul>
 				{#if form.chosenAreas.length === 0}
-					<p class="form-hint">{$t('tokens.form.chooseArea')}</p>
+					<HelpText text={$t('tokens.form.chooseArea')} />
 				{/if}
 			{/if}
 		</div>
 
 		{#if form.readOnly || !form.everyArea}
-			<p class="form-hint">{$t('tokens.form.limitedNote')}</p>
+			<HelpText text={$t('tokens.form.limitedNote')} />
 		{/if}
 		{#if form.warned}
 			<Alert variant="warning">{$t('tokens.form.warnedAreas')}</Alert>

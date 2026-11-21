@@ -61,8 +61,8 @@
 	</form>
 	{#snippet footer()}
 		<Button variant="secondary" type="button" disabled={busy} onclick={onclose}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form="firewall-add-rule" disabled={busy}>
-			{busy ? $t('firewall.adding') : $t('firewall.addRule')}
+		<Button variant="primary" type="submit" form="firewall-add-rule" loading={busy}>
+			{$t('firewall.addRule')}
 		</Button>
 	{/snippet}
 </Modal>

@@ -173,14 +173,13 @@ test.describe('Recovery codes', () => {
     await part.getByRole('button', { name: 'Generate new codes' }).click();
     const confirm = page.getByRole('dialog', { name: 'Generate new recovery codes' });
     await confirm.getByRole('button', { name: 'Generate new codes' }).click();
-
-    await expect(confirm.getByText(REFUSED)).toBeVisible();
-    await expect(confirm).toContainText('2FA must be enabled before generating recovery codes');
-    await expect(confirm.getByText(UNKNOWN)).toHaveCount(0);
-    await expect(confirm).not.toContainText(UNKNOWN_HINT);
-    await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toHaveCount(0);
-    await expect(part.getByText(REFUSED)).toHaveCount(0);
+
+    // The refusal shows on the card, by the codes it concerns (ADR-0432).
+    await expect(part.getByText(REFUSED)).toBeVisible();
+    await expect(part).toContainText('2FA must be enabled before generating recovery codes');
+    await expect(part.getByText(UNKNOWN)).toHaveCount(0);
+    await expect(part).not.toContainText(UNKNOWN_HINT);
     await expect(part.getByText('10 recovery codes left')).toBeVisible();
     await expectSignInWith(request, saved[0]);
   });
@@ -205,30 +204,29 @@ test.describe('Recovery codes', () => {
     });
     await part.getByRole('button', { name: 'Generate new codes' }).click();
     await confirm.getByRole('button', { name: 'Generate new codes' }).click();
-    await expect(confirm).toContainText('Request failed');
-    await expect(confirm.getByText(UNKNOWN)).toBeVisible();
-    await expect(confirm).toContainText(UNKNOWN_HINT);
-    await expect(confirm.getByText(REFUSED)).toHaveCount(0);
-    expect(replaced).toBe(200);
-    // The warning is right, and it stays on the page after Cancel.
-    await expectRefused(request, saved[0]);
-    await confirm.getByRole('button', { name: 'Cancel' }).click();
     await expect(confirm).toHaveCount(0);
+    await expect(part).toContainText('Request failed');
     await expect(part.getByText(UNKNOWN)).toBeVisible();
     await expect(part).toContainText(UNKNOWN_HINT);
+    await expect(part.getByText(REFUSED)).toHaveCount(0);
+    expect(replaced).toBe(200);
+    // The warning is right.
+    await expectRefused(request, saved[0]);
 
     // No answer at all (the connection broke): the page cannot know either.
     await page.unroute(generateUrl);
     await page.route(generateUrl, (route) => route.abort('connectionreset'));
     await part.getByRole('button', { name: 'Generate new codes' }).click();
     await confirm.getByRole('button', { name: 'Generate new codes' }).click();
-    await expect(confirm).toContainText('Failed to fetch');
-    await expect(confirm.getByText(UNKNOWN)).toBeVisible();
-    await expect(confirm).toContainText(UNKNOWN_HINT);
-    await expect(confirm.getByText(REFUSED)).toHaveCount(0);
+    await expect(confirm).toHaveCount(0);
+    await expect(part).toContainText('Failed to fetch');
+    await expect(part.getByText(UNKNOWN)).toBeVisible();
+    await expect(part).toContainText(UNKNOWN_HINT);
+    await expect(part.getByText(REFUSED)).toHaveCount(0);
     await page.unroute(generateUrl);
 
     // Generating again shows new codes that work, and the warning is gone.
+    await part.getByRole('button', { name: 'Generate new codes' }).click();
     await confirm.getByRole('button', { name: 'Generate new codes' }).click();
     await expect(confirm).toHaveCount(0);
     const list = part.getByRole('list', { name: 'Recovery codes' });

@@ -21,12 +21,10 @@ export class TwoFactor {
   // The code typed to confirm the setup.
   code = $state("");
   error = $state("");
-  success = $state("");
   setupOpen = $state(false);
   disableOpen = $state(false);
   // The code typed to turn it off.
   disableCode = $state("");
-  secretCopied = $state(false);
   // The otpauth:// URI contains the TOTP secret, so the QR code is rendered in
   // the browser and never sent to a third-party service.
   qrDataUrl = $state("");

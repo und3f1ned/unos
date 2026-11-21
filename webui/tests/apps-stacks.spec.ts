@@ -1,6 +1,6 @@
 import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { answerConfirmation } from './ui';
+import { actionsFor, answerConfirmation, chooseAction } from './ui';
 import {
   answerInstall,
   catalogCard,
@@ -141,7 +141,7 @@ function containersList(dialog: Locator, heading = 'Containers and images') {
 }
 
 async function installedTab(page: Page, count: number, label = 'Installed') {
-  await page.getByRole('button', { name: `${label} (${count})`, exact: true }).click();
+  await page.getByRole('tab', { name: `${label} (${count})`, exact: true }).click();
 }
 
 test.describe('Apps of several containers', () => {
@@ -184,11 +184,11 @@ test.describe('Apps of several containers', () => {
     await expect(locations.getByText(GENERATED_SECRET)).toBeVisible();
 
     // Ports: the server's only.
-    await dialog.getByRole('button', { name: 'Ports (1)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Ports (1)', exact: true }).click();
     await expect(dialog.getByLabel('Host port')).toHaveValue('2283');
 
     // Volumes: per container; only the server's data folder can be moved, the password file never.
-    await dialog.getByRole('button', { name: 'Volumes (7)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Volumes (7)', exact: true }).click();
     const groups = dialog.getByRole('group');
     await expect(groups).toHaveCount(4);
     for (const [i, name] of CONTAINERS.entries()) await expect(groups.nth(i)).toHaveAccessibleName(name);
@@ -211,7 +211,7 @@ test.describe('Apps of several containers', () => {
     expect(await dialog.innerText()).not.toMatch(/[0-9a-f]{64}/);
 
     // Environment: the wiring of the containers is UNOS's, and the companions take no change.
-    await dialog.getByRole('button', { name: 'Variables (12)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Variables (12)', exact: true }).click();
     for (const [name, value] of [
       ['DB_HOSTNAME', 'database'],
       ['DB_PASSWORD_FILE', '/run/secrets/db-password'],
@@ -261,7 +261,7 @@ test.describe('Apps of several containers', () => {
     await expect(notice).toContainText(FIRST_ADMIN);
     await expect(notice).toHaveClass(/alert-success/);
     expect(bodies).toEqual([{ template_id: 'immich', pool: POOL.name }]);
-    await expect(page.getByRole('button', { name: 'Installed (1)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (1)', exact: true })).toBeVisible();
   });
 
   for (const [what, devices, warns] of [
@@ -330,7 +330,7 @@ test.describe('Apps of several containers', () => {
     await dialog.getByRole('button', { name: 'Install Immich' }).click();
 
     await expect(dialog.locator('.alert', { hasText: 'Installation failed' })).toContainText(PORT_TAKEN);
-    await expect(page.getByRole('button', { name: 'Installed (0)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (0)', exact: true })).toBeVisible();
   });
 });
 
@@ -360,7 +360,8 @@ test.describe('An installed app of several containers', () => {
     await immich.getByRole('button', { name: 'Start', exact: true }).click();
     await expect(immich.getByText('Running', { exact: true })).toBeVisible();
 
-    await immich.getByRole('button', { name: 'Uninstall immich', exact: true }).click();
+    // Uninstall, which removes every container of the app, is its ⋯ menu's last item (ADR-0437).
+    await chooseAction(page, 'immich', 'Uninstall');
     await answerConfirmation(page, {
       title: 'Uninstall immich?',
       message: 'Its 4 containers are removed; its data folders are kept.',
@@ -381,7 +382,9 @@ test.describe('An installed app of several containers', () => {
 
     const immich = installedCard(page, 'immich');
     await expect(immich.locator('.alert-warning')).toHaveText(WITHOUT_ML);
-    await expect(immich.getByRole('button', { name: 'Restart', exact: true })).toBeVisible();
+    await actionsFor(immich, 'immich').click();
+    await expect(page.getByRole('menuitem', { name: 'Restart', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
   });
 
   test('a server that is still starting says so', async ({ authenticatedPage: page }) => {
@@ -410,11 +413,12 @@ test.describe('An installed app of several containers', () => {
     await expect(immich.getByRole('link', { name: 'Open' })).toHaveCount(0);
     await expect(immich.locator('[data-field="containers"]')).toHaveText('immich, immich-database, immich-machine-learning');
     // Its card in the catalog says so too.
-    await page.getByRole('button', { name: 'Catalog', exact: true }).click();
+    await page.getByRole('tab', { name: 'Catalog', exact: true }).click();
     await expect(catalogCard(page, 'Immich').getByText('Incomplete', { exact: true })).toBeVisible();
     await installedTab(page, 1);
 
-    await immich.getByRole('button', { name: 'Uninstall immich', exact: true }).click();
+    // Uninstall, which removes every container of the app, is its ⋯ menu's last item (ADR-0437).
+    await chooseAction(page, 'immich', 'Uninstall');
     await answerConfirmation(page, {
       title: 'Uninstall immich?',
       message: 'Its 3 containers are removed; its data folders are kept.',
@@ -437,7 +441,11 @@ test.describe('An installed app of several containers', () => {
     const immich = installedCard(page, 'immich');
     await expect(immich.getByText('Incomplete', { exact: true })).toBeVisible();
     await expect(immich.locator('.alert-warning')).toHaveText(incomplete('immich-redis'));
-    await expect(immich.getByRole('button', { name: 'Uninstall immich', exact: true })).toBeVisible();
+    // An incomplete app offers Uninstall and no Restart in its ⋯ menu, and no Start.
+    await actionsFor(immich, 'immich').click();
+    await expect(page.getByRole('menuitem', { name: 'Uninstall', exact: true })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Restart', exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
     for (const action of ['Restart', 'Start']) {
       await expect(immich.getByRole('button', { name: action, exact: true })).toHaveCount(0);
     }
@@ -464,7 +472,8 @@ test.describe('An installed app of several containers', () => {
     await expect(immich.locator('.alert-warning')).toHaveText(incomplete('immich'));
     await expect(immich.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
 
-    await immich.getByRole('button', { name: 'Uninstall immich', exact: true }).click();
+    // Uninstall, which removes every container of the app, is its ⋯ menu's last item (ADR-0437).
+    await chooseAction(page, 'immich', 'Uninstall');
     await answerConfirmation(page, {
       title: 'Uninstall immich?',
       message: 'Its 3 containers are removed; its data folders are kept.',
@@ -480,7 +489,7 @@ test.describe('An installed app of several containers', () => {
 
     const dialog = await details(page);
     await expect(dialog.getByText('Installed', { exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: 'Volumes (7)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Volumes (7)', exact: true }).click();
     const groups = dialog.getByRole('group');
     await expect(groups).toHaveCount(4);
     for (const [i, name] of CONTAINERS.entries()) await expect(groups.nth(i)).toHaveAccessibleName(name);
@@ -539,11 +548,11 @@ test.describe('Apps of several containers in Russian', () => {
         'монтируется в /var/lib/postgresql/data в контейнере immich-database',
       ),
     ).toBeVisible();
-    await dialog.getByRole('button', { name: 'Тома (7)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Тома (7)', exact: true }).click();
     await expect(
       dialog.getByText('Пароль, который UNOS создаёт при установке и хранит в этом файле; он нигде не показывается.'),
     ).toHaveCount(2);
-    await dialog.getByRole('button', { name: 'Переменные (12)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Переменные (12)', exact: true }).click();
     await expect(dialog.getByText('Задаётся UNOS.', { exact: true })).toHaveCount(12);
 
     await dialog.getByRole('button', { name: 'Установить Immich' }).click();
@@ -555,7 +564,7 @@ test.describe('Apps of several containers in Russian', () => {
     await expect(notice).toContainText('Приложение Immich установлено без оборудования этого NAS');
 
     // The installed app: its containers, a stopped companion, its state and the uninstall's question.
-    await page.getByRole('button', { name: 'Установленные (1)', exact: true }).click();
+    await page.getByRole('tab', { name: 'Установленные (1)', exact: true }).click();
     const immich = installedCard(page, 'immich');
     await expect(immich.locator('[data-field="containers"]')).toHaveText(CONTAINERS.join(', '));
     await expect(immich.getByText('Контейнеры', { exact: true })).toBeVisible();
@@ -564,7 +573,7 @@ test.describe('Apps of several containers in Russian', () => {
       'Приложение Immich работает без immich-machine-learning. Перезапустите Immich, чтобы запустить все его ' +
         'контейнеры; журнал контейнера, который снова останавливается, есть на странице «Контейнеры».',
     );
-    await immich.getByRole('button', { name: 'Удалить immich', exact: true }).click();
+    await chooseAction(page, 'immich', 'Удалить', true);
     await answerConfirmation(page, {
       title: 'Удалить приложение immich?',
       message: 'Его 4 контейнера будут удалены, а папки с данными останутся.',
@@ -576,7 +585,7 @@ test.describe('Apps of several containers in Russian', () => {
     test(`an incomplete app whose server is ${status}`, async ({ authenticatedPage: page }) => {
       await fakeApps(page, [installedImmich(POOL.path, { main: { status }, missing: ['immich-redis'] })]);
       await openAppStore(page);
-      await page.getByRole('button', { name: 'Установленные (1)', exact: true }).click();
+      await page.getByRole('tab', { name: 'Установленные (1)', exact: true }).click();
 
       const immich = installedCard(page, 'immich');
       await expect(immich.getByText('Неполное', { exact: true })).toBeVisible();
@@ -590,7 +599,11 @@ test.describe('Apps of several containers in Russian', () => {
       await expect(immich.getByRole('button', { name: 'Остановить', exact: true })).toHaveCount(
         status === 'running' ? 1 : 0,
       );
-      await expect(immich.getByRole('button', { name: 'Удалить immich', exact: true })).toBeVisible();
+      // Uninstall is its ⋯ menu's (ADR-0437), and an incomplete app offers no Restart there.
+      await actionsFor(immich, 'immich', true).click();
+      await expect(page.getByRole('menuitem', { name: 'Удалить', exact: true })).toBeVisible();
+      await expect(page.getByRole('menuitem', { name: 'Перезапустить', exact: true })).toHaveCount(0);
+      await page.keyboard.press('Escape');
     });
   }
 });

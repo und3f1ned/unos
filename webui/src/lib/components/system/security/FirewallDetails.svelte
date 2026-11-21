@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Plus, RefreshCw } from 'lucide-svelte';
+	import { Plus, RefreshCw, Flame } from 'lucide-svelte';
 	import type { FirewallRule, FirewallStatus } from '$lib/api/security';
-	import { Button } from '$lib/components/ui';
+	import { Button, EmptyState } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import FirewallRuleItem from './FirewallRuleItem.svelte';
 	import { labelOf, POLICIES } from './firewall';
@@ -41,8 +41,7 @@
 			{:else}
 				<Button variant="success" disabled={busy} onclick={onenable}>{$t('firewall.enable')}</Button>
 			{/if}
-			<Button variant="secondary" disabled={busy} onclick={onreset}>
-				<RefreshCw class="w-4 h-4" />
+			<Button variant="secondary" icon={RefreshCw} disabled={busy} onclick={onreset}>
 				{$t('firewall.reset')}
 			</Button>
 		</div>
@@ -56,7 +55,7 @@
 	</div>
 
 	{#if status.rules.length === 0}
-		<p class="text-sm text-content-secondary text-center py-4">{$t('firewall.noRules')}</p>
+		<EmptyState compact icon={Flame} title={$t('firewall.noRules')} />
 	{:else}
 		<ul class="space-y-2" aria-label={$t('firewall.rules')}>
 			{#each status.rules as rule (rule.id)}

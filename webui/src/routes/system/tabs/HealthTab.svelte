@@ -7,7 +7,7 @@
     type DiskPrediction,
     type SmartInfo
   } from "$lib/api/health";
-  import { Alert, Badge, Button, EmptyState, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, EmptyState, ErrorState, Skeleton } from "$lib/components/ui";
   import { SmartDataDialog } from "$lib/components/system/health";
   import { capacityText, diskState, orUnknown, predictionOf } from "$lib/components/system/health/texts";
   import { intlLocale, t } from "$lib/i18n";
@@ -90,7 +90,7 @@
       {/each}
     </div>
   {:else if error}
-    <Alert variant="error" title={$t("health.loadError")}>{error}</Alert>
+    <div class="card"><ErrorState title={$t("health.loadError")} message={error} onretry={loadHealth} retrying={loading} /></div>
   {:else if disks.length === 0}
     <div class="card"><EmptyState compact icon={HardDrive} title={$t("health.noDisks")} description={$t("health.noDisksHint")} /></div>
   {:else}

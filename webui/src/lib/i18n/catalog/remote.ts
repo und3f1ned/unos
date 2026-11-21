@@ -32,7 +32,7 @@ export const en = {
 	'remote.networkHint': 'Private IPv4 addresses of the tunnel, apart from the networks of your LAN',
 	'remote.turnOn': 'Turn on',
 	'remote.turnOff': 'Turn off',
-	'remote.enableTitle': 'Turn remote access on',
+	'remote.enableTitle': 'Turn remote access on?',
 	'remote.enableNasOnly':
 		"The devices that you add as peers reach the NAS alone through the tunnel: the web UI, the shares, SSH and the apps' ports. They reach no other computer of your LAN.",
 	'remote.enableRouter':
@@ -40,7 +40,7 @@ export const en = {
 	'remote.enableFirewall': "When the host has ufw, UNOS lets UDP port {port} through it.",
 	'remote.enableLan': "Turning remote access on or off does not change how the LAN reaches the NAS.",
 	'remote.turnedOn': 'Remote access is on',
-	'remote.disableTitle': 'Turn remote access off',
+	'remote.disableTitle': 'Turn remote access off?',
 	'remote.disableText':
 		"Every peer's tunnel ends, also the one this page may use now. The peers stay listed, and their configurations work again once remote access is on again.",
 	'remote.turnedOff': 'Remote access is off',
@@ -64,7 +64,7 @@ export const en = {
 	'remote.traffic': 'Received {received}, sent {sent}',
 	'remote.revoke': 'Revoke',
 	'remote.revokeLabel': 'Revoke {name}',
-	'remote.revokeTitle': 'Revoke a peer',
+	'remote.revokeTitle': 'Revoke {name}?',
 	'remote.revokeText': '{name} can no longer connect, and its tunnel ends at once.',
 	'remote.revoked': '{name} was revoked',
 	'remote.addTitle': 'Add a peer',
@@ -73,7 +73,6 @@ export const en = {
 	'remote.publicKeyLabel': "Device's public key (optional)",
 	'remote.publicKeyHint':
 		'Leave it empty and UNOS makes the key pair. Give the public key of a device that made its own, and the configuration holds no private key.',
-	'remote.adding': 'Adding...',
 	'remote.configTitle': 'Configuration of {name}',
 	'remote.configOnce':
 		"This configuration is shown only now: UNOS keeps no copy of the device's private key. Scan the QR code with the WireGuard app, or download the file and import it.",
@@ -104,10 +103,10 @@ export const en = {
 	'remote.names.noApps': 'No installed app publishes a TCP port.',
 	'remote.names.label': 'Name',
 	'remote.names.labelHint': '1 to 32 characters a-z, 0-9 and -. The app opens at https://{name}-{host}.local',
-	'remote.names.adding': 'Adding...',
 	'remote.names.added': '{name} now opens the app',
 	'remote.names.remove': 'Remove',
 	'remote.names.removeLabel': 'Remove the name {name}',
+	'remote.names.removeTitle': 'Remove the name {name}?',
 	'remote.names.removed': 'The name {name} was removed',
 	'remote.names.port': '{app}, port {port}',
 	'remote.names.missingApp': 'The app is not installed, or publishes another port now',
@@ -145,7 +144,7 @@ export const ru: Translation<typeof en> = {
 	'remote.networkHint': 'Частные IPv4-адреса туннеля, не пересекающиеся с сетями вашей локальной сети',
 	'remote.turnOn': 'Включить',
 	'remote.turnOff': 'Выключить',
-	'remote.enableTitle': 'Включение удалённого доступа',
+	'remote.enableTitle': 'Включить удалённый доступ?',
 	'remote.enableNasOnly':
 		'Устройства, добавленные как узлы, через туннель достигают только NAS: веб-интерфейса, общих папок, SSH и портов приложений. Другие компьютеры вашей сети им недоступны.',
 	'remote.enableRouter':
@@ -153,7 +152,7 @@ export const ru: Translation<typeof en> = {
 	'remote.enableFirewall': 'Если на хосте есть ufw, UNOS открывает в нём UDP-порт {port}.',
 	'remote.enableLan': 'Включение и выключение удалённого доступа не меняет доступ к NAS из локальной сети.',
 	'remote.turnedOn': 'Удалённый доступ включён',
-	'remote.disableTitle': 'Выключение удалённого доступа',
+	'remote.disableTitle': 'Выключить удалённый доступ?',
 	'remote.disableText':
 		'Туннели всех узлов закроются, в том числе тот, через который, возможно, открыта эта страница. Узлы останутся в списке, и их конфигурации снова заработают, когда удалённый доступ будет включён.',
 	'remote.turnedOff': 'Удалённый доступ выключен',
@@ -177,7 +176,7 @@ export const ru: Translation<typeof en> = {
 	'remote.traffic': 'Получено {received}, отправлено {sent}',
 	'remote.revoke': 'Отозвать',
 	'remote.revokeLabel': 'Отозвать {name}',
-	'remote.revokeTitle': 'Отзыв узла',
+	'remote.revokeTitle': 'Отозвать {name}?',
 	'remote.revokeText': '{name} больше не сможет подключиться, а его туннель сразу закроется.',
 	'remote.revoked': 'Узел {name} отозван',
 	'remote.addTitle': 'Добавление узла',
@@ -186,7 +185,6 @@ export const ru: Translation<typeof en> = {
 	'remote.publicKeyLabel': 'Открытый ключ устройства (необязательно)',
 	'remote.publicKeyHint':
 		'Оставьте пустым, и UNOS создаст пару ключей. Укажите открытый ключ устройства, создавшего свои ключи, и в конфигурации не будет закрытого ключа.',
-	'remote.adding': 'Добавление...',
 	'remote.configTitle': 'Конфигурация {name}',
 	'remote.configOnce':
 		'Эта конфигурация показывается только сейчас: UNOS не хранит копию закрытого ключа устройства. Отсканируйте QR-код приложением WireGuard или скачайте файл и импортируйте его.',
@@ -217,10 +215,10 @@ export const ru: Translation<typeof en> = {
 	'remote.names.noApps': 'Ни одно установленное приложение не публикует TCP-порт.',
 	'remote.names.label': 'Имя',
 	'remote.names.labelHint': 'От 1 до 32 символов a-z, 0-9 и -. Приложение откроется по адресу https://{name}-{host}.local',
-	'remote.names.adding': 'Добавление...',
 	'remote.names.added': '{name} теперь открывает приложение',
 	'remote.names.remove': 'Удалить',
 	'remote.names.removeLabel': 'Удалить имя {name}',
+	'remote.names.removeTitle': 'Удалить имя {name}?',
 	'remote.names.removed': 'Имя {name} удалено',
 	'remote.names.port': '{app}, порт {port}',
 	'remote.names.missingApp': 'Приложение не установлено или теперь публикует другой порт',

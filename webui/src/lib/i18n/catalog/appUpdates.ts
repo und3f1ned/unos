@@ -7,7 +7,6 @@ import type { Translation } from '../translate';
 export const en = {
 	'appUpdates.available': 'Update to {version}',
 	'appUpdates.title': 'Update {name}',
-	'appUpdates.loading': 'Reading what the update changes...',
 	'appUpdates.loadFailed': 'The update cannot run: {error}',
 	'appUpdates.versions': 'From {from} to {to}',
 	'appUpdates.versionUnknown': 'the installed version',
@@ -74,7 +73,6 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'appUpdates.available': 'Обновить до {version}',
 	'appUpdates.title': 'Обновление {name}',
-	'appUpdates.loading': 'Выясняем, что изменит обновление...',
 	'appUpdates.loadFailed': 'Обновление невозможно: {error}',
 	'appUpdates.versions': 'С {from} на {to}',
 	'appUpdates.versionUnknown': 'установленной версии',

@@ -20,7 +20,6 @@ export const en = {
 	'account.totp.off': 'Disabled',
 	'account.totp.enable': 'Enable',
 	'account.totp.disable': 'Disable',
-	'account.totp.settingUp': 'Setting up...',
 	'account.totp.statusError': 'Could not load the two-factor status',
 	'account.totp.setupFailed': 'Failed to setup 2FA',
 	'account.totp.codeRequired': 'Please enter a 6-digit code',
@@ -34,13 +33,11 @@ export const en = {
 	'account.totp.copy': 'Copy to clipboard',
 	'account.totp.copied': 'Copied!',
 	'account.totp.verifyLabel': 'Enter the 6-digit code from your app',
-	'account.totp.verifying': 'Verifying...',
 	'account.totp.enable2fa': 'Enable 2FA',
 	'account.totp.disableTitle': 'Disable Two-Factor Authentication',
 	'account.totp.disableHint':
 		'This will remove the extra security layer from your account. Enter a code from your authenticator app to confirm.',
 	'account.totp.codeLabel': 'Authentication Code',
-	'account.totp.disabling': 'Disabling...',
 	'account.totp.disable2fa': 'Disable 2FA',
 
 	'account.recovery.title': 'Recovery codes',
@@ -59,7 +56,7 @@ export const en = {
 	'account.recovery.noneLeft': 'No recovery codes left: generate new ones.',
 	'account.recovery.left': { one: '{n} recovery code left', other: '{n} recovery codes left' },
 	'account.recovery.generateNew': 'Generate new codes',
-	'account.recovery.confirmTitle': 'Generate new recovery codes',
+	'account.recovery.confirmTitle': 'Generate new recovery codes?',
 	'account.recovery.confirmText': 'Your current recovery codes stop working. Ten new ones are shown once.',
 
 	'account.password.title': 'Change Password',
@@ -68,7 +65,6 @@ export const en = {
 	'account.password.minimum': 'Minimum 8 characters',
 	'account.password.confirm': 'Confirm New Password',
 	'account.password.submit': 'Change Password',
-	'account.password.changing': 'Changing...',
 	'account.password.mismatch': 'New passwords do not match',
 	'account.password.tooShort': 'Password must be at least 8 characters',
 	'account.password.changed': 'Password changed successfully',
@@ -110,7 +106,7 @@ export const en = {
 	'account.smb.noTwoFactor': 'Two-factor authentication does not apply to SMB: use a strong password',
 	'account.smb.localAddress':
 		"Use the NAS's address on your local network (IPv4, or an IPv6 ULA or link-local address); public addresses are refused.",
-	'account.smb.offTitle': 'Turn off SMB',
+	'account.smb.offTitle': 'Turn off SMB for your account?',
 	'account.smb.offConfirm':
 		'Turn off SMB for your account? Your open SMB connections are ended. You can turn it on again here with your password.',
 	'account.smb.notOff': 'SMB was not turned off',
@@ -172,7 +168,6 @@ export const en = {
 	'account.certs.country': 'Country Code (optional)',
 	'account.certs.countryPlaceholder': 'e.g., US',
 	'account.certs.countryHint': 'Two letters, such as DE',
-	'account.certs.generating': 'Generating...',
 	'account.certs.generate': 'Generate',
 	// The types of certificate.
 	'account.certs.selfSigned': 'Self-signed',
@@ -214,7 +209,6 @@ export const ru: Translation<typeof en> = {
 	'account.totp.off': 'Выключена',
 	'account.totp.enable': 'Включить',
 	'account.totp.disable': 'Выключить',
-	'account.totp.settingUp': 'Настройка...',
 	'account.totp.statusError': 'Не удалось загрузить состояние двухфакторной аутентификации',
 	'account.totp.setupFailed': 'Не удалось настроить 2FA',
 	'account.totp.codeRequired': 'Введите 6-значный код',
@@ -229,13 +223,11 @@ export const ru: Translation<typeof en> = {
 	'account.totp.copy': 'Скопировать в буфер обмена',
 	'account.totp.copied': 'Скопировано!',
 	'account.totp.verifyLabel': 'Введите 6-значный код из приложения',
-	'account.totp.verifying': 'Проверка...',
 	'account.totp.enable2fa': 'Включить 2FA',
 	'account.totp.disableTitle': 'Выключение двухфакторной аутентификации',
 	'account.totp.disableHint':
 		'Учётная запись лишится дополнительной защиты. Для подтверждения введите код из приложения-аутентификатора.',
 	'account.totp.codeLabel': 'Код подтверждения',
-	'account.totp.disabling': 'Выключение...',
 	'account.totp.disable2fa': 'Выключить 2FA',
 
 	'account.recovery.title': 'Коды восстановления',
@@ -258,7 +250,7 @@ export const ru: Translation<typeof en> = {
 		many: 'Осталось {n} кодов восстановления'
 	},
 	'account.recovery.generateNew': 'Создать новые коды',
-	'account.recovery.confirmTitle': 'Новые коды восстановления',
+	'account.recovery.confirmTitle': 'Создать новые коды восстановления?',
 	'account.recovery.confirmText':
 		'Текущие коды восстановления перестанут действовать. Десять новых кодов будут показаны один раз.',
 
@@ -268,7 +260,6 @@ export const ru: Translation<typeof en> = {
 	'account.password.minimum': 'Не менее 8 символов',
 	'account.password.confirm': 'Подтверждение нового пароля',
 	'account.password.submit': 'Сменить пароль',
-	'account.password.changing': 'Смена пароля...',
 	'account.password.mismatch': 'Новые пароли не совпадают',
 	'account.password.tooShort': 'Пароль должен содержать не менее 8 символов',
 	'account.password.changed': 'Пароль успешно изменён',
@@ -311,7 +302,7 @@ export const ru: Translation<typeof en> = {
 	'account.smb.noTwoFactor': 'Двухфакторная аутентификация не действует для SMB: используйте надёжный пароль',
 	'account.smb.localAddress':
 		'Используйте адрес NAS в локальной сети (IPv4 либо IPv6-адрес ULA или link-local); публичные адреса отклоняются.',
-	'account.smb.offTitle': 'Выключение SMB',
+	'account.smb.offTitle': 'Выключить SMB для вашей учётной записи?',
 	'account.smb.offConfirm':
 		'Выключить SMB для вашей учётной записи? Ваши открытые подключения по SMB будут закрыты. Включить SMB снова можно здесь, указав пароль.',
 	'account.smb.notOff': 'SMB не выключен',
@@ -371,7 +362,6 @@ export const ru: Translation<typeof en> = {
 	'account.certs.country': 'Код страны (необязательно)',
 	'account.certs.countryPlaceholder': 'например, RU',
 	'account.certs.countryHint': 'Две латинские буквы, например DE',
-	'account.certs.generating': 'Создание...',
 	'account.certs.generate': 'Создать',
 	'account.certs.selfSigned': 'Самоподписанный',
 	'account.certs.custom': 'Пользовательский',

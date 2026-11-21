@@ -9,7 +9,7 @@
     type LogQueryParams,
     type LogSource
   } from "$lib/api/logs";
-  import { Button, Switch } from "$lib/components/ui";
+  import { Button, Switch, Segmented } from "$lib/components/ui";
   import LogEntries from "$lib/components/system/journal/LogEntries.svelte";
   import LogFilters from "$lib/components/system/journal/LogFilters.svelte";
   import { textOf } from "$lib/components/system/journal/logs";
@@ -204,18 +204,16 @@
     </div>
   </div>
 
-  <div class="tab-bar">
-    {#each sources as s}
-      <Button
-        variant="plain"
-        class="tab-underline {source === s.name ? 'tab-underline-active' : ''}"
-        pressed={source === s.name}
-        onclick={() => { source = s.name; handleSourceChange(); }}
-      >
-        {textOf($t, SOURCE_LABELS, s.name, s.label)}
-      </Button>
-    {/each}
-  </div>
+  <!-- The journal or a log file to read: a filter of the entries, a Segmented (ADR-0432). -->
+  {#if sources.length > 0}
+    <Segmented
+      options={sources.map((s) => ({ value: s.name, label: textOf($t, SOURCE_LABELS, s.name, s.label) }))}
+      value={source}
+      label={$t("logs.sourceLabel")}
+      onchange={(name) => { source = name; handleSourceChange(); }}
+      class="flex-wrap"
+    />
+  {/if}
 
   <LogFilters
     bind:search

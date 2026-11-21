@@ -1,9 +1,8 @@
 <script lang="ts">
   import { Key } from "lucide-svelte";
   import { changePassword } from "$lib/api/auth";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, HelpText, toast } from "$lib/components/ui";
   import { t } from "$lib/i18n";
-  import Notice from "./Notice.svelte";
   import RevealablePassword from "./RevealablePassword.svelte";
 
   // The account's own password: the current one and a new one, typed twice.
@@ -11,14 +10,12 @@
   let newPassword = $state("");
   let confirmPassword = $state("");
   let passwordError = $state("");
-  let passwordSuccess = $state("");
   // E.g. open SMB connections that could not be ended: shown until dismissed.
   let passwordWarnings = $state<string[]>([]);
   let changingPassword = $state(false);
 
   async function handlePasswordChange() {
     passwordError = "";
-    passwordSuccess = "";
     passwordWarnings = [];
 
     if (newPassword !== confirmPassword) {
@@ -37,7 +34,7 @@
         current_password: currentPassword,
         new_password: newPassword,
       });
-      passwordSuccess = $t("account.password.changed");
+      toast.success($t("account.password.changed"));
       passwordWarnings = result?.warnings ?? [];
       currentPassword = "";
       newPassword = "";
@@ -57,9 +54,6 @@
     {$t("account.password.title")}
   </h3>
 
-  {#if passwordSuccess}
-    <Notice variant="success" message={passwordSuccess} />
-  {/if}
 
   {#if passwordWarnings.length > 0}
     <Alert variant="warning" class="mb-4" dismissible ondismiss={() => (passwordWarnings = [])}>
@@ -70,7 +64,7 @@
   {/if}
 
   {#if passwordError}
-    <Notice variant="error" message={passwordError} />
+    <Alert variant="error" class="mb-4">{passwordError}</Alert>
   {/if}
 
   <form onsubmit={(e) => { e.preventDefault(); handlePasswordChange(); }} class="space-y-4 max-w-md">
@@ -86,24 +80,20 @@
         {$t("account.password.new")}
       </label>
       <RevealablePassword id="newPassword" bind:value={newPassword} minlength={8} />
-      <p class="text-xs text-content-muted mt-1">{$t("account.password.minimum")}</p>
+      <HelpText text={$t("account.password.minimum")} class="mt-1" />
     </div>
 
     <div>
       <label for="confirmPassword" class="block text-sm font-medium text-content-secondary mb-1">
         {$t("account.password.confirm")}
       </label>
-      <input
-        type="password"
-        id="confirmPassword"
-        bind:value={confirmPassword}
-        class="form-input"
-        required
-      />
+      <!-- A raw field (form-input): the label stays the field's name, without Input's mark of a
+           required field, as the two fields above. -->
+      <input type="password" id="confirmPassword" bind:value={confirmPassword} class="form-input" required />
     </div>
 
-    <Button variant="primary" type="submit" disabled={changingPassword}>
-      {changingPassword ? $t("account.password.changing") : $t("account.password.submit")}
+    <Button variant="primary" type="submit" loading={changingPassword}>
+      {$t("account.password.submit")}
     </Button>
   </form>
 </div>

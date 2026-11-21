@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { on } from 'svelte/events';
-	import { X, Terminal, Info, Network, Box } from 'lucide-svelte';
-	import { Button, Badge, type IconComponent } from '$lib/components/ui';
+	import { Terminal, Info, Network, Box } from 'lucide-svelte';
+	import { Badge, Sheet, Tabs } from '$lib/components/ui';
 	import type { Container } from '$lib/api/containers';
 	import { t } from '$lib/i18n';
 	import { ContainerLog } from './containerLog.svelte';
@@ -11,17 +10,16 @@
 	import ContainerNetworkTab from './ContainerNetworkTab.svelte';
 	import ContainerOverviewTab from './ContainerOverviewTab.svelte';
 
-	// The details of a container: its overview, log and ports. Starting, stopping, removing and
+	// The details of a container in a Sheet: its overview, log and ports, each a tab. Starting, stopping, removing and
 	// opening it in the browser are its row's in the list, not a second copy here (ADR-0431).
 	type Props = {
 		container?: Container | null;
 		open?: boolean;
-		/** Escape, the backdrop or the close button asked to close it. */
+		/** Escape, the backdrop or the Sheet's close button asked to close it. */
 		onclose?: () => void;
 	};
 
 	let { container = null, open = $bindable(false), onclose }: Props = $props();
-
 
 	type Tab = 'overview' | 'logs' | 'network';
 
@@ -55,69 +53,33 @@
 	}
 </script>
 
-{#snippet tab(id: Tab, Icon: IconComponent, label: string)}
-	<Button variant="plain"
-	 class="tab-underline py-3 {activeTab === id ? 'tab-underline-active' : ''}"
-		pressed={activeTab === id}
-		onclick={() => (activeTab = id)}
-	>
-		<Icon class="w-4 h-4" aria-hidden="true" />
-		{label}
-	</Button>
-{/snippet}
-
-<svelte:window
-	onkeydown={(e) => {
-		if (e.key === 'Escape' && open) close();
-	}}
-/>
-
-{#if open && container}
-	<!-- Backdrop: it listens for the click itself, not through Svelte's delegated listener at the
-	     app's root, as Modal's overlay does (iOS Safari, and a click that does not bubble). -->
-	<div class="fixed inset-0 scrim z-40" {@attach (node) => on(node, 'click', close)} role="presentation"></div>
-
-	<!-- Drawer -->
-	<div
-		class="fixed right-0 top-0 h-full w-full md:max-w-[480px] bg-surface-elevated md:border-l border-border z-50 shadow-dialog flex flex-col"
-		role="dialog"
-		aria-modal="true"
-		aria-labelledby="container-drawer-title"
-	>
-		<!-- Header -->
-		<!-- The name wraps, never cut; the state once, beside it (webui.ux-apps). -->
-		<div class="flex items-start justify-between gap-3 p-5 border-b border-border">
-			<div class="flex items-start gap-4 min-w-0">
-				<div
-					class="w-10 h-10 rounded-card bg-surface-overlay flex items-center justify-center flex-shrink-0"
-					aria-hidden="true"
-				>
-					<Box class="w-5 h-5 text-content-secondary" />
-				</div>
-				<div class="min-w-0">
-					<h2 id="container-drawer-title" class="font-semibold text-lg break-words">
-						{container.name}
-					</h2>
-					<div class="mt-1">
-						<Badge variant={stateVariant(container.state)} dot>{labelOf(STATES, container.state, $t)}</Badge>
-					</div>
-				</div>
-			</div>
-			<Button variant="ghost" size="icon" class="flex-shrink-0" onclick={close} title={$t('containers.drawer.close')}>
-				<X class="w-5 h-5" aria-hidden="true" />
-				<span class="sr-only">{$t('containers.drawer.close')}</span>
-			</Button>
-		</div>
-
-		<!-- Tabs -->
-		<div class="flex border-b border-border px-2">
-			{@render tab('overview', Info, $t('containers.drawer.overview'))}
-			{@render tab('logs', Terminal, $t('containers.drawer.logs'))}
-			{@render tab('network', Network, $t('containers.drawer.ports'))}
-		</div>
-
-		<!-- Tab Content -->
-		<div class="flex-1 overflow-y-auto p-5 scrollbar-thin">
+<!-- A Sheet (ADR-0432): its title the name, which wraps, the state once beside it (webui.ux-apps). -->
+<Sheet open={open && container !== null} title={container?.name ?? ''} onclose={close}>
+	{#snippet titleIcon()}
+		<span class="w-9 h-9 rounded-card bg-surface-overlay flex items-center justify-center flex-shrink-0" aria-hidden="true">
+			<Box class="w-5 h-5 text-content-secondary" />
+		</span>
+	{/snippet}
+	{#snippet status()}
+		{#if container}
+			<Badge variant={stateVariant(container.state)} dot>{labelOf(STATES, container.state, $t)}</Badge>
+		{/if}
+	{/snippet}
+	{#if container}
+		<Tabs
+			tabs={[
+				{ id: 'overview', label: $t('containers.drawer.overview'), icon: Info },
+				{ id: 'logs', label: $t('containers.drawer.logs'), icon: Terminal },
+				{ id: 'network', label: $t('containers.drawer.ports'), icon: Network }
+			]}
+			active={activeTab}
+			label={container.name}
+			tabId={(id) => `container-tab-${id}`}
+			panelId={(id) => `container-panel-${id}`}
+			onselect={(id) => (activeTab = id)}
+			class="mb-5"
+		/>
+		<div role="tabpanel" id="container-panel-{activeTab}" aria-labelledby="container-tab-{activeTab}">
 			{#if activeTab === 'overview'}
 				<ContainerOverviewTab {container} copied={copiedId} oncopy={copyId} />
 			{:else if activeTab === 'logs'}
@@ -126,5 +88,5 @@
 				<ContainerNetworkTab ports={container.ports} />
 			{/if}
 		</div>
-	</div>
-{/if}
+	{/if}
+</Sheet>

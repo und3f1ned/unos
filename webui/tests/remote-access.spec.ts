@@ -67,7 +67,7 @@ test.describe('Remote access', () => {
     expect(fake.writes).toEqual([]);
     await dialog.getByRole('button', { name: 'Turn on' }).click();
 
-    await expect(card.getByText('Remote access is on', { exact: true })).toBeVisible();
+    await expect(page.getByText('Remote access is on', { exact: true })).toBeVisible();
     await expect(card.getByText('On', { exact: true })).toBeVisible();
     expect(fake.writes).toEqual([{ method: 'POST', path: '/enable',
                                    body: { endpoint: 'nas.example.org', port: 51820, network: '10.99.0.0/24' } }]);
@@ -145,10 +145,10 @@ test.describe('Remote access', () => {
     const card = tunnelCard(page);
     await expect(card.getByRole('listitem').filter({ hasText: 'phone' })).toContainText('Received 1.5 KB, sent 2 KB');
     await card.getByRole('button', { name: 'Revoke phone' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Revoke a peer' });
+    const dialog = page.getByRole('dialog', { name: 'Revoke phone?' });
     await expect(dialog).toContainText('phone can no longer connect, and its tunnel ends at once.');
     await dialog.getByRole('button', { name: 'Revoke' }).click();
-    await expect(card.getByText('phone was revoked')).toBeVisible();
+    await expect(page.getByText('phone was revoked')).toBeVisible();
     await expect(card.getByRole('listitem')).toHaveCount(1);
     expect(fake.writes).toEqual([{ method: 'DELETE', path: '/peers/wg-000000000001' }]);
   });
@@ -192,14 +192,14 @@ test.describe('Remote access', () => {
     const edit = page.getByRole('dialog', { name: 'Change the public address' });
     await edit.getByLabel('Public address').fill('203.0.113.7');
     await edit.getByRole('button', { name: 'Save' }).click();
-    await expect(card.getByText('The public address was saved')).toBeVisible();
+    await expect(page.getByText('The public address was saved')).toBeVisible();
     await expect(card.getByText('203.0.113.7', { exact: true })).toBeVisible();
 
     await card.getByRole('button', { name: 'Turn off' }).click();
     const off = page.getByRole('dialog', { name: 'Turn remote access off' });
     await expect(off).toContainText("Every peer's tunnel ends, also the one this page may use now.");
     await off.getByRole('button', { name: 'Turn off' }).click();
-    await expect(card.getByText('Remote access is off', { exact: true })).toBeVisible();
+    await expect(page.getByText('Remote access is off', { exact: true })).toBeVisible();
     await expect(card.getByRole('listitem').filter({ hasText: 'phone' })).toBeVisible();
     expect(fake.writes).toEqual([{ method: 'PUT', path: '/endpoint', body: { endpoint: '203.0.113.7' } },
                                  { method: 'POST', path: '/disable' }]);
@@ -221,12 +221,15 @@ test.describe('Local names for apps', () => {
 
     await expect(card.getByText('https://jellyfin-unos.local', { exact: true })).toBeVisible();
     await expect(card.getByText('jellyfin, port 8096', { exact: true })).toBeVisible();
-    await expect(card.getByText('jellyfin-unos.local now opens the app')).toBeVisible();
+    await expect(page.getByText('jellyfin-unos.local now opens the app')).toBeVisible();
     expect(fake.writes).toEqual([{ method: 'POST', path: '', body: { label: 'jellyfin', app: 'jellyfin', port: 8096 } }]);
 
     await card.getByRole('button', { name: 'Remove the name jellyfin-unos.local' }).click();
-    await page.getByRole('dialog', { name: 'Remove' }).getByRole('button', { name: 'Remove' }).click();
-    await expect(card.getByText('The name jellyfin-unos.local was removed')).toBeVisible();
+    await page
+      .getByRole('dialog', { name: 'Remove the name jellyfin-unos.local?' })
+      .getByRole('button', { name: 'Remove' })
+      .click();
+    await expect(page.getByText('The name jellyfin-unos.local was removed')).toBeVisible();
     await expect(card.getByText('No app has a name yet.')).toBeVisible();
   });
 
@@ -276,7 +279,7 @@ test.describe('Local names for apps', () => {
       'avahi announces the names with 192.168.1.20, but the host has the address 192.168.1.77 now.',
     )).toBeVisible();
     await card.getByRole('button', { name: 'Announce again' }).click();
-    await expect(card.getByText('The names are announced with the address of now')).toBeVisible();
+    await expect(page.getByText('The names are announced with the address of now')).toBeVisible();
     await expect(card.getByText(/announces the names with/)).toHaveCount(0);
     expect(fake.writes).toEqual([{ method: 'POST', path: '/apply' }]);
   });

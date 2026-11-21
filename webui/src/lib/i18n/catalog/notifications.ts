@@ -13,7 +13,6 @@ export const en = {
 	// The tab's one line under its title: which channels receive what.
 	'notifications.subtitle': 'Every enabled channel, of any kind, receives the health alerts and the power announcements.',
 	'notifications.addChannel': 'Add channel',
-	'notifications.addFirst': 'Add a channel',
 	'notifications.loadError': 'The notification settings could not be read',
 
 	// The kinds of channel.
@@ -35,7 +34,7 @@ export const en = {
 	'notifications.channels.sendTestTo': 'to {name}',
 	'notifications.channels.edit': 'Edit {name}',
 	'notifications.channels.delete': 'Delete {name}',
-	'notifications.test.sent': 'Test notification sent',
+	'notifications.test.sentTo': 'Test notification sent to {name}',
 	'notifications.test.notSent': 'Test notification not sent',
 	// What the list shows of a channel's settings: of a webhook's URL only the host.
 	'notifications.summary.email': '{recipients} via {host}:{port}',
@@ -108,10 +107,10 @@ export const en = {
 	'notifications.form.need.chat': 'the chat ID',
 	'notifications.form.need.url': 'the URL',
 
-	'notifications.delete.title': 'Delete the channel?',
+	'notifications.delete.title': 'Delete the channel {name}?',
 	'notifications.delete.text': '{name} stops receiving notifications. Its entries in the history stay.',
 	'notifications.delete.error': 'The channel was not deleted',
-	'notifications.delete.confirm': 'Delete'
+	'notifications.delete.confirm': 'Delete channel'
 };
 
 export const ru: Translation<typeof en> = {
@@ -122,7 +121,6 @@ export const ru: Translation<typeof en> = {
 	'notifications.views.history': 'История',
 	'notifications.subtitle': 'Каждый включённый канал любого вида получает оповещения о состоянии и объявления о питании.',
 	'notifications.addChannel': 'Добавить канал',
-	'notifications.addFirst': 'Добавить канал',
 	'notifications.loadError': 'Не удалось прочитать настройки уведомлений',
 
 	'notifications.kinds.email': 'Эл. почта',
@@ -142,7 +140,7 @@ export const ru: Translation<typeof en> = {
 	'notifications.channels.sendTestTo': 'в канал «{name}»',
 	'notifications.channels.edit': 'Изменить канал «{name}»',
 	'notifications.channels.delete': 'Удалить канал «{name}»',
-	'notifications.test.sent': 'Тестовое уведомление отправлено',
+	'notifications.test.sentTo': 'Тестовое уведомление отправлено: {name}',
 	'notifications.test.notSent': 'Тестовое уведомление не отправлено',
 	'notifications.summary.email': '{recipients} через {host}:{port}',
 	'notifications.summary.telegram': 'ID чата {chat}',
@@ -216,8 +214,8 @@ export const ru: Translation<typeof en> = {
 	'notifications.form.need.chat': 'ID чата',
 	'notifications.form.need.url': 'URL',
 
-	'notifications.delete.title': 'Удалить канал?',
+	'notifications.delete.title': 'Удалить канал «{name}»?',
 	'notifications.delete.text': 'Канал «{name}» перестанет получать уведомления. Его записи в истории останутся.',
 	'notifications.delete.error': 'Канал не удалён',
-	'notifications.delete.confirm': 'Удалить'
+	'notifications.delete.confirm': 'Удалить канал'
 };

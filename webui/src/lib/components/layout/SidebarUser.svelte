@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { LogOut } from 'lucide-svelte';
 	import type { User } from '$lib/api/auth';
-	import { Button, Skeleton } from '$lib/components/ui';
+	import { Button, Skeleton, StatusDot } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { wsConnected, wsForbidden, wsSettled } from '$lib/stores/stats';
 
@@ -42,13 +42,13 @@
 {/snippet}
 
 {#if user}
-	{#snippet line(text: string, dot: string)}
-		<span class="status-dot {dot}" aria-hidden="true"></span>
+	{#snippet line(text: string, dot: 'success' | 'warning' | 'neutral')}
+		<StatusDot status={dot} />
 		{text}
 	{/snippet}
 	{#if !settled}
 		<div class="flex items-center gap-2 px-[22px] py-2.5 border-t border-border text-xs text-content-secondary">
-			{@render line($t('layout.connecting'), 'status-dot-neutral')}
+			{@render line($t('layout.connecting'), 'neutral')}
 		</div>
 	{:else}
 		<!-- A polite live region that speaks when the state changes, and only then. No role status:
@@ -59,11 +59,11 @@
 			aria-atomic="true"
 		>
 			{#if $wsForbidden}
-				{@render line($t('layout.noLiveData'), 'status-dot-neutral')}
+				{@render line($t('layout.noLiveData'), 'neutral')}
 			{:else}
 				{@render line(
 					connected ? $t('layout.connected') : $t('layout.notConnected'),
-					connected ? 'status-dot-success' : 'status-dot-warning'
+					connected ? 'success' : 'warning'
 				)}
 			{/if}
 		</div>

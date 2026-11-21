@@ -14,6 +14,8 @@ export type ConfirmOptions = {
 	message?: string;
 	/** What will happen, each a short sentence. */
 	consequences?: string[];
+	/** A risk to weigh before the action, shown as a warning (an Alert). */
+	warning?: string;
 	/** The action's button: a verb and its object ("Delete backup"). */
 	confirmLabel: string;
 	cancelLabel?: string;

@@ -3,11 +3,11 @@
 	// its traffic, with Add and Revoke.
 	import { formatBytes } from '$lib/api/backup';
 	import type { RemotePeer } from '$lib/api/remoteAccess';
-	import { Badge, Button } from '$lib/components/ui';
+	import { Badge, Button, EmptyState } from '$lib/components/ui';
 	import { apiTime } from '$lib/time';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
-	import { Plus, Trash2 } from 'lucide-svelte';
+	import { Plus, Smartphone, Trash2 } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
 	type Props = {
@@ -46,7 +46,7 @@
 	</Button>
 </div>
 {#if peers.length === 0}
-	<p class="text-sm text-content-secondary text-center py-4">{$t('remote.noPeers')}</p>
+	<EmptyState compact icon={Smartphone} title={$t('remote.noPeers')} />
 {:else}
 	<ul class="mt-1 divide-y divide-border" aria-label={$t('remote.peers')}>
 		{#each peers as peer (peer.id)}

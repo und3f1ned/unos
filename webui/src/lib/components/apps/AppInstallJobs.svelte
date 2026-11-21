@@ -159,7 +159,10 @@
 						{$t('apps.job.dismiss')}
 					</Button>
 				{:else if cancelling.has(job.id)}
-					<Button variant="secondary" size="sm" icon={Ban} disabled>{$t('apps.job.cancelling')}</Button>
+					<!-- Its cancel was asked: the button waits until the job ends. -->
+					<Button variant="secondary" size="sm" icon={Ban} loading>
+						{$t(job.kind === 'update' ? 'appUpdates.cancelUpdate' : 'apps.job.cancel')}
+					</Button>
 				{:else if job.kind === 'install'}
 					<Button variant="secondary" size="sm" icon={Ban} onclick={() => oncancel?.(job)}>
 						{$t('apps.job.cancel')}
@@ -172,6 +175,9 @@
 				{/if}
 			</div>
 
+			<!-- The end of a job stays on its card, no toast (ADR-0432): the card is the job's record,
+			     kept by the server across reloads and tabs until dismissed, and an install's end says
+			     how to sign in to the app, to read before going on. -->
 			{#if job.state === 'succeeded' && job.kind !== 'install'}
 				<Alert variant="success" class="mt-4">
 					<p>

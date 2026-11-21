@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Clock, History, MapPin, Monitor, RefreshCw, User } from "lucide-svelte";
   import { getLoginHistory, type LoginAttempt } from "$lib/api/security";
-  import { Alert, Badge, Button, CardAction, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, CardAction, Skeleton, EmptyState, LoadState } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
 
@@ -82,14 +82,15 @@
 
   {#if showLoginHistory}
     <div class="mt-4 space-y-4">
-      {#if loginHistoryLoading && !loginHistoryLoaded}
-        <div aria-busy="true"><Skeleton count={3} /></div>
-      {:else if loginHistoryError}
-        <Alert variant="error" title={$t("account.history.loadError")}>
-          <p>{loginHistoryError}</p>
-          <Button variant="secondary" size="sm" class="mt-3" onclick={loadLoginHistory}>{$t("common.retry")}</Button>
-        </Alert>
-      {:else}
+      <LoadState
+        loading={!loginHistoryLoaded && !loginHistoryError}
+        error={loginHistoryError}
+        errorTitle={$t("account.history.loadError")}
+        onretry={loadLoginHistory}
+        retrying={loginHistoryLoading}
+        class="space-y-4"
+      >
+        {#snippet skeleton()}<Skeleton count={3} />{/snippet}
         <!-- Stats -->
         <div class="grid grid-cols-3 gap-4">
           <div class="p-3 bg-surface-overlay rounded-lg text-center">
@@ -108,7 +109,7 @@
 
         <!-- History List -->
         {#if loginHistory.length === 0}
-          <p class="text-sm text-content-secondary text-center py-4">{$t("account.history.empty")}</p>
+          <EmptyState compact icon={History} title={$t("account.history.empty")} />
         {:else}
           <!-- Newest first; the times are the browser's local time (ADR-0262). -->
           <ul class="space-y-2 max-h-80 overflow-y-auto" aria-label={$t("account.history.list")}>
@@ -148,12 +149,11 @@
               </li>
             {/each}
           </ul>
-          <Button variant="secondary" class="w-full" onclick={loadLoginHistory}>
-            <RefreshCw class="w-4 h-4" />
+          <Button variant="secondary" class="w-full" icon={RefreshCw} loading={loginHistoryLoading} onclick={loadLoginHistory}>
             {$t("common.refresh")}
           </Button>
         {/if}
-      {/if}
+      </LoadState>
     </div>
   {/if}
 </div>

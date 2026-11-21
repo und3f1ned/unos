@@ -3,7 +3,7 @@
   // its level, its program and its message, in which the search is marked. With Auto, the tab
   // follows the journal and says so, or why it stopped.
   import type { LogEntry, LogPriority } from "$lib/api/logs";
-  import { Alert, Badge, Card, EmptyState, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Card, EmptyState, Skeleton, StatusDot } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
   import { FileText } from "lucide-svelte";
@@ -74,7 +74,7 @@
       </span>
       {#if autoRefresh}
         <span class="text-xs text-content-secondary flex items-center gap-1.5">
-          <span class="w-2 h-2 bg-status-success rounded-full animate-pulse" aria-hidden="true"></span>
+          <StatusDot status="success" pulse />
           {$t("logs.following")}
         </span>
       {:else if autoStopped}

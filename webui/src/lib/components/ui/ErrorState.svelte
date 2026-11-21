@@ -10,6 +10,8 @@
 	// under its details, behind a plain sentence) and Retry.
 	type Props = {
 		title?: string;
+		/** What the failure means for the user, in a plain sentence before the server's message. */
+		description?: string;
 		/** The server's message (messageOf). */
 		message?: string;
 		onretry?: (() => void) | null;
@@ -19,7 +21,7 @@
 		class?: string;
 	};
 
-	let { title = '', message = '', onretry = null, retrying = false, compact = true, class: className = '' }: Props =
+	let { title = '', description = '', message = '', onretry = null, retrying = false, compact = true, class: className = '' }: Props =
 		$props();
 
 	const technical = $derived(message !== '' && isTechnical(message));
@@ -34,9 +36,12 @@
 	{:else}
 		<h3 class="empty-state-title">{title || $t('ui.error.title')}</h3>
 	{/if}
+	{#if description}
+		<p class="empty-state-description">{description}</p>
+	{/if}
 	{#if message}
 		{#if technical}
-			<p class="empty-state-description">{$t('ui.error.technical')}</p>
+			{#if !description}<p class="empty-state-description">{$t('ui.error.technical')}</p>{/if}
 			<TechDetails text={message} class="w-full max-w-[60ch]" />
 		{:else}
 			<p class="empty-state-description break-words">{message}</p>

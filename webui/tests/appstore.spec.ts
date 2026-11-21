@@ -35,7 +35,7 @@ test.describe('App Store', () => {
 
     await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
     await expect(page.getByText(/^\d+ apps available$/)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Installed', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed', exact: true })).toBeVisible();
     // While the installed apps are not known no app offers Install (webui.ux-apps): one of them
     // may be the app, and Docker may not answer.
     const jellyfin = page.locator('.card[role="button"]', { has: page.locator('h3', { hasText: /^Jellyfin$/ }) });

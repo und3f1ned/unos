@@ -1,23 +1,25 @@
 <script lang="ts">
-	// The bar of an action on several containers (ADR-0389). It shows only while containers are
-	// selected (webui.ux-apps): their count, Start, Stop and Restart selected, and Clear; no
-	// disabled buttons wait above the list. It sits after the list and sticks to the bottom of the
-	// window while the list scrolls, so that it pushes no row from under the pointer; it wraps on a
-	// phone.
-	import { Play, RotateCw, Square, X } from 'lucide-svelte';
-	import { Button } from '$lib/components/ui';
+	// The bar of an action on several containers (ADR-0389), a BulkBar (ADR-0432). It shows only
+	// while containers are selected (ADR-0437): their count, Start, Stop and Restart selected, and
+	// Clear; no disabled buttons wait above the list. It sits after the list and sticks to the foot
+	// of the window while the list scrolls, so that it pushes no row from under the pointer. While an
+	// action runs it says which container it is at, in place of the count.
+	import { Play, RotateCw, Square } from 'lucide-svelte';
+	import { BulkBar, Button } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import type { BulkAction } from './bulk.svelte';
+	import { BULK_PROGRESS, type BulkAction, type BulkProgress } from './bulk.svelte';
 
 	type Props = {
 		selectedCount: number;
+		/** The run of an action on several containers, the container it is at; null when none runs. */
+		progress: BulkProgress | null;
 		/** An action on several containers runs. */
 		busy: boolean;
 		onclear: () => void;
 		onbulk: (action: BulkAction) => void;
 	};
 
-	let { selectedCount, busy, onclear, onbulk }: Props = $props();
+	let { selectedCount, progress, busy, onclear, onbulk }: Props = $props();
 
 	const ACTIONS: { id: BulkAction; Icon: typeof Play; key: string }[] = [
 		{ id: 'start', Icon: Play, key: 'containers.bulk.start' },
@@ -27,27 +29,19 @@
 </script>
 
 {#if selectedCount > 0}
-	<div
-		class="sticky bottom-4 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-border-strong bg-surface-elevated px-4 py-2.5 shadow-popover"
-		role="toolbar"
-		aria-label={$t('containers.bulk.toolbar')}
-	>
-		<span class="text-sm font-medium" aria-live="polite">
-			{$t('containers.bulk.selected', { n: selectedCount })}
-		</span>
-		<div class="flex flex-wrap items-center gap-2 sm:ml-auto">
-			{#each ACTIONS as action (action.id)}
-				<Button
-					variant="secondary"
-					size="sm"
-					icon={action.Icon}
-					disabled={busy}
-					onclick={() => onbulk(action.id)}>{$t(action.key)}</Button
-				>
-			{/each}
-			<Button variant="ghost" size="sm" icon={X} disabled={busy} onclick={onclear}>
-				{$t('containers.bulk.clear')}
-			</Button>
-		</div>
-	</div>
+<BulkBar
+	class="top-auto bottom-4"
+	count={selectedCount}
+	label={$t('containers.bulk.toolbar')}
+	summary={progress
+		? $t(BULK_PROGRESS[progress.action], { name: progress.name, i: progress.i, n: progress.n })
+		: $t('containers.bulk.selected', { n: selectedCount })}
+	onclear={busy ? null : onclear}
+>
+	{#each ACTIONS as action (action.id)}
+		<Button variant="secondary" size="sm" icon={action.Icon} disabled={busy} onclick={() => onbulk(action.id)}>
+			{$t(action.key)}
+		</Button>
+	{/each}
+</BulkBar>
 {/if}

@@ -265,9 +265,6 @@
           error={passphraseConfirm && passphraseMismatch ? $t("scheduler.form.passphraseMismatch") : ""}
           hint={$t("scheduler.form.typeAgain")}
         />
-        {#if waitsForPassphrase}
-          <p id="task-passphrase-wait" class="sr-only">{$t("scheduler.form.passphraseWait")}</p>
-        {/if}
       {/if}
 
       <hr class="border-border" />
@@ -377,9 +374,8 @@
       {$t("common.cancel")}
     </Button>
     <Button variant="primary" class="flex-1" onclick={handleSaveTask} loading={saving} disabled={waitsForPassphrase}
-      title={waitsForPassphrase ? $t("scheduler.form.passphraseWait") : undefined}
-      aria-describedby={waitsForPassphrase ? "task-passphrase-wait" : undefined}>
-      {saving ? $t("scheduler.form.saving") : task ? $t("scheduler.form.save") : $t("scheduler.form.create")}
+      disabledReason={waitsForPassphrase ? $t("scheduler.form.passphraseWait") : ""}>
+      {task ? $t("scheduler.form.save") : $t("scheduler.form.create")}
     </Button>
   {/snippet}
 </Modal>

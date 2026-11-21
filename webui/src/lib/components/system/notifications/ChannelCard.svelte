@@ -5,12 +5,12 @@
   import { t } from "$lib/i18n";
   import { KINDS, kindName, nameOf, summaryOf } from "./channels";
 
-  // A channel of the list: its kind, name and settings, its actions, and the outcome of its last
-  // test. Its events are not shown: alerts go to every enabled channel whatever they name.
+  // A channel of the list: its kind, name and settings, its actions, and why its last test was not
+  // sent (a test that was sent is a toast). Its events are not shown: alerts go to every enabled channel whatever they name.
   type Props = {
     config: NotificationConfig;
-    // The outcome of the channel's last test, until dismissed.
-    result: { success: boolean; message: string } | undefined;
+    // Why the channel's last test was not sent, until dismissed.
+    result: string | undefined;
     // The id of the channel whose test runs.
     testing: string | null;
     // The channel's on/off was changed and the server has not answered yet: the box shows the new state.
@@ -36,7 +36,7 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h3 class="font-medium">{name}</h3>
-          <Badge variant="neutral">{kindName($t, config.channel)}</Badge>
+          <Badge variant="outline">{kindName($t, config.channel)}</Badge>
           {#if !config.enabled}
             <Badge variant="neutral">{$t("notifications.channels.disabled")}</Badge>
           {/if}
@@ -82,14 +82,9 @@
     </div>
   </div>
   {#if result}
-    <div class="mt-3" role={result.success ? "status" : "alert"}>
-      <Alert
-        variant={result.success ? "success" : "error"}
-        title={result.success ? "" : $t("notifications.test.notSent")}
-        dismissible
-        ondismiss={() => ondismissresult(id)}
-      >
-        <span class="break-words">{result.message}</span>
+    <div class="mt-3" role="alert">
+      <Alert variant="error" title={$t("notifications.test.notSent")} dismissible ondismiss={() => ondismissresult(id)}>
+        <span class="break-words">{result}</span>
       </Alert>
     </div>
   {/if}

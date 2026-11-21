@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getSystemInfo, type SystemInfo } from "$lib/api/system";
-  import { Card, Skeleton } from "$lib/components/ui";
+  import { Card, ErrorState, Skeleton } from "$lib/components/ui";
+  import { messageOf } from "$lib/errors";
   import { HostSettings, HostSettingsCard } from "$lib/components/system/general";
   import { t } from "$lib/i18n";
   import { apiTime } from "$lib/time";
@@ -10,20 +11,27 @@
   // shown by its field alone, the version by Updates, the signed-in account by the sidebar.
   let systemInfo = $state<SystemInfo | null>(null);
   let loading = $state(true);
+  // Why the system information could not be read.
+  let infoError = $state("");
 
   // The name and time zone of the host (ADR-0331).
   const host = new HostSettings();
 
   onMount(async () => {
     host.load();
+    await loadInfo();
+  });
+
+  async function loadInfo() {
     try {
       systemInfo = await getSystemInfo();
+      infoError = "";
     } catch (e) {
-      console.error("Failed to load system info:", e);
+      infoError = messageOf(e);
     } finally {
       loading = false;
     }
-  });
+  }
 
   // Reactive, so that the uptime follows a change of the language.
   let formatUptime = $derived((bootTime: string): string => {
@@ -89,7 +97,7 @@
         {@render info($t("general.info.uptime"), formatUptime(systemInfo.boot_time), "tabular")}
       </div>
     {:else}
-      <p class="text-content-muted">{$t("general.info.loadFailed")}</p>
+      <ErrorState title={$t("general.info.loadFailed")} message={infoError} onretry={loadInfo} />
     {/if}
   </Card>
 

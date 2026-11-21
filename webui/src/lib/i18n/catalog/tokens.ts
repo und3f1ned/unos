@@ -64,7 +64,7 @@ export const en = {
 	'tokens.shown.copied': 'Copied',
 	'tokens.shown.copyFailed': 'The browser did not copy it: select the token and copy it yourself.',
 
-	'tokens.deleteDialog.title': 'Delete API Token',
+	'tokens.deleteDialog.title': 'Delete the API token {name}?',
 	'tokens.deleteDialog.text':
 		'Scripts that use the token {name} can no longer use it. A deleted token cannot be brought back.',
 	'tokens.deleteDialog.failed': 'The token was not deleted',
@@ -152,7 +152,7 @@ export const ru: Translation<typeof en> = {
 	'tokens.shown.copied': 'Скопировано',
 	'tokens.shown.copyFailed': 'Браузер не скопировал его: выделите токен и скопируйте вручную.',
 
-	'tokens.deleteDialog.title': 'Удаление API-токена',
+	'tokens.deleteDialog.title': 'Удалить API-токен {name}?',
 	'tokens.deleteDialog.text':
 		'Скрипты, которые пользуются токеном {name}, больше не смогут им пользоваться. Удалённый токен вернуть нельзя.',
 	'tokens.deleteDialog.failed': 'Токен не удалён',

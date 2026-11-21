@@ -13,7 +13,6 @@ export const en = {
 	'login.useAppCode': 'Use a code from your authenticator app',
 	'login.useRecoveryCode': 'Use a recovery code',
 	'login.back': '← Back to login',
-	'login.signingIn': 'Signing in…',
 	'login.verify': 'Verify',
 	'login.signIn': 'Sign in',
 	// The button beside the password's label that shows or hides it.
@@ -36,7 +35,6 @@ export const ru: Translation<typeof en> = {
 	'login.useAppCode': 'Ввести код из приложения-аутентификатора',
 	'login.useRecoveryCode': 'Ввести код восстановления',
 	'login.back': '← Назад ко входу',
-	'login.signingIn': 'Вход…',
 	'login.verify': 'Подтвердить',
 	'login.signIn': 'Войти',
 	'login.showPassword': 'Показать',

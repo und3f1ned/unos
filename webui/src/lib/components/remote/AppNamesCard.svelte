@@ -9,10 +9,9 @@
 		type AppName,
 		type AppNamesStatus
 	} from '$lib/api/remoteAccess';
-	import { Alert, Button, Card, Input, Select } from '$lib/components/ui';
+	import { Alert, Button, Card, Input, Select, EmptyState, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { Plus, Trash2 } from 'lucide-svelte';
-	import ConfirmDialog from './ConfirmDialog.svelte';
+	import { Globe, Plus, Trash2 } from 'lucide-svelte';
 	import FormDialog from './FormDialog.svelte';
 
 	// System > Network, administrators only: the local names of apps (ADR-0420, ADR-0431), routed by the
@@ -23,13 +22,11 @@
 	let loadError = $state('');
 	let busy = $state(false);
 	let error = $state('');
-	let success = $state('');
 	let showAdd = $state(false);
 	// The chosen published port: its index in status.apps, each app's web port first.
 	let choice = $state('');
 	let label = $state('');
 	let addError = $state('');
-	let removing = $state<AppName | null>(null);
 
 	let host = $derived(status?.host_name ?? '');
 	let appOptions = $derived(
@@ -93,12 +90,11 @@
 		busy = true;
 		addError = '';
 		error = '';
-		success = '';
 		try {
 			if (!chosen) return;
 			status = await addAppName(label.trim(), chosen.name, chosen.port);
 			showAdd = false;
-			success = $t('remote.names.added', { name: status.names.find((n) => n.label === label.trim())?.name ?? label.trim() });
+			toast.success($t('remote.names.added', { name: status.names.find((n) => n.label === label.trim())?.name ?? label.trim() }));
 		} catch (e) {
 			addError = messageOf(e);
 		} finally {
@@ -106,16 +102,17 @@
 		}
 	}
 
-	async function remove() {
-		const name = removing;
-		removing = null;
-		if (!name) return;
+	async function remove(name: AppName) {
+		const yes = await confirm({
+			title: $t('remote.names.removeTitle', { name: name.name }),
+			confirmLabel: $t('remote.names.remove')
+		});
+		if (!yes) return;
 		busy = true;
 		error = '';
-		success = '';
 		try {
 			status = await removeAppName(name.label);
-			success = $t('remote.names.removed', { name: name.name });
+			toast.success($t('remote.names.removed', { name: name.name }));
 		} catch (e) {
 			error = messageOf(e);
 			await load();
@@ -127,10 +124,9 @@
 	async function applyAgain() {
 		busy = true;
 		error = '';
-		success = '';
 		try {
 			status = await applyAppNames();
-			success = $t('remote.names.applied');
+			toast.success($t('remote.names.applied'));
 		} catch (e) {
 			error = messageOf(e);
 		} finally {
@@ -148,15 +144,12 @@
 		</div>
 		{#if status?.volume && status.announcer}
 			<Button variant="secondary" size="sm" icon={Plus} disabled={busy || status.apps.length === 0}
-				title={status.apps.length === 0 ? $t('remote.names.noApps') : undefined} onclick={openAdd}>
+				disabledReason={status.apps.length === 0 ? $t('remote.names.noApps') : ''} onclick={openAdd}>
 				{$t('remote.names.add')}
 			</Button>
 		{/if}
 	</div>
 
-	{#if success}
-		<Alert variant="success" class="mb-4"><p class="break-words">{success}</p></Alert>
-	{/if}
 	{#if error}
 		<Alert variant="error" class="mb-4"><p class="break-words">{error}</p></Alert>
 	{/if}
@@ -179,9 +172,7 @@
 			</Alert>
 		{/if}
 		{#if status.names.length === 0}
-			<p class="text-sm text-content-secondary text-center py-4">
-				{status.apps.length === 0 ? $t('remote.names.noApps') : $t('remote.names.none')}
-			</p>
+			<EmptyState compact icon={Globe} title={status.apps.length === 0 ? $t('remote.names.noApps') : $t('remote.names.none')} />
 		{:else}
 			<ul class="mt-4 space-y-2" aria-label={$t('remote.names.title')}>
 				{#each status.names as name (name.label)}
@@ -199,7 +190,7 @@
 							disabled={busy}
 							title={$t('remote.names.removeLabel', { name: name.name })}
 							aria-label={$t('remote.names.removeLabel', { name: name.name })}
-							onclick={() => (removing = name)}
+							onclick={() => remove(name)}
 						>
 							<Trash2 class="w-4 h-4" />
 						</Button>
@@ -217,7 +208,7 @@
 	formId="app-name-add"
 	{busy}
 	error={addError}
-	submitLabel={busy ? $t('remote.names.adding') : $t('remote.names.add')}
+	submitLabel={$t('remote.names.add')}
 	submitDisabled={busy || !label.trim() || !chosen}
 	oncancel={() => (showAdd = false)}
 	onsubmit={add}
@@ -233,14 +224,3 @@
 	/>
 </FormDialog>
 
-<ConfirmDialog
-	open={removing !== null}
-	title={$t('remote.names.remove')}
-	danger
-	confirmLabel={$t('remote.names.remove')}
-	{busy}
-	oncancel={() => (removing = null)}
-	onconfirm={remove}
->
-	<p class="text-sm break-words">{$t('remote.names.removeLabel', { name: removing?.name ?? '' })}</p>
-</ConfirmDialog>

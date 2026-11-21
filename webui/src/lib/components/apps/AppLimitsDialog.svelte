@@ -121,18 +121,21 @@
 			label={$t('apps.limits.memory')}
 			bind:value={memory}
 			placeholder={$t('apps.limits.none')}
-			hint={bounds
-				? $t('apps.limits.memoryHint', {
-						min: formatNumber(bounds.memory_min / MIB, 0),
-						max: formatNumber(Math.floor(bounds.memory_max / MIB), 0)
-					})
-				: ''}
+			hint={[
+				bounds
+					? $t('apps.limits.memoryHint', {
+							min: formatNumber(bounds.memory_min / MIB, 0),
+							max: formatNumber(Math.floor(bounds.memory_max / MIB), 0)
+						})
+					: '',
+				// The use now, which a new limit must stay above.
+				resources?.memory_used != null
+					? $t('apps.limits.memoryNow', { used: formatNumber(Math.ceil(resources.memory_used / MIB), 0) })
+					: ''
+			]
+				.filter(Boolean)
+				.join(' ')}
 		/>
-		{#if resources?.memory_used != null}
-			<p class="text-xs text-muted">
-				{$t('apps.limits.memoryNow', { used: formatNumber(Math.ceil(resources.memory_used / MIB), 0) })}
-			</p>
-		{/if}
 		<Input
 			type="text"
 			label={$t('apps.limits.cpu')}

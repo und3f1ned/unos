@@ -41,8 +41,15 @@ async function disable(page: Page, name: string) {
   await expand(page, name);
   await card(page, name).getByRole('button', { name: 'Disable' }).click();
   const dialog = page.getByRole('dialog', { name: `Disable ${name}` });
+  // The confirmation (confirm(), ADR-0432) closes at once and the disable is sent then: the
+  // interfaces that the page reads after its answer, or its loss, are waited for before a test
+  // goes on.
+  const reread = page.waitForResponse(
+    (response) => response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/v1/network/interfaces',
+  );
   await dialog.getByRole('button', { name: `Disable ${name}` }).click();
   await expect(dialog).toBeHidden();
+  await reread;
 }
 
 function countdown(page: Page, name: string) {
@@ -87,13 +94,13 @@ test.describe('System > Network', () => {
       await expect(dns).toContainText(text);
     }
 
-    await page.getByRole('button', { name: 'Routes' }).click();
+    await page.getByRole('tab', { name: 'Routes' }).click();
     const routes = page.getByRole('table');
     await expect(routes.getByRole('row', { name: /default 192\.168\.1\.1 eth0 dhcp/ })).toBeVisible();
     await expect(routes.getByRole('row', { name: /2001:db8:1::\/64 - eth0 ra/ })).toBeVisible();
     await expect(routes.getByRole('row', { name: /default fe80::1 eth0 ra/ })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Connections' }).click();
+    await page.getByRole('tab', { name: 'Connections' }).click();
     await expect(page.getByRole('row', { name: /tcp ESTAB 192\.168\.1\.10:443 192\.168\.1\.20:51515/ })).toBeVisible();
     await expect(page.getByRole('row', { name: /udp UNCONN 0\.0\.0\.0:137/ })).toBeVisible();
   });
@@ -102,13 +109,13 @@ test.describe('System > Network', () => {
     await fakeNetworkApi(page, { connections: [FAKE_CONNECTIONS[0]] });
     await openNetworkTab(page);
 
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
+    await page.getByRole('tab', { name: 'Connections', exact: true }).click();
     await expect(page.getByText('1 active connection', { exact: true })).toBeVisible();
 
     // The language that the Account page keeps in this browser (ADR-0287).
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
-    await page.getByRole('button', { name: 'Подключения', exact: true }).click();
+    await page.getByRole('tab', { name: 'Подключения', exact: true }).click();
     await expect(page.getByText('1 активное подключение', { exact: true })).toBeVisible();
   });
 
@@ -499,7 +506,7 @@ test.describe('System > Network', () => {
 
     // Disable asks first, counts down and offers to keep the change.
     await eth1.getByRole('button', { name: 'Выключить…', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Выключение eth1' });
+    const dialog = page.getByRole('dialog', { name: 'Выключить eth1?' });
     await expect(dialog).toContainText('Выключение eth1 может прервать ваше подключение к UNOS');
     await expect(dialog).toContainText('Если вы не сохраните изменение в течение 60 секунд, eth1 сам включится снова');
     await dialog.getByRole('button', { name: 'Выключить eth1' }).click();
@@ -516,11 +523,11 @@ test.describe('System > Network', () => {
     ]);
 
     // The routes and the connections; the values that ip and ss print stay as they come (ADR-0295).
-    await page.getByRole('button', { name: 'Маршруты' }).click();
+    await page.getByRole('tab', { name: 'Маршруты' }).click();
     await expect(page.getByRole('columnheader', { name: 'Назначение' })).toBeVisible();
     await expect(page.getByRole('table').getByRole('row', { name: /по умолчанию 192\.168\.1\.1 eth0 dhcp/ }))
       .toBeVisible();
-    await page.getByRole('button', { name: 'Подключения', exact: true }).click();
+    await page.getByRole('tab', { name: 'Подключения', exact: true }).click();
     await expect(page.getByText('2 активных подключения', { exact: true })).toBeVisible();
     await expect(page.getByRole('row', { name: /tcp ESTAB 192\.168\.1\.10:443 192\.168\.1\.20:51515/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Обновить подключения' })).toBeVisible();

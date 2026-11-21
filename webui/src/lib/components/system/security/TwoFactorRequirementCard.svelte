@@ -10,7 +10,7 @@
 		type GraceDays,
 		type TwoFactorRequirement
 	} from '$lib/api/security';
-	import { Alert, Badge, Button, Card, Input, Select } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, Input, Select, toast } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { UsersRound } from 'lucide-svelte';
@@ -34,7 +34,6 @@
 	let code = $state('');
 	let busy = $state(false);
 	let error = $state('');
-	let success = $state('');
 
 	const graceOptions = $derived(
 		GRACE_DAYS_CHOICES.map((n) => ({
@@ -64,14 +63,13 @@
 		if (!requirement || busy) return;
 		busy = true;
 		error = '';
-		success = '';
 		try {
 			if (requirement.enabled) {
 				requirement = await disableTwoFactorRequirement(code);
-				success = $t('twofactor.requirement.turnedOff');
+				toast.success($t('twofactor.requirement.turnedOff'));
 			} else {
 				requirement = await enableTwoFactorRequirement(Number(grace) as GraceDays, code);
-				success = $t('twofactor.requirement.turnedOn');
+				toast.success($t('twofactor.requirement.turnedOn'));
 			}
 			code = '';
 		} catch (e) {
@@ -95,9 +93,6 @@
 		{/if}
 	</div>
 
-	{#if success}
-		<Alert variant="success" class="mb-4">{success}</Alert>
-	{/if}
 
 	{#if loadError}
 		<Alert variant="error" title={$t('twofactor.requirement.loadError')} class="mb-4">

@@ -17,6 +17,7 @@
 			title={request.title}
 			message={request.message}
 			consequences={request.consequences}
+			warning={request.warning}
 			confirmLabel={request.confirmLabel}
 			cancelLabel={request.cancelLabel}
 			tone={request.tone}

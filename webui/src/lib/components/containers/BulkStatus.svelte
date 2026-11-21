@@ -1,34 +1,26 @@
 <script lang="ts">
-	// The container that an action on several is at, and the result of the last one, per container.
+	// The result of the last action on several containers that did not do everything, per container:
+	// what failed and why stays to be read (ADR-0432); a run that did all is a toast of the page, and
+	// the container a run is at is the bar's (BulkToolbar).
 	import { Alert } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { BULK_DONE, BULK_PROGRESS, type BulkProgress, type BulkResult } from './bulk.svelte';
+	import { BULK_DONE, type BulkResult } from './bulk.svelte';
 	import { labelOf, STATES } from './labels';
 
 	type Props = {
-		progress: BulkProgress | null;
 		result: BulkResult | null;
 		ondismiss: () => void;
 	};
 
-	let { progress, result, ondismiss }: Props = $props();
+	let { result, ondismiss }: Props = $props();
 
 	const ok = $derived(result ? result.items.filter((item) => item.state !== undefined).length : 0);
 </script>
 
-{#if progress}
-	<p class="text-sm text-secondary" role="status">
-		{$t(BULK_PROGRESS[progress.action], {
-			name: progress.name,
-			i: progress.i,
-			n: progress.n
-		})}
-	</p>
-{/if}
 {#if result}
 	{@const title = $t(BULK_DONE[result.action], { ok, n: result.items.length })}
 	<Alert
-		variant={ok === result.items.length ? 'success' : ok === 0 ? 'error' : 'warning'}
+		variant={ok === 0 ? 'error' : 'warning'}
 		{title}
 		dismissible
 		{ondismiss}

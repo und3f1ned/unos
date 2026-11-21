@@ -391,10 +391,10 @@ signedIn.describe('API tokens on the Account page', () => {
     expect((await me(request, token)).status()).toBe(200);
 
     await row.getByRole('button', { name: 'Delete Token' }).click();
-    const confirm = page.getByRole('dialog', { name: 'Delete API Token' });
-    await expect(confirm).toContainText(name);
+    const confirm = page.getByRole('dialog', { name: `Delete the API token ${name}?` });
+    await expect(confirm).toContainText(`Scripts that use the token ${name} can no longer use it.`);
     await confirm.getByRole('button', { name: 'Delete Token' }).click();
-    await expect(tokensCard(page).getByText(`The token ${name} was deleted`)).toBeVisible();
+    await expect(page.getByText(`The token ${name} was deleted`)).toBeVisible();
     await expect(row).toHaveCount(0);
     expect((await me(request, token)).status()).toBe(401);
   });

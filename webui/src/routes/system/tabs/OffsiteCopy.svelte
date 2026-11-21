@@ -22,7 +22,7 @@
     type OffsiteStatus,
   } from "$lib/api/offsite";
   import { getTasks, type ScheduledTask } from "$lib/api/scheduler";
-  import { Alert, Card, Skeleton, confirm } from "$lib/components/ui";
+  import { Alert, Card, Skeleton, confirm, toast } from "$lib/components/ui";
   import { OffsiteForm } from "$lib/components/system/offsite/form.svelte";
   import { restorePoolsOf } from "$lib/components/system/offsite/offsite";
   import OffsiteSettingsForm from "$lib/components/system/offsite/OffsiteSettingsForm.svelte";
@@ -51,7 +51,6 @@
   // The last failed action, until it is dismissed; and what the last action did.
   let error = $state<{ title: string; message: string } | null>(null);
   let errorBox = $state<HTMLDivElement>();
-  let notice = $state("");
 
   // The form, from the stored settings of the last answer.
   const form = new OffsiteForm(() => answer);
@@ -130,12 +129,11 @@
   async function save() {
     saving = true;
     error = null;
-    notice = "";
     const request = form.request();
     try {
       answer = await saveOffsiteSettings(request);
       form.fill(answer);
-      notice = $t("offsite.form.saved");
+      toast.success($t("offsite.form.saved"));
       await refresh();
     } catch (e) {
       showError($t("offsite.form.saveFailed"), e);
@@ -155,11 +153,10 @@
     }
     makingKey = true;
     error = null;
-    notice = "";
     try {
       const found = await makeOffsiteKeyPair();
       if (answer) answer = { ...answer, sftp_public_key: found.sftp_public_key };
-      notice = $t("offsite.sftp.keyMade");
+      toast.success($t("offsite.sftp.keyMade"));
     } catch (e) {
       showError($t("offsite.sftp.keyFailed"), e);
     }
@@ -174,7 +171,6 @@
     });
     if (!yes) return;
     error = null;
-    notice = "";
     try {
       await removeOffsiteSettings();
       snapshots = [];
@@ -189,7 +185,7 @@
     error = null;
     try {
       await runOffsiteCopy();
-      notice = $t("offsite.state.runStarted");
+      toast.success($t("offsite.state.runStarted"));
       status = await getOffsiteStatus();
     } catch (e) {
       showError($t("offsite.state.runFailed"), e);
@@ -200,10 +196,9 @@
   async function restoreConfiguration(snapshot: OffsiteSnapshot) {
     restoring = snapshot.id;
     error = null;
-    notice = "";
     try {
       const result = await restoreOffsiteConfiguration(snapshot.id);
-      notice = $t("offsite.snapshots.inBackupList", { name: result.backup.filename });
+      toast.success($t("offsite.snapshots.inBackupList", { name: result.backup.filename }));
       onrestored?.(result.backup.filename);
     } catch (e) {
       showError($t("offsite.snapshots.restoreConfigurationFailed"), e);
@@ -220,10 +215,9 @@
   async function restoreFiles(snapshot: OffsiteSnapshot) {
     restoring = snapshot.id;
     error = null;
-    notice = "";
     try {
       const result = await restoreOffsiteFiles(snapshot.id, restorePool, restorePath.trim() || undefined);
-      notice = $t("offsite.snapshots.restoring", { folder: result.folder });
+      toast.success($t("offsite.snapshots.restoring", { folder: result.folder }));
       filesOf = null;
       status = await getOffsiteStatus();
     } catch (e) {
@@ -250,11 +244,6 @@
         <Alert variant="error" title={error.title} dismissible ondismiss={() => (error = null)}>
           {error.message}
         </Alert>
-      </div>
-    {/if}
-    {#if notice}
-      <div role="status" class="mb-4">
-        <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
       </div>
     {/if}
 

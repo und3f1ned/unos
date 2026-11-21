@@ -1,7 +1,7 @@
 <script lang="ts">
   import { FileKey } from "lucide-svelte";
   import { generateSelfSignedCert } from "$lib/api/security";
-  import { Alert, Button, Modal } from "$lib/components/ui";
+  import { Alert, Button, Modal, toast } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { Certificates } from "./certificates.svelte";
 
@@ -28,7 +28,6 @@
 
     certificates.loading = true;
     certificates.generateError = "";
-    certificates.success = "";
     try {
       await generateSelfSignedCert({
         domain: newCert.domain,
@@ -36,7 +35,7 @@
         organization: newCert.organization || undefined,
         country: newCert.country || undefined
       });
-      certificates.success = $t("account.certs.generated");
+      toast.success($t("account.certs.generated"));
       certificates.generateOpen = false;
       newCert = { domain: "", validity_days: 365, organization: "", country: "" };
       await certificates.load();
@@ -121,8 +120,8 @@
       <Button variant="secondary" type="button" disabled={certificates.loading} onclick={() => (certificates.generateOpen = false)}>
         {$t("common.cancel")}
       </Button>
-      <Button variant="primary" type="submit" disabled={certificates.loading}>
-        {certificates.loading ? $t("account.certs.generating") : $t("account.certs.generate")}
+      <Button variant="primary" type="submit" loading={certificates.loading}>
+        {$t("account.certs.generate")}
       </Button>
     </div>
   </form>

@@ -3,7 +3,7 @@
 	// ports or the parent it may take, its addressing, and the warning when the change touches the
 	// interface of the connection to UNOS or of the default route, which then waits to be kept.
 	import type { HostInterface, VirtualInterface, VirtualKind } from '$lib/api/network';
-	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Input, Modal, Select, Checkbox, FieldGroup, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { VirtualForm } from './virtualForm.svelte';
 
@@ -102,29 +102,24 @@
 				{#if form.creating === 'bond'}
 					<Select label={$t('virtual.mode')} hint={$t('virtual.modeHint')} options={modeOptions} bind:value={form.mode} />
 				{/if}
-				<fieldset>
-					<legend class="form-label">{$t('virtual.ports')}</legend>
-					<p class="text-xs text-content-muted mb-2">
-						{form.creating === 'bond' ? $t('virtual.bondPortsHint') : $t('virtual.bridgePortsHint')}
-					</p>
+				<FieldGroup
+					legend={$t('virtual.ports')}
+					description={form.creating === 'bond' ? $t('virtual.bondPortsHint') : $t('virtual.bridgePortsHint')}
+					minWidth="7rem"
+				>
 					{#if candidates.length === 0}
-						<p class="text-sm text-content-muted">{$t('virtual.noCandidates')}</p>
+						<p class="text-sm text-content-muted col-span-full">{$t('virtual.noCandidates')}</p>
 					{:else}
-						<div class="flex flex-wrap gap-x-4 gap-y-2">
-							{#each candidates as iface (iface.name)}
-								<label class="flex items-center gap-2 text-sm text-content">
-									<input
-										type="checkbox"
-										class="form-checkbox"
-										checked={form.ports.includes(iface.name)}
-										onchange={(e) => form.togglePort(iface.name, e.currentTarget.checked)}
-									/>
-									<span class="break-all">{iface.name}</span>
-								</label>
-							{/each}
-						</div>
+						{#each candidates as iface (iface.name)}
+							<Checkbox
+								checked={form.ports.includes(iface.name)}
+								onchange={(on) => form.togglePort(iface.name, on)}
+							>
+								<span class="break-all">{iface.name}</span>
+							</Checkbox>
+						{/each}
 					{/if}
-				</fieldset>
+				</FieldGroup>
 			{/if}
 			<Input label={$t('virtual.mtu')} type="number" hint={$t('virtual.mtuHint')} bind:value={form.mtu} />
 			{#if form.creating !== 'vlan' && touched.length}
@@ -136,13 +131,13 @@
 				{#if form.addressing === 'static'}
 					<Input label={$t('virtual.addresses')} hint={$t('virtual.addressesHint')} bind:value={form.addressesText} />
 				{:else if form.addressing === 'dhcp'}
-					<p class="text-xs text-content-muted">{$t('virtual.dhcpHint')}</p>
+					<HelpText text={$t('virtual.dhcpHint')} />
 				{/if}
 			{/if}
 			{#if touched.length}
 				<Alert variant="warning">{$t('virtual.waitsWarning', { names: touched.join(', '), n: revertSeconds })}</Alert>
 			{:else}
-				<p class="text-xs text-content-muted">{$t('virtual.noRevertNote')}</p>
+				<HelpText text={$t('virtual.noRevertNote')} />
 			{/if}
 			{#if form.error}
 				<Alert variant="error"><p class="break-words">{form.error}</p></Alert>

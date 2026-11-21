@@ -41,6 +41,10 @@
 		children
 	}: Props = $props();
 
+	// With a line under it, the label alone names the box and the line describes it.
+	const uid = `checkbox-${Math.random().toString(36).slice(2, 9)}`;
+	const described = $derived(description !== '' && (label !== '' || children !== undefined));
+
 	const inGroup = $derived(group !== undefined);
 	const isChecked = $derived(inGroup ? (group ?? []).includes(value) : checked);
 
@@ -67,7 +71,8 @@
 		{indeterminate}
 		{disabled}
 		aria-label={ariaLabel || undefined}
-		aria-describedby={describedby}
+		aria-labelledby={described && !ariaLabel ? `${uid}-label` : undefined}
+		aria-describedby={[described ? `${uid}-description` : '', describedby ?? ''].filter(Boolean).join(' ') || undefined}
 		onchange={change}
 	/>
 {/snippet}
@@ -76,8 +81,8 @@
 	<label class="choice {disabled ? 'choice-disabled' : ''} {className}">
 		{@render box()}
 		<span class="min-w-0">
-			<span class="block">{#if children}{@render children()}{:else}{label}{/if}</span>
-			{#if description}<span class="choice-description">{description}</span>{/if}
+			<span id="{uid}-label" class="block">{#if children}{@render children()}{:else}{label}{/if}</span>
+			{#if description}<span id="{uid}-description" class="choice-description">{description}</span>{/if}
 		</span>
 	</label>
 {:else}
