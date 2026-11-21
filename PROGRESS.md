@@ -198,6 +198,13 @@ significant step. Features and their state live in `feature-list.json`, decision
   word (`webui.redesign`, ADR-0428), and TRIM for every pool, NVMe drives of a K1 included
   (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
   paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
+- On 2026-11-21 (Log): the nineteenth batch on the branch `mvp.batch-19`, from `mvp.batch-18`
+  (876968d6), not deployed and not pushed: what needs neither the device nor the owner. A compose
+  test stack per worktree (ADR-0439) and the coverage floor of 91 percent (ADR-0442) pass; no
+  plugins (ADR-0440) and no telemetry (ADR-0441); the in-app updater up to its release installer
+  (ADR-0443, two choices of the owner's open); Alembic migrations (ADR-0444, passes after the
+  deploy); gitleaks over the history (ADR-0445), trivy over both images (ADR-0446), mypy
+  (ADR-0447), shellcheck (ADR-0448) and ESLint with Prettier (ADR-0449), which pass once CI runs.
 - On 2026-11-19 (Log): the sixteenth batch on the branch `mvp.batch-16`, merged into `main` with
   its record: off-device copies to a restic REST server and over SFTP through the host's ssh
   (`backup.off-device-copies-over-sftp`, ADR-0422), the workflows' actions pinned by commit and the
@@ -734,6 +741,43 @@ Open owner actions:
     GB on the SD card).
 
 ## Log
+
+### 2026-11-21: The nineteenth batch, merged on `mvp.batch-19` (ADR-0439 to ADR-0449)
+
+- The owner: "do everything that needs neither the hardware nor me", then "do it yourself" for the
+  packages and "decide yourself" for plugins, telemetry and the coverage floor (in translation).
+  Nine branches from `mvp.batch-18` (876968d6), each built by its own agent in its own worktree
+  and merged here by the lead, with the Log entries below; ci.shellcheck and ci.webui-eslint
+  started from the batch after the first seven merges, ESLint's one Prettier reformat last.
+- Every builder wrote ADR-0439, the next free number on its base; at the merge each became the
+  next one, on the lines its branch added: 0439 compose stacks, 0442 coverage, 0443 updater,
+  0444 migrations, 0445 gitleaks, 0446 trivy, 0447 mypy, 0448 shellcheck, 0449 ESLint. The
+  baseline revision's pinned SHA-256 (`test_migrations.py`) follows its renumbered docstring;
+  the revision has not reached a database yet. The lead wrote ADR-0440 (no plugins) and ADR-0441
+  (no telemetry), which remove the ledger's entries for plugins and opt-in telemetry, and
+  recorded that ADR-0439 supersedes the once-per-machine rule of ADR-0210.
+- Found at the merges: mypy over the updater's and the migrations' code, which its builder had not
+  seen, 17 errors in 2 files (alembic's `configure` keywords typed, an update's action a
+  `Literal`, a missing job not shielded), fixed; the updater's schema fields in mypy's
+  `Field(default=...)` form; duplicate rows and blank lines in docs/TESTING.md and
+  docs/maintenance.md, the Makefile's `.PHONY` lines and the targets of `test_repo_tooling.py`.
+- The batch's venvs got alembic 1.20.1 (with Mako and MarkupSafe), mypy 2.4.1 and its stubs,
+  shellcheck-py 0.11.0.1 and the ESLint and Prettier packages, copied from the builders' worktrees,
+  which installed them from the pinned files; `make setup` on the main checkout installs them.
+- Gates on the merged batch: `make check` 10920 passed, 124 skipped, 1 xfailed, coverage 91.87
+  percent; 2 tests of `test_command_timeouts.py` (a scrub's and a stats reset's stuck command,
+  answered in 2.98 s and 4.1 s where the test allows 2.5) exceeded their time while the owner's
+  own processes loaded the machine (load average 22) and passed alone (22 passed); the gate passed
+  again with `TEST_WORKERS=4`: 10922 passed, 124 skipped, 1 xfailed. `make e2e-local` 1171 passed, 14 skipped,
+  0 failed (36.8 min). `make secret-scan` after the gitleaks merge: no leaks in 646 commits.
+- New entry `testing.compose-stack-sign-in-rate-limit`: on the compose test stack, auth.spec.ts's
+  invalid-credentials test meets the sign-in rate limit, since every spec reaches the supervisor
+  from the network's gateway (seen by the compose builder, also on the base).
+- Open for the owner: the updater's two choices (where a release's images come from, how the
+  supervisor replaces its own container); the deploy, which applies the baseline revision,
+  rebuilds both images (hundreds of MB on the SD card) and needs the new Caddy base pulled first
+  (Open owner actions 21); the push. The commits' `Feature:` line and `Co-Authored-By` are in
+  separate paragraphs, so git reads only the second as a trailer; the commit-msg hook accepts it.
 
 ### 2026-11-21: shellcheck checks the shell scripts in make lint (ci.shellcheck, ADR-0448)
 
