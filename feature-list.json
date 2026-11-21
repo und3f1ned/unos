@@ -4299,7 +4299,15 @@
         "make lint runs shellcheck on the scripts of deploy/, scripts/ and .claude/hooks/",
         "CI fails on a finding"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_repo_tooling.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0448"
+      ],
+      "notes": "Built 2026-11-21 (ADR-0448): shellcheck 0.11.0, as the wheel shellcheck-py 0.11.0.1 pinned with its hashes in .github/lint-requirements.txt and installed into .venv-lint, runs in make lint as lint-shellcheck over the 23 shell scripts of deploy/, scripts/ and .claude/hooks/ that bash -n checks, with its default checks and none turned off; .shellcheckrc, the repository's only rc file, sets external-sources and source-path=SCRIPTDIR. The CI workflow's Lint job installs the same hashed file and runs make lint with SHELLCHECK set to the pinned one in setup-python's folder, not the runner's own. The 45 findings were fixed without a change of behaviour or kept with a directive and its reason in the script (SC2016 for the whole of the six scripts of scripts/dev that send single-quoted scripts to the device). Step 1: test_shellcheck_checks_the_shell_scripts_with_the_settings_of_shellcheckrc, test_shellcheckrc_is_the_only_one_and_a_kept_finding_says_why and test_targets_run_the_agreed_commands of test_repo_tooling.py, and make lint itself. Step 2: test_python_checks_install_hashed_tools and test_lint_requirements_pin_every_package_with_its_hashes of test_deploy_scripts.py show the Lint job's install and make lint's shellcheck; that the job fails on a finding is not seen: the workflow is off on GitHub (ADR-0230), so passes stays false until it runs there once with a finding. Review in a fresh context (ADR-0017): no blocker; its findings fixed (the claim of every check on, a directive written #shellcheck and a nested rc file that the test missed, the count of findings, a message for a missing shellcheck, a directive replaced by read into _, the CI job's shellcheck named) but one, recorded in PROGRESS.md. The optional checks (enable=all, about 1,470 more findings) stay off. Not a host-level change: no device check."
     },
     {
       "id": "ci.wider-ruff-rules",

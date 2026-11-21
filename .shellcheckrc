@@ -1,0 +1,10 @@
+# The settings of shellcheck in make lint (ADR-0448), for every shell script below this folder.
+# The only rc file of the repository: shellcheck reads the first one it finds above a script.
+# No check is turned off: a finding that stays has a directive with its reason in the script,
+# "# shellcheck disable=SCnnnn # <why>", on the command it concerns or, for a whole script,
+# before its first command.
+
+# Follow the files that a script sources, such as scripts/dev/env.sh, ...
+external-sources=true
+# ... found relative to the script's own folder.
+source-path=SCRIPTDIR

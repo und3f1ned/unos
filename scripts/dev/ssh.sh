@@ -33,6 +33,7 @@ if dev_has_secret UNOS_DEV_SSH_PASSWORD; then
     SSH_ASKPASS="$UNOS_DEV_DIR/askpass.sh"
     SSH_ASKPASS_REQUIRE=force
     export SSH_ASKPASS SSH_ASKPASS_REQUIRE
+    # shellcheck disable=SC2054 # the comma separates ssh's methods
     opts+=(-o PreferredAuthentications=publickey,password -o NumberOfPasswordPrompts=1
            -o KbdInteractiveAuthentication=no)
 else

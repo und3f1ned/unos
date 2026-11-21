@@ -42,8 +42,8 @@ TEST_FAST = ("tests/test_adrs.py", "tests/test_feature_list.py", "tests/test_age
 # make smoke: the startup and /api/v1/health, the first-run setup, a login, anonymous requests.
 SMOKE = ("tests/test_lifespan.py", "tests/test_auth.py::TestFirstRunSetup", "tests/test_authz.py::TestRealClientAddress",
          "tests/test_authz.py::TestRouteMatrix::test_anonymous_requests_are_rejected")
-TOOLS = ("PYTHON=/opt/py/bin/python", "RUFF=/opt/lint/bin/ruff", "MYPY=/opt/lint/bin/mypy", "PIP_AUDIT=pip-audit",
-         "NPM=npm")
+TOOLS = ("PYTHON=/opt/py/bin/python", "RUFF=/opt/lint/bin/ruff", "MYPY=/opt/lint/bin/mypy",
+         "SHELLCHECK=/opt/lint/bin/shellcheck", "PIP_AUDIT=pip-audit", "NPM=npm")
 
 
 def without_git_variables(environ) -> dict:
@@ -67,8 +67,9 @@ def isolated_git_env(home: Path) -> dict:
 # itself must not reach the make runs below, nor those of an outer git.
 MAKE_ENV = {key: value for key, value in without_git_variables(os.environ).items()
             if key not in ("MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MAKEFILES", "PYTHON", "RUFF",
-                           "MYPY", "MYPYPATH", "PIP_AUDIT", "NPM", "TESTS", "PYTEST_ARGS", "PYTEST_ADDOPTS",
-                           "PYTEST_PLUGINS", "PYTHONPATH", "PYTHONHOME", "TEST_WORKERS", "E2E_ARGS")}
+                           "MYPY", "MYPYPATH", "SHELLCHECK", "SHELLCHECK_OPTS", "PIP_AUDIT", "NPM", "TESTS",
+                           "PYTEST_ARGS", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTHONPATH", "PYTHONHOME",
+                           "TEST_WORKERS", "E2E_ARGS")}
 
 
 def make(*args, cwd=REPO_ROOT, check=True):
@@ -103,7 +104,7 @@ def test_help_is_the_default_target():
     ("setup", ["scripts/setup.sh"]),
     ("lint", ["/opt/lint/bin/ruff check supervisor scripts .claude/hooks",
               "/opt/lint/bin/mypy --python-executable /opt/py/bin/python supervisor/src", "bash -n",
-              "deploy scripts .claude/hooks", "/opt/py/bin/python -m json.tool",
+              "/opt/lint/bin/shellcheck --format=gcc", "deploy scripts .claude/hooks", "/opt/py/bin/python -m json.tool",
               "feature-list.json .claude/settings.json"]),
     ("test", ["cd supervisor &&", "/opt/py/bin/python -m pytest tests/ -q --tb=short "
               "--ignore=tests/fixtures"]),
@@ -327,13 +328,15 @@ def test_a_floor_below_a_committed_one_is_refused(tmp_path):
 def test_the_defaults_are_the_environments_of_make_setup(tmp_path):
     shutil.copy(MAKEFILE, tmp_path / "Makefile")
     plain = make("-n", "test", "lint", cwd=tmp_path).stdout
-    for tool in ("supervisor/.venv/bin/python", ".venv-lint/bin/ruff", ".venv-lint/bin/mypy"):
+    for tool in ("supervisor/.venv/bin/python", ".venv-lint/bin/ruff", ".venv-lint/bin/mypy",
+                 ".venv-lint/bin/shellcheck"):
         (tmp_path / tool).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / tool).write_text("#!/bin/sh\n")
     installed = make("-n", "test", "lint", cwd=tmp_path).stdout
 
     assert "python3 -m pytest" in plain and "\nruff check" in "\n" + plain
     assert "\nmypy --python-executable python3 supervisor/src" in "\n" + plain
+    assert "|| shellcheck --format=gcc " in plain and "|| .venv-lint/bin/shellcheck --format=gcc " in installed
     assert f"{tmp_path.resolve()}/supervisor/.venv/bin/python -m pytest" in installed
     assert ".venv-lint/bin/ruff check supervisor scripts .claude/hooks" in installed
     # mypy checks the supervisor against the environment of its tests (ADR-0447).
@@ -482,6 +485,83 @@ def test_mypy_checks_the_supervisor_with_the_settings_of_mypy_ini(tmp_path):
     assert found == {(f"supervisor/src/{code.replace('-', '_')}.py", code) for code in MYPY_ERRORS}, result.stdout
 
 
+def _shellcheck() -> str:
+    """The shellcheck of make lint: make setup's, else the one on PATH, of the version that
+    .github/lint-requirements.in pins (shellcheck-py's version is shellcheck's and a build number)."""
+    installed = REPO_ROOT / ".venv-lint" / "bin" / "shellcheck"
+    found = str(installed) if installed.exists() else shutil.which("shellcheck")
+    if found is None:
+        pytest.skip("shellcheck is not installed (make setup puts it in .venv-lint)")
+    pinned = re.search(r"^shellcheck-py==(\d+\.\d+\.\d+)\.\d+$",
+                       (REPO_ROOT / ".github" / "lint-requirements.in").read_text(), re.M)
+    output = subprocess.run([found, "--version"], capture_output=True, text=True, check=True).stdout
+    version = re.search(r"^version: (\S+)$", output, re.M)
+    if version is None or version.group(1) != pinned.group(1):
+        pytest.skip(f"{found} is not the pinned shellcheck {pinned.group(1)}: {output.strip()}")
+    return found
+
+
+# One finding of each level that shellcheck reports, in each folder of make lint (ADR-0448), and its
+# code; a script without the suffix .sh is checked by its first line.
+SHELLCHECK_FINDINGS = {
+    "deploy/unused.sh": ("SC2034", "#!/bin/sh\nunused=1\n"),  # a warning
+    "scripts/unquoted.sh": ("SC2086", '#!/bin/sh\necho $1\n'),  # info
+    ".claude/hooks/backticks": ("SC2006", '#!/usr/bin/env bash\nnow=`date`\necho "$now"\n'),  # style
+    "scripts/single-quotes.sh": ("SC2016", "#!/bin/bash\necho 'the $HOME of the device'\n"),  # info
+}
+# What passes: a script that sources a file beside it, which shellcheck follows (external-sources and
+# source-path of .shellcheckrc), a finding kept with a directive, and a Python script, never checked.
+SHELLCHECK_CLEAN = {
+    "scripts/lib/main.sh": '#!/usr/bin/env bash\n. "$(dirname "${BASH_SOURCE[0]}")/helpers.sh" || exit 1\n'
+                           'echo "$GREETING"\n',
+    "scripts/lib/helpers.sh": "# shellcheck shell=bash\nexport GREETING=hello\n",
+    "deploy/kept.sh": "#!/bin/sh\n# shellcheck disable=SC2086 # one word\necho $1\n",
+    "scripts/tool.py": "#!/usr/bin/env python3\nprint('$1' == `x`)\n",
+}
+
+
+def test_shellcheck_checks_the_shell_scripts_with_the_settings_of_shellcheckrc(tmp_path):
+    shutil.copy(MAKEFILE, tmp_path / "Makefile")
+    shutil.copy(REPO_ROOT / ".shellcheckrc", tmp_path / ".shellcheckrc")
+    for path, text in [*((path, text) for path, (_, text) in SHELLCHECK_FINDINGS.items()), *SHELLCHECK_CLEAN.items()]:
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text)
+    missing = make("lint-shellcheck", "SHELLCHECK=/nonexistent/shellcheck", cwd=tmp_path, check=False)
+    assert missing.returncode != 0 and "shellcheck not found: /nonexistent/shellcheck" in missing.stderr
+    shellcheck = _shellcheck()
+
+    failed = make("lint-shellcheck", f"SHELLCHECK={shellcheck}", cwd=tmp_path, check=False)
+    for path in SHELLCHECK_FINDINGS:
+        (tmp_path / path).unlink()
+    passed = make("lint-shellcheck", f"SHELLCHECK={shellcheck}", cwd=tmp_path, check=False)
+
+    assert failed.returncode != 0 and "shellcheck failed" in failed.stderr, failed.stdout + failed.stderr
+    found = set(re.findall(r"^(\S+):\d+:\d+: \w+: .* \[(SC\d+)\]$", failed.stdout, re.M))
+    assert found == {(path, code) for path, (code, _) in SHELLCHECK_FINDINGS.items()}, failed.stdout
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    pinned = re.search(r"^shellcheck-py==(\d+\.\d+\.\d+)", (REPO_ROOT / ".github" / "lint-requirements.in").read_text(),
+                       re.M)
+    assert passed.stdout.splitlines() == [f"shellcheck {pinned.group(1)}: 3 shell scripts in deploy scripts .claude/hooks"]
+
+
+def test_shellcheckrc_is_the_only_one_and_a_kept_finding_says_why():
+    # .shellcheckrc turns no check off, and no other rc file replaces it for the scripts below it
+    # (shellcheck reads the first .shellcheckrc or shellcheckrc above a script). A finding that stays
+    # has its directive in the script, with its reason after it (ADR-0448).
+    rc = (REPO_ROOT / ".shellcheckrc").read_text().splitlines()
+    assert [line for line in rc if line.strip() and not line.startswith("#")] == [
+        "external-sources=true", "source-path=SCRIPTDIR"]
+    files = [path for folder in ("deploy", "scripts", ".claude") for path in sorted((REPO_ROOT / folder).rglob("*"))
+             if path.is_file()]
+    assert [path for path in files if path.name in (".shellcheckrc", "shellcheckrc")] == []
+    directives = [(path.relative_to(REPO_ROOT).as_posix(), line.strip()) for path in files if path.suffix != ".py"
+                  for line in path.read_text(errors="replace").splitlines()
+                  if re.match(r"\s*#\s*shellcheck\s.*disable=", line)]
+    assert directives, "no directive found: the search is wrong"
+    assert [(path, line) for path, line in directives
+            if not re.fullmatch(r"#\s*shellcheck\s+(\S+\s+)*disable=SC\d+(,SC\d+)*\s+#\s*\S.*", line)] == []
+
+
 def test_lint_and_frontend_run_every_part_even_when_one_fails(tmp_path):
     shutil.copy(MAKEFILE, tmp_path / "Makefile")
     (tmp_path / "webui").mkdir()
@@ -495,11 +575,12 @@ def test_lint_and_frontend_run_every_part_even_when_one_fails(tmp_path):
     npm.write_text('#!/bin/sh\necho "npm $*"\n[ "$2" != check ]\n')
     npm.chmod(0o755)
 
-    lint = make("lint", "RUFF=false", "MYPY=false", f"PYTHON={sys.executable}", cwd=tmp_path, check=False)
+    lint = make("lint", "RUFF=false", "MYPY=false", "SHELLCHECK=false", f"PYTHON={sys.executable}", cwd=tmp_path,
+                check=False)
     frontend = make("frontend", f"NPM={npm}", cwd=tmp_path, check=False)
 
     assert lint.returncode != 0
-    assert "make lint failed: lint-ruff lint-mypy lint-shell lint-json" in lint.stderr
+    assert "make lint failed: lint-ruff lint-mypy lint-shell lint-shellcheck lint-json" in lint.stderr
     assert "bash -n failed: scripts/bad.sh" in lint.stderr and "not valid JSON: feature-list.json" in lint.stderr
     assert frontend.returncode != 0
     assert "make frontend failed: frontend-check" in frontend.stderr
@@ -575,7 +656,8 @@ CHECK_FAST = "make --no-print-directory check-fast"
 @pytest.fixture
 def stop_hook(tmp_path):
     """A repository in which .claude/hooks/stop-check.sh runs as Claude Code runs it, with stubs
-    for make (it prints the file make-output and exits with make-status), ruff, mypy and Python."""
+    for make (it prints the file make-output and exits with make-status), ruff, mypy, shellcheck and
+    Python."""
     repo, stubs = tmp_path / "repo", tmp_path / "stubs"
     repo.mkdir()
     stubs.mkdir()
@@ -598,6 +680,7 @@ def stop_hook(tmp_path):
                   '  "-m pytest") echo "pytest stub: 3 passed"; exit 0 ;;\nesac\nexec "$REAL_PYTHON" "$@"\n',
         "ruff": 'echo "supervisor/src/x.py:1:8: F401 [*] os imported but unused"\nexit "${STUB_RUFF_STATUS:-0}"\n',
         "mypy": 'echo "Success: no issues found in 1 source file"\n',
+        "shellcheck": 'exit 0\n',
     }
     for name, body in stub_bodies.items():
         (stubs / name).write_text("#!/bin/sh\n" + body)
@@ -605,7 +688,7 @@ def stop_hook(tmp_path):
     real_make = shutil.which("make")
     env.update(PATH=f"{stubs}:{os.environ['PATH']}", STUB_DIR=str(stubs), STUB_LOG=str(tmp_path / "log"),
                PYTHON=str(stubs / "python"), RUFF=str(stubs / "ruff"), MYPY=str(stubs / "mypy"),
-               REAL_PYTHON=sys.executable,
+               SHELLCHECK=str(stubs / "shellcheck"), REAL_PYTHON=sys.executable,
                CLAUDE_PROJECT_DIR=str(repo))
 
     def run(payload=None, **extra):
@@ -636,10 +719,10 @@ def stop_hook(tmp_path):
         git("-c", "commit.gpgsign=false", "commit", "-q", "-m", "chore: the gate")
         # A tool given to make, also from the environment, records no green run (ADR-0383).
         for tool, stub in (("supervisor/.venv/bin/python", "python"), (".venv-lint/bin/ruff", "ruff"),
-                           (".venv-lint/bin/mypy", "mypy")):
+                           (".venv-lint/bin/mypy", "mypy"), (".venv-lint/bin/shellcheck", "shellcheck")):
             (repo / tool).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(stubs / stub, repo / tool)
-        del env["PYTHON"], env["RUFF"], env["MYPY"]
+        del env["PYTHON"], env["RUFF"], env["MYPY"], env["SHELLCHECK"]
         env["STUB_REAL_MAKE"] = real_make
 
     return SimpleNamespace(repo=repo, run=run, answer=answer, real_make=real_make, gate=gate)
@@ -742,6 +825,7 @@ def _warning(result) -> str:
     ({"STUB_NO_PYTEST": "1"}, "pytest"),
     ({"RUFF": "/nonexistent/ruff"}, "ruff"),
     ({"MYPY": "/nonexistent/mypy"}, "mypy"),
+    ({"SHELLCHECK": "/nonexistent/shellcheck"}, "shellcheck"),
     ({"PYTHON": '/no "such"\\python'}, 'pytest (/no "such"\\python)'),  # quotes and a backslash: still JSON
 ])
 def test_without_the_tools_the_session_stops_with_a_warning(stop_hook, extra, missing):
@@ -955,6 +1039,7 @@ def gate(work_tree, tmp_path):
         '  [ -z "${PYTEST_STUB_SCRIPT:-}" ] || sh -c "$PYTEST_STUB_SCRIPT" || exit 1\n'
         '  echo "pytest stub: 3 passed"; exit 0\nfi\nexec "$REAL_PYTHON" "$@"\n'),
         ".venv-lint/bin/ruff": "#!/bin/sh\nexit 0\n", ".venv-lint/bin/mypy": "#!/bin/sh\nexit 0\n",
+        ".venv-lint/bin/shellcheck": "#!/bin/sh\nexit 0\n",
         "../bin/npm": '#!/bin/sh\necho "npm $*"\n'}
     for path, body in stubs.items():
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
@@ -1016,6 +1101,9 @@ def test_make_check_fast_records_its_green_run(gate):
     (["check-fast", "MYPY=true"], {}),
     (["check-fast"], {"MYPY": "true"}),
     (["check-fast"], {"MYPYPATH": "/nonexistent/stubs"}),
+    (["check-fast", "SHELLCHECK=true"], {}),
+    (["check-fast"], {"SHELLCHECK": "true"}),
+    (["check-fast"], {"SHELLCHECK_OPTS": "--exclude=SC2086"}),  # shellcheck's options from the environment
     (["check-fast", "TYPED_DIRS=supervisor/src/auth"], {}),
 ])
 def test_a_run_that_may_check_less_records_no_green_run(gate, args, extra):

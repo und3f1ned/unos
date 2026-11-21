@@ -20,6 +20,8 @@
 # env.sh, ADR-0221), starts no container (ADR-0183), takes no lock (it waits for nobody) and
 # reports the SD writes of the check itself (ADR-0214). The output passes through the redaction
 # of api.py, in case a log line carries a secret.
+
+# shellcheck disable=SC2016 # the scripts for the device's shell are in single quotes: it expands them
 set -euo pipefail
 case ${1:-} in
     -h | --help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;

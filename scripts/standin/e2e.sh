@@ -159,6 +159,7 @@ echo $$ > "$lock/pid"
 
 supervisor_pid=
 front_pid=
+# shellcheck disable=SC2329 # trap stop EXIT runs it
 stop() {
   for pid in $front_pid $supervisor_pid; do
     kill "$pid" 2> /dev/null

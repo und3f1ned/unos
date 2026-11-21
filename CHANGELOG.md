@@ -185,6 +185,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   banner lists three and shows the rest on request. Pages share one header, underline tabs, flush
   tables and toolbars of grouped buttons; the hand-written cards and the certificate dialog take
   the shared components.
+- `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, runs
+  shellcheck 0.11.0 (pinned with its hashes as the wheel `shellcheck-py`) on the shell scripts of
+  `deploy/`, `scripts/` and `.claude/hooks/`, with no check turned off and the files they source
+  followed (`.shellcheckrc`, ADR-0448). Its findings were fixed without a change of behaviour:
+  quoted expansions in `install.sh`, `uninstall.sh` and `scripts/test-cycle.sh`, the secrets file
+  sourced on a line of its own; a finding kept in a script carries a directive with its reason.
 - `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
   the types of `supervisor/src` with mypy and the settings of `mypy.ini`, against the supervisor's
   packages and the type stubs of `supervisor/requirements-dev.txt` (ADR-0447). The code was fixed

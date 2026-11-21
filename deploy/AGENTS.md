@@ -42,7 +42,7 @@
 - `supervisor/tests/test_deploy_scripts.py` runs these scripts against fakes, parses the compose
   files and keeps `docs/INSTALL.md` and `docs/TESTING.md` in step with them; `test_authz.py`,
   `test_secret_bootstrap.py` and `test_standin.py` read them too. Run those tests after an edit
-  here; `make lint` runs `bash -n` on every script.
+  here; `make lint` runs `bash -n` and shellcheck on every script (ADR-0448).
 
 ## The dev device
 

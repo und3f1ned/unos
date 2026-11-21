@@ -33,6 +33,8 @@
 #
 # Settings: dev.env (see env.sh); UNOS_DEV_UP_TIMEOUT (seconds to wait for health, default 700,
 # above the supervisor's 680 s of deploy/docker-compose.yml); UNOS_DEV_PYTHON (python3).
+
+# shellcheck disable=SC2016 # the scripts for the device's shell are in single quotes: it expands them
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
 step=${1:-}

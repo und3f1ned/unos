@@ -46,7 +46,8 @@ stops before changing anything when one is missing, then sets up what is missing
 1. `supervisor/.venv`: Python 3.11 with `supervisor/requirements-dev.txt` (the runtime
    dependencies, pytest and the other test tools, and the type stubs of the runtime dependencies
    that publish none, which mypy reads there).
-2. `.venv-lint`: ruff, mypy and pip-audit from `.github/lint-requirements.txt`, with their hashes
+2. `.venv-lint`: ruff, mypy, shellcheck (the wheel `shellcheck-py`, which carries the binary) and
+   pip-audit from `.github/lint-requirements.txt`, with their hashes
    (`pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`).
 3. `webui/node_modules`: `npm ci` from `webui/package-lock.json` (a symbolic link there is left
    as it is).
@@ -74,8 +75,8 @@ installed from, so a rerun installs only what changed. Steps 1-4 need the networ
 no network. Python 3.11 is found as `python3.11` on `PATH`, or set `PYTHON311=/path/to/python`.
 
 The make targets use these environments when they exist, and `python3`, `ruff`, `mypy`,
-`pip-audit` and `npm` from `PATH` otherwise; override them with `PYTHON=`, `RUFF=`, `MYPY=`,
-`PIP_AUDIT=` and `NPM=`.
+`shellcheck`, `pip-audit` and `npm` from `PATH` otherwise; override them with `PYTHON=`, `RUFF=`,
+`MYPY=`, `SHELLCHECK=`, `PIP_AUDIT=` and `NPM=`.
 
 ## Make Targets
 
@@ -84,7 +85,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make check` | `lint`, `test` and `frontend`: what CI's Unit Tests, Lint and Frontend jobs run, without the network audits |
 | `make check-fast` | `lint` and `test-fast`: the pre-commit hook and the Stop hook |
 | `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py`, `test_webui_design_system.py`, `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365) and `test_webui_runes.py` (`webui/scripts/runes-check.mjs`: every component in runes mode, ADR-0427); when `TESTS` names every test, the line coverage of `supervisor/src` against its floor ([Coverage](#coverage)); `TESTS=tests/test_auth.py` for one file, `TESTS=tests/test_shares.py PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
-| `make lint` | `ruff check supervisor scripts .claude/hooks` with the rules of `ruff.toml` (pyflakes findings, syntax errors and the rules that find bugs, ADR-0425, in the supervisor and in the repository's own tooling), `mypy --python-executable <PYTHON> supervisor/src` with the settings of `mypy.ini`, against the packages of the supervisor's environment (ADR-0447), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
+| `make lint` | `ruff check supervisor scripts .claude/hooks` with the rules of `ruff.toml` (pyflakes findings, syntax errors and the rules that find bugs, ADR-0425, in the supervisor and in the repository's own tooling), `mypy --python-executable <PYTHON> supervisor/src` with the settings of `mypy.ini`, against the packages of the supervisor's environment (ADR-0447), `bash -n` and `shellcheck --format=gcc` with the settings of `.shellcheckrc` (ADR-0448) on every shell script of `deploy/`, `scripts/` and `.claude/hooks/` (the files named `*.sh` and those whose first line runs sh, bash, dash or ksh), and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
 | `make test-fast` | the convention tests, in parallel worker processes: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
 | `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run runes` (`scripts/runes-check.mjs`: every component in runes mode, without the syntax of Svelte 4, ADR-0427), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
@@ -593,7 +594,7 @@ request against `main`; a new push to a pull request cancels the run for the pre
    Python 3.11 and `make test`, with its coverage floor ([Coverage](#coverage)).
 2. **Lint and Audit (Python)** (`lint`):
    - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff,
-     mypy and pip-audit, and every package they depend on, with their hashes
+     mypy, shellcheck and pip-audit, and every package they depend on, with their hashes
    - `scripts/audit-python.sh`: known vulnerabilities in the runtime dependencies of the
      supervisor, and in their dependencies, resolved in the audit environment (below)
    - `python -m venv supervisor/.venv && supervisor/.venv/bin/pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt`:
@@ -601,7 +602,10 @@ request against `main`; a new push to a pull request cancels the run for the pre
      have no hashes, so they go into a venv of their own after the audit, not into the Python of the
      tools; `make lint` takes that venv as `PYTHON`
    - `make lint`: ruff with the rules of `ruff.toml`, mypy with the settings of `mypy.ini`,
-     `bash -n` and the JSON check, each also when another one failed
+     `bash -n`, shellcheck with the settings of `.shellcheckrc` and the JSON check, each also when
+     another one failed. The step's environment sets `SHELLCHECK` to the pinned shellcheck in
+     setup-python's folder (`${{ env.pythonLocation }}/bin/shellcheck`): the runner has another
+     one on `PATH`
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
@@ -694,7 +698,7 @@ example:
 pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt   # Python 3.11
 python3.11 -m venv ~/.venvs/unos-lint
 ~/.venvs/unos-lint/bin/pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt
-make lint RUFF=~/.venvs/unos-lint/bin/ruff MYPY=~/.venvs/unos-lint/bin/mypy
+make lint RUFF=~/.venvs/unos-lint/bin/ruff MYPY=~/.venvs/unos-lint/bin/mypy SHELLCHECK=~/.venvs/unos-lint/bin/shellcheck
 (cd webui && npm ci)
 make frontend
 ```
@@ -709,6 +713,16 @@ make frontend
   fails for an ignore that suppresses nothing and for one without its code. A runtime dependency
   that publishes no type information gets its stubs (`types-<name>`) pinned in
   `supervisor/requirements-dev.txt`, the environment that mypy reads.
+- `make lint-shellcheck` runs shellcheck alone, with its default checks and one line per finding
+  (`file:line:column: level: text [SCnnnn]`; `shellcheck <file>` shows it with the code and a
+  link to the check's page). `.shellcheckrc` lets it follow the files that a script sources,
+  relative to the script's folder, and turns no check off; it is the only rc file of the
+  repository, as shellcheck reads the first one it finds above a script. A finding that stays gets a directive
+  with its reason, `# shellcheck disable=SCnnnn # <why>`, on the line before the command, or,
+  for a whole script, before its first command (`test_repo_tooling.py` fails for a directive
+  without its reason); a file that a script sources from the host gets
+  `# shellcheck source=/dev/null # <why>` (ADR-0448). `SHELLCHECK_OPTS` from the environment
+  adds to its options: a run with it records no green run.
 - `scripts/audit-python.sh` resolves `requirements.txt` in the audit environment, a temporary
   virtual environment of Python 3.11 (`PYTHON`, `python3` by default) that it removes at the end:
   pip, setuptools and wheel (and packaging, which wheel needs) from
@@ -740,8 +754,11 @@ for the packages the tools depend on; add `--upgrade` to update those
 too, or `--upgrade-package <name>` for one of them. Commit both files, then run `make setup`
 to update `.venv-lint`. `supervisor/tests/test_deploy_scripts.py` checks that every package has
 hashes and that the tools have the versions of the `.in` file. Dependabot leaves these
-two files alone. A new mypy can find errors that the old one did not: fix them in the same
-change.
+two files alone. A new mypy or shellcheck can find errors that the old one did not: fix them in
+the same change. shellcheck-py's version is shellcheck's with a build number of the wheel
+(`0.11.0.1` carries shellcheck 0.11.0); it publishes wheels for Linux x86_64, macOS (arm64 and
+x86_64) and Windows, none for Linux on ARM, where `make setup` stops for want of a wheel
+(ADR-0448).
 
 The file pins pip too (pip-audit depends on it through pip-api), so the
 install replaces the pip of the environment with that version.

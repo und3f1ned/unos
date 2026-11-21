@@ -22,6 +22,8 @@
 #
 # Settings: dev.env (see env.sh); PYTHON, the local Python whose packages are bundled
 # (supervisor/.venv/bin/python if it exists, else python3).
+
+# shellcheck disable=SC2016 # the scripts for the device's shell are in single quotes: it expands them
 set -euo pipefail
 case ${1:-} in
     -h | --help) awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; exit 0 ;;

@@ -90,7 +90,7 @@ choose_test_stack() {
     ids=$(docker network ls -q) || { log_error "Docker does not answer (docker network ls)"; return 1; }
     if [ -n "$ids" ]; then
         # One argument per network; one that is removed meanwhile only drops out.
-        # shellcheck disable=SC2086
+        # shellcheck disable=SC2086 # $ids is split on purpose, one argument per network
         subnets=" $(docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' $ids 2> /dev/null | tr '\n' ' ') "
     fi
     while [ "$n" -lt "$TEST_STACK_SLOTS" ]; do
@@ -123,7 +123,7 @@ wait_for_service() {
 
     log_info "Waiting for service at $url..."
 
-    while [ $waited -lt $max_time ]; do
+    while [ "$waited" -lt "$max_time" ]; do
         # -k: the HTTPS certificate comes from Caddy's local CA.
         if curl -sk -o /dev/null -w "%{http_code}" "$url/api/v1/health" | grep -q "200"; then
             log_success "Service is ready!"
