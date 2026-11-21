@@ -1,8 +1,7 @@
 """Database tables of the UNOS SMB model (Phase 1 slice 2).
 
-New tables only: init_db() runs create_all, which creates missing tables in
-existing databases (there is no migration framework, and columns are never
-added to existing tables). A restore checks the first four in the extracted
+The tables come from the migrations of src/migrations (ADR-0439): a change of
+one ships as a revision, which init_db() applies at the start. A restore checks the first four in the extracted
 backup database and refuses one that lacks them (ADR-0319); smb_uids it
 makes anew from the live database's, adding the backup's rows that it can
 read only for uids still missing (ADR-0353); the options, the group tables and

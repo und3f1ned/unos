@@ -73,9 +73,18 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
   literal or a path made from `DATA_DIR` anywhere else in `src/` (but the apps' paths inside their
   containers). A host path gets a setting of its own in `src/config.py`, which
   the stand-in sets in its environment: `scripts/standin/run_supervisor.py` patches no constant.
-- New tables come from `create_all` in `init_db`; existing tables and columns are never altered,
-  and there is no migration framework (ADR-0319). SQLite does not enforce foreign keys here, so
-  code deletes the dependent rows in the same transaction.
+- The schema is the Alembic revisions of `src/migrations/versions/` (ADR-0439): `init_db` brings
+  unos.db to the head at the start, before the first request, in one transaction; nothing runs
+  `create_all`. A change to a model, a new table included, ships with a revision in the same
+  change: from `supervisor/`, with a scratch folder (`mkdir -p $TMPDIR/unos-cli`; the import of
+  `src` writes a JWT secret into `UNOS_DATA_DIR`),
+  `UNOS_DATA_DIR=$TMPDIR/unos-cli .venv/bin/alembic -x db=$TMPDIR/unos-cli/unos.db upgrade head`,
+  then the same with `revision --autogenerate --rev-id NNNN -m "<what changes>"` (the next number).
+  Read the file it writes: an existing table changes in `op.batch_alter_table`, data moves with
+  `op.execute`, and there is no `downgrade` (ADR-0207). Never edit a committed revision, the
+  baseline `0001` included. `tests/test_migrations.py` fails while the models differ from the head.
+  SQLite does not enforce foreign keys here, so code deletes the dependent rows in the same
+  transaction.
 
 ## SMB (`src/shares/`)
 

@@ -41,6 +41,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The database's schema comes from Alembic migrations (ADR-0439), which the supervisor applies at
+  its start, before it serves: a change to an existing table ships as a revision. A database made
+  before them keeps its tables and is recorded at the first revision, the baseline; one of a newer
+  UNOS stops the start, and a restore refuses its backup.
 - The web UI's shared components (ADR-0432, the first chunk of the UX work): a destructive action
   asks in a confirmation of the page, with the action named on its button, instead of the browser's
   dialog, and the outcome of a backup's deletion and of the Scheduler's actions comes as a toast; a failed load says so with Retry instead of an empty

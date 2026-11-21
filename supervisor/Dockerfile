@@ -39,6 +39,7 @@ RUN pip install --no-cache-dir pip==26.3 \
 # writes only restic.
 RUN apt-get update && apt-get install -y --no-install-recommends restic && rm -rf /var/lib/apt/lists/*
 
+# The code, with the migrations of unos.db in src/migrations, which the start applies (ADR-0439).
 COPY src/ ./src/
 
 # No .pyc files: the container's writable layer is on the system disk (SD card).
