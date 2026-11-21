@@ -150,7 +150,9 @@
 						{#if mounted || issues.length > 0}
 							<div class="mt-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs">
 								{#if issues.length > 0}
-									<span data-field="issues" class={isWarning(pool) ? 'text-warning' : 'text-error'}>{issues.join(' · ')}</span>
+									<span data-field="issues" class={isWarning(pool) ? 'text-warning' : 'text-error'}
+										>{issues.join(' · ')}</span
+									>
 								{/if}
 								{#if mounted}
 									<span data-field="used" class="ml-auto text-secondary tabular whitespace-nowrap"

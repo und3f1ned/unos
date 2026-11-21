@@ -15,7 +15,6 @@
 	} from '$lib/api/remoteAccess';
 	import { Alert, Badge, Button, Card, Input, confirm, toast, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { Globe } from 'lucide-svelte';
 	import FormDialog from './FormDialog.svelte';
 	import PeerConfigDialog from './PeerConfigDialog.svelte';
 	import PeerList from './PeerList.svelte';
@@ -216,7 +215,9 @@
 		</div>
 		{#if status?.installed && on}
 			<div class="flex flex-wrap gap-2">
-				<Button variant="secondary" size="sm" disabled={busy} onclick={openEndpoint}>{$t('remote.changeEndpoint')}</Button>
+				<Button variant="secondary" size="sm" disabled={busy} onclick={openEndpoint}
+					>{$t('remote.changeEndpoint')}</Button
+				>
 				<Button variant="secondary" size="sm" disabled={busy} onclick={turnOff}>{$t('remote.turnOff')}</Button>
 			</div>
 		{/if}
@@ -345,8 +346,12 @@
 		maxlength={32}
 		required
 	/>
-	<Input label={$t('remote.publicKeyLabel')} hint={$t('remote.publicKeyHint')} bind:value={peerKey} spellcheck={false} />
+	<Input
+		label={$t('remote.publicKeyLabel')}
+		hint={$t('remote.publicKeyHint')}
+		bind:value={peerKey}
+		spellcheck={false}
+	/>
 </FormDialog>
 
 <PeerConfigDialog {created} {qrDataUrl} onclose={closeCreated} />
-

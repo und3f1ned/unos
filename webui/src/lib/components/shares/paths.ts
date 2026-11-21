@@ -54,11 +54,7 @@ function lastComponent(path: string): string {
  * Why the folder cannot be shared (or exported) at this location, as far as
  * the browser can tell, or ''. The server checks every rule again.
  */
-export function folderProblem(
-	location: SharePath | undefined,
-	parts: string[],
-	messages: FolderMessages
-): string {
+export function folderProblem(location: SharePath | undefined, parts: string[], messages: FolderMessages): string {
 	if (!location || location.type !== 'pool') return '';
 	if (parts.length === 0) return messages.poolRoot;
 	if (parts[0] === 'apps') return messages.apps(lastComponent(location.path));

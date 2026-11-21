@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import importlib
 import ipaddress
+import re
 import time
 
 import pytest
@@ -1168,4 +1169,6 @@ def test_the_web_ui_repeats_the_servers_texts_and_networks():
     card = (REPO / "webui" / "src" / "lib" / "components" / "system" / "security" / "FirewallCard.svelte").read_text(encoding="utf-8")
     networks = [str(network) for network in firewall.LOCAL_NETWORKS]
     assert networks == LOCAL_V4 + LOCAL_V6
-    assert "const LOCAL_NETWORKS = [" + ", ".join(f"'{n}'" for n in networks) + "];" in card
+    listed = re.search(r"const LOCAL_NETWORKS = \[(.*?)\];", card, re.S)
+    assert listed is not None
+    assert re.findall(r"'([^']+)'", listed.group(1)) == networks

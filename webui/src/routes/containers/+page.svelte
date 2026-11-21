@@ -18,12 +18,7 @@
 	import { containerAction } from '$lib/components/containers/actions';
 	import { BULK_DONE, BulkRun, Selection, type BulkAction } from '$lib/components/containers/bulk.svelte';
 	import { ContainerForm } from '$lib/components/containers/containerForm.svelte';
-	import {
-		countByGroup,
-		groupOf,
-		type QuickAction,
-		type StateFilter
-	} from '$lib/components/containers/labels';
+	import { countByGroup, groupOf, type QuickAction, type StateFilter } from '$lib/components/containers/labels';
 	import { t } from '$lib/i18n';
 	import { ApiError } from '$lib/api/client';
 
@@ -132,8 +127,8 @@
 			loadError = '';
 			const listed = new Set(containers.map((c) => c.id));
 			selection.set([...selection.ids].filter((id) => listed.has(id)));
-		} catch (e: any) {
-			loadError = e.message;
+		} catch (e) {
+			loadError = (e as Error).message;
 			dockerDown = e instanceof ApiError && e.status === 503;
 		} finally {
 			loading = false;
@@ -172,8 +167,8 @@
 			await createContainer(form.config());
 			closeCreateModal();
 			await loadData();
-		} catch (e: any) {
-			error = e.message;
+		} catch (e) {
+			error = (e as Error).message;
 		} finally {
 			submitting = false;
 		}
@@ -195,8 +190,8 @@
 		try {
 			await containerAction(containerId, action);
 			await loadData();
-		} catch (e: any) {
-			error = e.message;
+		} catch (e) {
+			error = (e as Error).message;
 		}
 	}
 
@@ -229,9 +224,7 @@
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			{#if activeTab === 'containers' && !loadError}
-				<Button variant="primary" icon={Plus} onclick={openCreateModal}
-					>{$t('containers.create.button')}</Button
-				>
+				<Button variant="primary" icon={Plus} onclick={openCreateModal}>{$t('containers.create.button')}</Button>
 			{/if}
 		</div>
 	</div>
@@ -320,12 +313,7 @@
 		</LoadState>
 	</div>
 
-	<div
-		role="tabpanel"
-		id="docker-panel-images"
-		aria-labelledby="docker-tab-images"
-		hidden={activeTab !== 'images'}
-	>
+	<div role="tabpanel" id="docker-panel-images" aria-labelledby="docker-tab-images" hidden={activeTab !== 'images'}>
 		{#if imagesShown}
 			<ImageList bind:this={imageList} />
 		{/if}
@@ -343,8 +331,4 @@
 />
 
 <!-- A container's details (a Sheet) -->
-<ContainerDetailDrawer
-	bind:open={showDrawer}
-	container={selectedContainer}
-	onclose={closeDrawer}
-/>
+<ContainerDetailDrawer bind:open={showDrawer} container={selectedContainer} onclose={closeDrawer} />

@@ -34,17 +34,15 @@
 	const choices = $derived(admin ? [...ADMIN_PAGES, ...ADMIN_ACTIONS] : USER_PAGES);
 	// Reactive: the names follow the language of the page; the search also finds the other's.
 	const shown = $derived(
-		choices.map(
-			(choice): Shown => ({
-				id: choice.id,
-				name: $t(choice.nameKey),
-				kind: $t(choice.kindKey),
-				icon: choice.icon,
-				run: choice.run,
-				names: inEveryLanguage(choice.nameKey),
-				keywords: inEveryLanguage(choice.keywordsKey)
-			})
-		)
+		choices.map((choice): Shown => ({
+			id: choice.id,
+			name: $t(choice.nameKey),
+			kind: $t(choice.kindKey),
+			icon: choice.icon,
+			run: choice.run,
+			names: inEveryLanguage(choice.nameKey),
+			keywords: inEveryLanguage(choice.keywordsKey)
+		}))
 	);
 
 	let open = $state(false);

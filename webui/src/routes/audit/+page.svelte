@@ -256,11 +256,8 @@
 	</div>
 
 	{#if exportError}
-		<Alert
-			variant="error"
-			title={$t('audit.exportError')}
-			dismissible
-			ondismiss={() => (exportError = '')}>{exportError}</Alert
+		<Alert variant="error" title={$t('audit.exportError')} dismissible ondismiss={() => (exportError = '')}
+			>{exportError}</Alert
 		>
 	{/if}
 

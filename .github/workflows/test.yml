@@ -116,8 +116,9 @@ jobs:
           SHELLCHECK: ${{ env.pythonLocation }}/bin/shellcheck
         run: make lint
 
-  # The web UI: make frontend (svelte-check, the check of the web UI's texts
-  # and the production build, each also when another one failed), and the
+  # The web UI: make frontend (svelte-check, the checks of the web UI's runes,
+  # texts and design system, the production build, ESLint and Prettier's
+  # check of webui/src, ADR-0449, each also when another one failed), and the
   # known vulnerabilities of its runtime dependencies. Node.js as in the
   # builder stage of webui/Dockerfile.
   frontend:
@@ -142,12 +143,14 @@ jobs:
         working-directory: webui
         run: npm ci
 
-      # The check script of package.json (svelte-kit sync, which writes
-      # .svelte-kit/tsconfig.json, then svelte-check --threshold error) and
-      # the build. npm run takes the programs from node_modules/.bin, where
-      # npm ci installed the versions of package-lock.json; npx would download
-      # a missing one from the registry instead, without asking where CI is set.
-      - name: Type check and build
+      # The scripts of package.json: check (svelte-kit sync, which writes
+      # .svelte-kit/tsconfig.json, then svelte-check --threshold error), the
+      # checks of runes, texts and design, the build, lint (ESLint, a warning
+      # fails too) and format-check (Prettier). npm run takes the programs from
+      # node_modules/.bin, where npm ci installed the versions of
+      # package-lock.json; npx would download a missing one from the registry
+      # instead, without asking where CI is set.
+      - name: Type check, lint and build
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: make frontend
 

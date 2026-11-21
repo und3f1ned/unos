@@ -7,7 +7,8 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'snapshots.title': 'Snapshots',
-	'snapshots.subtitle': "Read-only copies of a pool or a volume. A pool's snapshot leaves out its volumes: take theirs as well.",
+	'snapshots.subtitle':
+		"Read-only copies of a pool or a volume. A pool's snapshot leaves out its volumes: take theirs as well.",
 	'snapshots.create': 'Create snapshot',
 	'snapshots.createBlocked': 'Mount a pool on the Storage page first',
 	'snapshots.loadPoolsError': 'Could not load the pools and volumes',
@@ -93,7 +94,8 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'snapshots.title': 'Снимки',
-	'snapshots.subtitle': 'Копии пула или тома только для чтения. Снимок пула не включает его тома: делайте снимки и томов.',
+	'snapshots.subtitle':
+		'Копии пула или тома только для чтения. Снимок пула не включает его тома: делайте снимки и томов.',
 	'snapshots.create': 'Создать снимок',
 	'snapshots.createBlocked': 'Сначала смонтируйте пул на странице «Хранилище»',
 	'snapshots.loadPoolsError': 'Не удалось загрузить пулы и тома',
@@ -121,7 +123,6 @@ export const ru: Translation<typeof en> = {
 	'snapshots.restoreAction': 'Восстановить…',
 	'snapshots.deleteOne': 'Удалить снимок {name}',
 	'snapshots.dateTime': '<дата>_<время>',
-
 
 	'snapshots.new.title': 'Создание снимка',
 	'snapshots.new.of': 'Снимок содержимого',

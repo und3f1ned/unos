@@ -25,7 +25,6 @@
 		autocomplete="off"
 		{placeholder}
 		aria-describedby="{id}-hint"
-		bind:value
-	></textarea>{#if error !== undefined}{' '}{#if error}<p class="form-error">{error}</p>{/if}{/if}
+		bind:value></textarea>{#if error !== undefined}{' '}{#if error}<p class="form-error">{error}</p>{/if}{/if}
 	<div id="{id}-hint"><HelpText text={$t('iscsi.form.initiatorsHint')} /></div>
 </div>

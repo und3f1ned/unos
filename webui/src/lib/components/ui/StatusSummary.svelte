@@ -36,7 +36,9 @@
 
 {#snippet actionOf(item: StatusItem)}
 	{#if item.action?.href}
-		<a href={item.action.href} class="card-action-link">{item.action.label}<ArrowRight class="w-3.5 h-3.5" aria-hidden="true" /></a>
+		<a href={item.action.href} class="card-action-link"
+			>{item.action.label}<ArrowRight class="w-3.5 h-3.5" aria-hidden="true" /></a
+		>
 	{:else if item.action}
 		<Button variant="secondary" size="sm" onclick={item.action.onclick}>{item.action.label}</Button>
 	{/if}
@@ -63,7 +65,10 @@
 			<p class="min-w-0 flex-1 font-medium">{$t('ui.status.issues', { n: sorted.length })}</p>
 			<Button variant="ghost" size="sm" aria-expanded={open} aria-controls={listId} onclick={() => (open = !open)}>
 				{open ? $t('ui.status.hide') : $t('ui.status.show')}
-				{#if open}<ChevronUp class="w-4 h-4" aria-hidden="true" />{:else}<ChevronDown class="w-4 h-4" aria-hidden="true" />{/if}
+				{#if open}<ChevronUp class="w-4 h-4" aria-hidden="true" />{:else}<ChevronDown
+						class="w-4 h-4"
+						aria-hidden="true"
+					/>{/if}
 			</Button>
 		</div>
 		<ul id={listId} class="status-summary-list" hidden={!open}>

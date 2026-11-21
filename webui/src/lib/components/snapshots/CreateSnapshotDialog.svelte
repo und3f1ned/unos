@@ -50,7 +50,13 @@
 
 <Modal {open} title={$t('snapshots.new.title')} closable={!creating} onclose={closeCreate}>
 	{#if selected}
-		<form onsubmit={(e) => { e.preventDefault(); handleCreate(); }} class="space-y-4">
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				handleCreate();
+			}}
+			class="space-y-4"
+		>
 			<p class="text-sm text-secondary">
 				{$t('snapshots.new.of')}
 				<span class="mono-xs break-all">{selected.path}</span>{$t('snapshots.new.keptIn')}

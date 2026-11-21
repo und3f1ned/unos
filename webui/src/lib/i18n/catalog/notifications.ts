@@ -11,7 +11,8 @@ export const en = {
 	'notifications.views.channels': 'Channels',
 	'notifications.views.history': 'History',
 	// The tab's one line under its title: which channels receive what.
-	'notifications.subtitle': 'Every enabled channel, of any kind, receives the health alerts and the power announcements.',
+	'notifications.subtitle':
+		'Every enabled channel, of any kind, receives the health alerts and the power announcements.',
 	'notifications.addChannel': 'Add channel',
 	'notifications.loadError': 'The notification settings could not be read',
 
@@ -89,8 +90,7 @@ export const en = {
 	'notifications.hook.url': 'URL',
 	'notifications.hook.webhookUrl': 'Webhook URL',
 	'notifications.hook.webhookHint': 'UNOS sends JSON with title, message, type, timestamp and source.',
-	'notifications.hook.discordHint':
-		"In Discord: the channel's settings, Integrations, Webhooks, Copy Webhook URL.",
+	'notifications.hook.discordHint': "In Discord: the channel's settings, Integrations, Webhooks, Copy Webhook URL.",
 	'notifications.hook.slackHint': 'An incoming webhook of a Slack app: it posts to the channel it was made for.',
 	'notifications.hook.method': 'Method',
 	'notifications.form.enabled': 'Enable channel',
@@ -119,7 +119,8 @@ export const ru: Translation<typeof en> = {
 
 	'notifications.views.channels': 'Каналы',
 	'notifications.views.history': 'История',
-	'notifications.subtitle': 'Каждый включённый канал любого вида получает оповещения о состоянии и объявления о питании.',
+	'notifications.subtitle':
+		'Каждый включённый канал любого вида получает оповещения о состоянии и объявления о питании.',
 	'notifications.addChannel': 'Добавить канал',
 	'notifications.loadError': 'Не удалось прочитать настройки уведомлений',
 
@@ -194,8 +195,7 @@ export const ru: Translation<typeof en> = {
 	'notifications.hook.url': 'URL',
 	'notifications.hook.webhookUrl': 'URL вебхука',
 	'notifications.hook.webhookHint': 'UNOS отправляет JSON с полями title, message, type, timestamp и source.',
-	'notifications.hook.discordHint':
-		'В Discord: настройки канала, «Интеграция», «Вебхуки», «Копировать URL вебхука».',
+	'notifications.hook.discordHint': 'В Discord: настройки канала, «Интеграция», «Вебхуки», «Копировать URL вебхука».',
 	'notifications.hook.slackHint':
 		'Входящий вебхук приложения Slack: он публикует сообщения в канал, для которого создан.',
 	'notifications.hook.method': 'Метод',

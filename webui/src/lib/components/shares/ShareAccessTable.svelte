@@ -115,7 +115,9 @@
 		{#if rows.length === 0}
 			<p class="access-empty">
 				{$t('shares.access.noUsers')}
-				<a class="link" href="/users" target="_blank" rel="noopener">{$t('shares.access.addUser')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a>
+				<a class="link" href="/users" target="_blank" rel="noopener"
+					>{$t('shares.access.addUser')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a
+				>
 			</p>
 		{:else}
 			<ul class="access-rows" aria-labelledby="share-access-users">
@@ -146,7 +148,9 @@
 						<p class="access-hint" id="share-access-hint-{user.id}">
 							{#if state === 'off'}
 								<Badge variant="neutral">{$t('shares.access.smbOff')}</Badge>
-								<a class="link" href="/users" target="_blank" rel="noopener">{$t('shares.access.turnOnSmb')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a>
+								<a class="link" href="/users" target="_blank" rel="noopener"
+									>{$t('shares.access.turnOnSmb')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a
+								>
 							{:else if state === 'password_needed'}
 								<Badge variant="warning">{$t('shares.access.smbPending')}</Badge>
 								{$t('shares.access.smbPendingHint')}
@@ -180,7 +184,9 @@
 		{#if groups.length === 0}
 			<p class="access-empty">
 				{$t('shares.access.noGroups')}
-				<a class="link" href="/users#groups" target="_blank" rel="noopener">{$t('shares.access.createGroup')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a>
+				<a class="link" href="/users#groups" target="_blank" rel="noopener"
+					>{$t('shares.access.createGroup')}<span class="sr-only">{` ${$t('shares.access.newTab')}`}</span></a
+				>
 			</p>
 		{:else}
 			<ul class="access-rows" aria-labelledby="share-access-groups">

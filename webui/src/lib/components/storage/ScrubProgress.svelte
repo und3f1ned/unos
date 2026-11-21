@@ -50,8 +50,7 @@
 
 	// When the last scrub started: the server answers it in UTC with its offset, the page shows it
 	// in the browser's time zone and the date format of the page's language (ADR-0401).
-	const scrubStarted = (value: string): string =>
-		formatDateTime(value, $intlLocale, DATE_TIME_MINUTES);
+	const scrubStarted = (value: string): string => formatDateTime(value, $intlLocale, DATE_TIME_MINUTES);
 
 	const scrubResultStyles = {
 		success: { icon: CheckCircle, class: 'text-success' },

@@ -12,7 +12,18 @@ export function isShortcut(event: KeyboardEvent): boolean {
 }
 
 // i18n-ignore: types of input that hold no text
-const NOT_TEXT = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+const NOT_TEXT = new Set([
+	'button',
+	'checkbox',
+	'color',
+	'file',
+	'hidden',
+	'image',
+	'radio',
+	'range',
+	'reset',
+	'submit'
+]);
 
 // On macOS Ctrl+K in a text field deletes to the end of its line: the field keeps it there.
 export function keptByTheField(event: KeyboardEvent): boolean {

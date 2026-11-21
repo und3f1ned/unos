@@ -101,11 +101,15 @@ export const en = {
 
 	'storage.pools.title': 'Pools',
 	'storage.pools.unsafeTitle': 'RAID 5 and 6 are unsafe in btrfs',
-	'storage.pools.unsafe': 'A power failure can corrupt data. Back up the pool and create it again as RAID 1, 1C3 or 1C4.',
+	'storage.pools.unsafe':
+		'A power failure can corrupt data. Back up the pool and create it again as RAID 1, 1C3 or 1C4.',
 	'storage.pools.loadError': 'Could not load the pools',
 	'storage.pools.none': 'No pools yet',
 	'storage.pools.noneHint': 'Create pool makes one from the free disks.',
-	'storage.pools.freeDisks': { one: '{n} disk is free for one: Create pool makes it.', other: '{n} disks are free for one: Create pool makes it.' },
+	'storage.pools.freeDisks': {
+		one: '{n} disk is free for one: Create pool makes it.',
+		other: '{n} disks are free for one: Create pool makes it.'
+	},
 
 	// A pool's health, as the server answers it (Pool.health).
 	'storage.health.healthy': 'Healthy',
@@ -169,12 +173,14 @@ export const en = {
 	'storage.pool.readOnly': 'Shares and apps cannot write to it until it is mounted read-write again.',
 	'storage.pool.deviceErrorsTitle': { one: '{n} disk error', other: '{n} disk errors' },
 	// Before the command that resets the counters.
-	'storage.pool.deviceErrors': "btrfs counted read, write or checksum errors on the pool's disks. Check the disks' SMART health and run a scrub.",
+	'storage.pool.deviceErrors':
+		"btrfs counted read, write or checksum errors on the pool's disks. Check the disks' SMART health and run a scrub.",
 	'storage.pool.resetWith': 'The count stays until it is reset with',
 	// The title of a pool's alert that lists more than one problem.
 	'storage.pool.issuesTitle': { one: '{n} problem', other: '{n} problems' },
 	'storage.pool.unreadableTitle': 'State unknown',
-	'storage.pool.unreadable': "UNOS could not read the host's mount table or the pool's error counters; the system logs say why.",
+	'storage.pool.unreadable':
+		"UNOS could not read the host's mount table or the pool's error counters; the system logs say why.",
 
 	// A pool's scrub, as btrfs reports it (ADR-0313).
 	'storage.scrub.statusError': 'Could not read the scrub status',
@@ -293,8 +299,7 @@ export const en = {
 	'storage.create.needConfirm': 'type the name again',
 	'storage.create.mismatch': 'Does not match the pool name',
 	'storage.create.failed': 'Pool was not created',
-	'storage.create.cleared':
-		'The selection has been cleared. Close this dialog and open it again to reload the disks.',
+	'storage.create.cleared': 'The selection has been cleared. Close this dialog and open it again to reload the disks.',
 	'storage.create.reloaded':
 		'The disk list has been reloaded and the selection cleared. Check the disks and select them again.',
 	'storage.create.submit': 'Erase disks and create pool',
@@ -342,16 +347,14 @@ export const en = {
 	// Around the pool's mountpoint.
 	'storage.import.keptBefore':
 		'The data on them is kept. UNOS gives the filesystem the pool name as its label, mounts it at',
-	'storage.import.keptAfter':
-		'by its UUID and adds an /etc/fstab entry, so the pool is mounted again after a reboot.',
+	'storage.import.keptAfter': 'by its UUID and adds an /etc/fstab entry, so the pool is mounted again after a reboot.',
 	// The last part of the mountpoint while no name is entered.
 	'storage.import.nameSlot': '<name>',
 	'storage.import.name': 'Pool name',
 	// An example of a pool's name.
 	'storage.import.namePlaceholder': 'backup',
 	'storage.import.nameTaken': 'A pool named "{name}" exists already. Choose another name.',
-	'storage.import.labelTaken':
-		'Another btrfs filesystem found on the disks is labelled "{name}". Choose another name.',
+	'storage.import.labelTaken': 'Another btrfs filesystem found on the disks is labelled "{name}". Choose another name.',
 	'storage.import.failed': 'Pool was not imported',
 
 	'storage.remove.title': 'Remove pool',
@@ -359,7 +362,8 @@ export const en = {
 	'storage.remove.about': 'UNOS stops using the pool',
 	'storage.remove.aboutEnd': '.',
 	'storage.remove.unmounted': 'It is unmounted, and no longer mounted at boot:',
-	'storage.remove.kept': 'Its data ({used}) stays on the disks, which are not wiped: the pool can be mounted again later.',
+	'storage.remove.kept':
+		'Its data ({used}) stays on the disks, which are not wiped: the pool can be mounted again later.',
 	'storage.remove.users': 'Shares and apps that use it stop working.',
 	'storage.remove.confirm': 'Type {name} to confirm',
 	'storage.remove.failed': 'Pool was not removed',
@@ -370,7 +374,8 @@ export const en = {
 	'storage.volumes.titleNone': 'Volumes',
 	// Around the pool's mountpoint.
 	'storage.volumes.introBefore': 'A volume is a folder of the pool in',
-	'storage.volumes.introAfter': 'with snapshots and a quota of its own, which can be shared on its own. A snapshot of the pool leaves it out, and scheduled snapshots take pools only.',
+	'storage.volumes.introAfter':
+		'with snapshots and a quota of its own, which can be shared on its own. A snapshot of the pool leaves it out, and scheduled snapshots take pools only.',
 	'storage.volumes.readOnly': 'Volumes cannot be created or deleted while the pool is mounted read-only.',
 	'storage.volumes.forcedReadOnly': 'btrfs made it read-only after an error; check the kernel log (dmesg).',
 	'storage.volumes.loadError': 'Could not load the volumes',
@@ -406,7 +411,8 @@ export const en = {
 	'storage.volumes.quotasOff':
 		"The volumes' use is not counted. Quotas count it and limit volumes, but they slow down deleting snapshots and balancing the pool, the more so the more snapshots it has. To enable them, run on the host:",
 	'storage.volumes.rescanTitle': 'The counts need a rescan',
-	'storage.volumes.rescan': 'btrfs says that the use counted on this pool may be wrong until it is counted again. Run on the host:',
+	'storage.volumes.rescan':
+		'btrfs says that the use counted on this pool may be wrong until it is counted again. Run on the host:',
 	// The use over time: one point per hour of the last 30 days, the current reading last.
 	'storage.volumes.chartShow': 'Use over time of {name}',
 	'storage.volumes.chartTitle': 'Use over time',
@@ -476,7 +482,8 @@ export const ru: Translation<typeof en> = {
 
 	'storage.found.title': 'Найдено на дисках',
 	'storage.found.searchError': 'Не удалось выполнить поиск пулов для импорта',
-	'storage.found.intro': 'Файловые системы btrfs на дисках хоста, которые ещё не стали пулами. Импорт сохраняет их данные.',
+	'storage.found.intro':
+		'Файловые системы btrfs на дисках хоста, которые ещё не стали пулами. Импорт сохраняет их данные.',
 	'storage.found.noLabel': 'Без метки',
 	'storage.found.label': 'Метка «{label}»',
 	'storage.found.uuid': 'UUID {uuid}',
@@ -495,11 +502,16 @@ export const ru: Translation<typeof en> = {
 
 	'storage.pools.title': 'Пулы',
 	'storage.pools.unsafeTitle': 'RAID 5 и 6 в btrfs ненадёжны',
-	'storage.pools.unsafe': 'Сбой питания может повредить данные. Сделайте резервную копию и создайте пул заново как RAID 1, 1C3 или 1C4.',
+	'storage.pools.unsafe':
+		'Сбой питания может повредить данные. Сделайте резервную копию и создайте пул заново как RAID 1, 1C3 или 1C4.',
 	'storage.pools.loadError': 'Не удалось загрузить пулы',
 	'storage.pools.none': 'Пулов пока нет',
 	'storage.pools.noneHint': 'Кнопка «Создать пул» соберёт его из свободных дисков.',
-	'storage.pools.freeDisks': { one: 'Для него свободен {n} диск: его соберёт кнопка «Создать пул».', few: 'Для него свободны {n} диска: его соберёт кнопка «Создать пул».', many: 'Для него свободны {n} дисков: его соберёт кнопка «Создать пул».' },
+	'storage.pools.freeDisks': {
+		one: 'Для него свободен {n} диск: его соберёт кнопка «Создать пул».',
+		few: 'Для него свободны {n} диска: его соберёт кнопка «Создать пул».',
+		many: 'Для него свободны {n} дисков: его соберёт кнопка «Создать пул».'
+	},
 
 	'storage.health.healthy': 'Исправен',
 	'storage.health.degraded': 'Деградирован',
@@ -550,18 +562,24 @@ export const ru: Translation<typeof en> = {
 	'storage.pool.unknown': 'неизвестно',
 	'storage.pool.unknownNotMounted': 'неизвестно (не смонтирован)',
 	'storage.pool.notMounted': 'Не смонтирован',
-	'storage.pool.missingTitle': { one: 'Не хватает {n} диска', few: 'Не хватает {n} дисков', many: 'Не хватает {n} дисков' },
+	'storage.pool.missingTitle': {
+		one: 'Не хватает {n} диска',
+		few: 'Не хватает {n} дисков',
+		many: 'Не хватает {n} дисков'
+	},
 	'storage.pool.missing': 'Подключите или замените его, пока не потеряна оставшаяся избыточность.',
 	'storage.pool.forcedReadOnlyTitle': 'Только для чтения после ошибки',
 	'storage.pool.forcedReadOnly': 'Запись в пул не удаётся; причину называет журнал ядра (dmesg).',
 	'storage.pool.readOnlyTitle': 'Смонтирован только для чтения',
 	'storage.pool.readOnly': 'Общие папки и приложения не могут писать в него, пока он снова не смонтирован для записи.',
 	'storage.pool.deviceErrorsTitle': { one: '{n} ошибка дисков', few: '{n} ошибки дисков', many: '{n} ошибок дисков' },
-	'storage.pool.deviceErrors': 'btrfs насчитал ошибки чтения, записи или контрольных сумм на дисках пула. Проверьте состояние SMART дисков и запустите проверку целостности.',
+	'storage.pool.deviceErrors':
+		'btrfs насчитал ошибки чтения, записи или контрольных сумм на дисках пула. Проверьте состояние SMART дисков и запустите проверку целостности.',
 	'storage.pool.resetWith': 'Счётчик сохраняется, пока его не сбросят командой',
 	'storage.pool.issuesTitle': { one: '{n} проблема', few: '{n} проблемы', many: '{n} проблем' },
 	'storage.pool.unreadableTitle': 'Состояние неизвестно',
-	'storage.pool.unreadable': 'UNOS не удалось прочитать таблицу монтирования хоста или счётчики ошибок пула; причину покажут системные журналы.',
+	'storage.pool.unreadable':
+		'UNOS не удалось прочитать таблицу монтирования хоста или счётчики ошибок пула; причину покажут системные журналы.',
 
 	'storage.scrub.statusError': 'Не удалось прочитать состояние проверки целостности',
 	'storage.scrub.running': 'Идёт проверка целостности',
@@ -675,7 +693,11 @@ export const ru: Translation<typeof en> = {
 	'storage.create.unusable': { one: '{n} диск недоступен', few: '{n} диска недоступны', many: '{n} дисков недоступны' },
 	'storage.create.missing': 'Чтобы создать пул: {list}.',
 	'storage.create.needName': 'введите имя',
-	'storage.create.needDisks': { one: 'выберите хотя бы {n} диск', few: 'выберите хотя бы {n} диска', many: 'выберите хотя бы {n} дисков' },
+	'storage.create.needDisks': {
+		one: 'выберите хотя бы {n} диск',
+		few: 'выберите хотя бы {n} диска',
+		many: 'выберите хотя бы {n} дисков'
+	},
 	'storage.create.needErase': 'согласитесь стереть их данные',
 	'storage.create.needConfirm': 'введите имя ещё раз',
 	'storage.create.mismatch': 'Не совпадает с именем пула',
@@ -723,20 +745,21 @@ export const ru: Translation<typeof en> = {
 	'storage.import.keptTitle': 'Диски не форматируются',
 	'storage.import.keptBefore':
 		'Данные на них сохраняются. UNOS сделает имя пула меткой файловой системы, смонтирует её в',
-	'storage.import.keptAfter':
-		'по UUID и добавит запись в /etc/fstab, чтобы пул снова монтировался после перезагрузки.',
+	'storage.import.keptAfter': 'по UUID и добавит запись в /etc/fstab, чтобы пул снова монтировался после перезагрузки.',
 	'storage.import.nameSlot': '<имя>',
 	'storage.import.name': 'Имя пула',
 	'storage.import.namePlaceholder': 'backup',
 	'storage.import.nameTaken': 'Пул «{name}» уже есть. Выберите другое имя.',
-	'storage.import.labelTaken': 'У другой файловой системы btrfs на дисках уже есть метка «{name}». Выберите другое имя.',
+	'storage.import.labelTaken':
+		'У другой файловой системы btrfs на дисках уже есть метка «{name}». Выберите другое имя.',
 	'storage.import.failed': 'Не удалось импортировать пул',
 
 	'storage.remove.title': 'Убрать пул',
 	'storage.remove.about': 'UNOS перестаёт использовать пул',
 	'storage.remove.aboutEnd': '.',
 	'storage.remove.unmounted': 'Он отмонтируется и больше не монтируется при загрузке:',
-	'storage.remove.kept': 'Его данные ({used}) остаются на дисках, диски не стираются: пул можно будет снова смонтировать.',
+	'storage.remove.kept':
+		'Его данные ({used}) остаются на дисках, диски не стираются: пул можно будет снова смонтировать.',
 	'storage.remove.users': 'Общие папки и приложения, которые его используют, перестанут работать.',
 	'storage.remove.confirm': 'Введите {name} для подтверждения',
 	'storage.remove.failed': 'Не удалось убрать пул',
@@ -745,7 +768,8 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.title': 'Тома в пуле {pool}',
 	'storage.volumes.titleNone': 'Тома',
 	'storage.volumes.introBefore': 'Том — это папка пула в',
-	'storage.volumes.introAfter': 'со своими снимками и квотой; её можно открыть в сеть отдельно. Снимок пула её не включает, а снимки по расписанию делаются только для пулов.',
+	'storage.volumes.introAfter':
+		'со своими снимками и квотой; её можно открыть в сеть отдельно. Снимок пула её не включает, а снимки по расписанию делаются только для пулов.',
 	'storage.volumes.readOnly': 'Тома нельзя создавать и удалять, пока пул смонтирован только для чтения.',
 	'storage.volumes.forcedReadOnly':
 		'btrfs перевёл его в режим только для чтения после ошибки; проверьте журнал ядра (dmesg).',
@@ -776,7 +800,8 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.quotasOff':
 		'Заполнение томов не считается. Квоты считают его и ограничивают тома, но замедляют удаление снимков и балансировку пула, тем сильнее, чем больше в нём снимков. Чтобы включить их, выполните на хосте:',
 	'storage.volumes.rescanTitle': 'Счётчики нужно пересчитать',
-	'storage.volumes.rescan': 'btrfs сообщает, что заполнение в этом пуле может быть посчитано неверно, пока его не пересчитают. Выполните на хосте:',
+	'storage.volumes.rescan':
+		'btrfs сообщает, что заполнение в этом пуле может быть посчитано неверно, пока его не пересчитают. Выполните на хосте:',
 	'storage.volumes.chartShow': 'Заполнение тома {name} во времени',
 	'storage.volumes.chartTitle': 'Заполнение во времени',
 	'storage.volumes.chartError': 'Не удалось загрузить заполнение во времени',

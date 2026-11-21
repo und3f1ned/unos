@@ -165,85 +165,84 @@
 	<!-- The field, in a positioned box only with a leading icon: else the label and the field stay
 	     siblings, as before. -->
 	{#snippet field()}
-	{#if type === 'number'}
-		<!-- The value stays the text that was typed, as in the other fields. -->
-		<input
-			id={inputId}
-			type="number"
-			{value}
-			oninput={handleInput}
-			{min}
-			{max}
-			{step}
-			{placeholder}
-			{required}
-			{disabled}
-			{autocomplete}
-			{spellcheck}
-			aria-label={ariaLabel || undefined}
-			use:focusAndSelect={selectOnMount}
-			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-status-error={error && !framed}
-			aria-invalid={error ? 'true' : undefined}
-			aria-describedby={describedBy}
-			{onchange}
-			{onfocus}
-			{onblur}
-			{onkeydown}
-			{onclick}
-			{ondblclick}
-		/>
-	{:else if type === 'date'}
-		<!-- The value is "" or YYYY-MM-DD, whatever the browser shows; the dark scheme keeps
+		{#if type === 'number'}
+			<!-- The value stays the text that was typed, as in the other fields. -->
+			<input
+				id={inputId}
+				type="number"
+				{value}
+				oninput={handleInput}
+				{min}
+				{max}
+				{step}
+				{placeholder}
+				{required}
+				{disabled}
+				{autocomplete}
+				{spellcheck}
+				aria-label={ariaLabel || undefined}
+				use:focusAndSelect={selectOnMount}
+				class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
+				class:border-status-error={error && !framed}
+				aria-invalid={error ? 'true' : undefined}
+				aria-describedby={describedBy}
+				{onchange}
+				{onfocus}
+				{onblur}
+				{onkeydown}
+				{onclick}
+				{ondblclick}
+			/>
+		{:else if type === 'date'}
+			<!-- The value is "" or YYYY-MM-DD, whatever the browser shows; the dark scheme keeps
 		     the browser's calendar button visible on the dark field. -->
-		<input
-			id={inputId}
-			type="date"
-			bind:value
-			{required}
-			{disabled}
-			{autocomplete}
-			class="form-input disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-status-error={error}
-			aria-invalid={error ? 'true' : undefined}
-			aria-describedby={describedBy}
-			{oninput}
-			{onchange}
-			{onfocus}
-			{onblur}
-		/>
-	{:else}
-		<input
-			id={inputId}
-			{type}
-			bind:value
-			{placeholder}
-			{required}
-			{disabled}
-			{autocomplete}
-			{spellcheck}
-			aria-label={ariaLabel || undefined}
-			role={combobox ? 'combobox' : undefined}
-			aria-autocomplete={combobox ? 'list' : undefined}
-			aria-expanded={combobox ? combobox.expanded : undefined}
-			aria-controls={combobox?.id}
-			aria-activedescendant={combobox?.activeId ?? undefined}
-			use:focusAndSelect={selectOnMount}
-			{maxlength}
-			class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
-			class:border-status-error={error && !framed}
-			aria-invalid={error ? 'true' : undefined}
-			aria-describedby={describedBy}
-			{oninput}
-			{onchange}
-			{onfocus}
-			{onblur}
-			{onkeydown}
-			{onclick}
-			{ondblclick}
-		/>
-	{/if}
-
+			<input
+				id={inputId}
+				type="date"
+				bind:value
+				{required}
+				{disabled}
+				{autocomplete}
+				class="form-input disabled:cursor-not-allowed disabled:opacity-50"
+				class:border-status-error={error}
+				aria-invalid={error ? 'true' : undefined}
+				aria-describedby={describedBy}
+				{oninput}
+				{onchange}
+				{onfocus}
+				{onblur}
+			/>
+		{:else}
+			<input
+				id={inputId}
+				{type}
+				bind:value
+				{placeholder}
+				{required}
+				{disabled}
+				{autocomplete}
+				{spellcheck}
+				aria-label={ariaLabel || undefined}
+				role={combobox ? 'combobox' : undefined}
+				aria-autocomplete={combobox ? 'list' : undefined}
+				aria-expanded={combobox ? combobox.expanded : undefined}
+				aria-controls={combobox?.id}
+				aria-activedescendant={combobox?.activeId ?? undefined}
+				use:focusAndSelect={selectOnMount}
+				{maxlength}
+				class="form-input {sizeClass} disabled:cursor-not-allowed disabled:opacity-50"
+				class:border-status-error={error && !framed}
+				aria-invalid={error ? 'true' : undefined}
+				aria-describedby={describedBy}
+				{oninput}
+				{onchange}
+				{onfocus}
+				{onblur}
+				{onkeydown}
+				{onclick}
+				{ondblclick}
+			/>
+		{/if}
 	{/snippet}
 
 	{#if icon}

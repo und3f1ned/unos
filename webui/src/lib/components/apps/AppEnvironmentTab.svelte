@@ -23,15 +23,7 @@
 		missingRequired: string[];
 	};
 
-	let {
-		app,
-		containers,
-		several,
-		isInstalled,
-		inUnosSmb,
-		envValues = $bindable(),
-		missingRequired
-	}: Props = $props();
+	let { app, containers, several, isInstalled, inUnosSmb, envValues = $bindable(), missingRequired }: Props = $props();
 </script>
 
 <div class="space-y-3">

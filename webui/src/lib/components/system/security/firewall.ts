@@ -4,7 +4,6 @@
 import type { FirewallAction, FirewallProtocol, FirewallRule } from '$lib/api/security';
 import type { Translate } from '$lib/i18n';
 
-
 export const RULE_ACTIONS: Record<string, string> = {
 	allow: 'firewall.allow',
 	deny: 'firewall.deny',
@@ -43,7 +42,13 @@ export function ruleLine(rule: FirewallRule, t: Translate): string {
 }
 
 /** The fields of the dialog of a new rule. */
-export type NewRule = { action: FirewallAction; protocol: FirewallProtocol; port: string; source: string; comment: string };
+export type NewRule = {
+	action: FirewallAction;
+	protocol: FirewallProtocol;
+	port: string;
+	source: string;
+	comment: string;
+};
 
 export function emptyRule(): NewRule {
 	return { action: 'allow', protocol: 'tcp', port: '', source: '', comment: '' };

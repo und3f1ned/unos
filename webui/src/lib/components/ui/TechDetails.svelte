@@ -30,7 +30,9 @@
 </script>
 
 <details class="tech-details {className}">
-	<summary><ChevronRight class="w-3.5 h-3.5 details-chevron" aria-hidden="true" />{summary || $t('ui.error.details')}</summary>
+	<summary
+		><ChevronRight class="w-3.5 h-3.5 details-chevron" aria-hidden="true" />{summary || $t('ui.error.details')}</summary
+	>
 	<div class="tech-details-body">
 		{#if children}
 			<div class="min-w-0 flex-1">{@render children()}</div>
@@ -38,7 +40,13 @@
 			<pre>{text}</pre>
 		{/if}
 		{#if text}
-			<button type="button" class="btn btn-ghost btn-icon-sm shrink-0" aria-label={$t('ui.error.copy')} title={$t('ui.error.copy')} onclick={copy}>
+			<button
+				type="button"
+				class="btn btn-ghost btn-icon-sm shrink-0"
+				aria-label={$t('ui.error.copy')}
+				title={$t('ui.error.copy')}
+				onclick={copy}
+			>
 				{#if copied}
 					<Check class="w-4 h-4 text-status-success" aria-hidden="true" />
 					<span class="sr-only" aria-live="polite">{$t('ui.error.copied')}</span>

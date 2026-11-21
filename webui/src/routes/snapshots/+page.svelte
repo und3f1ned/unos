@@ -16,12 +16,7 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import { DATE_TIME_MINUTES } from '$lib/format';
 	import { formatDateTime } from '$lib/time';
-	import {
-		CreateSnapshotDialog,
-		DeleteDialog,
-		RestoreSnapshotDialog,
-		SnapshotTable
-	} from '$lib/components/snapshots';
+	import { CreateSnapshotDialog, DeleteDialog, RestoreSnapshotDialog, SnapshotTable } from '$lib/components/snapshots';
 	import { SnapshotLists } from '$lib/components/snapshots/lists.svelte';
 	import { SNAPSHOTS_FOLDER } from '$lib/components/snapshots/names';
 
@@ -39,9 +34,7 @@
 	// A pool or a volume as the picker and the list's heading name it. It reads the language where
 	// it is called, as the dates below do, so that what shows them follows a change of the language.
 	const label = (sv: Subvolume): string =>
-		sv.volume
-			? $t('snapshots.volume', { pool: sv.pool, volume: sv.volume })
-			: $t('snapshots.pool', { pool: sv.pool });
+		sv.volume ? $t('snapshots.volume', { pool: sv.pool, volume: sv.volume }) : $t('snapshots.pool', { pool: sv.pool });
 
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
 	// in the language of the page (ADR-0287).
@@ -124,7 +117,9 @@
 			<Button
 				icon={Plus}
 				disabled={!lists.selected}
-				disabledReason={lists.selected || lists.subvolumesLoading || lists.subvolumesError ? '' : $t('snapshots.createBlocked')}
+				disabledReason={lists.selected || lists.subvolumesLoading || lists.subvolumesError
+					? ''
+					: $t('snapshots.createBlocked')}
 				onclick={openCreate}>{$t('snapshots.create')}</Button
 			>
 		</div>
@@ -159,12 +154,7 @@
 
 	{#if restoredTo}
 		<!-- design-ignore: where the restored copy was made, to read and keep before going on -->
-		<Alert
-			variant="success"
-			title={$t('snapshots.restored')}
-			dismissible
-			ondismiss={() => (restoredTo = '')}
-		>
+		<Alert variant="success" title={$t('snapshots.restored')} dismissible ondismiss={() => (restoredTo = '')}>
 			{$t('snapshots.restoredAt')} <span class="mono-xs break-all">{restoredTo}</span>.
 		</Alert>
 	{/if}

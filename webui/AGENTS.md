@@ -211,8 +211,17 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
 - `make frontend` runs `npm run check` (svelte-kit sync, then svelte-check `--threshold error`:
   errors fail, warnings do not), `npm run runes` (the runes check above), `npm run i18n` (the
   texts, above, and the keys that the `.ts` modules name),
-  `npm run design` (the design system, above) and `npm run build` (into `webui/build`). The
-  checks read components with Svelte's parser and walk its tree with `scripts/svelte-walk.mjs`.
+  `npm run design` (the design system, above), `npm run build` (into `webui/build`),
+  `npm run lint` and `npm run format-check` (below). The checks of this repository read
+  components with Svelte's parser and walk its tree with `scripts/svelte-walk.mjs`.
+- ESLint (`eslint.config.js`: the recommended rules of ESLint, typescript-eslint and
+  eslint-plugin-svelte) and Prettier (`prettier.config.js`: tabs, single quotes, no trailing
+  commas, 120 columns) check `src/` (ADR-0449). Run `npm run format` before `make frontend`. A
+  finding is fixed; a rule turned off in `eslint.config.js`, or a line exempted with
+  `// eslint-disable-next-line <rule> -- <reason>`, gives its reason. Prettier breaks a long line
+  at a space, and Svelte 5 keeps a line break between `{' '}` and a block element as a second
+  space: such an element keeps its source with `<!-- prettier-ignore -->` above it, where the
+  comment adds no space (between table cells, at the start of a block), and its reason.
 - `webui/node_modules` comes from `make setup` (`npm ci` from `package-lock.json`). A new
   dependency is the owner's call: it needs the network and a lockfile change.
 - The Node.js version of `webui/Dockerfile`, of `engines` in `package.json` and of CI agree;

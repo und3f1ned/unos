@@ -10,8 +10,7 @@ export const en = {
 
 	'account.language.title': 'Language',
 	'account.language.label': 'Interface language',
-	'account.language.hint':
-		'Applies at once and is kept in this browser. Messages from the server stay in English.',
+	'account.language.hint': 'Applies at once and is kept in this browser. Messages from the server stay in English.',
 
 	'account.totp.title': 'Two-Factor Authentication',
 	'account.totp.app': 'Authenticator App',
@@ -199,8 +198,7 @@ export const ru: Translation<typeof en> = {
 
 	'account.language.title': 'Язык',
 	'account.language.label': 'Язык интерфейса',
-	'account.language.hint':
-		'Применяется сразу и сохраняется в этом браузере. Сообщения сервера остаются на английском.',
+	'account.language.hint': 'Применяется сразу и сохраняется в этом браузере. Сообщения сервера остаются на английском.',
 
 	'account.totp.title': 'Двухфакторная аутентификация',
 	'account.totp.app': 'Приложение-аутентификатор',
@@ -216,8 +214,7 @@ export const ru: Translation<typeof en> = {
 	'account.totp.disabled': 'Двухфакторная аутентификация выключена',
 	'account.totp.invalidCode': 'Неверный код. Попробуйте ещё раз.',
 	'account.totp.setupTitle': 'Настройка двухфакторной аутентификации',
-	'account.totp.scan':
-		'Отсканируйте этот QR-код приложением-аутентификатором (Google Authenticator, Authy и другими)',
+	'account.totp.scan': 'Отсканируйте этот QR-код приложением-аутентификатором (Google Authenticator, Authy и другими)',
 	'account.totp.qrAlt': 'QR-код для приложения-аутентификатора',
 	'account.totp.manual': 'Или введите этот код вручную:',
 	'account.totp.copy': 'Скопировать в буфер обмена',
@@ -270,8 +267,7 @@ export const ru: Translation<typeof en> = {
 	'account.smb.onNotice': 'SMB для вашей учётной записи включён.',
 	'account.smb.offNotice': 'SMB для вашей учётной записи выключен.',
 	'account.smb.unavailable': 'SMB недоступен для вашей учётной записи.',
-	'account.smb.off':
-		'Доступ по SMB для вашей учётной записи не включён. Попросите администратора разрешить его.',
+	'account.smb.off': 'Доступ по SMB для вашей учётной записи не включён. Попросите администратора разрешить его.',
 	'account.smb.passwordNeeded':
 		'Администратор разрешил доступ по SMB. Чтобы включить его, введите текущий пароль: паролем SMB служит пароль UNOS.',
 	'account.smb.totpCode': 'Код двухфакторной аутентификации',

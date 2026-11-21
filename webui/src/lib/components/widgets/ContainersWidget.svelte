@@ -52,9 +52,7 @@
 		}
 	}
 
-	function getWebUrl(
-		container: (typeof containers)[0]
-	): string | null {
+	function getWebUrl(container: (typeof containers)[0]): string | null {
 		const webPort = container.ports?.find((p) => p.host_port);
 		if (webPort && typeof window !== 'undefined') {
 			return `http://${window.location.hostname}:${webPort.host_port}`;
@@ -109,9 +107,7 @@
 				{#each displayContainers as container}
 					{@const webUrl = getWebUrl(container)}
 					<!-- A row, not a link: the card's one link is Manage, to the Containers page (ADR-0431). -->
-					<div
-						class="flex items-center justify-between gap-3 py-2 border-b border-border-muted last:border-b-0"
-					>
+					<div class="flex items-center justify-between gap-3 py-2 border-b border-border-muted last:border-b-0">
 						<div class="min-w-0">
 							<p class="font-medium text-sm truncate" title={container.name}>{container.name}</p>
 							<p class="text-xs text-muted truncate" title={container.image}>{container.image.split(':')[0]}</p>

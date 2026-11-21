@@ -21,9 +21,7 @@
 
 <div class="space-y-3">
 	<p class="text-sm text-secondary mb-4">
-		{inHostNetwork
-			? $t('apps.detail.portsHostNetwork', { name: app.name })
-			: $t('apps.detail.portsHint')}
+		{inHostNetwork ? $t('apps.detail.portsHostNetwork', { name: app.name }) : $t('apps.detail.portsHint')}
 	</p>
 	{#each app.ports as port}
 		<div class="card-nested">

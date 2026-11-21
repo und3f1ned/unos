@@ -93,7 +93,6 @@
 		{/if}
 	</div>
 
-
 	{#if loadError}
 		<Alert variant="error" title={$t('twofactor.requirement.loadError')} class="mb-4">
 			<p>{loadError}</p>

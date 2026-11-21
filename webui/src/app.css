@@ -288,7 +288,10 @@
 	.btn {
 		@apply inline-flex items-center justify-center gap-2 rounded border border-transparent font-medium
 		       disabled:cursor-not-allowed disabled:opacity-50;
-		transition: background-color var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+		transition:
+			background-color var(--dur-fast),
+			color var(--dur-fast),
+			border-color var(--dur-fast);
 	}
 
 	/* A disabled button that says why (Button's disabledReason, ADR-0432): it keeps the focus, so
@@ -375,7 +378,9 @@
 
 	.tab-underline {
 		@apply relative flex items-center gap-2 px-3 py-2.5 -mb-px text-sm font-medium border-b-2 border-transparent text-content-secondary hover:text-content;
-		transition: color var(--dur-fast), border-color var(--dur-fast);
+		transition:
+			color var(--dur-fast),
+			border-color var(--dur-fast);
 	}
 
 	.tab-underline-active {
@@ -388,7 +393,9 @@
 
 	.tab-pill {
 		@apply px-3 py-1.5 rounded text-[13px] font-medium text-content-secondary hover:text-content;
-		transition: background-color var(--dur-fast), color var(--dur-fast);
+		transition:
+			background-color var(--dur-fast),
+			color var(--dur-fast);
 	}
 
 	/* The chosen segment: lifted, with a boundary of border-strong (3:1 on the track). */
@@ -407,7 +414,9 @@
 	.form-select {
 		@apply w-full min-h-9 px-3 py-1.5 bg-surface-overlay border border-border-strong rounded text-content
 		       placeholder:text-content-muted;
-		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+		transition:
+			border-color var(--dur-fast),
+			box-shadow var(--dur-fast);
 	}
 
 	/* A focused field: its border, a ring of brand-ring and a halo. */
@@ -435,7 +444,9 @@
 	   the frame is the field's, the input inside it has none. */
 	.form-affix {
 		@apply flex items-stretch w-full min-h-9 bg-surface-overlay border border-border-strong rounded text-content;
-		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+		transition:
+			border-color var(--dur-fast),
+			box-shadow var(--dur-fast);
 	}
 
 	.form-affix:focus-within {
@@ -562,12 +573,16 @@
 
 	.switch-track {
 		@apply pointer-events-none w-full h-full rounded-full bg-surface-hover border border-border-strong;
-		transition: background-color var(--dur-fast), border-color var(--dur-fast);
+		transition:
+			background-color var(--dur-fast),
+			border-color var(--dur-fast);
 	}
 
 	.switch-knob {
 		@apply pointer-events-none absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-border-strong;
-		transition: transform var(--dur-base) var(--ease), background-color var(--dur-fast);
+		transition:
+			transform var(--dur-base) var(--ease),
+			background-color var(--dur-fast);
 	}
 
 	.switch input:checked + .switch-track {
@@ -607,7 +622,9 @@
 		@apply relative shrink-0 w-[18px] h-[18px] m-0 mt-px border border-border-strong bg-surface-overlay cursor-pointer
 		       disabled:cursor-not-allowed disabled:opacity-50;
 		appearance: none;
-		transition: background-color var(--dur-fast), border-color var(--dur-fast);
+		transition:
+			background-color var(--dur-fast),
+			border-color var(--dur-fast);
 	}
 
 	.checkbox {
@@ -1233,7 +1250,9 @@
 	   selected it sticks to the top of what scrolls, on a brand tint. */
 	.bulk-bar {
 		@apply flex flex-wrap items-center gap-x-3 gap-y-2 min-h-11 px-3 py-1.5 rounded-lg border border-transparent;
-		transition: background-color var(--dur-fast), border-color var(--dur-fast);
+		transition:
+			background-color var(--dur-fast),
+			border-color var(--dur-fast);
 	}
 
 	.bulk-bar[data-active] {
@@ -1421,7 +1440,9 @@
 	   ---------------------------------------- */
 	.nav-item {
 		@apply relative flex items-center gap-2.5 min-h-9 px-2.5 py-1.5 rounded text-sm;
-		transition: background-color var(--dur-fast), color var(--dur-fast);
+		transition:
+			background-color var(--dur-fast),
+			color var(--dur-fast);
 	}
 
 	.nav-item svg {
@@ -1540,12 +1561,7 @@
 	.skeleton {
 		@apply rounded;
 		background-color: rgb(var(--skeleton-bone));
-		background-image: linear-gradient(
-			100deg,
-			transparent 20%,
-			rgb(var(--skeleton-shine)) 50%,
-			transparent 80%
-		);
+		background-image: linear-gradient(100deg, transparent 20%, rgb(var(--skeleton-shine)) 50%, transparent 80%);
 		background-size: 60vw 100%;
 		background-repeat: no-repeat;
 		background-attachment: fixed;

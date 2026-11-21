@@ -41,8 +41,7 @@
 					class="form-input mono break-all resize-none"
 					rows="2"
 					readonly
-					value={token.token}
-				></textarea>
+					value={token.token}></textarea>
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
 				<Button variant="secondary" size="sm" onclick={oncopy}>{$t('tokens.shown.copy')}</Button>

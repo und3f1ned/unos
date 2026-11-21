@@ -6,30 +6,31 @@
 	import { placeTip } from './float';
 
 	// The attributes of a button, and of a link for one with `href` (target, rel).
-	type Props = Omit<HTMLButtonAttributes, 'type'> & Pick<HTMLAnchorAttributes, 'target' | 'rel'> & {
-		// `plain` brings no look of its own: a control that styles itself through `class` (a tab, a
-		// clickable card or row, the classes `tab-*` of app.css). `ghost-danger`: an icon button that
-		// deletes or removes (ADR-0428).
-		variant?: 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost' | 'ghost-danger' | 'plain';
-		size?: 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
-		type?: 'button' | 'submit' | 'reset';
-		disabled?: boolean;
-		/**
-		 * Why the button is disabled, in a few words (ADR-0432): the button stays focusable
-		 * (aria-disabled instead of disabled), a click does nothing, and the reason shows as a
-		 * tooltip on hover and focus and is its accessible description.
-		 */
-		disabledReason?: string;
-		loading?: boolean;
-		icon?: IconComponent | null;
-		href?: string | null;
-		// A toggle button (aria-pressed): true while what it shows or turns on is active.
-		pressed?: boolean | undefined;
-		// The button element, for a page that moves the focus or measures it: bind:el.
-		el?: HTMLButtonElement | null;
-		class?: string;
-		children?: Snippet;
-	};
+	type Props = Omit<HTMLButtonAttributes, 'type'> &
+		Pick<HTMLAnchorAttributes, 'target' | 'rel'> & {
+			// `plain` brings no look of its own: a control that styles itself through `class` (a tab, a
+			// clickable card or row, the classes `tab-*` of app.css). `ghost-danger`: an icon button that
+			// deletes or removes (ADR-0428).
+			variant?: 'primary' | 'secondary' | 'danger' | 'warning' | 'success' | 'ghost' | 'ghost-danger' | 'plain';
+			size?: 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
+			type?: 'button' | 'submit' | 'reset';
+			disabled?: boolean;
+			/**
+			 * Why the button is disabled, in a few words (ADR-0432): the button stays focusable
+			 * (aria-disabled instead of disabled), a click does nothing, and the reason shows as a
+			 * tooltip on hover and focus and is its accessible description.
+			 */
+			disabledReason?: string;
+			loading?: boolean;
+			icon?: IconComponent | null;
+			href?: string | null;
+			// A toggle button (aria-pressed): true while what it shows or turns on is active.
+			pressed?: boolean | undefined;
+			// The button element, for a page that moves the focus or measures it: bind:el.
+			el?: HTMLButtonElement | null;
+			class?: string;
+			children?: Snippet;
+		};
 
 	let {
 		variant = 'primary',
@@ -124,7 +125,13 @@
 {/snippet}
 
 {#if href}
-	<a {...rest as Record<string, unknown>} {href} class={classes} class:disabled onclick={onclick as HTMLAnchorAttributes['onclick']}>
+	<a
+		{...rest as Record<string, unknown>}
+		{href}
+		class={classes}
+		class:disabled
+		onclick={onclick as HTMLAnchorAttributes['onclick']}
+	>
 		{@render content()}
 	</a>
 {:else}
@@ -134,7 +141,9 @@
 		{type}
 		disabled={explained ? undefined : disabled || loading}
 		aria-disabled={explained ? 'true' : undefined}
-		aria-describedby={explained ? [tipId, rest['aria-describedby']].filter(Boolean).join(' ') : rest['aria-describedby']}
+		aria-describedby={explained
+			? [tipId, rest['aria-describedby']].filter(Boolean).join(' ')
+			: rest['aria-describedby']}
 		aria-pressed={pressed}
 		aria-busy={loading || undefined}
 		class={classes}

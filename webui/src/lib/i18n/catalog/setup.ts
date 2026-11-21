@@ -27,5 +27,9 @@ export const ru: Translation<typeof en> = {
 	'setup.usernameRequired': 'Введите имя пользователя',
 	'setup.usernameInvalid': 'Используйте от 1 до 32 строчных латинских букв, цифр, _ или -, первая — буква',
 	'setup.passwordHint': { one: 'Не короче {n} символа', few: 'Не короче {n} символов', many: 'Не короче {n} символов' },
-	'setup.passwordShort': { one: 'Нужен хотя бы {n} символ', few: 'Нужно хотя бы {n} символа', many: 'Нужно хотя бы {n} символов' }
+	'setup.passwordShort': {
+		one: 'Нужен хотя бы {n} символ',
+		few: 'Нужно хотя бы {n} символа',
+		many: 'Нужно хотя бы {n} символов'
+	}
 };

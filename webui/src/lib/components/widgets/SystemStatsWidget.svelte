@@ -94,73 +94,78 @@
 	<div class="stat-cell">
 		<!-- CPU -->
 		{#if only === 'cpu'}
-		<Card padding="sm" class="stat-card">
-			{@render header(Cpu, 'chip-cpu', $t('dashboard.stats.cpu'), cpuCores > 0 ? $t('dashboard.stats.cores', { n: cpuCores }) : '')}
-			<p class="stat-card-value {getPercentColor(cpuPercent)}">{cpuPercent.toFixed(1)}%</p>
-			<ProgressBar value={cpuPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.cpu')} />
-		</Card>
+			<Card padding="sm" class="stat-card">
+				{@render header(
+					Cpu,
+					'chip-cpu',
+					$t('dashboard.stats.cpu'),
+					cpuCores > 0 ? $t('dashboard.stats.cores', { n: cpuCores }) : ''
+				)}
+				<p class="stat-card-value {getPercentColor(cpuPercent)}">{cpuPercent.toFixed(1)}%</p>
+				<ProgressBar value={cpuPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.cpu')} />
+			</Card>
 		{/if}
 
 		<!-- Memory -->
 		{#if only === 'memory'}
-		<Card padding="sm" class="stat-card">
-			{@render header(MemoryStick, 'chip-memory', $t('dashboard.stats.memory'), '')}
-			<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
-			<ProgressBar value={memoryPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.memory')} />
-			<p class="stat-card-sublabel">{formatBytes(memoryUsed, $t)} / {formatBytes(memoryTotal, $t)}</p>
-		</Card>
+			<Card padding="sm" class="stat-card">
+				{@render header(MemoryStick, 'chip-memory', $t('dashboard.stats.memory'), '')}
+				<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
+				<ProgressBar value={memoryPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.memory')} />
+				<p class="stat-card-sublabel">{formatBytes(memoryUsed, $t)} / {formatBytes(memoryTotal, $t)}</p>
+			</Card>
 		{/if}
 
 		<!-- Network: received, then sent, each with its word as Disk I/O's rates have. -->
 		{#if only === 'network'}
-		<Card padding="sm" class="stat-card">
-			{@render header(Network, 'chip-network', $t('dashboard.stats.network'), '')}
-			<p class="flex flex-wrap items-baseline gap-x-2">
-				<span class="stat-card-sublabel">{$t('dashboard.stats.received')}</span>
-				<span class="text-lg font-semibold tabular">{formatRate(networkDown)}</span>
-			</p>
-			<p class="flex flex-wrap items-baseline gap-x-2">
-				<span class="stat-card-sublabel">{$t('dashboard.stats.sent')}</span>
-				<span class="text-lg font-semibold tabular">{formatRate(networkUp)}</span>
-			</p>
-		</Card>
+			<Card padding="sm" class="stat-card">
+				{@render header(Network, 'chip-network', $t('dashboard.stats.network'), '')}
+				<p class="flex flex-wrap items-baseline gap-x-2">
+					<span class="stat-card-sublabel">{$t('dashboard.stats.received')}</span>
+					<span class="text-lg font-semibold tabular">{formatRate(networkDown)}</span>
+				</p>
+				<p class="flex flex-wrap items-baseline gap-x-2">
+					<span class="stat-card-sublabel">{$t('dashboard.stats.sent')}</span>
+					<span class="text-lg font-semibold tabular">{formatRate(networkUp)}</span>
+				</p>
+			</Card>
 		{/if}
 		<!-- Disk I/O: read, then written. A label goes above its rate where the card has no room for
 		     both (ADR-0302). -->
 		{#if only === 'disk-io'}
-		<Card padding="sm" class="stat-card">
-			{@render header(HardDrive, 'chip-storage', $t('dashboard.stats.diskIo'), '')}
-			<p class="flex flex-wrap items-baseline gap-x-2">
-				<span class="stat-card-sublabel">{$t('dashboard.stats.read')}</span>
-				<span class="text-lg font-semibold tabular">{formatRate(diskRead)}</span>
-			</p>
-			<p class="flex flex-wrap items-baseline gap-x-2">
-				<span class="stat-card-sublabel">{$t('dashboard.stats.write')}</span>
-				<span class="text-lg font-semibold tabular">{formatRate(diskWrite)}</span>
-			</p>
-		</Card>
+			<Card padding="sm" class="stat-card">
+				{@render header(HardDrive, 'chip-storage', $t('dashboard.stats.diskIo'), '')}
+				<p class="flex flex-wrap items-baseline gap-x-2">
+					<span class="stat-card-sublabel">{$t('dashboard.stats.read')}</span>
+					<span class="text-lg font-semibold tabular">{formatRate(diskRead)}</span>
+				</p>
+				<p class="flex flex-wrap items-baseline gap-x-2">
+					<span class="stat-card-sublabel">{$t('dashboard.stats.write')}</span>
+					<span class="text-lg font-semibold tabular">{formatRate(diskWrite)}</span>
+				</p>
+			</Card>
 		{/if}
 
 		<!-- Temperature, its meter against 90 °C -->
 		{#if only === 'temperature'}
-		<Card padding="sm" class="stat-card">
-			{@render header(Thermometer, 'chip-temperature', $t('dashboard.stats.temperature'), '', '')}
-			{#if temperature !== null}
-				<p class="stat-card-value {getTempColor(temperature)}">{$t('dashboard.celsius', { value: temperature })}</p>
-				<ProgressBar
-					value={temperature}
-					max={90}
-					size="sm"
-					variant={temperature < 50 ? 'success' : temperature < 70 ? 'warning' : 'error'}
-					class="mt-auto pt-1"
-					label={$t('dashboard.stats.temperature')}
-					valueText={$t('dashboard.celsius', { value: temperature })}
-				/>
-			{:else}
-				<!-- No sensor answered: a quiet line, not a big grey value. -->
-				<p class="text-sm text-content-muted">{$t('dashboard.stats.none')}</p>
-			{/if}
-		</Card>
+			<Card padding="sm" class="stat-card">
+				{@render header(Thermometer, 'chip-temperature', $t('dashboard.stats.temperature'), '', '')}
+				{#if temperature !== null}
+					<p class="stat-card-value {getTempColor(temperature)}">{$t('dashboard.celsius', { value: temperature })}</p>
+					<ProgressBar
+						value={temperature}
+						max={90}
+						size="sm"
+						variant={temperature < 50 ? 'success' : temperature < 70 ? 'warning' : 'error'}
+						class="mt-auto pt-1"
+						label={$t('dashboard.stats.temperature')}
+						valueText={$t('dashboard.celsius', { value: temperature })}
+					/>
+				{:else}
+					<!-- No sensor answered: a quiet line, not a big grey value. -->
+					<p class="text-sm text-content-muted">{$t('dashboard.stats.none')}</p>
+				{/if}
+			</Card>
 		{/if}
 	</div>
 {/if}

@@ -173,9 +173,7 @@
 	// can only be removed: the server saves such a share once it grants nothing.
 	const accessLocked = $derived(editing && loaded?.served === false && (!pathChanged || problem !== ''));
 	const loadedGrants = $derived(
-		(loaded?.access.length ?? 0) > 0 ||
-			(loaded?.group_access?.length ?? 0) > 0 ||
-			loaded?.guest_ok === true
+		(loaded?.access.length ?? 0) > 0 || (loaded?.group_access?.length ?? 0) > 0 || loaded?.guest_ok === true
 	);
 	// While access is locked, guest access can be turned off, and on again
 	// only when the loaded share has it. Guests' connections are never encrypted:

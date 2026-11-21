@@ -74,10 +74,18 @@
 	function issues(): Issue[] {
 		const list: Issue[] = [];
 		if (pool.missing_devices > 0) {
-			list.push({ tone: 'error', title: $t('storage.pool.missingTitle', { n: pool.missing_devices }), text: $t('storage.pool.missing') });
+			list.push({
+				tone: 'error',
+				title: $t('storage.pool.missingTitle', { n: pool.missing_devices }),
+				text: $t('storage.pool.missing')
+			});
 		}
 		if (pool.forced_read_only) {
-			list.push({ tone: 'error', title: $t('storage.pool.forcedReadOnlyTitle'), text: $t('storage.pool.forcedReadOnly') });
+			list.push({
+				tone: 'error',
+				title: $t('storage.pool.forcedReadOnlyTitle'),
+				text: $t('storage.pool.forcedReadOnly')
+			});
 		}
 		if (pool.device_errors > 0) {
 			list.push({
@@ -125,11 +133,33 @@
 	</div>
 
 	<!-- The jobs that run, right under the header with their controls (ADR-0313, ADR-0379, ADR-0411). -->
-	<ScrubProgress part="running" mounted={pool.mounted} status={scrub} error={scrubError} {formatBytes} {percentFormat}
-		oncancel={() => handlers.oncancelscrub(pool)} />
-	<BalanceProgress part="running" {pool} scrubRunning={scrub?.status === 'running'} status={balance} error={balanceError} {percentFormat} busy={balanceBusy}
-		onaction={(action) => handlers.onbalanceaction(pool, action)} />
-	<RemovalProgress part="running" mounted={pool.mounted} status={removal} error={removalError} {formatBytes} {percentFormat} />
+	<ScrubProgress
+		part="running"
+		mounted={pool.mounted}
+		status={scrub}
+		error={scrubError}
+		{formatBytes}
+		{percentFormat}
+		oncancel={() => handlers.oncancelscrub(pool)}
+	/>
+	<BalanceProgress
+		part="running"
+		{pool}
+		scrubRunning={scrub?.status === 'running'}
+		status={balance}
+		error={balanceError}
+		{percentFormat}
+		busy={balanceBusy}
+		onaction={(action) => handlers.onbalanceaction(pool, action)}
+	/>
+	<RemovalProgress
+		part="running"
+		mounted={pool.mounted}
+		status={removal}
+		error={removalError}
+		{formatBytes}
+		{percentFormat}
+	/>
 
 	<div class="kv">
 		<div data-field="raid">
@@ -166,8 +196,10 @@
 			<span class="kv-label">{$t('storage.pool.used')}</span>
 			{#if pool.mounted}
 				<span class="kv-value tabular text-content"
-					>{$t('storage.pool.usedOf', { used: formatBytes(pool.used_size), size: formatBytes(pool.total_size) })}{#if used !== null}<span
-							class="text-content-secondary">&nbsp;· {wholePercent.format(used / 100)}</span
+					>{$t('storage.pool.usedOf', {
+						used: formatBytes(pool.used_size),
+						size: formatBytes(pool.total_size)
+					})}{#if used !== null}<span class="text-content-secondary">&nbsp;· {wholePercent.format(used / 100)}</span
 						>{/if}</span
 				>
 			{:else}
@@ -192,7 +224,12 @@
 					{@const Icon = ISSUE_ICONS[issue.tone]}
 					<li class="flex items-start gap-2">
 						{#if poolIssues.length > 1}
-							<Icon class="w-3.5 h-3.5 mt-0.5 shrink-0 {issue.tone === 'error' ? 'text-status-error' : 'text-status-warning'}" aria-hidden="true" />
+							<Icon
+								class="w-3.5 h-3.5 mt-0.5 shrink-0 {issue.tone === 'error'
+									? 'text-status-error'
+									: 'text-status-warning'}"
+								aria-hidden="true"
+							/>
 						{/if}
 						<span class="min-w-0">
 							<span class="font-medium">{issue.title}.</span>
@@ -210,8 +247,22 @@
 	{/if}
 
 	<!-- How the last jobs ended, or why their state could not be read. -->
-	<ScrubProgress part="result" mounted={pool.mounted} status={scrub} error={scrubError} {formatBytes} {percentFormat}
-		oncancel={() => handlers.oncancelscrub(pool)} />
+	<ScrubProgress
+		part="result"
+		mounted={pool.mounted}
+		status={scrub}
+		error={scrubError}
+		{formatBytes}
+		{percentFormat}
+		oncancel={() => handlers.oncancelscrub(pool)}
+	/>
 	<BalanceProgress part="result" {pool} status={balance} error={balanceError} {percentFormat} />
-	<RemovalProgress part="result" mounted={pool.mounted} status={removal} error={removalError} {formatBytes} {percentFormat} />
+	<RemovalProgress
+		part="result"
+		mounted={pool.mounted}
+		status={removal}
+		error={removalError}
+		{formatBytes}
+		{percentFormat}
+	/>
 </div>

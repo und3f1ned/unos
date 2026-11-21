@@ -22,7 +22,6 @@
 	let actionError = $state('');
 	let warnings = $state<string[]>([]);
 
-
 	// The NAS's address as this browser reaches it (an IP address or a name).
 	let host = $state('');
 
@@ -126,83 +125,79 @@
 	>
 		{#snippet skeleton()}<Skeleton count={2} />{/snippet}
 		{#if status && account}
-		<div class="space-y-4">
-			{#if warnings.length > 0}
-				<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
-					{#each warnings as warning}
-						<p>{warning}</p>
-					{/each}
-				</Alert>
-			{/if}
+			<div class="space-y-4">
+				{#if warnings.length > 0}
+					<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
+						{#each warnings as warning}
+							<p>{warning}</p>
+						{/each}
+					</Alert>
+				{/if}
 
-			{#if account.state === 'unavailable'}
-				<Alert variant="info">{account.reason ?? $t('account.smb.unavailable')}</Alert>
-			{:else if account.state === 'off'}
-				<p class="text-sm">{$t('account.smb.off')}</p>
-			{:else if account.state === 'password_needed'}
-				<p class="text-sm">{$t('account.smb.passwordNeeded')}</p>
-				<form
-					onsubmit={(event) => {
-						event.preventDefault();
-						turnOn();
-					}}
-					class="space-y-3 max-w-md"
-				>
-					<Input
-						id="smb-password"
-						type="password"
-						label={$t('common.password')}
-						bind:value={password}
-						autocomplete="current-password"
-					/>
-					{#if status.totp_required}
-						<Input
-							id="smb-totp-code"
-							label={$t('account.smb.totpCode')}
-							bind:value={totpCode}
-							autocomplete="one-time-code"
-							maxlength={16}
-						/>
-					{/if}
-					<Button
-						type="submit"
-						loading={busy}
-						disabled={!password || (status.totp_required && !totpCode)}
+				{#if account.state === 'unavailable'}
+					<Alert variant="info">{account.reason ?? $t('account.smb.unavailable')}</Alert>
+				{:else if account.state === 'off'}
+					<p class="text-sm">{$t('account.smb.off')}</p>
+				{:else if account.state === 'password_needed'}
+					<p class="text-sm">{$t('account.smb.passwordNeeded')}</p>
+					<form
+						onsubmit={(event) => {
+							event.preventDefault();
+							turnOn();
+						}}
+						class="space-y-3 max-w-md"
 					>
-						{$t('account.smb.turnOn')}
-					</Button>
-				</form>
-			{:else if account.state === 'active'}
-				<div class="flex flex-wrap items-center gap-3">
-					<Badge variant="success">{$t('account.smb.active')}</Badge>
-					<Button variant="ghost" size="sm" loading={busy} onclick={turnOff}>
-						{$t('account.smb.turnOff')}
-					</Button>
-				</div>
-				<p class="text-sm">
-					{$t('account.smb.signInBefore')} <strong class="mono">{signInName}</strong>
-					{$t('account.smb.signInAfter')}
-				</p>
-			{/if}
+						<Input
+							id="smb-password"
+							type="password"
+							label={$t('common.password')}
+							bind:value={password}
+							autocomplete="current-password"
+						/>
+						{#if status.totp_required}
+							<Input
+								id="smb-totp-code"
+								label={$t('account.smb.totpCode')}
+								bind:value={totpCode}
+								autocomplete="one-time-code"
+								maxlength={16}
+							/>
+						{/if}
+						<Button type="submit" loading={busy} disabled={!password || (status.totp_required && !totpCode)}>
+							{$t('account.smb.turnOn')}
+						</Button>
+					</form>
+				{:else if account.state === 'active'}
+					<div class="flex flex-wrap items-center gap-3">
+						<Badge variant="success">{$t('account.smb.active')}</Badge>
+						<Button variant="ghost" size="sm" loading={busy} onclick={turnOff}>
+							{$t('account.smb.turnOff')}
+						</Button>
+					</div>
+					<p class="text-sm">
+						{$t('account.smb.signInBefore')} <strong class="mono">{signInName}</strong>
+						{$t('account.smb.signInAfter')}
+					</p>
+				{/if}
 
-			<!-- Outside the form: it stays shown when the status read after it changed the state. -->
-			{#if actionError}
-				<Alert variant="error" title={$t('account.smb.notOn')}>
-					<p>{actionError}</p>
-					<!-- After the server's "SMB passwords must ..." answer (e.g. a password made
+				<!-- Outside the form: it stays shown when the status read after it changed the state. -->
+				{#if actionError}
+					<Alert variant="error" title={$t('account.smb.notOn')}>
+						<p>{actionError}</p>
+						<!-- After the server's "SMB passwords must ..." answer (e.g. a password made
 					     before the SMB rules, shorter than 8 characters). -->
-					{#if actionError.startsWith('SMB passwords must')}
-						<p class="mt-1">{$t('account.smb.passwordRule')}</p>
-					{/if}
-				</Alert>
-			{/if}
+						{#if actionError.startsWith('SMB passwords must')}
+							<p class="mt-1">{$t('account.smb.passwordRule')}</p>
+						{/if}
+					</Alert>
+				{/if}
 
-			<SmbSharesTable shares={status.shares} />
+				<SmbSharesTable shares={status.shares} />
 
-			{#if showConnect}
-				<SmbConnectHelp {host} share={example} username={allowed ? signInName : null} />
-			{/if}
-		</div>
+				{#if showConnect}
+					<SmbConnectHelp {host} share={example} username={allowed ? signInName : null} />
+				{/if}
+			</div>
 		{/if}
 	</LoadState>
 </Card>

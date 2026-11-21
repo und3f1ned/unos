@@ -233,9 +233,7 @@
 
 	// The disks that a new pool can take, as the Create pool dialog offers them; null when the disks
 	// could not be read, which also disables Create pool, with the reason.
-	let freeDisks = $derived(
-		lists.disksError ? null : lists.disks.filter(usableForPool).length
-	);
+	let freeDisks = $derived(lists.disksError ? null : lists.disks.filter(usableForPool).length);
 
 	// What the pools' cards ask for.
 	const poolHandlers: PoolHandlers = {
@@ -357,12 +355,7 @@
 
 <PoolActionDialog action={poolAction} {quoted} onclose={() => (poolAction = null)} ondone={poolActionDone} />
 
-<SpindownDialog
-	disk={spindownDisk}
-	{timeoutLabel}
-	onclose={() => (spindownDisk = null)}
-	onsaved={spindownSaved}
-/>
+<SpindownDialog disk={spindownDisk} {timeoutLabel} onclose={() => (spindownDisk = null)} onsaved={spindownSaved} />
 
 <ImportDialog
 	target={importTarget}

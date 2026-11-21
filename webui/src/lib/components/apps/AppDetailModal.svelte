@@ -115,9 +115,7 @@
 		}
 	}
 	// Another install that runs: one install at a time (ADR-0384).
-	const otherInstall = $derived(
-		$appInstalls.find((job) => job.state === 'running' && job.id !== pending?.id) ?? null
-	);
+	const otherInstall = $derived($appInstalls.find((job) => job.state === 'running' && job.id !== pending?.id) ?? null);
 	let activeTab = $state<DetailTab>('overview');
 
 	// Form state, reset whenever an app is shown
@@ -169,17 +167,11 @@
 	// Client-side checks for a clear form; the server validates everything again.
 	const missingRequired = $derived(
 		app
-			? app.environment
-					.filter((env) => env.required && !(envValues[env.name] ?? '').trim())
-					.map((env) => env.name)
+			? app.environment.filter((env) => env.required && !(envValues[env.name] ?? '').trim()).map((env) => env.name)
 			: []
 	);
 	const invalidPorts = $derived(
-		app
-			? app.ports
-					.filter((port) => !isValidPort(portValues[port.container]))
-					.map((port) => port.container)
-			: []
+		app ? app.ports.filter((port) => !isValidPort(portValues[port.container])).map((port) => port.container) : []
 	);
 	const invalidVolumes = $derived(
 		Object.entries(volumeOverrides)
@@ -195,10 +187,10 @@
 				]
 			: []),
 		...(invalidPorts.length > 0 ? [$t('apps.detail.invalidPorts')] : []),
-		...(invalidVolumes.length > 0
-			? [$t('apps.detail.invalidVolumes', { paths: invalidVolumes.join(', ') })]
+		...(invalidVolumes.length > 0 ? [$t('apps.detail.invalidVolumes', { paths: invalidVolumes.join(', ') })] : []),
+		...(app && !app.available
+			? [$t('apps.detail.notAvailable', { name: app.name, platform: app.host_platform ?? '' })]
 			: []),
-		...(app && !app.available ? [$t('apps.detail.notAvailable', { name: app.name, platform: app.host_platform ?? '' })] : []),
 		...(otherInstall ? [$t('apps.detail.installRunning', { name: otherInstall.name })] : []),
 		...(installBlocked ? [installBlocked] : [])
 	]);
@@ -212,9 +204,7 @@
 	);
 
 	function resetForm(template: AppTemplate) {
-		portValues = Object.fromEntries(
-			template.ports.map((port) => [port.container, String(hostPortOf(template, port))])
-		);
+		portValues = Object.fromEntries(template.ports.map((port) => [port.container, String(hostPortOf(template, port))]));
 		volumeOverrides = {};
 		envValues = Object.fromEntries(template.environment.map((env) => [env.name, env.value]));
 		runInUnosSmb = false;
@@ -330,17 +320,14 @@
 		/>
 
 		<!-- Tab Content -->
-		<div class="min-h-[200px]" role="tabpanel" id="app-detail-panel-{activeTab}" aria-labelledby="app-detail-tab-{activeTab}">
+		<div
+			class="min-h-[200px]"
+			role="tabpanel"
+			id="app-detail-panel-{activeTab}"
+			aria-labelledby="app-detail-tab-{activeTab}"
+		>
 			{#if activeTab === 'overview'}
-				<AppOverviewTab
-					{app}
-					{containers}
-					{several}
-					{isInstalled}
-					{needsPool}
-					{selectedPool}
-					{dataLocations}
-				/>
+				<AppOverviewTab {app} {containers} {several} {isInstalled} {needsPool} {selectedPool} {dataLocations} />
 			{:else if activeTab === 'ports'}
 				<AppPortsTab {app} bind:portValues {inHostNetwork} {isInstalled} {invalidPorts} />
 			{:else if activeTab === 'volumes'}
@@ -358,15 +345,7 @@
 					onpath={setVolumePath}
 				/>
 			{:else if activeTab === 'environment'}
-				<AppEnvironmentTab
-					{app}
-					{containers}
-					{several}
-					{isInstalled}
-					{inUnosSmb}
-					bind:envValues
-					{missingRequired}
-				/>
+				<AppEnvironmentTab {app} {containers} {several} {isInstalled} {inUnosSmb} bind:envValues {missingRequired} />
 			{/if}
 		</div>
 

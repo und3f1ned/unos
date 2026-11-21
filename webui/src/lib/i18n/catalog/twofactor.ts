@@ -20,8 +20,7 @@ export const en = {
 	'twofactor.later': 'Later',
 	'twofactor.signOut': 'Sign out',
 	'twofactor.done': 'Two-factor authentication is on',
-	'twofactor.doneHint':
-		'Generate recovery codes now: each one signs you in once if you lose your authenticator app.',
+	'twofactor.doneHint': 'Generate recovery codes now: each one signs you in once if you lose your authenticator app.',
 	'twofactor.recoveryCodes': 'Generate recovery codes',
 	'twofactor.continue': 'Continue',
 

@@ -758,6 +758,43 @@ Open owner actions:
   `bin/testparm`, `check.sh` and `env.sh` (one or two strings each), one rule for the six
   scripts that send scripts to the device.
 
+### 2026-11-21: ESLint and Prettier check the web UI (ci.webui-eslint, ADR-0449)
+
+- `ci.webui-eslint` (branch `ci.webui-eslint`, from `mvp.batch-19` at 0d275963), `passes` false:
+  the Frontend job's failure on a finding cannot be seen while CI is off on GitHub (ADR-0230).
+  eslint 10.15.0, @eslint/js 10.0.1, typescript-eslint 8.72.2, eslint-plugin-svelte 3.24.1,
+  prettier 3.10.1 and prettier-plugin-svelte 4.1.1, exact dev dependencies (indirect ones a week
+  old too: minimatch held at 11.0.8 and ignore at 7.0.14). `make frontend` runs `frontend-lint`
+  (`eslint --max-warnings 0 src`) and `frontend-format` (`prettier --check src`); Dependabot leaves
+  the six alone, the monthly pass moves them.
+- ESLint: the recommended rules of the three; 172 findings on the base tree. 144 went with four
+  Svelte rules turned off with their reasons (`require-each-key` 74, `no-navigation-without-resolve`
+  43, `prefer-svelte-reactivity` 18, `no-useless-mustaches` 9), `no-undef` is off as
+  typescript-eslint advises, and 28 were fixed (15 `any`, 11 unused names, 2 counters), plus the
+  one `no-unexpected-multiline` that the reformat would have made. Prettier: tabs, single quotes,
+  no trailing commas, 120 columns (of 100 to 140, the fewest files changed), written once over
+  `webui/src` in a commit of its own (275 of 424 files). Svelte's compiler gives the same output
+  for every component before and after the fixes and the reformat, but for the fixes' own lines
+  and two re-indented line breaks inside a text; the `.ts` modules keep their syntax trees and
+  comments; two places keep their source with `<!-- prettier-ignore -->`, where a line break after
+  `{' '}` would be a second space. Two backend tests that read web UI source by its format
+  (`test_firewall.py`, `test_token_scopes.py`) now read the lists whatever the format.
+- Gates: `TEST_WORKERS=3 make check` exit 0 (10916 passed, 124 skipped, 1 xfailed). Full
+  `make e2e-local` on the stand-in: 1171 passed, 14 skipped, none failed (1185 tests, 31.5 min).
+- Review in a fresh context: 2 should-fix and 7 nits. Fixed: a warning (`$inspect`, `{@debug}`)
+  and an unused exemption passed ESLint (now `--max-warnings 0` and `reportUnusedDisableDirectives:
+  error`, with a test); minimatch 11.0.9 and ignore 7.0.16 were under a week old; the comment's
+  `.prettierrc`; `svelteConfig` with functions broke `--cache` and `--print-config` (dropped, runes
+  set directly); the ADR's lists; the CI step's name and comment; a test comment; the ESLint test
+  now takes the options of `npm run lint`. Left: nothing checks that an exemption gives its
+  `-- reason` (review reads it, as for ruff's `noqa`; a rule for it is a plugin more); `engines`
+  stays `>=22` (its test holds it at the builder's major), though ESLint 10 needs 22.13, which the
+  builder (22.23) and CI's Node 22 meet; the Prettier test passes the configuration by its path
+  (the real run over `src` finds it itself).
+- For the owner: keys of `{#each}` and `resolve()` stay with features that need them. Branches made
+  before the reformat merge with conflicts in nearly every component; `npm run format` on their
+  side first shrinks them.
+
 ### 2026-11-21: The in-app updater, built up to its release installer (ADR-0443)
 
 - `system.in-app-updater` (branch `system.in-app-updater`, from `mvp.batch-19`), `passes` false.

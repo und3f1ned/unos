@@ -109,11 +109,7 @@
 			<!-- The disks' place while they are read (ADR-0430). -->
 			<div aria-busy="true"><Skeleton shape="block" class="h-16 w-full" /></div>
 		{:else if loadError}
-			<ErrorState
-				title={$t('storage.addDisk.loadError')}
-				message={loadError}
-				onretry={() => load(pool)}
-			/>
+			<ErrorState title={$t('storage.addDisk.loadError')} message={loadError} onretry={() => load(pool)} />
 		{:else if candidates.length === 0}
 			<Alert variant="info" title={$t('storage.addDisk.noneTitle')}>{$t('storage.addDisk.none')}</Alert>
 		{:else}

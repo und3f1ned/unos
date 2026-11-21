@@ -197,6 +197,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   first, with no module exempted: the models declare `Field(default=...)` and SQLAlchemy's
   `Mapped[...]`, with the same tables; an error kept in the code carries `# type: ignore[<code>]`
   with its reason.
+- `make frontend`, and with it `make check` and the CI workflow's Frontend job, runs ESLint with
+  the recommended rules of ESLint, typescript-eslint and eslint-plugin-svelte
+  (`webui/eslint.config.js`; a warning fails too) and Prettier's check (`webui/prettier.config.js`)
+  over `webui/src` (ADR-0449). The findings were fixed first, without a change of behaviour, and
+  `webui/src` was formatted once: tabs, single quotes, no trailing commas, lines of up to 120
+  columns. A rule turned off gives its reason; `npm run format` in `webui/` writes the format.
 - `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
   the rules of ruff that find bugs, set in `ruff.toml`, beyond pyflakes findings and syntax errors:
   bugbear, pycodestyle's imports and statements, pyupgrade, bandit (not in the tests), pylint's

@@ -73,8 +73,8 @@
 								title={fs.missing_devices > 0 ? missingDevicesText(fs) : undefined}
 								onclick={() => onimport(fs)}
 							>
-								{$t('storage.found.import')}<span class="sr-only"
-									> {$t('storage.found.importOne', { uuid: fs.uuid })}</span
+								{$t('storage.found.import')}<span class="sr-only">
+									{$t('storage.found.importOne', { uuid: fs.uuid })}</span
 								>
 							</Button>
 						</li>

@@ -57,7 +57,8 @@
 		trailing = null
 	}: Props = $props();
 
-	const id = `menu-${++menuCount}`;
+	menuCount += 1;
+	const id = `menu-${menuCount}`;
 	const buttonId = `${id}-button`;
 	let open = $state(false);
 	let button: HTMLButtonElement | null = $state(null);

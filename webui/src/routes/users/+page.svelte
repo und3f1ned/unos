@@ -5,13 +5,7 @@
 	import { user as currentUser } from '$lib/stores/auth';
 	import { UserPlus } from 'lucide-svelte';
 	import { Alert, Button, ConfirmDialog, LoadState, Skeleton } from '$lib/components/ui';
-	import {
-		CreateUserDialog,
-		EditUserDialog,
-		GroupsCard,
-		OutcomeAlerts,
-		UsersCard
-	} from '$lib/components/users';
+	import { CreateUserDialog, EditUserDialog, GroupsCard, OutcomeAlerts, UsersCard } from '$lib/components/users';
 	import { UserDirectory } from '$lib/components/users/directory.svelte';
 	import { GroupDirectory } from '$lib/components/users/groups.svelte';
 	import { messageOf } from '$lib/components/users/errors';
@@ -59,10 +53,7 @@
 	async function endUserSessions(target: User) {
 		try {
 			const result = await endSessions(target.id, target.username);
-			directory.outcome.show(
-				$t('users.endSessions.done', { name: target.username, n: result.ended }),
-				[]
-			);
+			directory.outcome.show($t('users.endSessions.done', { name: target.username, n: result.ended }), []);
 		} catch (e) {
 			const message = messageOf(e);
 			await directory.currentAfterRefusal(e, target);

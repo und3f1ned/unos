@@ -36,9 +36,7 @@ export class PoolVolumes {
 	readOnly = $derived(this.pool?.read_only ?? false);
 	newNameValid = $derived(VOLUME_NAME_PATTERN.test(this.newName));
 	// null: no quota; NaN: one that cannot be sent.
-	newQuotaBytes = $derived(
-		this.newQuota.trim() === '' ? null : (quotaBytes(this.newQuota.trim()) ?? Number.NaN)
-	);
+	newQuotaBytes = $derived(this.newQuota.trim() === '' ? null : (quotaBytes(this.newQuota.trim()) ?? Number.NaN));
 
 	// The volume whose use over time the dialog shows, loaded when it is opened.
 	usageOf: string | null = $state(null);
@@ -125,9 +123,7 @@ export class PoolVolumes {
 			// The pool is part of the URL; the body names the volume and, if one is set, its quota.
 			await createVolume(
 				this.pool.name,
-				this.newQuotaBytes === null
-					? { name: this.newName }
-					: { name: this.newName, quota: this.newQuotaBytes }
+				this.newQuotaBytes === null ? { name: this.newName } : { name: this.newName, quota: this.newQuotaBytes }
 			);
 			this.newName = '';
 			this.newQuota = '';

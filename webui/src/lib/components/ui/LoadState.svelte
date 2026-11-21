@@ -62,7 +62,9 @@
 				{#if errorDescription}<p>{errorDescription}</p>{/if}
 				<p class="break-words">{error}</p>
 				{#if onretry}
-					<Button variant="secondary" size="sm" class="mt-2" loading={retrying} onclick={onretry}>{$t('common.retry')}</Button>
+					<Button variant="secondary" size="sm" class="mt-2" loading={retrying} onclick={onretry}
+						>{$t('common.retry')}</Button
+					>
 				{/if}
 			</Alert>
 		{/if}

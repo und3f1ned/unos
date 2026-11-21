@@ -21,8 +21,15 @@
 		class?: string;
 	};
 
-	let { title = '', description = '', message = '', onretry = null, retrying = false, compact = true, class: className = '' }: Props =
-		$props();
+	let {
+		title = '',
+		description = '',
+		message = '',
+		onretry = null,
+		retrying = false,
+		compact = true,
+		class: className = ''
+	}: Props = $props();
 
 	const technical = $derived(message !== '' && isTechnical(message));
 </script>

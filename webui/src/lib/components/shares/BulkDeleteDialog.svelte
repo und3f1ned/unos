@@ -102,8 +102,8 @@
 			<ul class="space-y-1" aria-label={$t('shares.bulk.list')}>
 				{#each shares as share (share.name)}
 					<li class="min-w-0">
-						<strong class="text-content break-all">{share.name}</strong>{' '}<span
-							class="mono-xs text-muted break-all">{share.path}</span
+						<strong class="text-content break-all">{share.name}</strong>{' '}<span class="mono-xs text-muted break-all"
+							>{share.path}</span
 						>
 					</li>
 				{/each}

@@ -5133,22 +5133,31 @@ class TestContinuousIntegration:
         # svelte-check@<version>` resolved its dependencies afresh in every
         # run, and npx downloads a program that is missing there.
         assert commands == ["npm ci", "make frontend", "npm audit --omit=dev --audit-level=high"]
-        # make frontend runs both, also when the type check fails (ADR-0190).
+        # make frontend runs them all, also when the type check fails (ADR-0190): with ESLint and
+        # Prettier's check (ADR-0449), a finding fails the job.
         dry_run = _make_dry_run("frontend", "NPM=npm").splitlines()
-        assert {"cd webui && npm run check", "cd webui && npm run build"} <= set(dry_run)
+        assert {"cd webui && npm run check", "cd webui && npm run build", "cd webui && npm run lint",
+                "cd webui && npm run format-check"} <= set(dry_run)
         assert scripts["check"] == "svelte-kit sync && svelte-check --threshold error"
 
-    def test_svelte_check_is_an_exact_dev_dependency_in_the_lockfile(self):
+    # The checkers of make frontend, each at an exact version, so that npm ci installs the one that
+    # package.json names: a new one can find what the old one did not, or format otherwise
+    # (ADR-0449).
+    CHECKERS = ("svelte-check", "eslint", "@eslint/js", "typescript-eslint", "eslint-plugin-svelte", "prettier",
+                "prettier-plugin-svelte")
+
+    @pytest.mark.parametrize("name", CHECKERS)
+    def test_a_checker_is_an_exact_dev_dependency_in_the_lockfile(self, name):
         package = json.loads((REPO_ROOT / "webui" / "package.json").read_text())
         lock = json.loads((REPO_ROOT / "webui" / "package-lock.json").read_text())
-        version = package["devDependencies"]["svelte-check"]
+        version = package["devDependencies"][name]
 
         assert re.fullmatch(r"\d+\.\d+\.\d+", version)
-        assert lock["packages"][""]["devDependencies"]["svelte-check"] == version
-        entry = lock["packages"]["node_modules/svelte-check"]
+        assert lock["packages"][""]["devDependencies"][name] == version
+        entry = lock["packages"][f"node_modules/{name}"]
         assert entry["version"] == version
         assert entry["dev"] is True
-        assert entry["resolved"] == f"https://registry.npmjs.org/svelte-check/-/svelte-check-{version}.tgz"
+        assert entry["resolved"] == f"https://registry.npmjs.org/{name}/-/{name.split('/')[-1]}-{version}.tgz"
         assert entry["integrity"].startswith("sha512-")
 
     def test_checkouts_do_not_keep_the_token(self):

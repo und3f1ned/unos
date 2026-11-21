@@ -70,11 +70,7 @@ export interface DataLocation {
  * Where the app's data goes on `pool`: each source once, with its mounts. Only the main
  * container's folders take an override; a password file has a fixed path.
  */
-export function locationsOf(
-	ofApp: AppContainer[],
-	pool: AppPool,
-	overrides: Record<string, string>
-): DataLocation[] {
+export function locationsOf(ofApp: AppContainer[], pool: AppPool, overrides: Record<string, string>): DataLocation[] {
 	const byHost = new Map<string, DataLocation>();
 	for (const container of ofApp) {
 		for (const volume of container.spec.volumes) {
@@ -98,7 +94,10 @@ export function locationsOf(
 export function volumesPerContainer(installed: InstalledApp): { name: string; volumes: AppVolume[] }[] {
 	const groups = [
 		{ companion: null as string | null, name: installed.name },
-		...installed.companions.map((companion) => ({ companion: companion.name as string | null, name: companion.container }))
+		...installed.companions.map((companion) => ({
+			companion: companion.name as string | null,
+			name: companion.container
+		}))
 	];
 	return groups
 		.map((group) => ({

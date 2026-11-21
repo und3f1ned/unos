@@ -90,7 +90,7 @@ export const en = {
 	'updates.auto.noChanges': 'No changes',
 	'updates.auto.invalid': 'The interval is 1 to 168 hours',
 	'updates.auto.saved': 'Automatic install saved',
-	'updates.auto.saveFailed': 'The automatic install could not be saved',
+	'updates.auto.saveFailed': 'The automatic install could not be saved'
 };
 
 export const ru: Translation<typeof en> = {
@@ -177,5 +177,5 @@ export const ru: Translation<typeof en> = {
 	'updates.auto.noChanges': 'Нет изменений',
 	'updates.auto.invalid': 'Интервал — от 1 до 168 часов',
 	'updates.auto.saved': 'Автоматическая установка сохранена',
-	'updates.auto.saveFailed': 'Не удалось сохранить автоматическую установку',
+	'updates.auto.saveFailed': 'Не удалось сохранить автоматическую установку'
 };

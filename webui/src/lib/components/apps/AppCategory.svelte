@@ -8,7 +8,6 @@
 	};
 
 	let { category }: Props = $props();
-
 </script>
 
 <!-- A category without a label is shown as the server answers it. -->

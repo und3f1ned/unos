@@ -133,7 +133,9 @@
 						href={item.href}
 						onclick={onnavigate}
 						aria-current={item.href === current ? 'page' : undefined}
-						class="nav-item {item.sub ? 'pl-[38px]' : ''} {item.href === current ? 'nav-item-active' : 'nav-item-inactive'}"
+						class="nav-item {item.sub ? 'pl-[38px]' : ''} {item.href === current
+							? 'nav-item-active'
+							: 'nav-item-inactive'}"
 					>
 						<item.icon aria-hidden="true" />
 						{item.label}

@@ -44,7 +44,8 @@ export const en = {
 	// An entry's browser in a few words: "Firefox 144 on Android".
 	'audit.agent': '{browser} on {os}',
 	'audit.chain.broken': 'Chain broken',
-	'audit.chain.brokenHint': 'The log file was changed here: this entry, or the one before it, was edited, removed, inserted or given a new hash.',
+	'audit.chain.brokenHint':
+		'The log file was changed here: this entry, or the one before it, was edited, removed, inserted or given a new hash.',
 	'audit.field.user': 'User',
 	'audit.field.address': 'Address',
 	'audit.field.resource': 'Resource',
@@ -226,7 +227,8 @@ export const ru: Translation<typeof en> = {
 	'audit.failed': 'Неудачно',
 	'audit.agent': '{browser}, {os}',
 	'audit.chain.broken': 'Цепочка нарушена',
-	'audit.chain.brokenHint': 'Здесь файл журнала изменён: эта запись или предыдущая отредактирована, удалена, вставлена или получила новый хэш.',
+	'audit.chain.brokenHint':
+		'Здесь файл журнала изменён: эта запись или предыдущая отредактирована, удалена, вставлена или получила новый хэш.',
 	'audit.field.user': 'Пользователь',
 	'audit.field.address': 'Адрес',
 	'audit.field.resource': 'Ресурс',

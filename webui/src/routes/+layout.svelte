@@ -255,11 +255,7 @@
 			{/if}
 		</main>
 	</div>
-	<CommandPalette
-		bind:this={commandPalette}
-		enabled={paletteEnabled}
-		admin={$user?.is_admin === true}
-	/>
+	<CommandPalette bind:this={commandPalette} enabled={paletteEnabled} admin={$user?.is_admin === true} />
 {/if}
 
 <!-- The messages after an action and the confirmations of confirm() (ADR-0432), on every page. -->

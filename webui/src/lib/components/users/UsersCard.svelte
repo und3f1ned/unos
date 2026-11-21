@@ -71,7 +71,11 @@
 							</div>
 						</td>
 						<td data-label={$t('users.role')}>
-							<span class="inline-flex items-center gap-1.5 whitespace-nowrap {user.is_admin ? 'text-content' : 'text-secondary'}">
+							<span
+								class="inline-flex items-center gap-1.5 whitespace-nowrap {user.is_admin
+									? 'text-content'
+									: 'text-secondary'}"
+							>
 								{#if user.is_admin}
 									<Shield class="w-4 h-4 text-content-secondary" aria-hidden="true" />
 									{$t('users.admin')}

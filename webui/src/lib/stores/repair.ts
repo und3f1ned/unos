@@ -11,5 +11,5 @@ export const repairJob = writable<RepairResult | null>(null);
 
 /** Whether `job` is a repair of the share `name`: share names are compared without case, as Samba does. */
 export function isRepairOf(job: RepairResult | null, name: string): job is RepairResult {
-  return job !== null && job.share.toLowerCase() === name.toLowerCase();
+	return job !== null && job.share.toLowerCase() === name.toLowerCase();
 }

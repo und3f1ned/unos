@@ -101,12 +101,7 @@
 	}
 </script>
 
-<Modal
-	{open}
-	title={$t('apps.limits.title', { name: container })}
-	closable={!saving}
-	onclose={() => onclose?.()}
->
+<Modal {open} title={$t('apps.limits.title', { name: container })} closable={!saving} onclose={() => onclose?.()}>
 	<form
 		id="app-limits-form"
 		class="space-y-4"

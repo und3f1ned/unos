@@ -93,13 +93,7 @@
 </script>
 
 <!-- Create user -->
-<Modal
-	open={createOpen}
-	title={$t('users.new.title')}
-	size="md"
-	closable={!creating}
-	onclose={closeCreate}
->
+<Modal open={createOpen} title={$t('users.new.title')} size="md" closable={!creating} onclose={closeCreate}>
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();

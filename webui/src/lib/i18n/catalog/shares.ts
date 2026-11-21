@@ -34,7 +34,8 @@ export const en = {
 	'shares.smb.title': 'SMB shares',
 	'shares.smb.loadError': 'The shares could not be loaded',
 	'shares.smb.empty': 'No SMB shares yet',
-	'shares.smb.emptyHint': 'Use Add SMB share above to share a folder of a pool, or a volume, with the users you choose.',
+	'shares.smb.emptyHint':
+		'Use Add SMB share above to share a folder of a pool, or a volume, with the users you choose.',
 	// The networks that smb.conf answers (HOSTS_ALLOW of supervisor/src/shares/smbconf.py, ADR-0095).
 	'shares.smb.networkNote':
 		'SMB answers only addresses of your local network (private IPv4, IPv6 ULA and link-local, VPN ranges such as 100.64.0.0/10); public addresses are refused.',
@@ -113,10 +114,12 @@ export const en = {
 	'shares.status.missing': 'Missing: {tools}',
 	'shares.status.guestShares':
 		'Guest access is on for: {shares}. Anyone on your network can read these shares without a password, and connections to this server are not required to be signed.',
-	'shares.status.imported': { one: 'Shares imported from the previous smb.conf: {n} note', other: 'Shares imported from the previous smb.conf: {n} notes' },
+	'shares.status.imported': {
+		one: 'Shares imported from the previous smb.conf: {n} note',
+		other: 'Shares imported from the previous smb.conf: {n} notes'
+	},
 	'shares.status.dismissImport': 'Dismiss the notes',
-	'shares.status.unmanagedUsers':
-		'These Samba accounts were not created by UNOS and cannot use UNOS shares: {users}',
+	'shares.status.unmanagedUsers': 'These Samba accounts were not created by UNOS and cannot use UNOS shares: {users}',
 	'shares.status.nobody': 'Nobody can connect yet: allow SMB on the Users page, then grant access here.',
 
 	'shares.nfs.add': 'Add NFS export',
@@ -126,7 +129,8 @@ export const en = {
 	'shares.nfs.statusError': 'The NFS status could not be read',
 	'shares.nfs.loadError': 'The NFS exports could not be loaded',
 	'shares.nfs.empty': 'No NFS exports yet',
-	'shares.nfs.emptyHint': 'Use Add NFS export above to export a folder of a pool, or a volume, to the computers of a network.',
+	'shares.nfs.emptyHint':
+		'Use Add NFS export above to export a folder of a pool, or a volume, to the computers of a network.',
 	'shares.nfs.clientsOf': 'Clients of {path}',
 	// A client whose options differ by security flavor (sec=): neither read only nor read & write.
 	'shares.nfs.perFlavor': 'Per security flavor',
@@ -216,7 +220,7 @@ export const en = {
 	'shares.form.option.timeMachineMore':
 		"Macs find the share in the Time Machine settings and back up to it; whoever backs up needs read & write access. Time Machine takes the free space of the pool. While a share offers Time Machine, every share loads Apple's SMB extensions.",
 	'shares.form.option.previousVersions': 'Previous Versions from snapshots',
-	'shares.form.option.previousVersionsHint': 'Windows lists the snapshots of the share\'s pool or volume.',
+	'shares.form.option.previousVersionsHint': "Windows lists the snapshots of the share's pool or volume.",
 	'shares.form.option.previousVersionsMore':
 		"Windows lists the snapshots of the share's pool, or of its volume when the share is in one, under Previous Versions of its files and folders: those made on the Snapshots page without a name of your own, and for a pool those of scheduled tasks too, which snapshot pools only. Open connections get it when they reconnect; turning it off disconnects them.",
 	'shares.form.usersError': 'The users could not be loaded',
@@ -269,7 +273,8 @@ export const en = {
 	'shares.access.noGroups': 'No groups yet.',
 	'shares.access.groupLabel': 'Group {name}',
 	'shares.access.groupMembers': { one: 'Group · {n} member: {names}', other: 'Group · {n} members: {names}' },
-	'shares.access.groupsHint': 'A group\'s members get its level once their SMB is on; whoever has several levels gets the highest.',
+	'shares.access.groupsHint':
+		"A group's members get its level once their SMB is on; whoever has several levels gets the highest.",
 
 	// The SMB state of a user (SmbAccountState of supervisor/src/shares/account_state.py).
 	'shares.smbState.active': 'SMB on',
@@ -401,7 +406,8 @@ export const en = {
 	'shares.bulk.confirm': { one: 'Delete {n} share', other: 'Delete {n} shares' },
 	'shares.bulk.noneDeleted': 'No share was deleted',
 	'shares.bulk.someGone': 'The deletion failed, and some of these shares are no longer listed',
-	'shares.bulk.notKnown': 'The deletion failed, and the list could not be read again: which shares are left is not known',
+	'shares.bulk.notKnown':
+		'The deletion failed, and the list could not be read again: which shares are left is not known',
 	'shares.bulk.tooMany': 'One deletion takes at most {max} shares: select fewer',
 	'shares.bulk.deleted': { one: 'Deleted {n} share: {names}', other: 'Deleted {n} shares: {names}' },
 	'shares.bulk.notDeleted': { one: '{n} share was not deleted', other: '{n} shares were not deleted' },
@@ -424,8 +430,7 @@ export const ru: Translation<typeof en> = {
 	'shares.location.choose': 'Выберите пул или том',
 	'shares.location.pool': '{name} (пул)',
 	'shares.location.volume': '{name} (том)',
-	'shares.location.noneMounted':
-		'Не смонтирован ни один пул или том. Сначала смонтируйте пул на странице «Хранилище».',
+	'shares.location.noneMounted': 'Не смонтирован ни один пул или том. Сначала смонтируйте пул на странице «Хранилище».',
 	'shares.location.noneManaged': 'Не смонтирован ни один пул, которым управляет UNOS.',
 	'shares.location.folder': 'Папка',
 
@@ -433,7 +438,8 @@ export const ru: Translation<typeof en> = {
 	'shares.smb.title': 'Общие папки SMB',
 	'shares.smb.loadError': 'Не удалось загрузить общие папки',
 	'shares.smb.empty': 'Общих папок SMB пока нет',
-	'shares.smb.emptyHint': 'Кнопка «Добавить общую папку SMB» выше открывает выбранным пользователям доступ к папке пула или к тому.',
+	'shares.smb.emptyHint':
+		'Кнопка «Добавить общую папку SMB» выше открывает выбранным пользователям доступ к папке пула или к тому.',
 	'shares.smb.networkNote':
 		'SMB отвечает только адресам вашей локальной сети (частные IPv4, IPv6 ULA и link-local, диапазоны VPN, например 100.64.0.0/10); публичные адреса отклоняются.',
 	'shares.smb.created': 'Общая папка «{name}» создана',
@@ -508,7 +514,11 @@ export const ru: Translation<typeof en> = {
 	'shares.status.missing': 'Не найдены: {tools}',
 	'shares.status.guestShares':
 		'Гостевой доступ включён для: {shares}. Любой в вашей сети может читать эти общие папки без пароля, и подпись подключений к этому серверу не требуется.',
-	'shares.status.imported': { one: 'Общие папки, импортированные из прежнего smb.conf: {n} заметка', few: 'Общие папки, импортированные из прежнего smb.conf: {n} заметки', many: 'Общие папки, импортированные из прежнего smb.conf: {n} заметок' },
+	'shares.status.imported': {
+		one: 'Общие папки, импортированные из прежнего smb.conf: {n} заметка',
+		few: 'Общие папки, импортированные из прежнего smb.conf: {n} заметки',
+		many: 'Общие папки, импортированные из прежнего smb.conf: {n} заметок'
+	},
 	'shares.status.dismissImport': 'Скрыть заметки',
 	'shares.status.unmanagedUsers':
 		'Эти учётные записи Samba созданы не в UNOS и не могут пользоваться общими папками UNOS: {users}',
@@ -541,8 +551,7 @@ export const ru: Translation<typeof en> = {
 
 	'shares.nfs.form.title': 'Новый экспорт NFS',
 	'shares.nfs.form.folderPlaceholder': 'media',
-	'shares.nfs.form.volumeHint':
-		'Существующая папка внутри тома. Оставьте поле пустым, чтобы экспортировать весь том',
+	'shares.nfs.form.volumeHint': 'Существующая папка внутри тома. Оставьте поле пустым, чтобы экспортировать весь том',
 	'shares.nfs.form.poolHint': 'Существующая папка внутри пула, например созданная в «Файлах»',
 	'shares.nfs.form.exportedFolder': 'Экспортируемая папка:',
 	'shares.nfs.form.client': 'Сеть клиентов',
@@ -594,7 +603,8 @@ export const ru: Translation<typeof en> = {
 	'shares.form.option.encryptionMore':
 		'Открыть общую папку могут только клиенты, которые шифруют подключение (SMB 3); более старым, например клиентам SMB 2, отказывается. Гостевые подключения никогда не шифруются, поэтому гостевая общая папка не может требовать шифрования.',
 	'shares.form.option.timeMachine': 'Резервные копии Time Machine с Mac',
-	'shares.form.option.timeMachineHint': 'Mac сохраняют сюда резервные копии; тому, кто их делает, нужны чтение и запись.',
+	'shares.form.option.timeMachineHint':
+		'Mac сохраняют сюда резервные копии; тому, кто их делает, нужны чтение и запись.',
 	'shares.form.option.timeMachineMore':
 		'Mac находит общую папку в настройках Time Machine и сохраняет в неё резервные копии; тому, кто их делает, нужен доступ на чтение и запись. Time Machine занимает свободное место пула. Пока хотя бы одна общая папка предлагает Time Machine, все общие папки загружают расширения SMB от Apple.',
 	'shares.form.option.previousVersions': 'Предыдущие версии из снимков',
@@ -644,8 +654,13 @@ export const ru: Translation<typeof en> = {
 	'shares.access.groups': 'Группы',
 	'shares.access.noGroups': 'Групп пока нет.',
 	'shares.access.groupLabel': 'Группа {name}',
-	'shares.access.groupMembers': { one: 'Группа · {n} участник: {names}', few: 'Группа · {n} участника: {names}', many: 'Группа · {n} участников: {names}' },
-	'shares.access.groupsHint': 'Участники группы получают её уровень, как только у них включён SMB; у кого несколько уровней, действует самый высокий.',
+	'shares.access.groupMembers': {
+		one: 'Группа · {n} участник: {names}',
+		few: 'Группа · {n} участника: {names}',
+		many: 'Группа · {n} участников: {names}'
+	},
+	'shares.access.groupsHint':
+		'Участники группы получают её уровень, как только у них включён SMB; у кого несколько уровней, действует самый высокий.',
 
 	'shares.smbState.active': 'SMB включён',
 	'shares.smbState.passwordNeeded': 'SMB: нужен пароль',
@@ -774,7 +789,8 @@ export const ru: Translation<typeof en> = {
 	},
 	'shares.bulk.noneDeleted': 'Ни одна общая папка не удалена',
 	'shares.bulk.someGone': 'Удаление не удалось, и некоторых из этих общих папок больше нет в списке',
-	'shares.bulk.notKnown': 'Удаление не удалось, и список не удалось прочитать снова: неизвестно, какие общие папки остались',
+	'shares.bulk.notKnown':
+		'Удаление не удалось, и список не удалось прочитать снова: неизвестно, какие общие папки остались',
 	'shares.bulk.tooMany': 'За один раз можно удалить не больше {max} общих папок: выберите меньше',
 	'shares.bulk.deleted': {
 		one: 'Удалена {n} общая папка: {names}',

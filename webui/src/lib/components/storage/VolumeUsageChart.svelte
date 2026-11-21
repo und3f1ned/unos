@@ -42,8 +42,20 @@
 		return drawn.trim();
 	}
 
-	let usedPath = $derived(path(points.map((point) => point.used), (index) => x(times[index]), y));
-	let quotaPath = $derived(path(points.map((point) => point.quota), (index) => x(times[index]), y));
+	let usedPath = $derived(
+		path(
+			points.map((point) => point.used),
+			(index) => x(times[index]),
+			y
+		)
+	);
+	let quotaPath = $derived(
+		path(
+			points.map((point) => point.quota),
+			(index) => x(times[index]),
+			y
+		)
+	);
 	let quota = $derived(points[points.length - 1]?.quota ?? null);
 	let dateFormat = $derived(
 		new Intl.DateTimeFormat($intlLocale, {

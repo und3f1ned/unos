@@ -20,12 +20,20 @@
 
 	const tabs = $derived([
 		{ id: 'overview' as DetailTab, label: $t('apps.detail.tabs.overview'), icon: Package },
-		...(portCount > 0 ? [{ id: 'ports' as DetailTab, label: $t('apps.detail.tabs.ports', { count: portCount }), icon: Network }] : []),
+		...(portCount > 0
+			? [{ id: 'ports' as DetailTab, label: $t('apps.detail.tabs.ports', { count: portCount }), icon: Network }]
+			: []),
 		...(volumeCount > 0
 			? [{ id: 'volumes' as DetailTab, label: $t('apps.detail.tabs.volumes', { count: volumeCount }), icon: HardDrive }]
 			: []),
 		...(variableCount > 0
-			? [{ id: 'environment' as DetailTab, label: $t('apps.detail.tabs.environment', { count: variableCount }), icon: Settings }]
+			? [
+					{
+						id: 'environment' as DetailTab,
+						label: $t('apps.detail.tabs.environment', { count: variableCount }),
+						icon: Settings
+					}
+				]
 			: [])
 	]);
 </script>

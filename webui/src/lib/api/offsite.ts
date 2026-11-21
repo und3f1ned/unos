@@ -1,48 +1,48 @@
-import { api } from "./client";
-import type { BackupInfo } from "./backup";
+import { api } from './client';
+import type { BackupInfo } from './backup';
 
 // The off-device copy (ADR-0337, ADR-0422): one copy repository, on a disk mounted below /mnt, in an
 // S3-compatible store, on a restic REST server or on an SFTP server, that restic fills with the
 // configuration and the pools' folders.
 
-export type OffsiteKind = "disk" | "s3" | "rest" | "sftp";
+export type OffsiteKind = 'disk' | 's3' | 'rest' | 'sftp';
 /** rest: how the server's certificate is checked. */
-export type OffsiteTls = "system" | "fingerprint" | "ca";
+export type OffsiteTls = 'system' | 'fingerprint' | 'ca';
 
 /** The copy target and what is copied, as GET /offsite/settings answers it: no secret. */
 export interface OffsiteSettings {
-  kind: OffsiteKind;
-  /** disk: the folder of the repository, below /mnt; sftp: its folder on the server. */
-  path?: string | null;
-  /** s3: https://host[:port] or http://host[:port]; rest: https://host[:port]. */
-  endpoint?: string | null;
-  bucket?: string | null;
-  /** s3: the folders in the bucket; rest: on the server. */
-  prefix?: string | null;
-  region?: string | null;
-  access_key_id?: string | null;
-  /** rest: the server's user; sftp: the login. */
-  username?: string | null;
-  /** sftp: the server and its SSH port. */
-  host?: string | null;
-  port?: number | null;
-  /** sftp: the host key pinned at the first test; the server sets it, never a request. */
-  host_key?: string | null;
-  tls?: OffsiteTls | null;
-  /** rest: the CA's certificate (ca) or the server's own, read at the save (fingerprint), in PEM. */
-  certificate?: string | null;
-  /** rest, tls fingerprint: the SHA-256 fingerprint of the server's certificate. */
-  certificate_sha256?: string | null;
-  /** Folders of the pools. */
-  sources: string[];
-  /** KiB/s, 0: no limit; s3, rest and sftp. */
-  limit_upload_kib: number;
-  limit_download_kib: number;
-  keep_daily: number;
-  keep_weekly: number;
-  keep_monthly: number;
-  /** The share of the data that each check reads, 0 to 100. */
-  check_percent: number;
+	kind: OffsiteKind;
+	/** disk: the folder of the repository, below /mnt; sftp: its folder on the server. */
+	path?: string | null;
+	/** s3: https://host[:port] or http://host[:port]; rest: https://host[:port]. */
+	endpoint?: string | null;
+	bucket?: string | null;
+	/** s3: the folders in the bucket; rest: on the server. */
+	prefix?: string | null;
+	region?: string | null;
+	access_key_id?: string | null;
+	/** rest: the server's user; sftp: the login. */
+	username?: string | null;
+	/** sftp: the server and its SSH port. */
+	host?: string | null;
+	port?: number | null;
+	/** sftp: the host key pinned at the first test; the server sets it, never a request. */
+	host_key?: string | null;
+	tls?: OffsiteTls | null;
+	/** rest: the CA's certificate (ca) or the server's own, read at the save (fingerprint), in PEM. */
+	certificate?: string | null;
+	/** rest, tls fingerprint: the SHA-256 fingerprint of the server's certificate. */
+	certificate_sha256?: string | null;
+	/** Folders of the pools. */
+	sources: string[];
+	/** KiB/s, 0: no limit; s3, rest and sftp. */
+	limit_upload_kib: number;
+	limit_download_kib: number;
+	keep_daily: number;
+	keep_weekly: number;
+	keep_monthly: number;
+	/** The share of the data that each check reads, 0 to 100. */
+	check_percent: number;
 }
 
 /**
@@ -50,154 +50,154 @@ export interface OffsiteSettings {
  * the same target without them keeps the stored ones.
  */
 export interface OffsiteSettingsRequest extends OffsiteSettings {
-  password?: string;
-  s3_secret_access_key?: string;
-  rest_password?: string;
-  /** sftp: pin the key that the server shows now, for a key that changed on purpose. */
-  trust_new_host_key?: boolean;
-  /** sftp: the fingerprint that the server's host key must have, SHA256:..., checked first. */
-  host_key_fingerprint?: string;
+	password?: string;
+	s3_secret_access_key?: string;
+	rest_password?: string;
+	/** sftp: pin the key that the server shows now, for a key that changed on purpose. */
+	trust_new_host_key?: boolean;
+	/** sftp: the fingerprint that the server's host key must have, SHA256:..., checked first. */
+	host_key_fingerprint?: string;
 }
 
 /** A warning about the settings: same_disk, a disk target on the filesystem of a folder it copies. */
 export interface OffsiteWarning {
-  kind: string;
-  message: string;
+	kind: string;
+	message: string;
 }
 
 export interface OffsiteSettingsAnswer {
-  configured: boolean;
-  settings: OffsiteSettings | null;
-  has_password: boolean;
-  has_s3_secret_access_key: boolean;
-  has_rest_password: boolean;
-  /** The public key of UNOS's key pair for SFTP, for the server's authorized keys; null before one is made. */
-  sftp_public_key: string | null;
-  /** The SHA256 fingerprint of the SFTP server's pinned host key. */
-  host_key_fingerprint: string | null;
-  /** The managed pools: their mount points are the folders a copy takes by default. */
-  pools: { name: string; path: string }[];
-  /** The folder of the pools' mount points (/mnt/pools): a source below it names its pool. */
-  pools_base: string;
-  warnings: OffsiteWarning[];
+	configured: boolean;
+	settings: OffsiteSettings | null;
+	has_password: boolean;
+	has_s3_secret_access_key: boolean;
+	has_rest_password: boolean;
+	/** The public key of UNOS's key pair for SFTP, for the server's authorized keys; null before one is made. */
+	sftp_public_key: string | null;
+	/** The SHA256 fingerprint of the SFTP server's pinned host key. */
+	host_key_fingerprint: string | null;
+	/** The managed pools: their mount points are the folders a copy takes by default. */
+	pools: { name: string; path: string }[];
+	/** The folder of the pools' mount points (/mnt/pools): a source below it names its pool. */
+	pools_base: string;
+	warnings: OffsiteWarning[];
 }
 
 export interface CopySummary {
-  files_new: number;
-  files_changed: number;
-  files_unmodified: number;
-  bytes_added: number;
-  configuration_snapshot: string | null;
-  data_snapshot: string | null;
+	files_new: number;
+	files_changed: number;
+	files_unmodified: number;
+	bytes_added: number;
+	configuration_snapshot: string | null;
+	data_snapshot: string | null;
 }
 
 /** The last copy. Times are ISO 8601 in UTC. */
 export interface CopyResult {
-  started: string;
-  ended: string | null;
-  /** task: a task of the Scheduler; manual: Run now. */
-  trigger: string;
-  success: boolean;
-  /** The step that failed: settings, folders, unlock, configuration, data, forget, check, restore_test. */
-  step: string | null;
-  /** Why it failed, in the server's words. */
-  error: string | null;
-  summary: CopySummary | null;
-  /** passed or failed; null when the copy did not get there. */
-  check: string | null;
-  restore_test: string | null;
-  /** What the copy of the data could not read that is not the error, in the server's words: files that
-   * vanished while it ran (no failure), and files that could not be read when a later step failed. */
-  note: string | null;
+	started: string;
+	ended: string | null;
+	/** task: a task of the Scheduler; manual: Run now. */
+	trigger: string;
+	success: boolean;
+	/** The step that failed: settings, folders, unlock, configuration, data, forget, check, restore_test. */
+	step: string | null;
+	/** Why it failed, in the server's words. */
+	error: string | null;
+	summary: CopySummary | null;
+	/** passed or failed; null when the copy did not get there. */
+	check: string | null;
+	restore_test: string | null;
+	/** What the copy of the data could not read that is not the error, in the server's words: files that
+	 * vanished while it ran (no failure), and files that could not be read when a later step failed. */
+	note: string | null;
 }
 
 export interface RestoreResult {
-  snapshot_id: string;
-  path: string | null;
-  folder: string;
-  started: string;
-  ended: string | null;
-  success: boolean;
-  error: string | null;
+	snapshot_id: string;
+	path: string | null;
+	folder: string;
+	started: string;
+	ended: string | null;
+	success: boolean;
+	error: string | null;
 }
 
 /** What runs now: a copy, a restore, or a test or removal of the settings. */
 export interface OffsiteActivity {
-  kind: string;
-  started: string;
-  step: string | null;
-  snapshot_id: string | null;
-  folder: string | null;
+	kind: string;
+	started: string;
+	step: string | null;
+	snapshot_id: string | null;
+	folder: string | null;
 }
 
 export interface OffsiteStatus {
-  running: OffsiteActivity | null;
-  last_copy: CopyResult | null;
-  last_restore: RestoreResult | null;
+	running: OffsiteActivity | null;
+	last_copy: CopyResult | null;
+	last_restore: RestoreResult | null;
 }
 
 export interface OffsiteSnapshot {
-  id: string;
-  short_id: string;
-  time: string;
-  /** configuration, data or other, by its tags. */
-  kind: string;
-  tags: string[];
-  paths: string[];
-  hostname: string | null;
-  /** Bytes and files that it holds, when restic says. */
-  size: number | null;
-  files: number | null;
+	id: string;
+	short_id: string;
+	time: string;
+	/** configuration, data or other, by its tags. */
+	kind: string;
+	tags: string[];
+	paths: string[];
+	hostname: string | null;
+	/** Bytes and files that it holds, when restic says. */
+	size: number | null;
+	files: number | null;
 }
 
 export async function getOffsiteSettings(): Promise<OffsiteSettingsAnswer> {
-  return api.get<OffsiteSettingsAnswer>("/offsite/settings");
+	return api.get<OffsiteSettingsAnswer>('/offsite/settings');
 }
 
 /** Save the settings; the server tests the target first, and answers 400 with restic's message. */
 export async function saveOffsiteSettings(settings: OffsiteSettingsRequest): Promise<OffsiteSettingsAnswer> {
-  return api.put<OffsiteSettingsAnswer>("/offsite/settings", settings);
+	return api.put<OffsiteSettingsAnswer>('/offsite/settings', settings);
 }
 
 /** Make a new key pair of UNOS for SFTP, which replaces the one before; the answer holds its public key. */
 export async function makeOffsiteKeyPair(): Promise<OffsiteSettingsAnswer> {
-  return api.post<OffsiteSettingsAnswer>("/offsite/sftp-key");
+	return api.post<OffsiteSettingsAnswer>('/offsite/sftp-key');
 }
 
 /** Forget the target: its settings, secrets and state. The copies stay where they are. */
 export async function removeOffsiteSettings(): Promise<{ status: string }> {
-  return api.delete<{ status: string }>("/offsite/settings");
+	return api.delete<{ status: string }>('/offsite/settings');
 }
 
 export async function getOffsiteStatus(): Promise<OffsiteStatus> {
-  return api.get<OffsiteStatus>("/offsite/status");
+	return api.get<OffsiteStatus>('/offsite/status');
 }
 
 /** Run now: the copy runs in the background. */
 export async function runOffsiteCopy(): Promise<{ status: string }> {
-  return api.post<{ status: string }>("/offsite/run");
+	return api.post<{ status: string }>('/offsite/run');
 }
 
 export async function getOffsiteSnapshots(): Promise<{ snapshots: OffsiteSnapshot[] }> {
-  return api.get<{ snapshots: OffsiteSnapshot[] }>("/offsite/snapshots");
+	return api.get<{ snapshots: OffsiteSnapshot[] }>('/offsite/snapshots');
 }
 
 /** Put a snapshot's configuration into the backup list, where it is restored. */
 export async function restoreOffsiteConfiguration(snapshotId: string): Promise<{ status: string; backup: BackupInfo }> {
-  return api.post<{ status: string; backup: BackupInfo }>("/offsite/restore-configuration", {
-    snapshot_id: snapshotId,
-  });
+	return api.post<{ status: string; backup: BackupInfo }>('/offsite/restore-configuration', {
+		snapshot_id: snapshotId
+	});
 }
 
 /** Restore a snapshot, or one of its folders, into a new folder at the top of a pool, in the background. */
 export async function restoreOffsiteFiles(
-  snapshotId: string,
-  pool: string,
-  path?: string
+	snapshotId: string,
+	pool: string,
+	path?: string
 ): Promise<{ status: string; folder: string }> {
-  return api.post<{ status: string; folder: string }>("/offsite/restore-files", {
-    snapshot_id: snapshotId,
-    pool,
-    path: path || null,
-  });
+	return api.post<{ status: string; folder: string }>('/offsite/restore-files', {
+		snapshot_id: snapshotId,
+		pool,
+		path: path || null
+	});
 }

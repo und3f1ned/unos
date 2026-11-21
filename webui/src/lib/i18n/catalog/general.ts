@@ -30,7 +30,7 @@ export const en = {
 	// The uptime, as long as it is.
 	'general.uptime.days': '{days}d {hours}h {minutes}m',
 	'general.uptime.hours': '{hours}h {minutes}m',
-	'general.uptime.minutes': '{minutes}m',
+	'general.uptime.minutes': '{minutes}m'
 };
 
 export const ru: Translation<typeof en> = {
@@ -41,7 +41,8 @@ export const ru: Translation<typeof en> = {
 	'general.host.title': 'Имя и часовой пояс',
 	'general.host.hostname': 'Имя хоста',
 	'general.host.saveHostname': 'Сохранить имя хоста',
-	'general.host.hostnameHint': 'Латинские буквы, цифры и дефисы, не больше 63; дефис не может быть первым или последним.',
+	'general.host.hostnameHint':
+		'Латинские буквы, цифры и дефисы, не больше 63; дефис не может быть первым или последним.',
 	'general.host.hostnameSaved': 'Имя хоста изменено на {name}.',
 	'general.host.zone': 'Часовой пояс',
 	'general.host.zoneHint': 'Задачи планировщика выполняются по времени этого пояса.',
@@ -59,5 +60,5 @@ export const ru: Translation<typeof en> = {
 	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.',
 	'general.uptime.days': '{days} д {hours} ч {minutes} мин',
 	'general.uptime.hours': '{hours} ч {minutes} мин',
-	'general.uptime.minutes': '{minutes} мин',
+	'general.uptime.minutes': '{minutes} мин'
 };

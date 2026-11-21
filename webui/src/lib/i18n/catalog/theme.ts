@@ -12,8 +12,7 @@ export const en = {
 	'theme.hint':
 		'Applies at once and is kept for your account, in every browser you sign in to. System follows the light or dark setting of your device.',
 	'theme.saveFailed': 'The theme could not be saved',
-	'theme.loadFailed':
-		'Your saved theme could not be loaded: this browser shows its own. Open this page again to retry.'
+	'theme.loadFailed': 'Your saved theme could not be loaded: this browser shows its own. Open this page again to retry.'
 };
 
 export const ru: Translation<typeof en> = {

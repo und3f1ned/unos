@@ -4,7 +4,6 @@ import type { AuditEntry } from '$lib/api/audit';
 import type { Translate } from '$lib/i18n';
 import { localDay } from '$lib/time';
 
-
 export interface Day {
 	day: string;
 	entries: AuditEntry[];

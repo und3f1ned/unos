@@ -56,22 +56,13 @@
 	let renameNeedsPassword = $derived(renaming && editState === 'active');
 	let promoting = $derived(editing !== null && !editing.is_admin && editIsAdmin);
 	let adminWarning = $derived(
-		promoting &&
-			(editState === 'active' || editState === 'password_needed' || editHasShareAccess !== false)
+		promoting && (editState === 'active' || editState === 'password_needed' || editHasShareAccess !== false)
 	);
 	let turnOnWithPassword = $derived(
-		editState === 'password_needed' &&
-			!editIsAdmin &&
-			alsoTurnOnSmb &&
-			editPassword !== '' &&
-			!renaming
+		editState === 'password_needed' && !editIsAdmin && alsoTurnOnSmb && editPassword !== '' && !renaming
 	);
-	let editPasswordReady = $derived(
-		editPassword === '' || passwordComplete(editPassword, editConfirm)
-	);
-	let editChanged = $derived(
-		editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '' || renaming)
-	);
+	let editPasswordReady = $derived(editPassword === '' || passwordComplete(editPassword, editConfirm));
+	let editChanged = $derived(editing !== null && (editIsAdmin !== editing.is_admin || editPassword !== '' || renaming));
 	let canSave = $derived(
 		editChanged &&
 			editPasswordReady &&
@@ -252,9 +243,7 @@
 <!-- Edit user: its sections in a Sheet, which scrolls them (ADR-0432). -->
 <Sheet
 	open={editing !== null}
-	title={editing
-		? $t('users.edit.title', { name: editing.username })
-		: $t('users.edit.titleWithoutName')}
+	title={editing ? $t('users.edit.title', { name: editing.username }) : $t('users.edit.titleWithoutName')}
 	size="lg"
 	closable={!saving && !smbBusy}
 	onclose={() => closeEdit()}
@@ -299,35 +288,35 @@
 			<!-- The own password has one place, the Account page, which asks for the current one
 			     (ADR-0431). -->
 			{#if currentUserId === editing.id}
-			<section class="space-y-2">
-				<h3 class="card-title">{$t('common.password')}</h3>
-				<p class="form-hint">
-					{$t('users.edit.ownPassword')}
-					<a href="/account#security" class="link">{$t('account.tabs.security')}</a>
-				</p>
-			</section>
+				<section class="space-y-2">
+					<h3 class="card-title">{$t('common.password')}</h3>
+					<p class="form-hint">
+						{$t('users.edit.ownPassword')}
+						<a href="/account#security" class="link">{$t('account.tabs.security')}</a>
+					</p>
+				</section>
 			{:else}
-			<section class="space-y-2">
-				<h3 class="card-title">{$t('common.password')}</h3>
-				<PasswordFields
-					id="edit-password"
-					confirmId="edit-password-confirm"
-					label={$t('users.edit.password')}
-					confirmLabel={$t('users.edit.confirm')}
-					hint={$t('users.edit.passwordHint', { n: MIN_PASSWORD_LENGTH })}
-					disabled={saving}
-					attempted={editAttempted && (renameNeedsPassword || editPassword !== '')}
-					bind:password={editPassword}
-					bind:confirmation={editConfirm}
-				/>
-				{#if renameNeedsPassword}
-					<HelpText text={$t('users.edit.renameSmb', { name: editing.username })} />
-				{:else if editState === 'active'}
-					<HelpText text={$t('users.edit.smbPassword')} />
-				{:else if editState === 'password_needed' && !editIsAdmin && !renaming}
-					<Checkbox bind:checked={alsoTurnOnSmb} disabled={saving} label={$t('users.edit.turnOnSmb')} />
-				{/if}
-			</section>
+				<section class="space-y-2">
+					<h3 class="card-title">{$t('common.password')}</h3>
+					<PasswordFields
+						id="edit-password"
+						confirmId="edit-password-confirm"
+						label={$t('users.edit.password')}
+						confirmLabel={$t('users.edit.confirm')}
+						hint={$t('users.edit.passwordHint', { n: MIN_PASSWORD_LENGTH })}
+						disabled={saving}
+						attempted={editAttempted && (renameNeedsPassword || editPassword !== '')}
+						bind:password={editPassword}
+						bind:confirmation={editConfirm}
+					/>
+					{#if renameNeedsPassword}
+						<HelpText text={$t('users.edit.renameSmb', { name: editing.username })} />
+					{:else if editState === 'active'}
+						<HelpText text={$t('users.edit.smbPassword')} />
+					{:else if editState === 'password_needed' && !editIsAdmin && !renaming}
+						<Checkbox bind:checked={alsoTurnOnSmb} disabled={saving} label={$t('users.edit.turnOnSmb')} />
+					{/if}
+				</section>
 			{/if}
 
 			<section class="space-y-2">
@@ -371,12 +360,7 @@
 	{/if}
 
 	{#snippet footer()}
-		<Button
-			variant="secondary"
-			class="flex-1"
-			disabled={saving || smbBusy}
-			onclick={() => closeEdit()}
-		>
+		<Button variant="secondary" class="flex-1" disabled={saving || smbBusy} onclick={() => closeEdit()}>
 			{$t('users.edit.close')}
 		</Button>
 		<!-- Disabled only while nothing changed, and then it says so; what a change lacks is

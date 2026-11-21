@@ -21,9 +21,7 @@ export function accessKey(userId: number, username: string): string {
 
 /** The users the picker lists: administrators cannot use SMB. Sorted by name. */
 export function pickableUsers(users: User[]): User[] {
-	return users
-		.filter((user) => !user.is_admin)
-		.sort((a, b) => a.username.localeCompare(b.username));
+	return users.filter((user) => !user.is_admin).sort((a, b) => a.username.localeCompare(b.username));
 }
 
 /** Users whose name SMB cannot use are listed, but cannot be given access. */
@@ -39,10 +37,7 @@ export function levelsFromAccess(access: ShareAccess[]): Record<string, AccessCh
 }
 
 /** The access list the picker shows for `users`, sorted by user id. */
-export function accessEntries(
-	users: User[],
-	levels: Record<string, AccessChoice>
-): ShareAccessEntry[] {
+export function accessEntries(users: User[], levels: Record<string, AccessChoice>): ShareAccessEntry[] {
 	const entries: ShareAccessEntry[] = [];
 	for (const user of users) {
 		if (!canBeGivenAccess(user)) continue;
@@ -58,10 +53,7 @@ export function sameAccess(a: ShareAccessEntry[], b: ShareAccessEntry[]): boolea
 	return (
 		a.length === b.length &&
 		a.every(
-			(entry, i) =>
-				entry.user_id === b[i].user_id &&
-				entry.username === b[i].username &&
-				entry.level === b[i].level
+			(entry, i) => entry.user_id === b[i].user_id && entry.username === b[i].username && entry.level === b[i].level
 		)
 	);
 }
@@ -84,10 +76,7 @@ export function groupLevelsFromAccess(access: ShareGroupAccess[]): Record<string
 }
 
 /** The group access list the picker shows for `groups`, sorted by group id. */
-export function groupAccessEntries(
-	groups: Group[],
-	levels: Record<string, AccessChoice>
-): ShareGroupAccessEntry[] {
+export function groupAccessEntries(groups: Group[], levels: Record<string, AccessChoice>): ShareGroupAccessEntry[] {
 	const entries: ShareGroupAccessEntry[] = [];
 	for (const group of groups) {
 		const level = levels[groupKey(group.id, group.name)];
@@ -99,10 +88,7 @@ export function groupAccessEntries(
 export function sameGroupAccess(a: ShareGroupAccessEntry[], b: ShareGroupAccessEntry[]): boolean {
 	return (
 		a.length === b.length &&
-		a.every(
-			(entry, i) =>
-				entry.group_id === b[i].group_id && entry.group === b[i].group && entry.level === b[i].level
-		)
+		a.every((entry, i) => entry.group_id === b[i].group_id && entry.group === b[i].group && entry.level === b[i].level)
 	);
 }
 

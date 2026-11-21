@@ -110,7 +110,9 @@ def test_help_is_the_default_target():
               "--ignore=tests/fixtures"]),
     ("test-fast", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(TEST_FAST)]),
     ("smoke", ["cd supervisor &&", "/opt/py/bin/python -m pytest " + " ".join(SMOKE)]),
-    ("frontend", ["cd webui && npm run check", "cd webui && npm run i18n", "cd webui && npm run build"]),
+    ("frontend", ["cd webui && npm run check", "cd webui && npm run i18n", "cd webui && npm run build",
+                  # ESLint and Prettier's check of webui/src (ADR-0449).
+                  "cd webui && npm run lint", "cd webui && npm run format-check"]),
     ("e2e-local", ["scripts/standin/e2e.sh"]),
     # pip-audit of the supervisor's dependencies as resolved by pinned, hashed tools (ADR-0423).
     ("audit", ['PYTHON="/opt/py/bin/python" PIP_AUDIT="pip-audit" scripts/audit-python.sh',
@@ -585,6 +587,7 @@ def test_lint_and_frontend_run_every_part_even_when_one_fails(tmp_path):
     assert frontend.returncode != 0
     assert "make frontend failed: frontend-check" in frontend.stderr
     assert "npm run build" in frontend.stdout  # the build ran after the failed check
+    assert "npm run lint" in frontend.stdout and "npm run format-check" in frontend.stdout
 
 
 # --- .claude/settings.json, the guard and the Stop hook --------------------------------------
@@ -1819,6 +1822,10 @@ def test_dependabot_leaves_major_npm_versions_and_playwright_alone():
 
     assert npm_ignored["*"] == ["version-update:semver-major"]
     assert npm_ignored["@playwright/test"] is None  # every version
+    # ESLint, Prettier and their plugins move by hand, with their findings and format (ADR-0449).
+    for name in ("eslint", "@eslint/js", "typescript-eslint", "eslint-plugin-svelte", "prettier",
+                 "prettier-plugin-svelte"):
+        assert npm_ignored[name] is None, name
     # Dependabot names an image without its registry: mcr.microsoft.com/playwright is "playwright".
     assert docker_ignored["playwright"] is None
     assert not [name for name in docker_ignored if "." in name.split("/")[0] or ":" in name.split("/")[0]]

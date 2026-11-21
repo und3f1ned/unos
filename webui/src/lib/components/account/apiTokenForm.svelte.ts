@@ -14,9 +14,7 @@ export class ApiTokenForm {
 	canCreate = $derived(this.name.trim().length > 0 && (this.everyArea || this.chosenAreas.length > 0));
 	// Change access to chosen areas whose changes reach beyond them (WARNED_AREAS). Change access to
 	// every area is a full token, as the choice says.
-	warned = $derived(
-		!this.readOnly && !this.everyArea && this.chosenAreas.some((area) => WARNED_AREAS.includes(area))
-	);
+	warned = $derived(!this.readOnly && !this.everyArea && this.chosenAreas.some((area) => WARNED_AREAS.includes(area)));
 
 	/** Back to the first choices, for the next token. */
 	reset() {

@@ -162,11 +162,7 @@
 	{#if menuOpen}
 		<!-- Covers the page beside the drawer, which a click on it never reaches; it listens
 		     for the click itself (closeOnClick, and handleOutsideClick for the rest). -->
-		<div
-			class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 scrim"
-			role="presentation"
-			{@attach closeOnClick}
-		></div>
+		<div class="md:hidden fixed inset-x-0 top-14 bottom-0 z-30 scrim" role="presentation" {@attach closeOnClick}></div>
 	{/if}
 
 	<!-- Below md a drawer that slides in (reduced motion: at once); closed, it is invisible, so that

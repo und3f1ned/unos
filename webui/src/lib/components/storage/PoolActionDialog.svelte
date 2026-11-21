@@ -81,10 +81,7 @@
 			</Alert>
 		{/if}
 		{#if error}
-			<Alert
-				variant="error"
-				title={$t(action.kind === 'mount' ? 'storage.mount.failed' : 'storage.unmount.failed')}
-			>
+			<Alert variant="error" title={$t(action.kind === 'mount' ? 'storage.mount.failed' : 'storage.unmount.failed')}>
 				{error}
 			</Alert>
 		{/if}

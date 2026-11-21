@@ -29,19 +29,19 @@
 </script>
 
 {#if selectedCount > 0}
-<BulkBar
-	class="top-auto bottom-4"
-	count={selectedCount}
-	label={$t('containers.bulk.toolbar')}
-	summary={progress
-		? $t(BULK_PROGRESS[progress.action], { name: progress.name, i: progress.i, n: progress.n })
-		: $t('containers.bulk.selected', { n: selectedCount })}
-	onclear={busy ? null : onclear}
->
-	{#each ACTIONS as action (action.id)}
-		<Button variant="secondary" size="sm" icon={action.Icon} disabled={busy} onclick={() => onbulk(action.id)}>
-			{$t(action.key)}
-		</Button>
-	{/each}
-</BulkBar>
+	<BulkBar
+		class="top-auto bottom-4"
+		count={selectedCount}
+		label={$t('containers.bulk.toolbar')}
+		summary={progress
+			? $t(BULK_PROGRESS[progress.action], { name: progress.name, i: progress.i, n: progress.n })
+			: $t('containers.bulk.selected', { n: selectedCount })}
+		onclear={busy ? null : onclear}
+	>
+		{#each ACTIONS as action (action.id)}
+			<Button variant="secondary" size="sm" icon={action.Icon} disabled={busy} onclick={() => onbulk(action.id)}>
+				{$t(action.key)}
+			</Button>
+		{/each}
+	</BulkBar>
 {/if}

@@ -68,7 +68,8 @@
 
 	const toneOf = $derived(tone ?? (danger ? 'danger' : null));
 
-	const titleId = `modal-title-${++titleCount}`;
+	titleCount += 1;
+	const titleId = `modal-title-${titleCount}`;
 
 	const sizeClasses = {
 		sm: 'modal-sm',
@@ -201,9 +202,7 @@
 	<div
 		bind:this={overlay}
 		use:inStack
-		class="modal-overlay outline-none {placement === 'side'
-			? 'modal-overlay-side'
-			: 'items-start overflow-y-auto p-4'}"
+		class="modal-overlay outline-none {placement === 'side' ? 'modal-overlay-side' : 'items-start overflow-y-auto p-4'}"
 		{@attach (node) => on(node, 'click', handleBackdropClick)}
 		role="dialog"
 		aria-modal="true"
@@ -212,7 +211,10 @@
 		tabindex="-1"
 		style:z-index={50 + depth}
 	>
-		<div class="modal modal-panel {placement === 'side' ? 'modal-side' : 'my-auto'} {sizeClasses[size]}" {@attach edges}>
+		<div
+			class="modal modal-panel {placement === 'side' ? 'modal-side' : 'my-auto'} {sizeClasses[size]}"
+			{@attach edges}
+		>
 			<div class="modal-header" bind:this={header}>
 				<div class="flex items-center gap-3 min-w-0">
 					{#if toneOf}

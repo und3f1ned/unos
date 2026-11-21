@@ -49,10 +49,7 @@
 		balanceStarting = true;
 		balanceError = '';
 		try {
-			onstarted(
-				poolName,
-				await startBalance(poolName, balanceFull ? { full: true } : { usage: balanceLimit })
-			);
+			onstarted(poolName, await startBalance(poolName, balanceFull ? { full: true } : { usage: balanceLimit }));
 			balanceStarting = false;
 			closeBalance();
 		} catch (e) {
@@ -84,7 +81,11 @@
 		{#if balanceFull}
 			<Alert variant="warning" title={$t('storage.balance.fullTitle')}>
 				{$t('storage.balance.fullWarning')}
-				<Checkbox bind:checked={balanceConfirmed} label={$t('storage.balance.fullConfirm', { name: pool.name })} class="mt-3" />
+				<Checkbox
+					bind:checked={balanceConfirmed}
+					label={$t('storage.balance.fullConfirm', { name: pool.name })}
+					class="mt-3"
+				/>
 			</Alert>
 		{:else}
 			<Input

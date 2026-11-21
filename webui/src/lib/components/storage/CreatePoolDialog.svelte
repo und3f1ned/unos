@@ -7,7 +7,18 @@
 	// still missing while Create is disabled.
 	import { untrack } from 'svelte';
 	import { ChevronDown, HardDrive } from 'lucide-svelte';
-	import { Alert, Badge, Button, Checkbox, EmptyState, ErrorState, Input, Select, Sheet, Skeleton } from '$lib/components/ui';
+	import {
+		Alert,
+		Badge,
+		Button,
+		Checkbox,
+		EmptyState,
+		ErrorState,
+		Input,
+		Select,
+		Sheet,
+		Skeleton
+	} from '$lib/components/ui';
 	import { ApiError } from '$lib/api/client';
 	import {
 		createPool,
@@ -37,17 +48,8 @@
 		oncreated: () => void | Promise<void>;
 	};
 
-	let {
-		open,
-		disks,
-		disksLoading,
-		disksError,
-		formatBytes,
-		describeContents,
-		reloadDisks,
-		onclose,
-		oncreated
-	}: Props = $props();
+	let { open, disks, disksLoading, disksError, formatBytes, describeContents, reloadDisks, onclose, oncreated }: Props =
+		$props();
 
 	let saving = $state(false);
 	let createError = $state('');
@@ -81,9 +83,7 @@
 		return disk.in_use_reason || $t('storage.create.inUse');
 	};
 
-	let raidOptions = $derived(
-		RAID_LEVELS.map((level) => ({ value: level.value, label: $t(level.labelKey) }))
-	);
+	let raidOptions = $derived(RAID_LEVELS.map((level) => ({ value: level.value, label: $t(level.labelKey) })));
 	let selectedRaidLevel = $derived(RAID_LEVELS.find((level) => level.value === poolForm.raid_level));
 	let selectedRaidDescription = $derived(selectedRaidLevel ? $t(selectedRaidLevel.hintKey) : '');
 	let requiredDevices = $derived(selectedRaidLevel?.minDevices ?? 1);
@@ -192,17 +192,14 @@
 </script>
 
 <!-- A form of a list of disks and its fields: a Sheet (ADR-0432). -->
-<Sheet
-	{open}
-	title={$t('storage.create.title')}
-	size="lg"
-	closable={!saving}
-	onclose={closeCreateModal}
->
+<Sheet {open} title={$t('storage.create.title')} size="lg" closable={!saving} onclose={closeCreateModal}>
 	<!-- The dialog scrolls as a whole, so that the typed confirmation is never hidden. -->
 	<form
 		id="create-pool-form"
-		onsubmit={(e) => { e.preventDefault(); handleCreatePool(); }}
+		onsubmit={(e) => {
+			e.preventDefault();
+			handleCreatePool();
+		}}
 		class="space-y-4"
 	>
 		<Alert variant="error" size="sm" title={$t('storage.create.eraseTitle')}>
@@ -248,9 +245,7 @@
 								{/if}
 							</span>
 							<span class="block text-xs text-secondary">
-								{describeContents(disk)}{disk.pool
-									? ` · ${$t('storage.create.memberOf', { pool: disk.pool })}`
-									: ''}
+								{describeContents(disk)}{disk.pool ? ` · ${$t('storage.create.memberOf', { pool: disk.pool })}` : ''}
 							</span>
 							{#if disk.has_data}
 								<Badge variant="warning" class="mt-1">{$t('storage.create.containsData')}</Badge>
@@ -277,7 +272,9 @@
 								<li class="px-2 text-secondary">
 									<span class="mono">{disk.path}</span>
 									<span class="text-xs text-muted">{formatBytes(disk.size)}{disk.model ? ` · ${disk.model}` : ''}</span>
-									<span class="block text-xs">{$t('storage.create.unavailable', { reason: unavailableReason(disk) ?? '' })}</span>
+									<span class="block text-xs"
+										>{$t('storage.create.unavailable', { reason: unavailableReason(disk) ?? '' })}</span
+									>
 								</li>
 							{/each}
 						</ul>

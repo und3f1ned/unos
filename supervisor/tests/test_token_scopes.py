@@ -231,7 +231,7 @@ def test_the_web_ui_knows_the_same_areas():
     def listed(name: str) -> tuple[str, ...]:
         found = re.search(rf"export const {name}\b[^=]*= \[(.*?)\]", source, re.S)
         assert found is not None, name
-        return tuple(re.findall(r'"([a-z]+)"', found.group(1)))
+        return tuple(re.findall(r"""["']([a-z]+)["']""", found.group(1)))
 
     assert listed("TOKEN_AREAS") == scopes.AREAS
     assert listed("WARNED_AREAS") == scopes.WARNED_AREAS

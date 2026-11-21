@@ -17,7 +17,7 @@
 	import { Flame, ShieldCheck, ShieldX } from 'lucide-svelte';
 	import FirewallAddRuleDialog from './FirewallAddRuleDialog.svelte';
 	import FirewallDetails from './FirewallDetails.svelte';
-		import { emptyRule, type NewRule } from './firewall';
+	import { emptyRule, type NewRule } from './firewall';
 
 	// System > Security, administrators only: the host's ufw (ADR-0416). Turning it on adds UNOS's
 	// rules for the local networks first, and a change made while it is on is undone by the host
@@ -28,7 +28,15 @@
 	// writes them (LOCAL_NETWORKS of supervisor/src/security/firewall.py, which
 	// supervisor/tests/test_firewall.py compares with this line).
 	// i18n-ignore: network addresses, the same in every language
-	const LOCAL_NETWORKS = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16', 'fc00::/7', 'fe80::/10'];
+	const LOCAL_NETWORKS = [
+		'10.0.0.0/8',
+		'172.16.0.0/12',
+		'192.168.0.0/16',
+		'100.64.0.0/10',
+		'169.254.0.0/16',
+		'fc00::/7',
+		'fe80::/10'
+	];
 	// Seconds the host's revert may take after its time before the card reads the firewall again,
 	// and how often it reads again while the host still undoes the change.
 	const REVERT_GRACE_MS = 5000;
@@ -178,7 +186,11 @@
 			message: $t('firewall.enableRules', { networks: LOCAL_NETWORKS.join(', ') }),
 			// This browser reaches the NAS from outside the local networks: a warning to weigh first.
 			warning: status?.client_local === false ? $t('firewall.notLocal') : undefined,
-			consequences: [$t('firewall.enableRevert', { n: revertSeconds }), $t('firewall.enableOthers'), $t('firewall.docker')],
+			consequences: [
+				$t('firewall.enableRevert', { n: revertSeconds }),
+				$t('firewall.enableOthers'),
+				$t('firewall.docker')
+			],
 			confirmLabel: $t('firewall.turnOn'),
 			tone: 'warning'
 		});
@@ -287,7 +299,9 @@
 				<span aria-busy="true"><Skeleton shape="block" class="h-6 w-24 rounded-full" /></span>
 			{/if}
 			<!-- A card's action opens it here: a small secondary button, no primary (ADR-0432). -->
-			<CardAction aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}>{$t('firewall.configure')}</CardAction>
+			<CardAction aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}
+				>{$t('firewall.configure')}</CardAction
+			>
 		</div>
 	</div>
 

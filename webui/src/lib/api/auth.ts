@@ -1,5 +1,5 @@
-import { api, SESSION_KEY_HEADER, sessionStarted } from "./client";
-import type { ShareAccessLevel, SmbAccountState } from "./shares";
+import { api, SESSION_KEY_HEADER, sessionStarted } from './client';
+import type { ShareAccessLevel, SmbAccountState } from './shares';
 
 /**
  * Names of new users (they are also SMB account names). The server checks it
@@ -9,15 +9,15 @@ export const USERNAME_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
 
 /** SMB state of a UNOS user, derived by the server (never stored). */
 export interface SmbAccountStatus {
-  state: SmbAccountState;
-  /** An administrator allowed SMB access. */
-  allowed: boolean;
-  /** The SMB sign-in name; set once SMB is allowed. */
-  linux_name: string | null;
-  uid: number | null;
-  password_set_at: string | null;
-  /** Why SMB is not available (administrator, or a username SMB cannot use). */
-  reason: string | null;
+	state: SmbAccountState;
+	/** An administrator allowed SMB access. */
+	allowed: boolean;
+	/** The SMB sign-in name; set once SMB is allowed. */
+	linux_name: string | null;
+	uid: number | null;
+	password_set_at: string | null;
+	/** Why SMB is not available (administrator, or a username SMB cannot use). */
+	reason: string | null;
 }
 
 /**
@@ -25,24 +25,24 @@ export interface SmbAccountStatus {
  * (src/routes/two-factor-setup).
  */
 export interface TwoFactorRequired {
-  /** The end of the account's grace period (UTC, with its offset). */
-  by: string;
-  /** The grace period is over: the account can only set up two-factor authentication. */
-  setup_only: boolean;
+	/** The end of the account's grace period (UTC, with its offset). */
+	by: string;
+	/** The grace period is over: the account can only set up two-factor authentication. */
+	setup_only: boolean;
 }
 
 export interface User {
-  id: number;
-  username: string;
-  is_admin: boolean;
-  totp_enabled: boolean;
-  created_at: string | null;
-  /** In GET /auth/users and the answers of the user endpoints; null in /auth/me. */
-  smb?: SmbAccountStatus | null;
-  /** Problems after a change that went through (e.g. smb.conf not updated). */
-  warnings?: string[];
-  /** In GET /auth/me only: null unless every account must have 2FA and this one has none. */
-  two_factor_required?: TwoFactorRequired | null;
+	id: number;
+	username: string;
+	is_admin: boolean;
+	totp_enabled: boolean;
+	created_at: string | null;
+	/** In GET /auth/users and the answers of the user endpoints; null in /auth/me. */
+	smb?: SmbAccountStatus | null;
+	/** Problems after a change that went through (e.g. smb.conf not updated). */
+	warnings?: string[];
+	/** In GET /auth/me only: null unless every account must have 2FA and this one has none. */
+	two_factor_required?: TwoFactorRequired | null;
 }
 
 /**
@@ -50,138 +50,138 @@ export interface User {
  * the HttpOnly session cookie, and `access_token` stays empty.
  */
 export interface SignIn {
-  /** The account has two-factor authentication: sign in again with a code. */
-  requires_totp: boolean;
-  /** What the page sends with the session cookie; empty at the code step. */
-  session_key: string;
-  /**
-   * At the code step (ADR-0409): the request for a security key, when the account has keys that
-   * work at the address the page is open at; null otherwise.
-   */
-  security_key?: SecurityKeyRequest | null;
-  /** At the code step: the web UI's addresses where the account's security keys work. */
-  security_key_origins?: string[];
+	/** The account has two-factor authentication: sign in again with a code. */
+	requires_totp: boolean;
+	/** What the page sends with the session cookie; empty at the code step. */
+	session_key: string;
+	/**
+	 * At the code step (ADR-0409): the request for a security key, when the account has keys that
+	 * work at the address the page is open at; null otherwise.
+	 */
+	security_key?: SecurityKeyRequest | null;
+	/** At the code step: the web UI's addresses where the account's security keys work. */
+	security_key_origins?: string[];
 }
 
 /** What the page passes to navigator.credentials.get at the code step; bytes in base64url. */
 export interface SecurityKeyRequest {
-  challenge: string;
-  rp_id: string;
-  credential_ids: string[];
-  timeout_ms: number;
-  user_verification: UserVerificationRequirement;
+	challenge: string;
+	rp_id: string;
+	credential_ids: string[];
+	timeout_ms: number;
+	user_verification: UserVerificationRequirement;
 }
 
 /** A security key's answer at the code step, each field base64url. */
 export interface SecurityKeyAssertion {
-  credential_id: string;
-  client_data_json: string;
-  authenticator_data: string;
-  signature: string;
+	credential_id: string;
+	client_data_json: string;
+	authenticator_data: string;
+	signature: string;
 }
 
 /** POST /auth/security-keys/register/begin: the options of navigator.credentials.create. */
 export interface SecurityKeyCreation {
-  challenge: string;
-  rp_id: string;
-  rp_name: string;
-  user_id: string;
-  user_name: string;
-  algorithms: number[];
-  exclude_credentials: string[];
-  timeout_ms: number;
-  attestation: AttestationConveyancePreference;
-  user_verification: UserVerificationRequirement;
-  resident_key: ResidentKeyRequirement;
+	challenge: string;
+	rp_id: string;
+	rp_name: string;
+	user_id: string;
+	user_name: string;
+	algorithms: number[];
+	exclude_credentials: string[];
+	timeout_ms: number;
+	attestation: AttestationConveyancePreference;
+	user_verification: UserVerificationRequirement;
+	resident_key: ResidentKeyRequirement;
 }
 
 /** The answer of navigator.credentials.create, as /register/finish takes it. */
 export interface SecurityKeyAttestation {
-  credential_id: string;
-  client_data_json: string;
-  attestation_object: string;
+	credential_id: string;
+	client_data_json: string;
+	attestation_object: string;
 }
 
 /** A security key of the signed-in account (GET /auth/security-keys). */
 export interface SecurityKey {
-  id: number;
-  name: string;
-  /** The web UI's address where the key works; null when the stored one cannot be read. */
-  origin: string | null;
-  created_at: string | null;
-  last_used_at: string | null;
-  /** False for a key whose stored data cannot be read: it signs in nowhere and can only be removed. */
-  usable: boolean;
+	id: number;
+	name: string;
+	/** The web UI's address where the key works; null when the stored one cannot be read. */
+	origin: string | null;
+	created_at: string | null;
+	last_used_at: string | null;
+	/** False for a key whose stored data cannot be read: it signs in nowhere and can only be removed. */
+	usable: boolean;
 }
 
 export interface AuthStatus {
-  setup_required: boolean;
+	setup_required: boolean;
 }
 
 export interface UserCreate {
-  username: string;
-  password: string;
-  /** Turn SMB on with the same password right away. */
-  smb_enabled?: boolean;
+	username: string;
+	password: string;
+	/** Turn SMB on with the same password right away. */
+	smb_enabled?: boolean;
 }
 
 export interface UserUpdate {
-  is_admin?: boolean;
-  password?: string;
-  /** The username the change was prepared for: 409 when the id now belongs to another user. */
-  username?: string;
-  /**
-   * A new name (ADR-0368), sent with `username`. A user with SMB on also needs `password`: Samba's
-   * account of the new name is made with it.
-   */
-  new_username?: string;
+	is_admin?: boolean;
+	password?: string;
+	/** The username the change was prepared for: 409 when the id now belongs to another user. */
+	username?: string;
+	/**
+	 * A new name (ADR-0368), sent with `username`. A user with SMB on also needs `password`: Samba's
+	 * account of the new name is made with it.
+	 */
+	new_username?: string;
 }
 
 /** A share the signed-in user can open over SMB (GET /auth/me/smb). */
 export interface MySmbShare {
-  name: string;
-  comment: string;
-  level: ShareAccessLevel;
-  guest_ok: boolean;
-  /** The account is active, or it is a guest share. */
-  usable: boolean;
+	name: string;
+	comment: string;
+	level: ShareAccessLevel;
+	guest_ok: boolean;
+	/** The account is active, or it is a guest share. */
+	usable: boolean;
 }
 
 export interface MySmbStatus {
-  account: SmbAccountStatus;
-  /** The user has 2FA: turning SMB on needs the two-factor code. */
-  totp_required: boolean;
-  /** Sorted by name; no paths. */
-  shares: MySmbShare[];
+	account: SmbAccountStatus;
+	/** The user has 2FA: turning SMB on needs the two-factor code. */
+	totp_required: boolean;
+	/** Sorted by name; no paths. */
+	shares: MySmbShare[];
 }
 
 /** Answer of POST /auth/me/smb/enable and /disable: only `warnings` is read. */
 export interface SmbChangeResult {
-  warnings?: string[];
+	warnings?: string[];
 }
 
 export interface PasswordChange {
-  current_password: string;
-  new_password: string;
+	current_password: string;
+	new_password: string;
 }
 
 export interface TOTPSetupResponse {
-  secret: string;
-  qr_uri: string;
+	secret: string;
+	qr_uri: string;
 }
 
 export interface TOTPStatus {
-  enabled: boolean;
-  /** Every account must have two-factor authentication. */
-  required: boolean;
+	enabled: boolean;
+	/** Every account must have two-factor authentication. */
+	required: boolean;
 }
 
 /** GET /auth/recovery-codes/status. */
 export interface RecoveryCodesStatus {
-  /** Codes not used yet. */
-  remaining: number;
-  /** Codes were generated for the current two-factor setup (also when all are used). */
-  generated: boolean;
+	/** Codes not used yet. */
+	remaining: number;
+	/** Codes were generated for the current two-factor setup (also when all are used). */
+	generated: boolean;
 }
 
 /**
@@ -191,36 +191,36 @@ export interface RecoveryCodesStatus {
  * the other tabs learn of it.
  */
 export async function login(
-  username: string,
-  password: string,
-  totp_code?: string,
-  recovery_code?: string,
-  security_key?: SecurityKeyAssertion
+	username: string,
+	password: string,
+	totp_code?: string,
+	recovery_code?: string,
+	security_key?: SecurityKeyAssertion
 ): Promise<SignIn> {
-  const answer = await api.post<SignIn>("/auth/login", {
-    username,
-    password,
-    totp_code,
-    recovery_code,
-    security_key,
-    cookie: true,
-  });
-  if (!answer.requires_totp) {
-    sessionStarted(answer.session_key);
-  }
-  return answer;
+	const answer = await api.post<SignIn>('/auth/login', {
+		username,
+		password,
+		totp_code,
+		recovery_code,
+		security_key,
+		cookie: true
+	});
+	if (!answer.requires_totp) {
+		sessionStarted(answer.session_key);
+	}
+	return answer;
 }
 
 export async function setup(username: string, password: string): Promise<User> {
-  return api.post<User>("/auth/setup", { username, password });
+	return api.post<User>('/auth/setup', { username, password });
 }
 
 export async function getMe(): Promise<User> {
-  return api.get<User>("/auth/me");
+	return api.get<User>('/auth/me');
 }
 
 export async function getAuthStatus(): Promise<AuthStatus> {
-  return api.get<AuthStatus>("/auth/status");
+	return api.get<AuthStatus>('/auth/status');
 }
 
 /**
@@ -231,37 +231,37 @@ export async function getAuthStatus(): Promise<AuthStatus> {
  * be reached or failed, and the cookie may still be a session.
  */
 export async function logout(key: string | null): Promise<boolean> {
-  try {
-    const response = await fetch("/api/v1/auth/logout", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: key ? { [SESSION_KEY_HEADER]: key } : {},
-    });
-    return response.ok || response.status === 401;
-  } catch {
-    return false;
-  }
+	try {
+		const response = await fetch('/api/v1/auth/logout', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: key ? { [SESSION_KEY_HEADER]: key } : {}
+		});
+		return response.ok || response.status === 401;
+	} catch {
+		return false;
+	}
 }
 
 // User management functions (admin only)
 export async function getUsers(): Promise<User[]> {
-  return api.get<User[]>("/auth/users");
+	return api.get<User[]>('/auth/users');
 }
 
 export async function createUser(data: UserCreate): Promise<User> {
-  return api.post<User>("/auth/users", data);
+	return api.post<User>('/auth/users', data);
 }
 
 export async function updateUser(userId: number, data: UserUpdate): Promise<User> {
-  return api.put<User>(`/auth/users/${userId}`, data);
+	return api.put<User>(`/auth/users/${userId}`, data);
 }
 
 /** End every session of a user (ADR-0329); `username` is the name the request was prepared for. */
 export async function endSessions(userId: number, username: string): Promise<{ status: string; ended: number }> {
-  return api.post<{ status: string; ended: number }>(
-    `/auth/users/${userId}/end-sessions?username=${encodeURIComponent(username)}`,
-    {}
-  );
+	return api.post<{ status: string; ended: number }>(
+		`/auth/users/${userId}/end-sessions?username=${encodeURIComponent(username)}`,
+		{}
+	);
 }
 
 /**
@@ -269,12 +269,12 @@ export async function endSessions(userId: number, username: string): Promise<{ s
  * server answers 409 when the id now belongs to someone else.
  */
 export async function deleteUser(
-  userId: number,
-  username: string
+	userId: number,
+	username: string
 ): Promise<{ status: string; message: string; warnings?: string[] }> {
-  return api.delete<{ status: string; message: string; warnings?: string[] }>(
-    `/auth/users/${userId}?username=${encodeURIComponent(username)}`
-  );
+	return api.delete<{ status: string; message: string; warnings?: string[] }>(
+		`/auth/users/${userId}?username=${encodeURIComponent(username)}`
+	);
 }
 
 // SMB access (administrators). `username` is the name the request was
@@ -285,79 +285,68 @@ export async function deleteUser(
  * SMB password and turn SMB on; without, the user turns SMB on in the
  * Account page.
  */
-export async function enableUserSmb(
-  userId: number,
-  username: string,
-  password?: string
-): Promise<User> {
-  const body: { username: string; password?: string } = { username };
-  if (password !== undefined) body.password = password;
-  return api.post<User>(`/auth/users/${userId}/smb/enable`, body);
+export async function enableUserSmb(userId: number, username: string, password?: string): Promise<User> {
+	const body: { username: string; password?: string } = { username };
+	if (password !== undefined) body.password = password;
+	return api.post<User>(`/auth/users/${userId}/smb/enable`, body);
 }
 
 /** Disallow SMB for a user; their open SMB connections are ended. */
 export async function disableUserSmb(userId: number, username: string): Promise<User> {
-  return api.post<User>(`/auth/users/${userId}/smb/disable`, { username });
+	return api.post<User>(`/auth/users/${userId}/smb/disable`, { username });
 }
 
 // SMB access of the signed-in user (Account page).
 
 export async function getMySmb(): Promise<MySmbStatus> {
-  return api.get<MySmbStatus>("/auth/me/smb");
+	return api.get<MySmbStatus>('/auth/me/smb');
 }
 
 /** Turn SMB on with the current UNOS password (and the 2FA code, if the user has 2FA). */
-export async function enableMySmb(
-  currentPassword: string,
-  totpCode?: string
-): Promise<SmbChangeResult> {
-  const body: { current_password: string; totp_code?: string } = {
-    current_password: currentPassword,
-  };
-  if (totpCode) body.totp_code = totpCode;
-  return api.post<SmbChangeResult>("/auth/me/smb/enable", body);
+export async function enableMySmb(currentPassword: string, totpCode?: string): Promise<SmbChangeResult> {
+	const body: { current_password: string; totp_code?: string } = {
+		current_password: currentPassword
+	};
+	if (totpCode) body.totp_code = totpCode;
+	return api.post<SmbChangeResult>('/auth/me/smb/enable', body);
 }
 
 /** Turn SMB off; open SMB connections are ended. */
 export async function disableMySmb(): Promise<SmbChangeResult> {
-  return api.post<SmbChangeResult>("/auth/me/smb/disable");
+	return api.post<SmbChangeResult>('/auth/me/smb/disable');
 }
 
 /** Answer of POST /auth/change-password. */
 export interface PasswordChangeResult {
-  status: string;
-  message: string;
-  /** The password changed, but e.g. open SMB connections could not be ended. */
-  warnings?: string[];
+	status: string;
+	message: string;
+	/** The password changed, but e.g. open SMB connections could not be ended. */
+	warnings?: string[];
 }
 
 export async function changePassword(data: PasswordChange): Promise<PasswordChangeResult> {
-  return api.post<PasswordChangeResult>("/auth/change-password", data);
+	return api.post<PasswordChangeResult>('/auth/change-password', data);
 }
 
 // TOTP 2FA functions
 export async function setupTOTP(): Promise<TOTPSetupResponse> {
-  return api.post<TOTPSetupResponse>("/auth/totp/setup", {});
+	return api.post<TOTPSetupResponse>('/auth/totp/setup', {});
 }
 
-export async function enableTOTP(
-  code: string
-): Promise<{ status: string; message: string }> {
-  return api.post<{ status: string; message: string }>("/auth/totp/enable", {
-    code,
-  });
+export async function enableTOTP(code: string): Promise<{ status: string; message: string }> {
+	return api.post<{ status: string; message: string }>('/auth/totp/enable', {
+		code
+	});
 }
 
-export async function disableTOTP(
-  code: string
-): Promise<{ status: string; message: string }> {
-  return api.post<{ status: string; message: string }>("/auth/totp/disable", {
-    code,
-  });
+export async function disableTOTP(code: string): Promise<{ status: string; message: string }> {
+	return api.post<{ status: string; message: string }>('/auth/totp/disable', {
+		code
+	});
 }
 
 export async function getTOTPStatus(): Promise<TOTPStatus> {
-  return api.get<TOTPStatus>("/auth/totp/status");
+	return api.get<TOTPStatus>('/auth/totp/status');
 }
 
 // Recovery codes (only while 2FA is on): each one signs in once in place of a
@@ -365,33 +354,33 @@ export async function getTOTPStatus(): Promise<TOTPStatus> {
 
 /** Ten new codes that replace the earlier ones; the server answers them only this once. */
 export async function generateRecoveryCodes(): Promise<string[]> {
-  const result = await api.post<{ codes: string[] }>("/auth/recovery-codes/generate");
-  return result.codes;
+	const result = await api.post<{ codes: string[] }>('/auth/recovery-codes/generate');
+	return result.codes;
 }
 
 export async function getRecoveryCodesStatus(): Promise<RecoveryCodesStatus> {
-  return api.get<RecoveryCodesStatus>("/auth/recovery-codes/status");
+	return api.get<RecoveryCodesStatus>('/auth/recovery-codes/status');
 }
 
 // Security keys (ADR-0409): only while 2FA is on, each an alternative to the app's code at the
 // sign-in. Registering and removing one take the current password.
 export async function getSecurityKeys(): Promise<SecurityKey[]> {
-  return api.get<SecurityKey[]>("/auth/security-keys");
+	return api.get<SecurityKey[]>('/auth/security-keys');
 }
 
 export async function beginSecurityKeyRegistration(current_password: string): Promise<SecurityKeyCreation> {
-  return api.post<SecurityKeyCreation>("/auth/security-keys/register/begin", { current_password });
+	return api.post<SecurityKeyCreation>('/auth/security-keys/register/begin', { current_password });
 }
 
 export async function finishSecurityKeyRegistration(
-  name: string,
-  attestation: SecurityKeyAttestation
+	name: string,
+	attestation: SecurityKeyAttestation
 ): Promise<SecurityKey> {
-  return api.post<SecurityKey>("/auth/security-keys/register/finish", { name, ...attestation });
+	return api.post<SecurityKey>('/auth/security-keys/register/finish', { name, ...attestation });
 }
 
 export async function deleteSecurityKey(id: number, current_password: string): Promise<void> {
-  await api.delete(`/auth/security-keys/${id}`, { current_password });
+	await api.delete(`/auth/security-keys/${id}`, { current_password });
 }
 
 // API tokens (ADR-0239): only a session makes, disables and deletes them (ADR-0253). A token is
@@ -399,27 +388,27 @@ export async function deleteSecurityKey(id: number, current_password: string): P
 
 /** The areas of the API, the first segment of a path after /api/v1/ (AREAS of supervisor/src/auth/scopes.py). */
 export const TOKEN_AREAS = [
-  "apps",
-  "audit",
-  "auth",
-  "backup",
-  "containers",
-  "files",
-  "groups",
-  "health",
-  "logs",
-  "monitor",
-  "network",
-  "notifications",
-  "offsite",
-  "power",
-  "scheduler",
-  "security",
-  "shares",
-  "snapshots",
-  "storage",
-  "system",
-  "updates",
+	'apps',
+	'audit',
+	'auth',
+	'backup',
+	'containers',
+	'files',
+	'groups',
+	'health',
+	'logs',
+	'monitor',
+	'network',
+	'notifications',
+	'offsite',
+	'power',
+	'scheduler',
+	'security',
+	'shares',
+	'snapshots',
+	'storage',
+	'system',
+	'updates'
 ] as const;
 export type TokenArea = (typeof TOKEN_AREAS)[number];
 
@@ -427,59 +416,59 @@ export type TokenArea = (typeof TOKEN_AREAS)[number];
  * The areas whose change access reaches beyond them (WARNED_AREAS of scopes.py): programs that run
  * as root on the NAS, or the database with every account's password hash and two-factor secret.
  */
-export const WARNED_AREAS: readonly TokenArea[] = ["apps", "backup", "containers", "offsite", "scheduler", "updates"];
+export const WARNED_AREAS: readonly TokenArea[] = ['apps', 'backup', 'containers', 'offsite', 'scheduler', 'updates'];
 
 /** GET /auth/tokens: a token of the signed-in account, never the token itself. */
 export interface ApiToken {
-  id: number;
-  name: string;
-  /** Its first 12 characters. */
-  token_prefix: string;
-  is_active: boolean;
-  read_only: boolean;
-  /** null: every area; else sorted. */
-  areas: TokenArea[] | null;
-  /** false: the stored scope cannot be read, and the token is refused everywhere. */
-  scope_known: boolean;
-  /** In UTC with their offset (ADR-0401). */
-  created_at: string | null;
-  last_used_at: string | null;
-  expires_at: string | null;
+	id: number;
+	name: string;
+	/** Its first 12 characters. */
+	token_prefix: string;
+	is_active: boolean;
+	read_only: boolean;
+	/** null: every area; else sorted. */
+	areas: TokenArea[] | null;
+	/** false: the stored scope cannot be read, and the token is refused everywhere. */
+	scope_known: boolean;
+	/** In UTC with their offset (ADR-0401). */
+	created_at: string | null;
+	last_used_at: string | null;
+	expires_at: string | null;
 }
 
 export interface NewApiToken {
-  name: string;
-  read_only: boolean;
-  /** null: every area. */
-  areas: TokenArea[] | null;
-  /** null: it never expires. */
-  expires_in_days: number | null;
+	name: string;
+	read_only: boolean;
+	/** null: every area. */
+	areas: TokenArea[] | null;
+	/** null: it never expires. */
+	expires_in_days: number | null;
 }
 
 /** POST /auth/tokens: the token, answered only this once. */
 export interface CreatedApiToken {
-  id: number;
-  name: string;
-  token: string;
-  token_prefix: string;
-  read_only: boolean;
-  areas: TokenArea[] | null;
-  expires_at: string | null;
+	id: number;
+	name: string;
+	token: string;
+	token_prefix: string;
+	read_only: boolean;
+	areas: TokenArea[] | null;
+	expires_at: string | null;
 }
 
 export async function listApiTokens(): Promise<ApiToken[]> {
-  return api.get<ApiToken[]>("/auth/tokens");
+	return api.get<ApiToken[]>('/auth/tokens');
 }
 
 export async function createApiToken(data: NewApiToken): Promise<CreatedApiToken> {
-  return api.post<CreatedApiToken>("/auth/tokens", data);
+	return api.post<CreatedApiToken>('/auth/tokens', data);
 }
 
 /** Disable an active token, enable a disabled one. */
 export async function toggleApiToken(id: number): Promise<{ is_active: boolean }> {
-  return api.post<{ is_active: boolean }>(`/auth/tokens/${id}/toggle`);
+	return api.post<{ is_active: boolean }>(`/auth/tokens/${id}/toggle`);
 }
 
 export async function deleteApiToken(id: number): Promise<void> {
-  await api.delete(`/auth/tokens/${id}`);
+	await api.delete(`/auth/tokens/${id}`);
 }

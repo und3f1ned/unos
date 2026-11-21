@@ -3,7 +3,6 @@
 import { roundedNumber, scaleBytes } from '$lib/format';
 import type { Translate } from '$lib/i18n';
 
-
 // The units of a size, from bytes up: keys of the catalog.
 const UNITS = ['dashboard.unit.b', 'dashboard.unit.kb', 'dashboard.unit.mb', 'dashboard.unit.gb', 'dashboard.unit.tb'];
 

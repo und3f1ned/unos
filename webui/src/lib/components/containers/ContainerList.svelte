@@ -5,16 +5,17 @@
 	// a column as narrow as they are, the name keeps a width, and an image cut short shows whole on
 	// hover (webui.ux-apps). A container that an app of the App Store made says so and links there;
 	// it has no Remove: removing one container breaks its app, whose Uninstall is the App Store's.
+	import { Container as ContainerIcon, ExternalLink, Package, Play, RotateCw, Square, Trash2 } from 'lucide-svelte';
 	import {
-		Container as ContainerIcon,
-		ExternalLink,
-		Package,
-		Play,
-		RotateCw,
-		Square,
-		Trash2
-	} from 'lucide-svelte';
-	import { ActionMenu, Badge, Button, Card, Checkbox, EmptyState, type IconComponent, type MenuItem } from '$lib/components/ui';
+		ActionMenu,
+		Badge,
+		Button,
+		Card,
+		Checkbox,
+		EmptyState,
+		type IconComponent,
+		type MenuItem
+	} from '$lib/components/ui';
 	import type { Container } from '$lib/api/containers';
 	import { t } from '$lib/i18n';
 	import { appOf, labelOf, stateVariant, STATES, webUrl, type QuickAction } from './labels';
@@ -39,18 +40,8 @@
 		onclear: () => void;
 	};
 
-	let {
-		containers,
-		filtered,
-		view,
-		selected,
-		busy,
-		onopen,
-		onselect,
-		ontoggleall,
-		onaction,
-		onclear
-	}: Props = $props();
+	let { containers, filtered, view, selected, busy, onopen, onselect, ontoggleall, onaction, onclear }: Props =
+		$props();
 
 	const allSelected = $derived(containers.length > 0 && containers.every((c) => selected.has(c.id)));
 	const someSelected = $derived(!allSelected && containers.some((c) => selected.has(c.id)));
@@ -87,7 +78,14 @@
 				? [{ label: $t('containers.action.restart'), icon: RotateCw, onclick: () => onaction(container.id, 'restart') }]
 				: []),
 			...(appOf(container) === null
-				? [{ label: $t('containers.action.remove'), icon: Trash2, danger: true, onclick: () => onaction(container.id, 'remove') }]
+				? [
+						{
+							label: $t('containers.action.remove'),
+							icon: Trash2,
+							danger: true,
+							onclick: () => onaction(container.id, 'remove')
+						}
+					]
 				: [])
 		];
 	}

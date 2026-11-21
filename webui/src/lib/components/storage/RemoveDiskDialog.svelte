@@ -4,13 +4,7 @@
 	// space); the removal starts once the disk's path is typed again.
 	import { untrack } from 'svelte';
 	import { Alert, Badge, Button, ErrorState, Input, Modal, RadioGroup, Skeleton } from '$lib/components/ui';
-	import {
-		getPoolDevices,
-		removePoolDisk,
-		type DiskRemovalStatus,
-		type Pool,
-		type PoolMember
-	} from '$lib/api/storage';
+	import { getPoolDevices, removePoolDisk, type DiskRemovalStatus, type Pool, type PoolMember } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './pools';
 
@@ -105,11 +99,7 @@
 			<!-- The disks' place while they are read (ADR-0430). -->
 			<div aria-busy="true"><Skeleton shape="block" class="h-16 w-full" /></div>
 		{:else if loadError}
-			<ErrorState
-				title={$t('storage.removeDisk.loadError')}
-				message={loadError}
-				onretry={() => load(pool)}
-			/>
+			<ErrorState title={$t('storage.removeDisk.loadError')} message={loadError} onretry={() => load(pool)} />
 		{:else}
 			<RadioGroup
 				name="remove-disk"

@@ -39,6 +39,7 @@
 	</form>
 	{#snippet footer()}
 		<Button variant="secondary" type="button" disabled={busy} onclick={oncancel}>{$t('common.cancel')}</Button>
-		<Button variant="primary" type="submit" form={formId} loading={busy} disabled={submitDisabled}>{submitLabel}</Button>
+		<Button variant="primary" type="submit" form={formId} loading={busy} disabled={submitDisabled}>{submitLabel}</Button
+		>
 	{/snippet}
 </Modal>

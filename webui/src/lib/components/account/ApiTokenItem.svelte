@@ -45,9 +45,7 @@
 	</div>
 	{#if token.scope_known}
 		<p class="text-sm break-words">
-			{token.areas === null
-				? $t('tokens.areas.every')
-				: $t('tokens.areas.some', { areas: areaNames(token.areas, $t) })}
+			{token.areas === null ? $t('tokens.areas.every') : $t('tokens.areas.some', { areas: areaNames(token.areas, $t) })}
 		</p>
 	{:else}
 		<p class="text-sm text-error">{$t('tokens.unknownScopeHint')}</p>

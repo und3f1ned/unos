@@ -73,7 +73,8 @@ export const ru: Translation<typeof en> = {
 	'palette.keywords.general': 'общие имя хоста часовой пояс',
 	'palette.keywords.updates': 'версия',
 	'palette.keywords.security': 'брандмауэр сертификаты HTTPS требование двухфакторной',
-	'palette.keywords.account': 'вход безопасность пароль двухфакторная 2FA коды восстановления ключи безопасности API токены',
+	'palette.keywords.account':
+		'вход безопасность пароль двухфакторная 2FA коды восстановления ключи безопасности API токены',
 	'palette.keywords.sharing': 'SMB сетевой доступ к файлам',
 	'palette.keywords.appearance': 'тема тёмная светлая язык английский русский English Русский',
 	'palette.keywords.monitor': 'процессор память процессы',

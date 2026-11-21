@@ -22,9 +22,7 @@
 	let restoreError = $state('');
 
 	// The pool or volume that a restore makes its copy in.
-	let restoreInto = $derived(
-		snapshot ? (subvolumes.find((sv) => sv.path === snapshot?.subvolume) ?? null) : null
-	);
+	let restoreInto = $derived(snapshot ? (subvolumes.find((sv) => sv.path === snapshot?.subvolume) ?? null) : null);
 
 	function closeRestore() {
 		if (restoring) return;
