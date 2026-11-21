@@ -1,12 +1,14 @@
 <script lang="ts">
-	// The tabs of an app's details; a tab without content (no ports, folders or variables) is not
-	// shown. They wrap on a narrow screen (ADR-0302).
+	// The tabs of an app's details (Tabs, ADR-0432); a tab without content (no ports, folders or
+	// variables) is not shown. The details draw the panel (`app-detail-panel-<tab>`).
 	import { HardDrive, Network, Package, Settings } from 'lucide-svelte';
-	import { Button, type IconComponent } from '$lib/components/ui';
+	import { Tabs } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { DetailTab } from './detail';
 
 	type Props = {
+		/** The app's name, which names the tabs for screen readers. */
+		name: string;
 		active: DetailTab;
 		portCount: number;
 		volumeCount: number;
@@ -14,29 +16,26 @@
 		onselect: (tab: DetailTab) => void;
 	};
 
-	let { active, portCount, volumeCount, variableCount, onselect }: Props = $props();
+	let { name, active, portCount, volumeCount, variableCount, onselect }: Props = $props();
+
+	const tabs = $derived([
+		{ id: 'overview' as DetailTab, label: $t('apps.detail.tabs.overview'), icon: Package },
+		...(portCount > 0 ? [{ id: 'ports' as DetailTab, label: $t('apps.detail.tabs.ports', { count: portCount }), icon: Network }] : []),
+		...(volumeCount > 0
+			? [{ id: 'volumes' as DetailTab, label: $t('apps.detail.tabs.volumes', { count: volumeCount }), icon: HardDrive }]
+			: []),
+		...(variableCount > 0
+			? [{ id: 'environment' as DetailTab, label: $t('apps.detail.tabs.environment', { count: variableCount }), icon: Settings }]
+			: [])
+	]);
 </script>
 
-{#snippet tab(id: DetailTab, Icon: IconComponent, label: string)}
-	<Button variant="plain"
-	 class="tab-underline {active === id ? 'tab-underline-active' : ''}"
-		onclick={() => onselect(id)}
-	>
-		<Icon class="w-4 h-4" />
-		{label}
-	</Button>
-{/snippet}
-
-<!-- Tabs: they wrap on a narrow screen (ADR-0302) -->
-<div class="flex flex-wrap border-b border-border -mx-6 px-6 mb-4">
-	{@render tab('overview', Package, $t('apps.detail.tabs.overview'))}
-	{#if portCount > 0}
-		{@render tab('ports', Network, $t('apps.detail.tabs.ports', { count: portCount }))}
-	{/if}
-	{#if volumeCount > 0}
-		{@render tab('volumes', HardDrive, $t('apps.detail.tabs.volumes', { count: volumeCount }))}
-	{/if}
-	{#if variableCount > 0}
-		{@render tab('environment', Settings, $t('apps.detail.tabs.environment', { count: variableCount }))}
-	{/if}
-</div>
+<Tabs
+	{tabs}
+	{active}
+	label={name}
+	tabId={(id) => `app-detail-tab-${id}`}
+	panelId={(id) => `app-detail-panel-${id}`}
+	{onselect}
+	class="mb-4"
+/>

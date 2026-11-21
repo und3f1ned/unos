@@ -127,7 +127,7 @@ async function fakeApps(page: Page, app: FakeInstalledApp): Promise<Fakes> {
 
 async function openInstalled(page: Page) {
   await page.goto('/apps');
-  await page.getByRole('button', { name: /^Installed/ }).click();
+  await page.getByRole('tab', { name: /^Installed/ }).click();
   return installedCard(page, 'immich');
 }
 

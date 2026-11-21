@@ -10,11 +10,10 @@
 		type ApiToken,
 		type CreatedApiToken
 	} from '$lib/api/auth';
-	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, Skeleton, LoadState, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import ApiTokenItem from './ApiTokenItem.svelte';
 	import ApiTokenShownDialog from './ApiTokenShownDialog.svelte';
-	import DeleteApiTokenDialog from './DeleteApiTokenDialog.svelte';
 	import NewApiTokenDialog from './NewApiTokenDialog.svelte';
 	import { ApiTokenForm } from './apiTokenForm.svelte';
 
@@ -25,9 +24,10 @@
 	let tokens = $state<ApiToken[]>([]);
 	let loading = $state(true);
 	let loadError = $state('');
-	let notice = $state('');
 	let actionError = $state('');
 	let busyId = $state<number | null>(null);
+	// The token whose deletion runs: its Enable or Disable does not spin meanwhile.
+	let deletingId = $state<number | null>(null);
 
 	// The dialog of a new token.
 	let creating = $state(false);
@@ -37,11 +37,8 @@
 
 	// The token just made, shown only now.
 	let created = $state<CreatedApiToken | null>(null);
-	let copied = $state(false);
 	let copyFailed = $state(false);
 
-	let deleting = $state<ApiToken | null>(null);
-	let deleteError = $state('');
 
 	onMount(() => {
 		void load();
@@ -79,7 +76,6 @@
 				areas: form.everyArea ? null : form.chosenAreas,
 				expires_in_days: form.lifetime ? Number(form.lifetime) : null
 			});
-			copied = false;
 			copyFailed = false;
 			creating = false;
 			await load();
@@ -94,7 +90,7 @@
 		if (!created) return;
 		try {
 			await navigator.clipboard.writeText(created.token);
-			copied = true;
+			toast.success($t('tokens.shown.copied'));
 			copyFailed = false;
 		} catch {
 			copyFailed = true;
@@ -105,7 +101,6 @@
 		if (busyId !== null) return;
 		busyId = token.id;
 		actionError = '';
-		notice = '';
 		try {
 			await toggleApiToken(token.id);
 			await load();
@@ -116,30 +111,25 @@
 		}
 	}
 
-	function askDelete(token: ApiToken) {
-		deleteError = '';
-		deleting = token;
-	}
-
-	function closeDelete() {
-		if (busyId === null) deleting = null;
-	}
-
-	async function remove() {
-		if (!deleting || busyId !== null) return;
-		const token = deleting;
-		busyId = token.id;
-		deleteError = '';
+	/** Delete a token once confirmed: a program that uses it can no longer sign in. */
+	async function askDelete(token: ApiToken) {
+		if (busyId !== null) return;
+		const yes = await confirm({
+			title: $t('tokens.deleteDialog.title', { name: token.name }),
+			message: $t('tokens.deleteDialog.text', { name: token.name }),
+			confirmLabel: $t('tokens.delete')
+		});
+		if (!yes) return;
+		busyId = deletingId = token.id;
 		try {
 			await deleteApiToken(token.id);
-			deleting = null;
-			notice = $t('tokens.deleted', { name: token.name });
+			toast.success($t('tokens.deleted', { name: token.name }));
 			actionError = '';
 			await load();
 		} catch (e) {
-			deleteError = messageOf(e);
+			toast.error(messageOf(e), { title: $t('tokens.deleteDialog.failed') });
 		} finally {
-			busyId = null;
+			busyId = deletingId = null;
 		}
 	}
 </script>
@@ -155,47 +145,35 @@
 		</div>
 		<p class="text-sm text-secondary mb-4">{$t('tokens.description')}</p>
 
-		{#if notice}
-			<Alert variant="success" dismissible class="mb-4" ondismiss={() => (notice = '')}>{notice}</Alert>
-		{/if}
 		{#if actionError}
 			<Alert variant="error" title={$t('tokens.toggleFailed')} class="mb-4">{actionError}</Alert>
 		{/if}
 
-		{#if loading}
-			<div aria-busy="true"><Skeleton count={2} /></div>
-		{:else if loadError}
-			<Alert variant="error" title={$t('tokens.loadError')}>
-				{loadError}
-				<Button variant="secondary" size="sm" class="mt-3" onclick={load}>{$t('common.retry')}</Button>
-			</Alert>
-		{:else if tokens.length === 0}
-			<EmptyState icon={KeyRound} title={$t('tokens.none')} />
-		{:else}
+		<LoadState
+			{loading}
+			error={loadError}
+			errorTitle={$t('tokens.loadError')}
+			empty={tokens.length === 0}
+			onretry={load}
+		>
+			{#snippet skeleton()}<Skeleton count={2} />{/snippet}
+			{#snippet emptyState()}<EmptyState compact icon={KeyRound} title={$t('tokens.none')} />{/snippet}
 			<ul class="space-y-3" aria-label={$t('tokens.list')}>
 				{#each tokens as token (token.id)}
 					<ApiTokenItem
 						{token}
 						busy={busyId !== null}
-						toggling={busyId === token.id && deleting === null}
+						toggling={busyId === token.id && deletingId !== token.id}
 						ontoggle={() => toggle(token)}
 						ondelete={() => askDelete(token)}
 					/>
 				{/each}
 			</ul>
-		{/if}
+		</LoadState>
 	</section>
 </Card>
 
 <NewApiTokenDialog open={creating} {form} {saving} error={createError} oncreate={create} onclose={closeCreate} />
 
 <!-- Closed only by Done: the token is shown only now. -->
-<ApiTokenShownDialog token={created} {copied} {copyFailed} oncopy={copy} ondone={() => (created = null)} />
-
-<DeleteApiTokenDialog
-	token={deleting}
-	busy={busyId !== null}
-	error={deleteError}
-	ondelete={remove}
-	onclose={closeDelete}
-/>
+<ApiTokenShownDialog token={created} {copyFailed} oncopy={copy} ondone={() => (created = null)} />

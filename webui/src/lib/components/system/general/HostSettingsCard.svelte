@@ -2,7 +2,7 @@
   import { setHostname } from "$lib/api/network";
   import { setTimezone } from "$lib/api/system";
   import { setNasTimeZone } from "$lib/stores/nasTime";
-  import { Alert, Button, Card, Input, Select, Skeleton } from "$lib/components/ui";
+  import { Alert, Button, Card, ErrorState, HelpText, Input, Select, Skeleton, toast } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { HostSettings } from "./host.svelte";
 
@@ -15,17 +15,16 @@
 
   let savingHostname = $state(false);
   let savingZone = $state(false);
-  let hostNotice = $state("");
   let hostError = $state("");
 
   async function saveHostname() {
     const name = host.hostname.trim();
     savingHostname = true;
-    hostNotice = hostError = "";
+    hostError = "";
     try {
       const answer = await setHostname(name);
       host.hostname = host.savedHostname = answer.hostname;
-      hostNotice = $t("general.host.hostnameSaved", { name: answer.hostname });
+      toast.success($t("general.host.hostnameSaved", { name: answer.hostname }));
     } catch (e) {
       hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");
     } finally {
@@ -35,12 +34,12 @@
 
   async function saveZone() {
     savingZone = true;
-    hostNotice = hostError = "";
+    hostError = "";
     try {
       const answer = await setTimezone(host.zone);
       host.zone = host.savedZone = answer.timezone;
       setNasTimeZone(answer.timezone);
-      hostNotice = $t("general.host.zoneSaved", { zone: answer.timezone });
+      toast.success($t("general.host.zoneSaved", { zone: answer.timezone }));
     } catch (e) {
       hostError = e instanceof Error ? e.message : $t("general.host.saveFailed");
       host.zone = host.savedZone; // the host kept its zone
@@ -65,7 +64,7 @@
       {/each}
     </div>
   {:else if host.loadFailed}
-    <p class="text-sm text-muted">{$t("general.host.loadFailed")}</p>
+    <ErrorState title={$t("general.host.loadFailed")} onretry={() => host.load()} />
   {:else}
     <div class="space-y-4">
       {#if host.hostnameLoaded}
@@ -80,12 +79,12 @@
               variant="secondary"
               loading={savingHostname}
               disabled={!host.hostname.trim() || host.hostname.trim() === host.savedHostname}
-              title={!host.hostname.trim() || host.hostname.trim() === host.savedHostname ? $t("general.host.unchanged") : undefined}
+              disabledReason={!host.hostname.trim() || host.hostname.trim() === host.savedHostname ? $t("general.host.unchanged") : ""}
             >
               {$t("general.host.saveHostname")}
             </Button>
           </form>
-          <p class="form-hint">{$t("general.host.hostnameHint")}</p>
+          <HelpText text={$t("general.host.hostnameHint")} class="mt-1.5" />
         </div>
       {/if}
       {#if host.zoneLoaded}
@@ -102,18 +101,13 @@
               />
             </div>
             <Button variant="secondary" loading={savingZone} disabled={!host.zone || host.zone === host.savedZone}
-              title={!host.zone || host.zone === host.savedZone ? $t("general.host.unchanged") : undefined} onclick={saveZone}>
+              disabledReason={!host.zone || host.zone === host.savedZone ? $t("general.host.unchanged") : ""} onclick={saveZone}>
               {$t("general.host.saveZone")}
             </Button>
           </div>
-          <p class="form-hint">{host.zones.length === 0 ? $t("general.host.noZones") : $t("general.host.zoneHint")}</p>
+          <HelpText text={host.zones.length === 0 ? $t("general.host.noZones") : $t("general.host.zoneHint")} class="mt-1.5" />
         </div>
       {/if}
-      <div role="status">
-        {#if hostNotice}
-          <Alert variant="success" dismissible ondismiss={() => (hostNotice = "")}>{hostNotice}</Alert>
-        {/if}
-      </div>
       <div role="alert">
         {#if hostError}
           <Alert variant="error" dismissible ondismiss={() => (hostError = "")}>{hostError}</Alert>

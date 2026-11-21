@@ -1,6 +1,6 @@
 import type { Page, Request, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { answerConfirmation } from './ui';
+import { actionsFor, answerConfirmation, chooseAction } from './ui';
 import { answerInstall, catalogCard, fakeInstallEvents, oneContainerApp } from './apps-fakes';
 
 test.describe('App Store', () => {
@@ -209,16 +209,16 @@ test.describe('Installed apps', () => {
   test('Stop and Start an app: its state follows', async ({ authenticatedPage: page }) => {
     const requests = await fakeInstalledApps(page);
     await page.goto('/apps');
-    await page.getByRole('button', { name: /^Installed/ }).click();
+    await page.getByRole('tab', { name: /^Installed/ }).click();
     const jellyfin = card(page, 'e2e-jellyfin');
     await expect(jellyfin.getByText('Running', { exact: true })).toBeVisible();
-    // Quiet buttons: no solid colour on an app's routine actions (webui.ux-apps). Uninstall, which
-    // removes every container of the app, says so in words, names the app and is a delete's quiet
-    // red, as every delete is (webui/AGENTS.md).
+    // Quiet buttons: no solid colour on an app's routine actions (webui.ux-apps). Restart and
+    // Uninstall, which removes every container of the app, are its ⋯ menu's, named after the app;
+    // Uninstall last, after a separator, in a delete's red (ADR-0432, ADR-0437).
     await expect(jellyfin.locator('.btn-primary, .btn-warning, .btn-danger, .btn-success')).toHaveCount(0);
-    const uninstall = jellyfin.getByRole('button', { name: 'Uninstall e2e-jellyfin', exact: true });
-    await expect(uninstall).toHaveText('Uninstall');
-    await expect(uninstall).toHaveClass(/btn-ghost-danger/);
+    await actionsFor(jellyfin, 'e2e-jellyfin').click();
+    await expect(page.getByRole('menuitem')).toHaveText(['Restart', 'Uninstall']);
+    await page.keyboard.press('Escape');
 
     await jellyfin.getByRole('button', { name: 'Stop' }).click();
     await expect(jellyfin.getByText('Stopped', { exact: true })).toBeVisible();
@@ -237,7 +237,7 @@ test.describe('Installed apps', () => {
   }) => {
     await fakeInstalledApps(page);
     await page.goto('/apps');
-    await page.getByRole('button', { name: /^Installed/ }).click();
+    await page.getByRole('tab', { name: /^Installed/ }).click();
     const transmission = card(page, 'e2e-transmission');
 
     await transmission.getByRole('button', { name: 'Start' }).click();
@@ -249,9 +249,9 @@ test.describe('Installed apps', () => {
   test('Uninstall removes the container and keeps the app data', async ({ authenticatedPage: page }) => {
     const requests = await fakeInstalledApps(page);
     await page.goto('/apps');
-    await page.getByRole('button', { name: /^Installed/ }).click();
+    await page.getByRole('tab', { name: /^Installed/ }).click();
 
-    await card(page, 'e2e-jellyfin').getByRole('button', { name: 'Uninstall' }).click();
+    await chooseAction(page, 'e2e-jellyfin', 'Uninstall');
     await answerConfirmation(page, {
       title: 'Uninstall e2e-jellyfin?',
       message: 'Its container is removed; its data folders are kept.',
@@ -260,7 +260,7 @@ test.describe('Installed apps', () => {
 
     await expect(card(page, 'e2e-jellyfin')).toHaveCount(0);
     await expect(card(page, 'e2e-transmission')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Installed (1)' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (1)' })).toBeVisible();
     expect(requests).toContain('DELETE /api/v1/apps/installed/e2e-jellyfin-id');
   });
 });
@@ -329,7 +329,7 @@ test.describe('Install in the group unos-smb', () => {
       /^Sets PUID to 80000, PGID to 70000 \(unos-smb\) and UMASK to 007\./,
     );
 
-    await dialog.getByRole('button', { name: /^Variables/ }).click();
+    await dialog.getByRole('tab', { name: /^Variables/ }).click();
     await dialog.getByLabel('USER').fill('e2e');
     await dialog.getByLabel('PASS').fill('k7-Unique-pass');
     // PUID and PGID are UNOS's to set: the option sets them, the Environment tab does not.
@@ -340,7 +340,7 @@ test.describe('Install in the group unos-smb', () => {
     await expect(pgid).toBeDisabled();
     await expect(pgid).toHaveValue('1000');
 
-    await dialog.getByRole('button', { name: /^Volumes/ }).click();
+    await dialog.getByRole('tab', { name: /^Volumes/ }).click();
     await dialog.locator('.card-nested', { hasText: '/downloads' }).getByLabel('Host path').fill(FAMILY);
 
     // Without the option the server refuses the share's folder.
@@ -349,7 +349,7 @@ test.describe('Install in the group unos-smb', () => {
 
     await option.check();
     await expect(dialog.getByText('Transmission can read and change the files of every share folder')).toBeVisible();
-    await dialog.getByRole('button', { name: /^Variables/ }).click();
+    await dialog.getByRole('tab', { name: /^Variables/ }).click();
     await expect(puid).toHaveValue('80000');
     await expect(pgid).toHaveValue('70000');
 
@@ -375,7 +375,7 @@ test.describe('Install in the group unos-smb', () => {
 
     await expect(dialog.getByRole('button', { name: 'Install Jellyfin' })).toBeEnabled();
     await expect(dialog.getByRole('checkbox', { name: 'Run in the group unos-smb' })).toHaveCount(0);
-    await dialog.getByRole('button', { name: /^Variables/ }).click();
+    await dialog.getByRole('tab', { name: /^Variables/ }).click();
     for (const name of ['PUID', 'PGID']) {
       await expect(dialog.getByLabel(name)).toBeDisabled();
       await expect(dialog.getByLabel(name)).toHaveValue('1000');
@@ -432,7 +432,7 @@ test.describe('Ports of an app', () => {
     await catalogCard(page, name).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name, exact: true })).toBeVisible();
-    await dialog.getByRole('button', { name: 'Ports (1)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Ports (1)', exact: true }).click();
     return dialog;
   }
 
@@ -514,7 +514,7 @@ test.describe('Installed apps in the group unos-smb', () => {
 
   test('the installed list names the apps that run in the group', async ({ authenticatedPage: page }) => {
     await page.goto('/apps');
-    await page.getByRole('button', { name: /^Installed/ }).click();
+    await page.getByRole('tab', { name: /^Installed/ }).click();
 
     const card = (name: string) => page.locator('.card', { has: page.locator('h3', { hasText: name }) });
     await expect(card('e2e-transmission').locator('[data-field="group"]')).toHaveText('unos-smb');
@@ -529,7 +529,7 @@ test.describe('Installed apps in the group unos-smb', () => {
     await page.locator('h3', { hasText: 'Transmission' }).first().click();
     let dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Transmission runs in the group unos-smb (PUID 80000, PGID 70000)')).toBeVisible();
-    await dialog.getByRole('button', { name: /^Variables/ }).click();
+    await dialog.getByRole('tab', { name: /^Variables/ }).click();
     await expect(dialog.getByLabel('PUID')).toHaveValue('80000');
     await expect(dialog.getByLabel('PGID')).toHaveValue('70000');
     // The hint of each of the two fields.
@@ -541,7 +541,7 @@ test.describe('Installed apps in the group unos-smb', () => {
     dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Syncthing', exact: true })).toBeVisible();
     await expect(dialog.getByText('runs in the group unos-smb (PUID')).toHaveCount(0);
-    await dialog.getByRole('button', { name: /^Variables/ }).click();
+    await dialog.getByRole('tab', { name: /^Variables/ }).click();
     await expect(dialog.getByLabel('PUID')).toHaveValue('1000');
     await expect(dialog.getByLabel('PGID')).toHaveValue('1000');
     await expect(dialog.getByText('Set by UNOS: Syncthing runs outside the group unos-smb.')).toHaveCount(2);
@@ -644,8 +644,8 @@ test.describe('The App Store in Russian', () => {
     await expect(main.getByRole('heading', { name: 'Магазин приложений', level: 1 })).toBeVisible();
     // The installed apps are counted by their tab, and the catalog lists each app once (ADR-0431).
     await expect(main.getByText(/^Доступно приложений: \d+$/)).toBeVisible();
-    await expect(main.getByRole('button', { name: 'Каталог', exact: true })).toBeVisible();
-    await expect(main.getByRole('button', { name: 'Установленные (2)', exact: true })).toBeVisible();
+    await expect(main.getByRole('tab', { name: 'Каталог', exact: true })).toBeVisible();
+    await expect(main.getByRole('tab', { name: 'Установленные (2)', exact: true })).toBeVisible();
     await expect(main.getByRole('heading', { name: 'Категории' })).toBeVisible();
     await expect(main.locator('nav').getByRole('button', { name: /^Все приложения \d+$/ })).toBeVisible();
     await expect(main.locator('nav').getByRole('button', { name: /^Умный дом \d+$/ })).toBeVisible();
@@ -673,19 +673,19 @@ test.describe('The App Store in Russian', () => {
     );
     await expect(dialog.getByText('Данные приложения хранятся в этом пуле.')).toBeVisible();
     await expect(dialog.getByRole('checkbox', { name: 'Запускать в группе unos-smb' })).not.toBeChecked();
-    await expect(dialog.getByText('Задайте обязательные переменные USER, PASS.')).toBeVisible();
+    await expect(dialog.locator('.alert').getByText('Задайте обязательные переменные USER, PASS.')).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Расположение данных в пуле e2e_data' })).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'Образ', exact: true })).toBeVisible();
     // The memory first, in the page's units (webui.ux-apps).
     await expect(dialog.locator('.kv').getByText('Рекомендуемая память', { exact: true })).toBeVisible();
     await expect(dialog.locator('[data-field="recommended-memory"]')).toHaveText(/^[\d,]+ (ГБ|МБ)$/);
     for (const tab of ['Обзор', 'Порты (3)', 'Тома (3)', 'Переменные (5)']) {
-      await expect(dialog.getByRole('button', { name: tab, exact: true })).toBeVisible();
+      await expect(dialog.getByRole('tab', { name: tab, exact: true })).toBeVisible();
     }
     await expect(dialog.getByRole('button', { name: 'Установить Transmission' })).toBeDisabled();
     await expect(dialog.getByRole('button', { name: 'Install Transmission' })).toHaveCount(0);
 
-    await dialog.getByRole('button', { name: 'Переменные (5)', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Переменные (5)', exact: true }).click();
     await expect(dialog.getByLabel('USER')).toHaveAttribute('placeholder', 'Введите USER');
     await expect(dialog.getByLabel('PASS')).toHaveAttribute('placeholder', 'Придумайте уникальное значение');
     await expect(dialog.getByText('Обязательно', { exact: true })).toHaveCount(2);
@@ -696,21 +696,23 @@ test.describe('The App Store in Russian', () => {
     await expect(dialog).toHaveCount(0);
 
     // The installed apps: their states and actions, and the warning of an app whose pool is not mounted.
-    await main.getByRole('button', { name: 'Установленные (2)', exact: true }).click();
+    await main.getByRole('tab', { name: 'Установленные (2)', exact: true }).click();
     const installedCard = (name: string) => main.locator('.card', { has: page.locator('h3', { hasText: name }) });
     const jellyfin = installedCard('e2e-jellyfin');
     await expect(jellyfin.getByText('Работает', { exact: true })).toBeVisible();
     await expect(jellyfin.getByText('Пул', { exact: true })).toBeVisible();
     await expect(jellyfin.locator('[data-field="pool"]')).toHaveText('e2e_data');
-    for (const action of ['Остановить', 'Перезапустить', 'Удалить e2e-jellyfin']) {
-      await expect(jellyfin.getByRole('button', { name: action, exact: true })).toBeVisible();
-    }
+    await expect(jellyfin.getByRole('button', { name: 'Остановить', exact: true })).toBeVisible();
+    // Restart and Uninstall are its ⋯ menu's (ADR-0437).
+    await actionsFor(jellyfin, 'e2e-jellyfin', true).click();
+    await expect(page.getByRole('menuitem')).toHaveText(['Перезапустить', 'Удалить']);
+    await page.keyboard.press('Escape');
     const syncthing = installedCard('e2e-syncthing');
     await expect(syncthing.getByText('Остановлено', { exact: true })).toBeVisible();
     await expect(syncthing.getByRole('button', { name: 'Запустить', exact: true })).toBeVisible();
     await expect(syncthing.getByText('Папки с данными недоступны')).toBeVisible();
 
-    await jellyfin.getByRole('button', { name: 'Удалить e2e-jellyfin', exact: true }).click();
+    await chooseAction(page, 'e2e-jellyfin', 'Удалить', true);
     await answerConfirmation(page, {
       title: 'Удалить приложение e2e-jellyfin?',
       message: 'Его контейнер будет удалён, а папки с данными останутся.',
@@ -720,6 +722,6 @@ test.describe('The App Store in Russian', () => {
 
     // Nothing of the English page is left.
     await expect(main.getByRole('heading', { name: 'App Store' })).toHaveCount(0);
-    await expect(main.getByRole('button', { name: /^Installed/ })).toHaveCount(0);
+    await expect(main.getByRole('tab', { name: /^Installed/ })).toHaveCount(0);
   });
 });

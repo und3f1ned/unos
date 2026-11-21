@@ -16,15 +16,10 @@ export class Certificates {
   loading = $state(false);
   // Why the last load of the certificates failed: reset by every load.
   loadError = $state("");
-  // Why a delete failed; why a generation failed, shown in its dialog.
+  // Why a delete or a serving failed; why a generation failed, shown in its dialog. What an action
+  // did is a toast (ADR-0432).
   error = $state("");
   generateError = $state("");
-  success = $state("");
-  // The certificate whose serving waits for its confirmation: a stored one, or null for Caddy's
-  // local CA (ADR-0404); why the server refused it, shown in the dialog.
-  serveTarget = $state<{ cert: Certificate | null } | null>(null);
-  serveBusy = $state(false);
-  serveError = $state("");
   generateOpen = $state(false);
 
   async load() {
@@ -45,11 +40,6 @@ export class Certificates {
     } finally {
       this.loading = false;
     }
-  }
-
-  askServe(cert: Certificate | null) {
-    this.serveError = "";
-    this.serveTarget = { cert };
   }
 
   openGenerate() {

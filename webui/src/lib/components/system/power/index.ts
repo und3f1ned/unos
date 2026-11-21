@@ -1,5 +1,4 @@
 export { default as PowerActionsCard } from './PowerActionsCard.svelte';
-export { default as PowerConfirmDialog } from './PowerConfirmDialog.svelte';
 export { default as PowerScheduleCard } from './PowerScheduleCard.svelte';
 export { default as PowerStatusCard } from './PowerStatusCard.svelte';
 export { default as WakeOnLanCard } from './WakeOnLanCard.svelte';

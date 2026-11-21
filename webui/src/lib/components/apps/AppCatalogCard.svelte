@@ -46,11 +46,11 @@
 		<div class="flex-1 min-w-0">
 			<h3 class="font-semibold truncate mb-1">{app.name}</h3>
 			<div class="flex flex-wrap items-center gap-1.5">
-				<Badge variant="neutral">
+				<Badge variant="outline">
 					{#if source.verified}<BadgeCheck class="w-3 h-3" aria-hidden="true" />{/if}
 					{$t(source.key)}
 				</Badge>
-				<Badge variant="neutral"><AppCategory category={app.category} /></Badge>
+				<Badge variant="outline"><AppCategory category={app.category} /></Badge>
 				{#if installedInfo && missingHardware(app, installedInfo).length > 0}
 					<!-- A container of it did not get the hardware: its details say how to give it. -->
 					<Badge variant="warning">
@@ -58,7 +58,7 @@
 						{$t('apps.hardware.badgeMissing')}
 					</Badge>
 				{:else if allProfiles(app).length > 0}
-					<Badge variant="neutral">
+					<Badge variant="outline">
 						<Cpu class="w-3 h-3" aria-hidden="true" />
 						{$t('apps.hardware.badge')}
 					</Badge>

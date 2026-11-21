@@ -200,7 +200,7 @@ test.describe('Apps that came back with companions', () => {
       expect((await dialog.innerText()).replace(/sha256:[0-9a-f]{64}/g, '')).not.toMatch(/[0-9a-f]{32}/);
 
       // Environment: the wiring is UNOS's and cannot be changed.
-      await dialog.getByRole('button', { name: /^Variables \(\d+\)$/ }).click();
+      await dialog.getByRole('tab', { name: /^Variables \(\d+\)$/ }).click();
       for (const [name, value] of app.wiring) {
         await expect(dialog.getByLabel(name, { exact: true })).toBeDisabled();
         await expect(dialog.getByLabel(name, { exact: true })).toHaveValue(value);
@@ -220,8 +220,8 @@ test.describe('Apps that came back with companions', () => {
     const dialog = await details(page, 'BookStack');
     const install = dialog.getByRole('button', { name: 'Install BookStack' });
     await expect(install).toBeDisabled();
-    await expect(dialog.getByText('Set the required variable APP_URL.')).toBeVisible();
-    await dialog.getByRole('button', { name: /^Variables \(\d+\)$/ }).click();
+    await expect(dialog.locator('.alert').getByText('Set the required variable APP_URL.')).toBeVisible();
+    await dialog.getByRole('tab', { name: /^Variables \(\d+\)$/ }).click();
     // A required variable's label is marked with an asterisk.
     await dialog.getByRole('textbox', { name: 'APP_URL *', exact: true }).fill('http://nas.local:6875');
     await install.click();

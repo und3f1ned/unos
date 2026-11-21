@@ -9,10 +9,12 @@
 		text: string;
 		/** The rest, shown on demand. */
 		more?: Snippet;
+		/** The toggle's text while the rest is hidden: "Details" by default. */
+		moreLabel?: string;
 		class?: string;
 	};
 
-	let { text, more, class: className = '' }: Props = $props();
+	let { text, more, moreLabel = '', class: className = '' }: Props = $props();
 	let open = $state(false);
 	const moreId = `help-${Math.random().toString(36).slice(2, 9)}`;
 </script>
@@ -26,7 +28,7 @@
 				class="help-text-toggle"
 				aria-expanded={open}
 				aria-controls={moreId}
-				onclick={() => (open = !open)}>{open ? $t('ui.help.hide') : $t('ui.help.details')}</button
+				onclick={() => (open = !open)}>{open ? $t('ui.help.hide') : moreLabel || $t('ui.help.details')}</button
 			>
 		{/if}
 	</p>

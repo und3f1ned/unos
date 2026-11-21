@@ -136,7 +136,7 @@ test.describe('Two-factor authentication for every account', () => {
     await page.getByRole('option', { name: '14 days', exact: true }).click();
     await card.getByLabel('Code from your authenticator app').fill(await nextAdminCode());
     await card.getByRole('button', { name: 'Require for every account' }).click();
-    await expect(card.getByText('Two-factor authentication is now required for every account')).toBeVisible();
+    await expect(page.getByText('Two-factor authentication is now required for every account')).toBeVisible();
     await expect(card.getByText('Required', { exact: true })).toBeVisible();
     await expect(card.getByText(`turned on by ${ADMIN.username}`)).toBeVisible();
     await expect(card.getByText(/^Grace period: 14 days/)).toBeVisible();
@@ -174,7 +174,7 @@ test.describe('Two-factor authentication for every account', () => {
     await expect(card.getByText(/^Required since .+, turned on by /)).toBeVisible();
     await card.getByLabel('Code from your authenticator app').fill(await nextAdminCode());
     await card.getByRole('button', { name: 'Stop requiring' }).click();
-    await expect(card.getByText('Two-factor authentication is no longer required for every account')).toBeVisible();
+    await expect(page.getByText('Two-factor authentication is no longer required for every account')).toBeVisible();
     await expect(card.getByText('Not required', { exact: true })).toBeVisible();
     expect((await requirementOf(request)).enabled).toBe(false);
     await signIn(page, USER);

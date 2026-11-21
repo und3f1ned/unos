@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Network } from "lucide-svelte";
   import { disableWol, enableWol, type WolInterface } from "$lib/api/power";
-  import { Alert, Badge, Button, Card, EmptyState, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, Card, EmptyState, Skeleton, LoadState, HelpText } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { WakeOnLan } from "./wol.svelte";
 
@@ -51,13 +51,16 @@
 <Card title={$t("power.wol.title")} description={$t("power.wol.hint")}>
   {#if unavailable}
     <p class="text-sm text-content-muted">{$t("power.unavailable")}</p>
-  {:else if wol.loading}
-    <div aria-busy="true"><Skeleton shape="row" count={2} /></div>
-  {:else if wol.error}
-    <Alert variant="error" size="sm" title={$t("power.wol.loadError")}>{wol.error}</Alert>
-  {:else if wol.interfaces.length === 0}
-    <EmptyState compact icon={Network} title={$t("power.wol.none")} />
   {:else}
+  <LoadState
+    loading={wol.loading}
+    error={wol.error}
+    errorTitle={$t("power.wol.loadError")}
+    empty={wol.interfaces.length === 0}
+    onretry={() => wol.load()}
+  >
+    {#snippet skeleton()}<Skeleton shape="row" count={2} />{/snippet}
+    {#snippet emptyState()}<EmptyState compact icon={Network} title={$t("power.wol.none")} />{/snippet}
     <div class="table-frame">
       <table class="table">
         <thead class="table-header">
@@ -100,12 +103,14 @@
         </tbody>
       </table>
     </div>
-    <details class="mt-3 text-[13px] leading-[18px] text-content-secondary">
-      <summary class="link w-fit cursor-pointer">{$t("power.wol.more")}</summary>
-      <p class="mt-2">
-        {$t("power.wol.hintBefore")}
-        <span class="mono">{$t("power.wol.command")}</span>{$t("power.wol.hintAfter")}
-      </p>
-    </details>
+    <HelpText text="" moreLabel={$t("power.wol.more")} class="mt-3">
+      {#snippet more()}
+        <p>
+          {$t("power.wol.hintBefore")}
+          <span class="mono">{$t("power.wol.command")}</span>{$t("power.wol.hintAfter")}
+        </p>
+      {/snippet}
+    </HelpText>
+  </LoadState>
   {/if}
 </Card>

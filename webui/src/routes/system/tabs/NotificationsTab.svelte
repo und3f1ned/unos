@@ -3,24 +3,23 @@
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { Plus, RefreshCw } from "lucide-svelte";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, Tabs, confirm, toast } from "$lib/components/ui";
   import {
     ChannelDialog,
     ChannelForm,
     ChannelsView,
-    DeleteChannelDialog,
     HistoryFilter,
     HistoryView
   } from "$lib/components/system/notifications";
-  import { kindName } from "$lib/components/system/notifications/channels";
+  import { kindName, nameOf } from "$lib/components/system/notifications/channels";
   import { t } from "$lib/i18n";
   import {
-    createConfig, getConfigs, getLogs, testNotification, updateConfig,
+    createConfig, deleteConfig, getConfigs, getLogs, testNotification, updateConfig,
     type ChannelKind, type NotificationConfig, type NotificationLog
   } from "$lib/api/notifications";
 
-  // Channels of five kinds (ADR-0326), each of which receives every alert. A test reports next to
-  // its channel whether the server delivered it, or why not, and the history lists every
+  // Channels of five kinds (ADR-0326), each of which receives every alert. A test that the server
+  // delivered says so in a toast, one that it did not says why next to its channel, and the history lists every
   // notification sent, newest first. A channel's events are not offered: the server sends every
   // alert to every enabled channel whatever they name.
 
@@ -35,15 +34,13 @@
   let loadError = $state("");
   let activeView = $state<View>("channels");
 
-  // The outcome of each channel's last test, by channel id: shown under the channel.
-  let results = $state<Record<string, { success: boolean; message: string }>>({});
+  // Why each channel's last test was not sent, by channel id: shown under the channel.
+  let results = $state<Record<string, string>>({});
   let testing = $state<string | null>(null);
   let actionError = $state("");
 
-  // The dialog that adds or edits a channel, and the channel whose deletion waits for its
-  // confirmation.
+  // The dialog that adds or edits a channel.
   const form = new ChannelForm();
-  let deleting = $state<NotificationConfig | null>(null);
 
   const filter = new HistoryFilter();
 
@@ -108,9 +105,9 @@
     dismissResult(id);
     try {
       await testNotification(id);
-      results = { ...results, [id]: { success: true, message: $t("notifications.test.sent") } };
+      toast.success($t("notifications.test.sentTo", { name: nameOf($t, config) }));
     } catch (e) {
-      results = { ...results, [id]: { success: false, message: messageOf(e) } };
+      results = { ...results, [id]: messageOf(e) };
     } finally {
       testing = null;
     }
@@ -142,24 +139,27 @@
     await loadData();
   }
 
-  async function deleted(id: string) {
+  // Delete asks first; why the server refused it is a toast.
+  async function deleteChannel(config: NotificationConfig) {
+    const id = config.id;
+    if (!id) return;
+    const name = nameOf($t, config);
+    const yes = await confirm({
+      title: $t("notifications.delete.title", { name }),
+      message: $t("notifications.delete.text", { name }),
+      confirmLabel: $t("notifications.delete.confirm")
+    });
+    if (!yes) return;
+    try {
+      await deleteConfig(id);
+    } catch (e) {
+      toast.error(messageOf(e), { title: $t("notifications.delete.error") });
+      return;
+    }
     dismissResult(id);
-    deleting = null;
     await loadData();
   }
 </script>
-
-<!-- A view of the tab: Channels or History. -->
-{#snippet viewTab(view: View, label: string)}
-  <Button
-    variant="plain"
-    class="tab-underline {activeView === view ? 'tab-underline-active' : ''}"
-    pressed={activeView === view}
-    onclick={() => (activeView = view)}
-  >
-    {label}
-  </Button>
-{/snippet}
 
 <!-- A tab of System's Settings: the channels the NAS notifies through, and what it sent (ADR-0431). -->
 <div class="space-y-6">
@@ -171,10 +171,20 @@
     <Button variant="primary" icon={Plus} onclick={openCreate}>{$t("notifications.addChannel")}</Button>
   </div>
 
-  <div class="tab-bar items-center">
-    {@render viewTab("channels", $t("notifications.views.channels"))}
-    {@render viewTab("history", $t("notifications.views.history"))}
-    <Button variant="ghost" size="icon-sm" class="ml-auto" icon={RefreshCw} loading={loading}
+  <div class="flex items-center gap-2">
+    <Tabs
+      tabs={[
+        { id: "channels", label: $t("notifications.views.channels") },
+        { id: "history", label: $t("notifications.views.history") }
+      ]}
+      active={activeView}
+      label={$t("system.tabs.notifications")}
+      tabId={(id) => `notifications-tab-${id}`}
+      panelId={(id) => `notifications-panel-${id}`}
+      onselect={(id) => (activeView = id)}
+      class="flex-1 min-w-0"
+    />
+    <Button variant="ghost" size="icon-sm" icon={RefreshCw} loading={loading}
       title={$t("common.refresh")} onclick={loadData}>
       <span class="sr-only">{$t("common.refresh")}</span>
     </Button>
@@ -191,27 +201,24 @@
     </div>
   {/if}
 
-  {#if activeView === "channels"}
-    <ChannelsView
-      {configs}
-      {loading}
-      {results}
-      {testing}
-      {toggling}
-      oncreate={openCreate}
-      ontest={handleTest}
-      ontoggle={toggleEnabled}
-      onedit={(config) => form.openEdit(config)}
-      ondelete={(config) => (deleting = config)}
-      ondismissresult={dismissResult}
-    />
-  {/if}
-
-  {#if activeView === "history"}
-    <HistoryView {logs} {loading} {filter} />
-  {/if}
+  <div role="tabpanel" id="notifications-panel-{activeView}" aria-labelledby="notifications-tab-{activeView}">
+    {#if activeView === "channels"}
+      <ChannelsView
+        {configs}
+        {loading}
+        {results}
+        {testing}
+        {toggling}
+        ontest={handleTest}
+        ontoggle={toggleEnabled}
+        onedit={(config) => form.openEdit(config)}
+        ondelete={deleteChannel}
+        ondismissresult={dismissResult}
+      />
+    {:else}
+      <HistoryView {logs} {loading} {filter} />
+    {/if}
+  </div>
 </div>
 
 <ChannelDialog {form} {defaultName} onsave={handleSave} />
-
-<DeleteChannelDialog channel={deleting} onclose={() => (deleting = null)} ondeleted={deleted} />

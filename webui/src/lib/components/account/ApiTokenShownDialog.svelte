@@ -9,17 +9,17 @@
 	type Props = {
 		/** The token just made; the dialog is closed without one. */
 		token: CreatedApiToken | null;
-		copied: boolean;
 		copyFailed: boolean;
 		oncopy: () => void;
 		/** Done: the token is never shown again. */
 		ondone: () => void;
 	};
 
-	let { token, copied, copyFailed, oncopy, ondone }: Props = $props();
+	let { token, copyFailed, oncopy, ondone }: Props = $props();
 </script>
 
-<!-- Closed only by Done: the token is shown only now. -->
+<!-- Closed only by Done: the token is shown only now, so it stays in the dialog to be read and
+     copied, no toast (ADR-0432); that it was copied is a toast. -->
 <Modal open={token !== null} title={$t('tokens.shown.title')} size="md" closable={false}>
 	{#if token}
 		<div class="space-y-3">
@@ -46,7 +46,6 @@
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
 				<Button variant="secondary" size="sm" onclick={oncopy}>{$t('tokens.shown.copy')}</Button>
-				{#if copied}<span class="text-sm text-success">{$t('tokens.shown.copied')}</span>{/if}
 			</div>
 			{#if copyFailed}
 				<Alert variant="error">{$t('tokens.shown.copyFailed')}</Alert>

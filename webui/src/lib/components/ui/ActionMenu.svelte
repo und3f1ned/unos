@@ -11,10 +11,12 @@
 		/** The object's name, for the button's name; without it, "Actions". */
 		name?: string;
 		size?: 'icon' | 'icon-sm';
+		/** The object's actions wait, such as while an action on several runs. */
+		disabled?: boolean;
 		class?: string;
 	};
 
-	let { items, name = '', size = 'icon-sm', class: className = '' }: Props = $props();
+	let { items, name = '', size = 'icon-sm', disabled = false, class: className = '' }: Props = $props();
 </script>
 
 <Menu
@@ -24,5 +26,6 @@
 	iconOnly
 	variant="ghost"
 	{size}
+	{disabled}
 	class={className}
 />

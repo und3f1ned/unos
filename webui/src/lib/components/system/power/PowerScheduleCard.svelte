@@ -1,7 +1,7 @@
 <script lang="ts">
   import { messageOf } from "$lib/errors";
   import { updatePowerConfig } from "$lib/api/power";
-  import { Alert, Button, Card, Skeleton } from "$lib/components/ui";
+  import { Alert, Button, Card, Skeleton, SwitchRow, TechDetails, HelpText } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { PowerPlan } from "./plan.svelte";
 
@@ -69,9 +69,8 @@
   let rtcProblem = $derived(plan.schedule && !plan.schedule.wake.rtc.available ? (plan.schedule.wake.rtc.reason ?? "") : null);
 </script>
 
-<!-- The rows share one grid: the on/off, its title and help, and its field in a column of its own,
-     so that the three fields stand on one line whatever the length of the titles. The checkbox is
-     the place of the Switch of the design system. -->
+<!-- Each rule a SwitchRow (ADR-0432): its title and help, the switch, and its field below while it
+     is on, so that the three fields stand in one column. Saved together with Save schedule. -->
 <Card title={$t("power.schedule.title")} description={$t("power.schedule.hint")}>
   {#if unavailable}
     <p class="text-sm text-content-muted">{$t("power.unavailable")}</p>
@@ -91,73 +90,61 @@
       }}
     >
       <div class="divide-y divide-border border-y border-border">
-        <div class="grid grid-cols-[auto_minmax(0,1fr)] sm:grid-cols-[auto_minmax(0,1fr)_10.5rem] items-start gap-x-3 gap-y-2 py-3.5">
-          <input id="power-auto-shutdown" type="checkbox" class="form-checkbox mt-0.5 h-4 w-4"
-            aria-describedby="power-auto-shutdown-hint" bind:checked={plan.form.autoShutdown} />
-          <div class="min-w-0">
-            <label for="power-auto-shutdown" class="text-sm font-medium text-content">{$t("power.schedule.shutdownEvery")}</label>
-            <p id="power-auto-shutdown-hint" class="mt-0.5 text-[13px] leading-[18px] text-content-muted">{$t("power.schedule.shutdownHint")}</p>
-          </div>
-          {#if plan.form.autoShutdown}
-            <div class="col-start-2 sm:col-start-3 sm:row-start-1">
-              <input type="time" class="form-input w-36" aria-label={$t("power.schedule.shutdownTime")}
-                bind:value={plan.form.shutdownTime} />
-            </div>
-          {/if}
-        </div>
+        <SwitchRow
+          id="power-auto-shutdown"
+          class="py-3.5"
+          title={$t("power.schedule.shutdownEvery")}
+          help={$t("power.schedule.shutdownHint")}
+          bind:checked={plan.form.autoShutdown}
+        >
+          <input type="time" class="form-input w-36" aria-label={$t("power.schedule.shutdownTime")}
+            bind:value={plan.form.shutdownTime} />
+        </SwitchRow>
 
-        <div class="grid grid-cols-[auto_minmax(0,1fr)] sm:grid-cols-[auto_minmax(0,1fr)_10.5rem] items-start gap-x-3 gap-y-2 py-3.5">
-          <input id="power-auto-wakeup" type="checkbox" class="form-checkbox mt-0.5 h-4 w-4"
-            aria-describedby="power-auto-wakeup-hint" bind:checked={plan.form.autoWakeup} />
-          <div class="min-w-0">
-            <label for="power-auto-wakeup" class="text-sm font-medium text-content">{$t("power.schedule.wakeEvery")}</label>
-            <p id="power-auto-wakeup-hint" class="mt-0.5 text-[13px] leading-[18px] text-content-muted">{$t("power.schedule.wakeHint")}</p>
-          </div>
-          {#if plan.form.autoWakeup}
-            <div class="col-start-2 sm:col-start-3 sm:row-start-1">
-              <input type="time" class="form-input w-36" aria-label={$t("power.schedule.wakeTime")}
-                bind:value={plan.form.wakeTime} />
+        <SwitchRow
+          id="power-auto-wakeup"
+          class="py-3.5"
+          title={$t("power.schedule.wakeEvery")}
+          help={$t("power.schedule.wakeHint")}
+          bind:checked={plan.form.autoWakeup}
+        >
+          <input type="time" class="form-input w-36" aria-label={$t("power.schedule.wakeTime")}
+            bind:value={plan.form.wakeTime} />
+          {#if rtcProblem !== null}
+            <!-- A plain sentence first; the host's reason, technical, folded (TechDetails). -->
+            <div class="text-[13px] leading-[18px]" data-testid="power-rtc-problem">
+              <p class="text-status-warning">{$t("power.schedule.rtcCannotWake")}</p>
+              {#if rtcProblem}
+                <TechDetails text={rtcProblem} summary={$t("power.details")} class="mt-1" />
+              {/if}
             </div>
-            {#if rtcProblem !== null}
-              <!-- A plain sentence first; the host's reason, technical, on demand. -->
-              <div class="col-start-2 sm:col-span-2 text-[13px] leading-[18px]" data-testid="power-rtc-problem">
-                <p class="text-status-warning">{$t("power.schedule.rtcCannotWake")}</p>
-                {#if rtcProblem}
-                  <details class="mt-1 text-content-secondary">
-                    <summary class="link w-fit cursor-pointer">{$t("power.details")}</summary>
-                    <p class="mt-1 mono text-xs break-words">{rtcProblem}</p>
-                  </details>
-                {/if}
-              </div>
-            {/if}
           {/if}
-        </div>
+        </SwitchRow>
 
-        <div class="grid grid-cols-[auto_minmax(0,1fr)] sm:grid-cols-[auto_minmax(0,1fr)_10.5rem] items-start gap-x-3 gap-y-2 py-3.5">
-          <input id="power-idle-shutdown" type="checkbox" class="form-checkbox mt-0.5 h-4 w-4"
-            aria-describedby="power-idle-shutdown-hint" bind:checked={plan.form.idleShutdown} />
-          <div class="min-w-0">
-            <label for="power-idle-shutdown" class="text-sm font-medium text-content">{$t("power.schedule.idleAfter")}</label>
-            <p id="power-idle-shutdown-hint" class="mt-0.5 text-[13px] leading-[18px] text-content-muted">{$t("power.schedule.idleHint")}</p>
+        <SwitchRow
+          id="power-idle-shutdown"
+          class="py-3.5"
+          title={$t("power.schedule.idleAfter")}
+          help={$t("power.schedule.idleHint")}
+          bind:checked={plan.form.idleShutdown}
+        >
+          <div class="flex items-center gap-2">
+            <input type="number" min="20" max="1440" class="form-input w-24 tabular"
+              aria-label={$t("power.schedule.idleMinutes")} bind:value={plan.form.idleMinutes} />
+            <span class="text-sm text-content-secondary">{$t("power.schedule.minutes")}</span>
           </div>
-          {#if plan.form.idleShutdown}
-            <div class="col-start-2 sm:col-start-3 sm:row-start-1 flex items-center gap-2">
-              <input type="number" min="20" max="1440" class="form-input w-24 tabular"
-                aria-label={$t("power.schedule.idleMinutes")} bind:value={plan.form.idleMinutes} />
-              <span class="text-sm text-content-secondary">{$t("power.schedule.minutes")}</span>
-            </div>
-          {/if}
-        </div>
+        </SwitchRow>
       </div>
 
-      <details class="mt-3 text-[13px] leading-[18px] text-content-secondary">
-        <summary class="link w-fit cursor-pointer">{$t("power.schedule.more")}</summary>
-        <p class="mt-2">{$t("power.schedule.moreJobs")}</p>
-        {#if plan.schedule?.wake.rtc.available}
-          <!-- Only for an RTC that takes the alarm: one that cannot is said under the wake's row. -->
-          <p class="mt-2">{$t("power.schedule.rtcReady")}</p>
-        {/if}
-      </details>
+      <HelpText text="" moreLabel={$t("power.schedule.more")} class="mt-3">
+        {#snippet more()}
+          <p>{$t("power.schedule.moreJobs")}</p>
+          {#if plan.schedule?.wake.rtc.available}
+            <!-- Only for an RTC that takes the alarm: one that cannot is said under the wake's row. -->
+            <p>{$t("power.schedule.rtcReady")}</p>
+          {/if}
+        {/snippet}
+      </HelpText>
 
       {#if plan.saveError}
         <div role="alert" class="mt-4">
@@ -166,12 +153,9 @@
       {/if}
       <div class="mt-4 flex flex-wrap items-center gap-3">
         <Button type="submit" variant="primary" loading={plan.saving} disabled={!plan.changed}
-          aria-describedby={plan.changed ? undefined : "power-schedule-unchanged"}>
+          disabledReason={plan.changed ? "" : $t("power.schedule.unchanged")}>
           {$t("power.schedule.save")}
         </Button>
-        {#if !plan.changed}
-          <span id="power-schedule-unchanged" class="text-[13px] text-content-muted">{$t("power.schedule.unchanged")}</span>
-        {/if}
       </div>
     </form>
   {/if}

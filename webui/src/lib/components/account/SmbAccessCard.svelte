@@ -4,7 +4,7 @@
 	import { Share2 } from 'lucide-svelte';
 	import { disableMySmb, enableMySmb, getMySmb, type MySmbStatus } from '$lib/api/auth';
 	import { user } from '$lib/stores/auth';
-	import { Alert, Badge, Button, Card, Input, Modal, Skeleton } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, Input, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import SmbConnectHelp from './SmbConnectHelp.svelte';
 	import SmbSharesTable from './SmbSharesTable.svelte';
@@ -20,11 +20,8 @@
 	let totpCode = $state('');
 	let busy = $state(false);
 	let actionError = $state('');
-	let notice = $state('');
 	let warnings = $state<string[]>([]);
 
-	let confirmOff = $state(false);
-	let offError = $state('');
 
 	// The NAS's address as this browser reaches it (an IP address or a name).
 	let host = $state('');
@@ -65,12 +62,11 @@
 		if (status.totp_required && !totpCode) return;
 		busy = true;
 		actionError = '';
-		notice = '';
 		try {
 			const result = await enableMySmb(password, status.totp_required ? totpCode : undefined);
 			password = '';
 			totpCode = '';
-			notice = $t('account.smb.onNotice');
+			toast.success($t('account.smb.onNotice'));
 			warnings = result?.warnings ?? [];
 			await load();
 		} catch (e) {
@@ -83,26 +79,23 @@
 		}
 	}
 
-	function closeConfirm() {
-		if (!busy) {
-			confirmOff = false;
-			offError = '';
-		}
-	}
-
 	async function turnOff() {
 		if (busy) return;
+		const yes = await confirm({
+			title: $t('account.smb.offTitle'),
+			message: $t('account.smb.offConfirm'),
+			confirmLabel: $t('account.smb.turnOff')
+		});
+		if (!yes) return;
 		busy = true;
-		offError = '';
 		try {
 			const result = await disableMySmb();
-			confirmOff = false;
-			notice = $t('account.smb.offNotice');
+			toast.success($t('account.smb.offNotice'));
 			warnings = result?.warnings ?? [];
 			actionError = '';
 			await load();
 		} catch (e) {
-			offError = messageOf(e);
+			toast.error(messageOf(e), { title: $t('account.smb.notOff') });
 		} finally {
 			busy = false;
 		}
@@ -125,15 +118,15 @@
 		{$t('account.smb.title')}
 	</h3>
 
-	{#if loading}
-		<div aria-busy="true"><Skeleton count={2} /></div>
-	{:else if loadError || !status || !account}
-		<Alert variant="error" title={$t('account.smb.loadError')}>{loadError}</Alert>
-	{:else}
+	<LoadState
+		{loading}
+		error={loadError || (!status || !account ? $t('account.smb.unavailable') : '')}
+		errorTitle={$t('account.smb.loadError')}
+		onretry={load}
+	>
+		{#snippet skeleton()}<Skeleton count={2} />{/snippet}
+		{#if status && account}
 		<div class="space-y-4">
-			{#if notice}
-				<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
-			{/if}
 			{#if warnings.length > 0}
 				<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
 					{#each warnings as warning}
@@ -182,7 +175,7 @@
 			{:else if account.state === 'active'}
 				<div class="flex flex-wrap items-center gap-3">
 					<Badge variant="success">{$t('account.smb.active')}</Badge>
-					<Button variant="ghost" size="sm" onclick={() => (confirmOff = true)}>
+					<Button variant="ghost" size="sm" loading={busy} onclick={turnOff}>
 						{$t('account.smb.turnOff')}
 					</Button>
 				</div>
@@ -210,25 +203,6 @@
 				<SmbConnectHelp {host} share={example} username={allowed ? signInName : null} />
 			{/if}
 		</div>
-	{/if}
+		{/if}
+	</LoadState>
 </Card>
-
-<Modal
-	open={confirmOff}
-	title={$t('account.smb.offTitle')}
-	size="md"
-	closable={!busy}
-	onclose={closeConfirm}
->
-	<p>{$t('account.smb.offConfirm')}</p>
-	{#if offError}
-		<Alert variant="error" title={$t('account.smb.notOff')}>{offError}</Alert>
-	{/if}
-
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeConfirm}>
-			{$t('common.cancel')}
-		</Button>
-		<Button variant="danger" class="flex-1" loading={busy} onclick={turnOff}>{$t('account.smb.turnOff')}</Button>
-	{/snippet}
-</Modal>

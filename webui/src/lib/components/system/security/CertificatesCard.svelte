@@ -1,15 +1,16 @@
 <script lang="ts">
   import { FileKey, Plus, Trash2 } from "lucide-svelte";
-  import { deleteCertificate, type Certificate } from "$lib/api/security";
-  import { Alert, Badge, Button, CardAction, Skeleton, confirm } from "$lib/components/ui";
+  import { messageOf } from "$lib/errors";
+  import { deleteCertificate, serveCertificate, LOCAL_CA_ID, type Certificate } from "$lib/api/security";
+  import { Alert, Badge, Button, CardAction, EmptyState, Skeleton, confirm, toast } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
   import { CERTIFICATE_TYPES, SERVED_BADGES, SERVED_BY, storedCertificate } from "./certificates";
   import type { Certificates } from "./certificates.svelte";
 
   // The web server's certificates (ADR-0404): what browsers get, and under Manage the stored
-  // certificates, which can be served, generated or deleted. The dialogs are ServeCertificateDialog
-  // and GenerateCertificateDialog.
+  // certificates, which can be served, generated or deleted. Serving and deleting ask with confirm();
+  // generating is GenerateCertificateDialog.
   type Props = {
     certificates: Certificates;
   };
@@ -42,6 +43,35 @@
     certificates.status.served_id !== certificates.status.chosen_id
   );
 
+  /**
+   * Serve a stored certificate, or Caddy's local CA again, once confirmed: every browser sees a
+   * new certificate (ADR-0404).
+   */
+  async function askServe(cert: Certificate | null) {
+    const yes = await confirm({
+      title: cert ? $t("account.certs.serveTitle") : $t("account.certs.localCaTitle"),
+      message: cert ? $t("account.certs.serveText", { domain: cert.domain }) : $t("account.certs.localCaText"),
+      warning: $t("account.certs.newCertificateWarning"),
+      consequences:
+        cert?.expires_soon && cert.valid_until
+          ? [$t("account.certs.expiresSoonWarning", { date: formatCertificateDate(cert.valid_until) })]
+          : [],
+      confirmLabel: cert ? $t("account.certs.serveConfirm") : $t("account.certs.useLocalCa"),
+      tone: "warning"
+    });
+    if (!yes) return;
+    certificates.error = "";
+    try {
+      const answer = await serveCertificate(cert ? cert.id : LOCAL_CA_ID);
+      certificates.status = answer.status;
+      toast.success(cert ? $t("account.certs.nowServed", { domain: cert.domain }) : $t("account.certs.nowLocalCa"));
+      await certificates.load();
+    } catch (e) {
+      // The server's refusal stays on the card, by the certificates it concerns.
+      certificates.error = messageOf(e);
+    }
+  }
+
   async function handleDeleteCert(cert: Certificate) {
     const yes = await confirm({
       title: $t("account.certs.deleteTitle", { domain: cert.domain }),
@@ -52,10 +82,9 @@
 
     certificates.loading = true;
     certificates.error = "";
-    certificates.success = "";
     try {
       await deleteCertificate(cert.id);
-      certificates.success = $t("account.certs.deleted");
+      toast.success($t("account.certs.deleted"));
       await certificates.load();
     } catch (e: any) {
       certificates.error = e.message || $t("account.certs.deleteFailed");
@@ -84,10 +113,6 @@
       </CardAction>
     </div>
   </div>
-
-  {#if certificates.success}
-    <Alert variant="success" class="mb-4">{certificates.success}</Alert>
-  {/if}
 
   {#if certificates.error}
     <Alert variant="error" class="mb-4">{certificates.error}</Alert>
@@ -126,7 +151,7 @@
             </Alert>
           {/if}
           {#if certificates.status.chosen_id || certificates.status.served_by === "stored_certificate"}
-            <Button variant="secondary" size="sm" class="mt-3" onclick={() => certificates.askServe(null)}>
+            <Button variant="secondary" size="sm" class="mt-3" onclick={() => askServe(null)}>
               {$t("account.certs.useLocalCa")}
             </Button>
           {/if}
@@ -142,16 +167,16 @@
 
       {#if certificates.list.length === 0}
         {#if certificates.loaded}
-          <p class="text-sm text-content-secondary text-center py-4">{$t("account.certs.noneFound")}</p>
+          <EmptyState compact icon={FileKey} title={$t("account.certs.noneFound")} />
         {/if}
       {:else}
         <div class="space-y-2">
           {#each certificates.list as cert}
             <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
-                <span class="px-2 py-1 rounded text-xs font-medium {cert.is_valid ? 'bg-status-success/20 text-status-success' : 'bg-status-error/20 text-status-error'}">
+                <Badge variant={cert.is_valid ? "success" : "error"}>
                   {cert.is_valid ? $t("account.certs.validBadge") : $t("account.certs.expiredBadge")}
-                </span>
+                </Badge>
                 {#if cert.served}
                   <Badge variant="success">{$t("account.certs.servedBadge")}</Badge>
                 {:else if cert.chosen}
@@ -175,7 +200,7 @@
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 {#if cert.is_valid && !cert.served}
-                  <Button variant="secondary" size="sm" onclick={() => certificates.askServe(cert)}
+                  <Button variant="secondary" size="sm" onclick={() => askServe(cert)}
                     aria-label={$t("account.certs.serveLabel", { domain: cert.domain })}
                   >
                     {$t("account.certs.serve")}

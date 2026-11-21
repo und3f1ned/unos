@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The containers that the Containers page shows, as a table or as cards: a click opens the
-	// container's drawer, the checkbox selects it for an action on several (ADR-0389), and the
-	// buttons act on it alone. When it shows none, it says so. A row's buttons stay on one line in
+	// container's details (a Sheet), the checkbox selects it for an action on several (ADR-0389), and the
+	// buttons and its ⋯ menu act on it alone. When it shows none, it says so. A row's buttons stay on one line in
 	// a column as narrow as they are, the name keeps a width, and an image cut short shows whole on
 	// hover (webui.ux-apps). A container that an app of the App Store made says so and links there;
 	// it has no Remove: removing one container breaks its app, whose Uninstall is the App Store's.
@@ -14,7 +14,7 @@
 		Square,
 		Trash2
 	} from 'lucide-svelte';
-	import { Badge, Button, Card, Checkbox, EmptyState, type IconComponent } from '$lib/components/ui';
+	import { ActionMenu, Badge, Button, Card, Checkbox, EmptyState, type IconComponent, type MenuItem } from '$lib/components/ui';
 	import type { Container } from '$lib/api/containers';
 	import { t } from '$lib/i18n';
 	import { appOf, labelOf, stateVariant, STATES, webUrl, type QuickAction } from './labels';
@@ -33,8 +33,8 @@
 		onselect: (id: string, on: boolean) => void;
 		/** Select every container shown, or none. */
 		ontoggleall: (on: boolean) => void;
-		/** A container's own button; the page stops the click from opening the drawer. */
-		onaction: (event: MouseEvent, id: string, action: QuickAction) => void;
+		/** A container's own button or menu item. */
+		onaction: (id: string, action: QuickAction) => void;
 		/** Clear the search and the filter. */
 		onclear: () => void;
 	};
@@ -56,11 +56,9 @@
 	const someSelected = $derived(!allSelected && containers.some((c) => selected.has(c.id)));
 
 	// The look of a container's own buttons: no status colours on an action (webui.ux-apps).
-	const QUICK: Record<QuickAction, { Icon: IconComponent; key: string; danger?: boolean }> = {
+	const QUICK: Record<'start' | 'stop', { Icon: IconComponent; key: string }> = {
 		stop: { Icon: Square, key: 'containers.action.stop' },
-		restart: { Icon: RotateCw, key: 'containers.action.restart' },
-		start: { Icon: Play, key: 'containers.action.start' },
-		remove: { Icon: Trash2, key: 'containers.action.remove', danger: true }
+		start: { Icon: Play, key: 'containers.action.start' }
 	};
 
 	// i18n-ignore: a dash for no port, the same in every language
@@ -70,23 +68,44 @@
 		return container.ports.filter((p) => p.host_port).map((p) => `${p.host_port}:${p.container_port}`);
 	}
 
+	/**
+	 * The event comes from a control of a row or a card (its checkbox, a button, a link, its ⋯ menu),
+	 * which does its own thing and opens nothing.
+	 */
+	function fromControl(event: Event): boolean {
+		return event.target instanceof Element && event.target.closest('input, button, a, [role="menu"]') !== null;
+	}
+
+	/**
+	 * The actions of a container's ⋯ menu (ADR-0432, ADR-0437): Restart while it runs, and Remove,
+	 * last, unless an app of the App Store made it.
+	 */
+	function moreOf(container: Container): MenuItem[] {
+		const running = container.state === 'running' || container.state === 'restarting';
+		return [
+			...(running
+				? [{ label: $t('containers.action.restart'), icon: RotateCw, onclick: () => onaction(container.id, 'restart') }]
+				: []),
+			...(appOf(container) === null
+				? [{ label: $t('containers.action.remove'), icon: Trash2, danger: true, onclick: () => onaction(container.id, 'remove') }]
+				: [])
+		];
+	}
+
 	function appName(container: Container): string | null {
 		const app = appOf(container);
 		return app === null ? null : (container.labels['unos.app.name'] ?? app);
 	}
 </script>
 
-<!-- Selecting does not open the drawer; on a card, neither does Enter on the checkbox. -->
-{#snippet selectBox(container: Container, className: string, onCard: boolean)}
-	<input
-		type="checkbox"
-		class={className}
+<!-- Selecting does not open the drawer: the row and the card leave a press on a checkbox alone. -->
+{#snippet selectBox(container: Container, className: string)}
+	<Checkbox
 		checked={selected.has(container.id)}
 		disabled={busy}
-		aria-label={$t('containers.bulk.selectOne', { name: container.name })}
-		onclick={(e) => e.stopPropagation()}
-		onkeypress={onCard ? (e) => e.stopPropagation() : undefined}
-		onchange={(event) => onselect(container.id, event.currentTarget.checked)}
+		ariaLabel={$t('containers.bulk.selectOne', { name: container.name })}
+		class={className}
+		onchange={(on) => onselect(container.id, on)}
 	/>
 {/snippet}
 
@@ -129,13 +148,13 @@
 {/snippet}
 
 <!-- A container's own button. -->
-{#snippet quick(container: Container, action: QuickAction)}
+{#snippet quick(container: Container, action: 'start' | 'stop')}
 	{@const look = QUICK[action]}
 	<Button
-		variant={look.danger ? 'ghost-danger' : 'ghost'}
+		variant="ghost"
 		size="icon-sm"
 		disabled={busy}
-		onclick={(e) => onaction(e, container.id, action)}
+		onclick={() => onaction(container.id, action)}
 		title={$t(look.key)}
 	>
 		<look.Icon class="w-4 h-4" aria-hidden="true" />
@@ -147,20 +166,20 @@
      has none (ADR-0431). -->
 {#snippet actions(container: Container, href: string | null)}
 	<!-- Each button keeps its column, so that the rows' buttons line up: an empty slot of the same
-	     size where a container has no web page, no Restart (it does not run) or no Remove (an
-	     app's). -->
+	     size where a container has no web page or nothing for its ⋯ menu (no Restart, as it does not
+	     run, and no Remove, as an app's). Open in browser and Start or Stop are buttons; Restart
+	     and Remove are its ⋯ menu's (ADR-0437). -->
 	{#if href}{@render webLink(href)}{:else}{@render slot()}{/if}
 	<!-- A container that restarts over and over is stopped like a running one: Start would do
 	     nothing to it. -->
 	{#if container.state === 'running' || container.state === 'restarting'}
 		{@render quick(container, 'stop')}
-		{@render quick(container, 'restart')}
 	{:else}
 		{@render quick(container, 'start')}
-		{@render slot()}
 	{/if}
-	{#if appOf(container) === null}
-		{@render quick(container, 'remove')}
+	{@const more = moreOf(container)}
+	{#if more.length > 0}
+		<ActionMenu items={more} name={container.name} disabled={busy} />
 	{:else}
 		{@render slot()}
 	{/if}
@@ -204,10 +223,10 @@
 						{@const app = appName(container)}
 						<tr
 							class="table-row cursor-pointer {selected.has(container.id) ? 'bg-surface-overlay/60' : ''}"
-							onclick={() => onopen(container)}
+							onclick={(e) => !fromControl(e) && onopen(container)}
 						>
 							<td>
-								{@render selectBox(container, 'form-checkbox', false)}
+								{@render selectBox(container, '')}
 							</td>
 							<td class="min-w-[16ch]">
 								<div class="font-medium break-words">{container.name}</div>
@@ -252,13 +271,13 @@
 					)
 						? 'ring-1 ring-brand-ring'
 						: ''}"
-					onclick={() => onopen(container)}
+					onclick={(e) => !fromControl(e) && onopen(container)}
 					role="button"
 					tabindex="0"
-					onkeypress={(e) => e.key === 'Enter' && onopen(container)}
+					onkeypress={(e) => e.key === 'Enter' && !fromControl(e) && onopen(container)}
 				>
 					<div class="flex items-start gap-3">
-						{@render selectBox(container, 'form-checkbox mt-1 flex-shrink-0', true)}
+						{@render selectBox(container, 'mt-1 flex-shrink-0')}
 						<div class="min-w-0 flex-1">
 							<h3 class="font-semibold break-words">{container.name}</h3>
 							<p class="mono-xs text-content-secondary truncate" title={container.image}>{container.image}</p>

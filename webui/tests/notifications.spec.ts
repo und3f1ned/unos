@@ -109,7 +109,7 @@ test.describe('Notifications', () => {
     await expect(page.getByText('Every enabled channel, of any kind, receives the health alerts and the power announcements.'))
       .toBeVisible();
     for (const label of ['Active Channels', 'Total Sent']) await expect(page.getByText(label)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Channels', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('tab', { name: 'Channels', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('button', { name: /^Add (Email|Telegram|Webhook|Discord|Slack)$/ })).toHaveCount(0);
     const dialog = await openAdd(page, 'Email');
     await dialog.getByRole('combobox', { name: 'Kind' }).click();
@@ -120,8 +120,8 @@ test.describe('Notifications', () => {
     await expect(page.getByText('No notification channels')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'History', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'History', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('tab', { name: 'History', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'History', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('combobox', { name: 'Channel' })).toHaveText('All channels');
     await expect(page.getByRole('button', { name: 'All', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByRole('button', { name: 'Delivered', exact: true })).toBeVisible();
@@ -208,17 +208,18 @@ test.describe('Notifications', () => {
     const channel = channelItem(page, 'Admin mail');
 
     await channel.getByRole('button', { name: 'Send test to Admin mail' }).click();
-    await expect(channel.getByRole('status')).toHaveText('Test notification sent');
+    // A test that was sent is a toast (ADR-0432); one that was not says why by its channel.
+    await expect(page.getByText('Test notification sent to Admin mail')).toBeVisible();
 
     fake.errors[ADMIN_MAIL.id] = UNTRUSTED_CERTIFICATE;
     await channel.getByRole('button', { name: 'Send test to Admin mail' }).click();
     await expect(channel.getByRole('alert')).toContainText('Test notification not sent');
     await expect(channel.getByRole('alert')).toContainText(sendFailed(UNTRUSTED_CERTIFICATE));
-    await expect(channel.getByRole('status')).toHaveCount(0);
+    await expect(channel.getByText('Test notification sent', { exact: false })).toHaveCount(0);
     expect(fake.tests).toEqual([ADMIN_MAIL.id, ADMIN_MAIL.id]);
 
     // Newest first, without a reload.
-    await page.getByRole('button', { name: 'History', exact: true }).click();
+    await page.getByRole('tab', { name: 'History', exact: true }).click();
     const [failed, delivered] = [historyItems(page).nth(0), historyItems(page).nth(1)];
     await expect(historyItems(page)).toHaveCount(2);
     for (const entry of [failed, delivered]) {
@@ -273,7 +274,7 @@ test.describe('Notifications', () => {
     await expect(other.getByRole('button', { name: 'Send test to Home hook' })).toBeDisabled();
 
     answer();
-    await expect(channel.getByRole('status')).toHaveText('Test notification sent');
+    await expect(page.getByText('Test notification sent to Admin mail')).toBeVisible();
     await expect(channel.getByRole('button', { name: 'Edit Admin mail' })).toBeEnabled();
     await expect(channel.getByRole('switch', { name: 'Send alerts to Admin mail' })).toBeEnabled();
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
@@ -312,7 +313,7 @@ test.describe('Notifications', () => {
     await expect(channel).toContainText('Disabled');
 
     await channel.getByRole('button', { name: 'Send test to Admin mail' }).click();
-    await expect(channel.getByRole('status')).toHaveText('Test notification sent');
+    await expect(page.getByText('Test notification sent to Admin mail')).toBeVisible();
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
 
     const toggle = channel.getByRole('switch', { name: 'Send alerts to Admin mail' });
@@ -378,14 +379,18 @@ test.describe('Notifications', () => {
     fake.errors[team.id] = NO_SUCH_HOOK;
     for (const name of ['Phone', 'Home hook', 'Discord', 'Team']) {
       await channelItem(page, name).getByRole('button', { name: `Send test to ${name}` }).click();
-      await expect(channelItem(page, name).getByRole(name === 'Phone' || name === 'Team' ? 'alert' : 'status')).toBeVisible();
+      await expect(
+        name === 'Phone' || name === 'Team'
+          ? channelItem(page, name).getByRole('alert')
+          : page.getByText(`Test notification sent to ${name}`),
+      ).toBeVisible();
     }
     await expect(channelItem(page, 'Phone').getByRole('alert')).toContainText(sendFailed(CHAT_NOT_FOUND));
-    await expect(channelItem(page, 'Home hook').getByRole('status')).toHaveText('Test notification sent');
-    await expect(channelItem(page, 'Discord').getByRole('status')).toHaveText('Test notification sent');
+    await expect(page.getByText('Test notification sent to Home hook')).toBeVisible();
+    await expect(page.getByText('Test notification sent to Discord')).toBeVisible();
     await expect(channelItem(page, 'Team').getByRole('alert')).toContainText(sendFailed(NO_SUCH_HOOK));
 
-    await page.getByRole('button', { name: 'History', exact: true }).click();
+    await page.getByRole('tab', { name: 'History', exact: true }).click();
     await expect(historyItems(page)).toHaveCount(4);
     const expected = [
       ['Team', 'Slack', 'Failed'],
@@ -444,7 +449,7 @@ test.describe('Notifications', () => {
 
     await expect(page.getByText('Каждый включённый канал любого вида получает оповещения о состоянии и объявления о питании.'))
       .toBeVisible();
-    await expect(page.getByRole('button', { name: 'Каналы', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('tab', { name: 'Каналы', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('main').getByRole('button', { name: 'Добавить канал', exact: true })).toHaveCount(1);
     const channel = page.getByRole('list', { name: 'Каналы уведомлений' }).getByRole('listitem')
       .filter({ hasText: 'Admin mail' });
@@ -469,11 +474,11 @@ test.describe('Notifications', () => {
     await expect(edit).toBeHidden();
 
     await channel.getByRole('button', { name: 'Отправить тест в канал «Admin mail»' }).click();
-    await expect(channel.getByRole('status')).toHaveText('Тестовое уведомление отправлено');
+    await expect(page.getByText('Тестовое уведомление отправлено: Admin mail')).toBeVisible();
     expect(fake.tests).toEqual([ADMIN_MAIL.id]);
 
     // The history: the outcome, the type and the time in Russian; the server's texts as they come.
-    await page.getByRole('button', { name: 'История', exact: true }).click();
+    await page.getByRole('tab', { name: 'История', exact: true }).click();
     await expect(page.getByRole('combobox', { name: 'Канал' })).toHaveText('Все каналы');
     const entry = page.getByRole('list', { name: 'Отправленные уведомления' }).getByRole('listitem').first();
     await expect(entry).toContainText('Доставлено');
@@ -507,7 +512,7 @@ test.describe('Notifications', () => {
     await channel.getByRole('button', { name: `Send test to ${name}` }).click();
     await expect(channel.getByRole('alert')).toContainText(/Failed to send notification: .*Connection refused/);
 
-    await page.getByRole('button', { name: 'History', exact: true }).click();
+    await page.getByRole('tab', { name: 'History', exact: true }).click();
     const newest = historyItems(page).nth(0);
     await expect(newest).toContainText(name);
     await expect(newest).toContainText('Failed');
@@ -515,14 +520,14 @@ test.describe('Notifications', () => {
     await expect(newest).toContainText(/Connection refused/);
 
     // The server kept the certificate check on, and the channel goes again.
-    await page.getByRole('button', { name: 'Channels', exact: true }).click();
+    await page.getByRole('tab', { name: 'Channels', exact: true }).click();
     await channel.getByRole('button', { name: `Edit ${name}` }).click();
     const edit = page.getByRole('dialog', { name: 'Edit Email channel' });
     await expect(edit.getByRole('checkbox', { name: "Verify the server's certificate" })).toBeChecked();
     await edit.getByRole('button', { name: 'Cancel' }).click();
     await channel.getByRole('button', { name: `Delete ${name}` }).click();
-    const confirm = page.getByRole('dialog', { name: 'Delete the channel?' });
-    await confirm.getByRole('button', { name: 'Delete', exact: true }).click();
+    const confirm = page.getByRole('dialog', { name: `Delete the channel ${name}?` });
+    await confirm.getByRole('button', { name: 'Delete channel', exact: true }).click();
     await expect(confirm).toBeHidden();
     await expect(channel).toHaveCount(0);
   });

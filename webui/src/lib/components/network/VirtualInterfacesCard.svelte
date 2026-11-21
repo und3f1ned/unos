@@ -13,11 +13,10 @@
 		type VirtualStatus,
 		type WaitingChange
 	} from '$lib/api/network';
-	import { Alert, Button, EmptyState } from '$lib/components/ui';
+	import { Alert, Button, EmptyState, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { Network, Plus } from 'lucide-svelte';
 	import CreateVirtualDialog from './CreateVirtualDialog.svelte';
-	import DeleteVirtualDialog from './DeleteVirtualDialog.svelte';
 	import { labelOf, messageOf } from './network';
 	import VirtualInterfaceList from './VirtualInterfaceList.svelte';
 	import { VirtualForm } from './virtualForm.svelte';
@@ -45,12 +44,10 @@
 	let loadError = $state('');
 	let busy = $state(false);
 	let error = $state('');
-	let success = $state('');
 	let notice = $state('');
 
 	// The dialog of a new interface, and its fields.
 	const form = new VirtualForm();
-	let deleting = $state<VirtualInterface | null>(null);
 
 	// The countdown of a change that waits to be kept, in the page's clock.
 	let deadline = $state<number | null>(null);
@@ -172,7 +169,7 @@
 	}
 
 	async function afterChange(result: VirtualChange, done: string) {
-		success = $t(done, { name: result.name });
+		toast.success($t(done, { name: result.name }));
 		if (result.revert_in !== null) startCountdown(result.revert_in);
 		await load();
 		onchanged?.();
@@ -208,7 +205,6 @@
 		busy = true;
 		form.error = '';
 		error = '';
-		success = '';
 		notice = '';
 		try {
 			let result: VirtualChange;
@@ -229,20 +225,29 @@
 		}
 	}
 
-	async function confirmDelete() {
-		const item = deleting;
-		if (!item) return;
+	/**
+	 * Delete asks first, and warns when the deletion touches the interface of the connection to UNOS
+	 * or of the default route: it then waits to be kept (ADR-0424).
+	 */
+	async function confirmDelete(item: VirtualInterface) {
+		const touches = [item.name, ...item.ports, ...(item.parent ? [item.parent] : [])].filter((n) =>
+			protectedNames.has(n)
+		);
+		const yes = await confirm({
+			title: $t('virtual.deleteTitle', { name: item.name }),
+			message: $t('virtual.deleteText', { name: item.name }),
+			warning: touches.length ? $t('virtual.waitsWarning', { names: touches.join(', '), n: revertSeconds }) : undefined,
+			confirmLabel: $t('virtual.delete', { name: item.name })
+		});
+		if (!yes) return;
 		busy = true;
 		error = '';
-		success = '';
 		notice = '';
 		try {
 			const result = await deleteVirtualInterface(item.name);
-			deleting = null;
 			busy = false;
 			await afterChange(result, 'virtual.deleted');
 		} catch (e) {
-			deleting = null;
 			error = messageOf(e) || $t('virtual.deleteFailed');
 			await load();
 		} finally {
@@ -253,12 +258,11 @@
 	async function keep() {
 		busy = true;
 		error = '';
-		success = '';
 		notice = '';
 		try {
 			await keepVirtualChange();
 			stopCountdown();
-			success = $t('virtual.kept');
+			toast.success($t('virtual.kept'));
 		} catch (e) {
 			error = messageOf(e) || $t('virtual.keepFailed');
 		} finally {
@@ -288,9 +292,6 @@
 		{/if}
 	</div>
 
-	{#if success}
-		<Alert variant="success" class="mb-3">{success}</Alert>
-	{/if}
 	{#if notice}
 		<Alert variant="info" class="mb-3">{notice}</Alert>
 	{/if}
@@ -303,13 +304,6 @@
 	{#if status?.revert_failed && error !== $t('virtual.revertFailed')}
 		<Alert variant="error" class="mb-3">{$t('virtual.revertFailed')}</Alert>
 	{/if}
-	{#if loadError}
-		<Alert variant="error" title={$t('virtual.loadFailed')} class="mb-3">
-			<p class="break-words">{loadError}</p>
-			<Button variant="secondary" size="sm" class="mt-3" {loading} onclick={load}>{$t('common.retry')}</Button>
-		</Alert>
-	{/if}
-
 	{#if secondsLeft !== null}
 		<Alert variant="warning" class="mb-3">
 			<p id="virtual-countdown">
@@ -328,22 +322,33 @@
 		</Alert>
 	{/if}
 
-	{#if status && !status.supported}
-		<Alert variant="info">
-			{$t('virtual.unsupported', {
-				manager: status.manager === 'none' ? $t('virtual.managerNone') : status.manager
-			})}
-		</Alert>
-	{:else if status}
-		{#if status.unreadable.length}
-			<Alert variant="warning" class="mb-3">{$t('virtual.unreadable', { n: status.unreadable.length })}</Alert>
+	<!-- The first load's rows (ADR-0430); a failed load in their place, or above an earlier one's. -->
+	<LoadState
+		loading={status === null && !loadError}
+		error={loadError}
+		errorTitle={$t('virtual.loadFailed')}
+		keepOnError={status !== null}
+		onretry={load}
+		retrying={loading}
+	>
+		{#snippet skeleton()}<Skeleton shape="row" count={2} />{/snippet}
+		{#if status && !status.supported}
+			<Alert variant="info">
+				{$t('virtual.unsupported', {
+					manager: status.manager === 'none' ? $t('virtual.managerNone') : status.manager
+				})}
+			</Alert>
+		{:else if status}
+			{#if status.unreadable.length}
+				<Alert variant="warning" class="mb-3">{$t('virtual.unreadable', { n: status.unreadable.length })}</Alert>
+			{/if}
+			{#if status.interfaces.length === 0}
+				<EmptyState compact icon={Network} title={$t('virtual.none')} description={$t('virtual.noneHint')} />
+			{:else}
+				<VirtualInterfaceList items={status.interfaces} disabled={busy || waits} ondelete={confirmDelete} />
+			{/if}
 		{/if}
-		{#if status.interfaces.length === 0}
-			<EmptyState compact icon={Network} title={$t('virtual.none')} description={$t('virtual.noneHint')} />
-		{:else}
-			<VirtualInterfaceList items={status.interfaces} disabled={busy || waits} ondelete={(item) => (deleting = item)} />
-		{/if}
-	{/if}
+	</LoadState>
 </section>
 
 <CreateVirtualDialog
@@ -355,13 +360,4 @@
 	{busy}
 	oncancel={() => (form.creating = null)}
 	onsubmit={submitCreate}
-/>
-
-<DeleteVirtualDialog
-	{deleting}
-	{protectedNames}
-	{revertSeconds}
-	{busy}
-	oncancel={() => (deleting = null)}
-	onconfirm={confirmDelete}
 />

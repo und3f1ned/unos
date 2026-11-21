@@ -17,6 +17,8 @@
 		/** Why the last load failed (messageOf), or empty. */
 		error?: string | null;
 		errorTitle?: string;
+		/** What the failure means, a plain sentence before the server's message (ErrorState). */
+		errorDescription?: string;
 		/** The answer has nothing to show. */
 		empty?: boolean;
 		/** The content of an earlier load stays under the error. */
@@ -35,6 +37,7 @@
 		loading,
 		error = '',
 		errorTitle = '',
+		errorDescription = '',
 		empty = false,
 		keepOnError = false,
 		onretry = null,
@@ -52,10 +55,11 @@
 	{#if phase === 'loading'}
 		{#if skeleton}{@render skeleton()}{:else}<Skeleton count={3} />{/if}
 	{:else if phase === 'error'}
-		<ErrorState title={errorTitle} message={error ?? ''} {onretry} {retrying} />
+		<ErrorState title={errorTitle} description={errorDescription} message={error ?? ''} {onretry} {retrying} />
 	{:else}
 		{#if error}
 			<Alert variant="error" size="sm" title={errorTitle || $t('ui.error.title')} class="mb-3">
+				{#if errorDescription}<p>{errorDescription}</p>{/if}
 				<p class="break-words">{error}</p>
 				{#if onretry}
 					<Button variant="secondary" size="sm" class="mt-2" loading={retrying} onclick={onretry}>{$t('common.retry')}</Button>

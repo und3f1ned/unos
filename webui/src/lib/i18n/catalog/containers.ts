@@ -93,7 +93,6 @@ export const en = {
 
 	'containers.drawer.overview': 'Overview',
 	'containers.drawer.logs': 'Logs',
-	'containers.drawer.close': 'Close',
 	'containers.drawer.id': 'Container ID',
 	'containers.drawer.copyId': 'Copy ID',
 	'containers.drawer.created': 'Created',
@@ -139,11 +138,8 @@ export const en = {
 	'containers.images.column.actions': 'Actions',
 	'containers.images.noTag': 'No tag',
 	'containers.images.removeOne': 'Remove image {name}',
-	'containers.images.removeTitle': 'Remove image',
-	// The question of the dialog, around the image's name and ID: "Remove the image <name> (<id>)?"
-	'containers.images.removeQuestion': 'Remove the image',
-	// Before the image's other tags.
-	'containers.images.otherTags': 'Its other tags go with it:',
+	'containers.images.removeTitleOf': 'Remove image {name}?',
+	'containers.images.otherTags': 'Its other tags go with it: {tags}.',
 	'containers.images.removeNote': 'An image that a container uses is not removed. Pull it again to use it later.',
 	'containers.images.notRemoved': 'The image was not removed',
 	'containers.images.remove': 'Remove image',
@@ -157,7 +153,6 @@ export const en = {
 	'containers.bulk.start': 'Start selected',
 	'containers.bulk.stop': 'Stop selected',
 	'containers.bulk.restart': 'Restart selected',
-	'containers.bulk.clear': 'Clear selection',
 	'containers.bulk.progress.start': 'Starting {name} ({i} of {n})',
 	'containers.bulk.progress.stop': 'Stopping {name} ({i} of {n})',
 	'containers.bulk.progress.restart': 'Restarting {name} ({i} of {n})',
@@ -257,7 +252,6 @@ export const ru: Translation<typeof en> = {
 
 	'containers.drawer.overview': 'Сведения',
 	'containers.drawer.logs': 'Журнал',
-	'containers.drawer.close': 'Закрыть',
 	'containers.drawer.id': 'ID контейнера',
 	'containers.drawer.copyId': 'Скопировать ID',
 	'containers.drawer.created': 'Создан',
@@ -302,9 +296,8 @@ export const ru: Translation<typeof en> = {
 	'containers.images.column.actions': 'Действия',
 	'containers.images.noTag': 'Без тега',
 	'containers.images.removeOne': 'Удалить образ {name}',
-	'containers.images.removeTitle': 'Удаление образа',
-	'containers.images.removeQuestion': 'Удалить образ',
-	'containers.images.otherTags': 'Вместе с ним удаляются и другие его теги:',
+	'containers.images.removeTitleOf': 'Удалить образ {name}?',
+	'containers.images.otherTags': 'Вместе с ним удаляются и другие его теги: {tags}.',
 	'containers.images.removeNote':
 		'Образ, который используется контейнером, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
 	'containers.images.notRemoved': 'Образ не удалён',
@@ -321,7 +314,6 @@ export const ru: Translation<typeof en> = {
 	'containers.bulk.start': 'Запустить выбранные',
 	'containers.bulk.stop': 'Остановить выбранные',
 	'containers.bulk.restart': 'Перезапустить выбранные',
-	'containers.bulk.clear': 'Снять выделение',
 	'containers.bulk.progress.start': 'Запуск {name} ({i} из {n})',
 	'containers.bulk.progress.stop': 'Остановка {name} ({i} из {n})',
 	'containers.bulk.progress.restart': 'Перезапуск {name} ({i} из {n})',

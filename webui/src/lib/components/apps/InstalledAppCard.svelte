@@ -2,11 +2,11 @@
 	// An installed app on the App Store's Installed tab: its state and health, its facts (port,
 	// pool, group, containers) as labels over values, its buttons, what Docker lacks or does not
 	// run, the earlier version that its last update kept (ADR-0408), its data outside the pools, and
-	// its containers' resources. The buttons are quiet and in one place, the top right: Update and
-	// Open, Start or Stop and Restart as secondary buttons, Uninstall as a trash icon; no solid
-	// colours, which are for a confirming dialog's button (webui.ux-apps).
+	// its containers' resources. The buttons are quiet and in one place, the top right: Update,
+	// Open and Start or Stop as secondary buttons, and Restart and Uninstall, last and in red, in its
+	// ⋯ menu (ADR-0432, ADR-0437); no solid colours, which are for a confirming dialog's button.
 	import { ArrowUpCircle, ExternalLink, PackageX, Play, RotateCw, Square, Trash2, Undo2 } from 'lucide-svelte';
-	import { Alert, Badge, Button, Card } from '$lib/components/ui';
+	import { ActionMenu, Alert, Badge, Button, Card, type MenuItem } from '$lib/components/ui';
 	import type { AppTemplate, ContainerResources, InstalledApp } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
 	import AppResources from './AppResources.svelte';
@@ -49,6 +49,14 @@
 	const state = $derived(stateOf(app));
 	const health = $derived(app.status === 'running' && app.health ? HEALTH[app.health] : undefined);
 	const href = $derived(webUrl(app));
+	// Its ⋯ menu: Restart while it runs and Docker has all of it, and Uninstall, which removes every
+	// container of the app.
+	const more = $derived<MenuItem[]>([
+		...(app.status === 'running' && app.missing.length === 0
+			? [{ label: $t('apps.installed.restart'), icon: RotateCw, onclick: () => onrestart(app) }]
+			: []),
+		{ label: $t('apps.installed.uninstall'), icon: PackageX, danger: true, onclick: () => onuninstall(app) }
+	]);
 	const several = $derived(app.companions.length > 0 || app.missing.length > 0);
 	// What Docker lacks (such an app does not start), else the companions that do not run.
 	const warning = $derived.by(() => {
@@ -103,27 +111,12 @@
 				<Button variant="secondary" size="sm" icon={Square} onclick={() => onstop(app)}>
 					{$t('apps.installed.stop')}
 				</Button>
-				{#if app.missing.length === 0}
-					<Button variant="secondary" size="sm" icon={RotateCw} onclick={() => onrestart(app)}>
-						{$t('apps.installed.restart')}
-					</Button>
-				{/if}
 			{:else if app.missing.length === 0}
 				<Button variant="secondary" size="sm" icon={Play} onclick={() => onstart(app)}>
 					{$t('apps.installed.start')}
 				</Button>
 			{/if}
-			<!-- It removes every container of the app: its word on the button, the app in its name, and a
-			     glyph of its own beside Remove earlier version's bin (webui.ux-apps). -->
-			<Button
-				variant="ghost-danger"
-				size="sm"
-				icon={PackageX}
-				onclick={() => onuninstall(app)}
-				aria-label={$t('apps.installed.uninstallOne', { name: app.name })}
-			>
-				{$t('apps.installed.uninstall')}
-			</Button>
+			<ActionMenu items={more} name={app.name} />
 		</div>
 	</div>
 
@@ -178,7 +171,7 @@
 					size="sm"
 					icon={Undo2}
 					disabled={installing}
-					title={installing ? $t('apps.installed.busy') : undefined}
+					disabledReason={installing ? $t('apps.installed.busy') : ''}
 					onclick={() => onrollback(app)}
 				>
 					{$t('appUpdates.rollback')}
@@ -188,7 +181,7 @@
 					size="sm"
 					icon={Trash2}
 					disabled={installing}
-					title={installing ? $t('apps.installed.busy') : undefined}
+					disabledReason={installing ? $t('apps.installed.busy') : ''}
 					onclick={() => onremoveearlier(app)}
 				>
 					{$t('appUpdates.removeEarlier')}

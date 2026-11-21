@@ -3,10 +3,10 @@
   // the backup list, files go into a new folder of a pool, by the form of the snapshot `filesOf`.
   import { formatBytes } from "$lib/api/backup";
   import type { OffsiteSnapshot, OffsiteStatus } from "$lib/api/offsite";
-  import { Badge, Button, Input } from "$lib/components/ui";
+  import { Badge, Button, Input, HelpText, EmptyState, ErrorState } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
-  import { RotateCcw, X } from "lucide-svelte";
+  import { RotateCcw, X, Camera } from "lucide-svelte";
 
   type Props = {
     snapshots: OffsiteSnapshot[];
@@ -60,9 +60,9 @@
 
 <h4 class="font-medium text-sm mb-2">{$t("offsite.snapshots.title")}</h4>
 {#if snapshotsError}
-  <p class="text-sm text-status-error mb-4 break-words">{$t("offsite.snapshots.loadFailed")}: {snapshotsError}</p>
+  <ErrorState title={$t("offsite.snapshots.loadFailed")} message={snapshotsError} class="mb-4" />
 {:else if snapshots.length === 0}
-  <p class="text-sm text-content-muted mb-4">{$t("offsite.snapshots.empty")}</p>
+  <EmptyState compact icon={Camera} title={$t("offsite.snapshots.empty")} class="mb-4" />
 {:else}
   <ul class="space-y-2 mb-4" aria-label={$t("offsite.snapshots.label")}>
     {#each snapshots as snapshot (snapshot.id)}
@@ -127,7 +127,7 @@
               bind:value={restorePath}
               hint={$t("offsite.snapshots.folderHint", { path: snapshot.paths[0] ?? "/" })}
             />
-            <p class="form-hint">{$t("offsite.snapshots.into")}</p>
+            <HelpText text={$t("offsite.snapshots.into")} class="mt-1.5" />
             <div class="flex flex-wrap gap-2">
               <Button type="submit" size="sm" loading={restoring === snapshot.id} disabled={!restorePool || restoring !== null}>
                 {$t("offsite.snapshots.restore")}

@@ -68,7 +68,7 @@
 	{#if readonly}
 		<Badge variant="warning">{$t('apps.detail.readOnly')}</Badge>
 	{:else}
-		<Badge variant="neutral">{$t('apps.detail.readWrite')}</Badge>
+		<Badge variant="outline">{$t('apps.detail.readWrite')}</Badge>
 	{/if}
 {/snippet}
 
@@ -153,7 +153,7 @@
 										<Badge variant="info">{$t('apps.detail.system')}</Badge>
 									{/if}
 									{#if volume.is_file}
-										<Badge variant="neutral">{$t('apps.detail.file')}</Badge>
+										<Badge variant="outline">{$t('apps.detail.file')}</Badge>
 									{/if}
 								</div>
 							</div>

@@ -96,11 +96,9 @@ export const en = {
 	'network.dnsConfig.domains': 'Search Domains',
 
 	// Disable asks first: the connection to UNOS may go through the interface (ADR-0244).
-	'network.disable.title': 'Disable {name}',
+	'network.disable.title': 'Disable {name}?',
 	'network.disable.confirm': 'Disable {name}',
-	// Around the interface's name, in bold.
-	'network.disable.dropBefore': 'Disabling',
-	'network.disable.dropAfter': 'may drop your connection to UNOS, if you reach UNOS through it.',
+	'network.disable.drop': 'Disabling {name} may drop your connection to UNOS, if you reach UNOS through it.',
 	'network.disable.revert': {
 		one: 'Unless you keep the change within {n} second, {name} comes back on by itself, with its addresses and routes.',
 		other: 'Unless you keep the change within {n} seconds, {name} comes back on by itself, with its addresses and routes.'
@@ -198,10 +196,9 @@ export const ru: Translation<typeof en> = {
 	'network.dnsConfig.servers': 'Серверы имён',
 	'network.dnsConfig.domains': 'Домены поиска',
 
-	'network.disable.title': 'Выключение {name}',
+	'network.disable.title': 'Выключить {name}?',
 	'network.disable.confirm': 'Выключить {name}',
-	'network.disable.dropBefore': 'Выключение',
-	'network.disable.dropAfter': 'может прервать ваше подключение к UNOS, если вы подключаетесь к UNOS через него.',
+	'network.disable.drop': 'Выключение {name} может прервать ваше подключение к UNOS, если вы подключаетесь к UNOS через него.',
 	'network.disable.revert': {
 		one: 'Если вы не сохраните изменение в течение {n} секунды, {name} сам включится снова, со своими адресами и маршрутами.',
 		few: 'Если вы не сохраните изменение в течение {n} секунд, {name} сам включится снова, со своими адресами и маршрутами.',

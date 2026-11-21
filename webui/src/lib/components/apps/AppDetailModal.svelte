@@ -1,10 +1,10 @@
 <script lang="ts">
-	// The details of an app of the App Store, with its install form: the pool for its data, the
-	// group option, its ports, folders and variables (one tab each), and Install, which starts its
+	// The details of an app of the App Store in a Sheet (ADR-0432), with its install form: the pool
+	// for its data, the group option, its ports, folders and variables (one tab each), and Install, which starts its
 	// job and follows the job's checks (ADR-0384).
 	import { untrack } from 'svelte';
 	import { Download } from 'lucide-svelte';
-	import { Button, Modal, Alert } from '$lib/components/ui';
+	import { Button, Sheet, Alert } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { appInstalls } from '$lib/stores/appInstalls';
 	import { wsConnected } from '$lib/stores/stats';
@@ -296,8 +296,8 @@
 	}
 </script>
 
-<!-- The app's name and icon are the dialog's title: no empty band above them (webui.ux-apps). -->
-<Modal {open} size="xl" title={app?.name ?? ''} onclose={close}>
+<!-- The app's name and icon are the Sheet's title: no empty band above them (webui.ux-apps). -->
+<Sheet {open} size="lg" title={app?.name ?? ''} onclose={close}>
 	{#snippet titleIcon()}
 		{#if app}
 			<span
@@ -321,6 +321,7 @@
 		<AppHardwareHint {app} installed={isInstalled ? installedApp : null} class="mb-4" />
 
 		<AppDetailTabs
+			name={app.name}
 			active={activeTab}
 			portCount={app.ports?.length ?? 0}
 			{volumeCount}
@@ -329,7 +330,7 @@
 		/>
 
 		<!-- Tab Content -->
-		<div class="min-h-[200px]">
+		<div class="min-h-[200px]" role="tabpanel" id="app-detail-panel-{activeTab}" aria-labelledby="app-detail-tab-{activeTab}">
 			{#if activeTab === 'overview'}
 				<AppOverviewTab
 					{app}
@@ -370,14 +371,12 @@
 		</div>
 
 		{#if !isInstalled && blockers.length > 0}
-			<!-- Why Install is disabled: the button names this text (aria-describedby). -->
-			<div id="app-install-blockers">
-				<Alert variant="warning" class="mt-4">
-					{#each blockers as blocker}
-						<p>{blocker}</p>
-					{/each}
-				</Alert>
-			</div>
+			<!-- Why Install is disabled, which the button says too (its disabledReason). -->
+			<Alert variant="warning" class="mt-4">
+				{#each blockers as blocker}
+					<p>{blocker}</p>
+				{/each}
+			</Alert>
 		{/if}
 
 		{#if pending}
@@ -400,8 +399,7 @@
 				class="flex-1"
 				loading={installing}
 				disabled={!canInstall}
-				aria-describedby={!canInstall && blockers.length > 0 ? 'app-install-blockers' : undefined}
-				title={!canInstall && blockers.length > 0 ? blockers.join(' ') : undefined}
+				disabledReason={!canInstall && !installing ? blockers.join(' ') : ''}
 				onclick={handleInstall}
 				icon={Download}
 			>
@@ -409,4 +407,4 @@
 			</Button>
 		{/if}
 	{/snippet}
-</Modal>
+</Sheet>

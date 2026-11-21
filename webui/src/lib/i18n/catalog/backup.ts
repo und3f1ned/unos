@@ -46,7 +46,6 @@ export const en = {
 	'backup.downloadFailed': 'Could not download {name}',
 	'backup.uploadFailed': 'Could not upload {name}',
 
-	'backup.dialog.label': 'Restore backup',
 	'backup.dialog.title': 'Restore backup',
 	'backup.dialog.from': 'This will restore configuration from',
 	'backup.dialog.warning': 'The restore replaces what this NAS has now:',
@@ -55,7 +54,6 @@ export const en = {
 	'backup.dialog.shares': 'The configuration of the SMB shares',
 	'backup.dialog.passphrase': 'Passphrase of the encrypted backup',
 	'backup.dialog.confirm': 'Type the backup filename to confirm:',
-	'backup.dialog.restoring': 'Restoring...',
 	'backup.dialog.complete': 'Restore complete',
 	'backup.dialog.restored': 'Restored items:',
 	// The items of a restore, as the server names them.
@@ -105,7 +103,6 @@ export const ru: Translation<typeof en> = {
 	'backup.downloadFailed': 'Не удалось скачать {name}',
 	'backup.uploadFailed': 'Не удалось загрузить {name}',
 
-	'backup.dialog.label': 'Восстановление из резервной копии',
 	'backup.dialog.title': 'Восстановление из резервной копии',
 	'backup.dialog.from': 'Конфигурация будет восстановлена из',
 	'backup.dialog.warning': 'Восстановление заменит то, что сейчас есть на этом NAS:',
@@ -114,7 +111,6 @@ export const ru: Translation<typeof en> = {
 	'backup.dialog.shares': 'Настройки общих папок SMB',
 	'backup.dialog.passphrase': 'Парольная фраза зашифрованной резервной копии',
 	'backup.dialog.confirm': 'Для подтверждения введите имя файла резервной копии:',
-	'backup.dialog.restoring': 'Восстановление...',
 	'backup.dialog.complete': 'Восстановление завершено',
 	'backup.dialog.restored': 'Восстановлено:',
 	'backup.dialog.items.database': 'база данных',

@@ -12,6 +12,7 @@ export const en = {
 	'logs.searchPlaceholder': 'Search in logs',
 	'logs.search': 'Search',
 	'logs.clearSearch': 'Clear the search',
+	'logs.sourceLabel': 'Log source',
 
 	'logs.source.journal': 'System Journal',
 	'logs.source.journalDescription': "Everything in the host's systemd journal",
@@ -82,6 +83,7 @@ export const ru: Translation<typeof en> = {
 	'logs.searchPlaceholder': 'Поиск в журналах',
 	'logs.search': 'Найти',
 	'logs.clearSearch': 'Очистить поиск',
+	'logs.sourceLabel': 'Источник журнала',
 
 	'logs.source.journal': 'Системный журнал',
 	'logs.source.journalDescription': 'Весь журнал systemd хоста',

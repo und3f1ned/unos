@@ -105,7 +105,6 @@ export const en = {
 		other:
 			'The rule is for incoming connections. While the firewall is on, the change is undone after {n} seconds unless you keep it.'
 	},
-	'firewall.adding': 'Adding...',
 
 	// A rule's direction and protocol in the list of rules; its action is the form's word.
 	'firewall.in': 'IN',
@@ -218,7 +217,6 @@ export const ru: Translation<typeof en> = {
 		few: 'Правило для входящих соединений. Пока брандмауэр включён, изменение будет отменено через {n} секунды, если вы его не сохраните.',
 		many: 'Правило для входящих соединений. Пока брандмауэр включён, изменение будет отменено через {n} секунд, если вы его не сохраните.'
 	},
-	'firewall.adding': 'Добавление...',
 
 	'firewall.in': 'Входящие',
 	'firewall.out': 'Исходящие',

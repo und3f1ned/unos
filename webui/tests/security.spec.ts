@@ -123,7 +123,8 @@ test.describe('Security Settings', () => {
     const card = page.locator('div:has(> div > h3:has-text("Login History"))');
     await card.getByRole('button', { name: 'View History' }).click();
 
-    const alert = card.locator('.alert-error');
+    // In the list's place, an ErrorState with Retry (ADR-0432).
+    const alert = card.locator('[data-error-state]');
     await expect(alert.getByText('Could not load the login history', { exact: true })).toBeVisible();
     await expect(alert).toContainText('Request failed');
     // No list and no counts: none of them is known.
@@ -201,7 +202,7 @@ test.describe('Security Settings', () => {
       await dialog.getByPlaceholder('e.g., My Home').fill('E2E Home');
       await dialog.getByPlaceholder('e.g., US').fill('DE');
       await dialog.getByRole('button', { name: 'Generate', exact: true }).click();
-      await expect(card.getByText('Certificate generated successfully')).toBeVisible();
+      await expect(page.getByText('Certificate generated successfully')).toBeVisible();
 
       const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
       await expect(row.getByText('Valid', { exact: true })).toBeVisible();
@@ -212,7 +213,7 @@ test.describe('Security Settings', () => {
 
       await row.getByRole('button', { name: `Delete ${domain}` }).click();
       await answerConfirmation(page, { title: `Delete the certificate of ${domain}?`, action: 'Delete certificate' });
-      await expect(card.getByText('Certificate deleted')).toBeVisible();
+      await expect(page.getByText('Certificate deleted')).toBeVisible();
       await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
     } finally {
       // Gone already when the test passed: 404 then.
@@ -251,7 +252,7 @@ test.describe('Security Settings', () => {
       await expect(dialog.getByText('Every browser will see a new certificate.', { exact: false })).toBeVisible();
       await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
       await expect(dialog).toHaveCount(0);
-      await expect(card.getByText(`Browsers now get ${domain}`, { exact: true })).toBeVisible();
+      await expect(page.getByText(`Browsers now get ${domain}`, { exact: true })).toBeVisible();
       await expect(card.getByText(`HTTPS for browsers: ${domain}`, { exact: true })).toBeVisible();
       await expect(row.getByText('Served', { exact: true })).toBeVisible();
       await expect(row.getByRole('button', { name: `Serve ${domain}` })).toHaveCount(0);
@@ -268,7 +269,7 @@ test.describe('Security Settings', () => {
       await expect(dialog.getByRole('heading', { name: "Use Caddy's local CA?" })).toBeVisible();
       await expect(dialog.getByText('Every browser will see a new certificate.', { exact: false })).toBeVisible();
       await dialog.getByRole('button', { name: "Use Caddy's local CA" }).click();
-      await expect(card.getByText("Browsers now get the certificate of Caddy's local CA", { exact: true })).toBeVisible();
+      await expect(page.getByText("Browsers now get the certificate of Caddy's local CA", { exact: true })).toBeVisible();
       await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
       await expect(row.getByText('Not served', { exact: true })).toBeVisible();
       expect(await status()).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
@@ -285,7 +286,7 @@ test.describe('Security Settings', () => {
         message: "It is served: deleting it gives every browser the certificate of Caddy's local CA, a new certificate for them.",
         action: 'Delete certificate',
       });
-      await expect(card.getByText('Certificate deleted')).toBeVisible();
+      await expect(page.getByText('Certificate deleted')).toBeVisible();
       await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
       await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
       expect(await status()).toMatchObject({ served_by: 'caddy_local_ca', served_id: null, chosen_id: null });
@@ -325,7 +326,7 @@ test.describe('Security Settings', () => {
     }
   });
 
-  test('a certificate that the server does not serve says why in the dialog', async ({ authenticatedPage: page }) => {
+  test('a certificate that the server does not serve says why on its card', async ({ authenticatedPage: page }) => {
     // The server's 409 for a certificate that fails the checks before Caddy gets it.
     const domain = `e2e-${Date.now().toString(36)}.home.arpa`;
     const refusal = `${domain} cannot be served: The private key does not belong to the certificate`;
@@ -346,11 +347,10 @@ test.describe('Security Settings', () => {
       await row.getByRole('button', { name: `Serve ${domain}` }).click();
       await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
 
-      await expect(dialog.getByText(refusal, { exact: true })).toBeVisible();
+      // The confirmation (ADR-0432) closed; the refusal stays on the card until the next try.
+      await expect(dialog).toHaveCount(0);
+      await expect(card.getByText(refusal, { exact: true })).toBeVisible();
       await expect(card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true })).toBeVisible();
-      await dialog.getByRole('button', { name: 'Cancel' }).click();
-      await row.getByRole('button', { name: `Serve ${domain}` }).click();
-      await expect(dialog.getByText(refusal)).toHaveCount(0);
     } finally {
       await page.request.delete(`/api/v1/security/certificates/custom_${domain}`, { headers });
     }
@@ -401,7 +401,7 @@ test.describe('Security Settings', () => {
       failing = true;
       await row.getByRole('button', { name: `Delete ${domain}` }).click();
       await answerConfirmation(page, { title: `Delete the certificate of ${domain}?`, action: 'Delete certificate' });
-      await expect(card.getByText('Certificate deleted')).toBeVisible();
+      await expect(page.getByText('Certificate deleted')).toBeVisible();
       await expect(loadError).toBeVisible();
       await expect(card.getByText(domain, { exact: true })).toHaveCount(0);
       await expect(card.getByText('No certificates found')).toHaveCount(0);

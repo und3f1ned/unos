@@ -192,7 +192,7 @@ test.describe('Firewall', () => {
     expect(fake.writes).toEqual([]);
     await dialog.getByRole('button', { name: 'Turn on' }).click();
 
-    await expect(card(page).getByText('Firewall enabled', { exact: true })).toBeVisible();
+    await expect(page.getByText('Firewall enabled', { exact: true })).toBeVisible();
     await expect(card(page).getByText('Active', { exact: true })).toBeVisible();
     await expect(card(page).getByText(/^This firewall change is undone in 1(20|19|18) seconds unless you keep it\./))
       .toBeVisible();
@@ -206,7 +206,7 @@ test.describe('Firewall', () => {
     await expect(ruleRow(page, 'UNOS: network discovery').last()).toContainText('IPv6');
 
     await keep.click();
-    await expect(card(page).getByText('The firewall change is kept', { exact: true })).toBeVisible();
+    await expect(page.getByText('The firewall change is kept', { exact: true })).toBeVisible();
     await expect(keep).toBeHidden();
     expect(fake.writes).toEqual([{ method: 'POST', path: '/enable' }, { method: 'POST', path: '/confirm' }]);
   });
@@ -295,7 +295,7 @@ test.describe('Firewall', () => {
     await dialog.getByRole('button', { name: 'Add Rule' }).click();
 
     await expect(dialog).toBeHidden();
-    await expect(card(page).getByText('Rule added', { exact: true })).toBeVisible();
+    await expect(page.getByText('Rule added', { exact: true })).toBeVisible();
     const added = ruleRow(page, 'Web server');
     await expect(added).toContainText('IN | TCP | Port: 8080 | From: 192.168.1.0/24');
     await expect(card(page).getByText(/^This firewall change is undone in 1(20|19|18) seconds/)).toBeVisible();
@@ -311,7 +311,7 @@ test.describe('Firewall', () => {
     await card(page).getByRole('button', { name: 'Keep the change' }).click();
     await added.getByRole('button', { name: /^Delete rule/ }).click();
     await answerConfirmation(page, { title: "Delete this rule from the host's firewall?", action: 'Delete rule' });
-    await expect(card(page).getByText('Rule deleted', { exact: true })).toBeVisible();
+    await expect(page.getByText('Rule deleted', { exact: true })).toBeVisible();
     await expect(added).toHaveCount(0);
     expect(fake.writes.slice(1).map((w) => `${w.method} ${w.path}`)).toEqual([
       'DELETE /rules/fw-new-14', 'POST /confirm', 'DELETE /rules/fw-new-14']);
@@ -329,7 +329,7 @@ test.describe('Firewall', () => {
     await page.getByRole('option', { name: 'Deny' }).click();
     await dialog.getByRole('button', { name: 'Add Rule' }).click();
 
-    await expect(card(page).getByText('Rule added', { exact: true })).toBeVisible();
+    await expect(page.getByText('Rule added', { exact: true })).toBeVisible();
     await expect(card(page).getByRole('button', { name: 'Keep the change' })).toBeHidden();
     // From anywhere: an IPv4 and an IPv6 rule.
     await expect(ruleRow(page, 'Rule 1')).toContainText('IN | UDP | Port: 137:139');
@@ -342,7 +342,7 @@ test.describe('Firewall', () => {
     const fake = await fakeFirewall(page, { enabled: true, rules: unosRules() });
     await openFirewall(page);
     await card(page).getByRole('button', { name: 'Disable' }).click();
-    await expect(card(page).getByText('Firewall disabled', { exact: true })).toBeVisible();
+    await expect(page.getByText('Firewall disabled', { exact: true })).toBeVisible();
     await expect(card(page).getByText('Inactive', { exact: true })).toBeVisible();
     expect(fake.writes).toEqual([{ method: 'POST', path: '/disable' }]);
   });

@@ -4,7 +4,7 @@
 	// dialog opens), the request and its error, which the page's list shows too.
 	import { untrack } from 'svelte';
 	import { Plus, Trash2 } from 'lucide-svelte';
-	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Input, Select, Sheet, FieldGroup } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { ContainerForm } from './containerForm.svelte';
 
@@ -54,7 +54,8 @@
 	{/if}
 {/snippet}
 
-<Modal {open} title={$t('containers.create.title')} size="lg" {onclose}>
+<!-- A form of more than six fields: a Sheet (ADR-0432). -->
+<Sheet {open} title={$t('containers.create.title')} {onclose}>
 	<!-- Enter in a field submits the form through Create, its submit button in the footer; novalidate:
 	     the dialog says under each field what is missing, instead of the browser's bubble. -->
 	<form
@@ -94,11 +95,9 @@
 			]}
 		/>
 
-		<!-- Ports: each field with its own label, in one row from sm, two per row on a phone
-		     (webui.ux-apps). -->
-		<fieldset>
-			<legend class="form-label">{$t('containers.create.ports')}</legend>
-			<div class="grid grid-cols-2 sm:grid-cols-[1fr_1fr_7rem_auto] items-end gap-2">
+		<!-- Ports: each field with its own label, lined up in a FieldGroup, then Add (webui.ux-apps). -->
+		<div>
+			<FieldGroup legend={$t('containers.create.ports')} minWidth="7rem">
 				<Input
 					type="number"
 					label={$t('containers.create.hostPort')}
@@ -119,21 +118,20 @@
 						{ value: 'udp', label: $t('containers.protocol.udp') }
 					]}
 				/>
-				<Button variant="secondary" icon={Plus} onclick={() => form.addPort()} type="button">
-					{$t('containers.create.addPort')}
-				</Button>
-			</div>
+			</FieldGroup>
+			<Button variant="secondary" size="sm" icon={Plus} onclick={() => form.addPort()} type="button" class="mt-3">
+				{$t('containers.create.addPort')}
+			</Button>
 			{@render added(
 				form.portsList.map((port) => `${port.host}:${port.container}/${port.protocol}`),
 				(i) => form.removePort(i),
 				'containers.create.removeItem'
 			)}
-		</fieldset>
+		</div>
 
 		<!-- Variables: a name and a value, then Add. -->
-		<fieldset>
-			<legend class="form-label">{$t('containers.create.environment')}</legend>
-			<div class="grid grid-cols-2 sm:grid-cols-[1fr_1fr_auto] items-end gap-2">
+		<div>
+			<FieldGroup legend={$t('containers.create.environment')} minWidth="9rem">
 				<Input
 					label={$t('containers.create.envKey')}
 					bind:value={form.envVar.key}
@@ -146,16 +144,16 @@
 					placeholder={$t('containers.create.envValueExample')}
 					spellcheck={false}
 				/>
-				<Button variant="secondary" icon={Plus} onclick={() => form.addEnvVar()} type="button" class="col-span-2 sm:col-span-1 justify-self-start">
-					{$t('containers.create.addVariable')}
-				</Button>
-			</div>
+			</FieldGroup>
+			<Button variant="secondary" size="sm" icon={Plus} onclick={() => form.addEnvVar()} type="button" class="mt-3">
+				{$t('containers.create.addVariable')}
+			</Button>
 			{@render added(
 				form.envList.map((env) => `${env.key}=${env.value}`),
 				(i) => form.removeEnvVar(i),
 				'containers.create.removeItem'
 			)}
-		</fieldset>
+		</div>
 
 		{#if error}
 			<Alert variant="error">{error}</Alert>
@@ -177,4 +175,4 @@
 			{$t('containers.create.button')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>

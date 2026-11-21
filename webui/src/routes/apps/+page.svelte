@@ -15,7 +15,7 @@
 		type InstalledApp
 	} from '$lib/api/apps';
 	import { Package, RefreshCw, RotateCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
-	import { Button, Alert, EmptyState, Skeleton, confirm } from '$lib/components/ui';
+	import { Button, Alert, EmptyState, LoadState, Skeleton, Tabs, confirm } from '$lib/components/ui';
 	import {
 		AppCatalog,
 		AppDetailModal,
@@ -218,8 +218,7 @@
 				{/if}
 			</p>
 		</div>
-		<Button variant="secondary" size="icon" onclick={refresh} disabled={data.loading} title={$t('common.refresh')}>
-			<RefreshCw class="w-4 h-4 {data.loading ? 'animate-spin' : ''}" aria-hidden="true" />
+		<Button variant="secondary" size="icon" icon={RefreshCw} onclick={refresh} loading={data.loading} title={$t('common.refresh')}>
 			<span class="sr-only">{$t('common.refresh')}</span>
 		</Button>
 	</div>
@@ -232,119 +231,125 @@
 	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0384). -->
 	<AppInstallJobs jobs={$appInstalls} catalog={data.catalog} {cancelling} ondismiss={dismiss} oncancel={cancel} />
 
-	<!-- Page tabs: a line under the row (ADR-0428). -->
-	<div class="tab-bar">
-		<Button variant="plain"
-		 class="tab-underline {activeTab === 'catalog' ? 'tab-underline-active' : ''}"
-			onclick={() => (activeTab = 'catalog')}
-		>
-			<span class="flex items-center gap-2">
-				<Grid3X3 class="w-4 h-4" />
-				{$t('apps.tabs.catalog')}
-			</span>
-		</Button>
-		<Button variant="plain"
-		 class="tab-underline {activeTab === 'installed' ? 'tab-underline-active' : ''}"
-			onclick={() => (activeTab = 'installed')}
-		>
-			<span class="flex items-center gap-2">
-				<CheckCircle2 class="w-4 h-4" />
-				{data.installedKnown
+	<!-- Page tabs (Tabs, ADR-0432); the Installed tab counts the installed apps (ADR-0431). -->
+	<Tabs
+		tabs={[
+			{ id: 'catalog', label: $t('apps.tabs.catalog'), icon: Grid3X3 },
+			{
+				id: 'installed',
+				label: data.installedKnown
 					? $t('apps.tabs.installed', { count: data.installed.length })
-					: $t('apps.tabs.installedUnknown')}
-			</span>
-		</Button>
-	</div>
+					: $t('apps.tabs.installedUnknown'),
+				icon: CheckCircle2
+			}
+		]}
+		active={activeTab}
+		label={$t('apps.title')}
+		tabId={(id) => `apps-tab-${id}`}
+		panelId={(id) => `apps-panel-${id}`}
+		onselect={(id) => (activeTab = id)}
+	/>
 
-	<!-- The lists' errors under the tabs, drawn with the lists: they push nothing that was shown
-	     (ADR-0430). -->
-	<!-- Each failed load: a plain title, what it means, the server's reason and Retry
-	     (webui.ux-apps). Docker's answer is the installed apps': without it no app is installed,
-	     started or stopped. "Docker is not answering" only for Docker's own 503 (ADR-0323); any
-	     other failure says that the installed apps could not be loaded. -->
-	{#if drawn && data.catalogError}
-		<Alert variant="error" title={$t('apps.catalogLoadError')}>
-			<p class="mono-xs break-words">{data.catalogError}</p>
-			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.catalogState === 'loading'} onclick={() => data.loadCatalog()}>
-				{$t('common.retry')}
-			</Button>
-		</Alert>
-	{/if}
-
-	{#if drawn && data.installedError}
-		<Alert variant="error" title={$t(data.installedDockerDown ? 'apps.installed.loadErrorTitle' : 'apps.installed.loadFailedTitle')}>
-			<p>{$t(data.installedDockerDown ? 'apps.installed.loadError' : 'apps.installed.loadFailed')}</p>
-			<p class="mt-1 mono-xs break-words text-content-secondary">{data.installedError}</p>
-			<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.installedState === 'loading'} onclick={() => data.loadInstalled()}>
-				{$t('common.retry')}
-			</Button>
-		</Alert>
-	{/if}
-
-	{#if activeTab === 'catalog' && !drawn}
-		<!-- The first load: the categories and the grid of apps (ADR-0430), as the catalog draws them
-		     at each width (no featured apps: ADR-0431): the list of categories from lg, below it the
-		     category menu beside the search (on a phone under it). -->
-		<div class="flex flex-col lg:flex-row gap-6" aria-busy="true">
-			<div class="hidden lg:block lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
-			<div class="flex-1 min-w-0">
-				<div class="mb-5 flex flex-col sm:flex-row gap-3">
-					<Skeleton shape="block" class="h-9 w-full sm:flex-1" />
-					<!-- Select's field is 38 px high, Input's 36. -->
-					<Skeleton shape="block" class="h-[38px] w-full sm:w-60 lg:hidden" />
-				</div>
-				<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-					{#each [0, 1, 2, 3, 4, 5] as tile (tile)}
-						<Skeleton shape="block" class="h-40 w-full rounded-card" />
+	<div role="tabpanel" id="apps-panel-{activeTab}" aria-labelledby="apps-tab-{activeTab}" class="space-y-6">
+		{#if activeTab === 'catalog'}
+			<!-- The catalog: its skeleton until the first load has drawn (ADR-0430), a failed load in
+			     its place, or above the apps of an earlier load. -->
+			<LoadState
+				loading={!drawn}
+				error={data.catalogError}
+				errorTitle={$t('apps.catalogLoadError')}
+				keepOnError={data.catalog.length > 0}
+				onretry={() => data.loadCatalog()}
+				retrying={data.catalogState === 'loading'}
+				class="space-y-6"
+			>
+				{#snippet skeleton()}
+					<!-- The categories and the grid of apps, as the catalog draws them at each width (no
+					     featured apps: ADR-0431): the list of categories from lg, below it the category
+					     menu beside the search (on a phone under it). -->
+					<div class="flex flex-col lg:flex-row gap-6">
+						<div class="hidden lg:block lg:w-56 flex-shrink-0"><Skeleton shape="card" count={6} size="control" /></div>
+						<div class="flex-1 min-w-0">
+							<div class="mb-5 flex flex-col sm:flex-row gap-3">
+								<Skeleton shape="block" class="h-9 w-full sm:flex-1" />
+								<!-- Select's field is 38 px high, Input's 36. -->
+								<Skeleton shape="block" class="h-[38px] w-full sm:w-60 lg:hidden" />
+							</div>
+							<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+								{#each [0, 1, 2, 3, 4, 5] as tile (tile)}
+									<Skeleton shape="block" class="h-40 w-full rounded-card" />
+								{/each}
+							</div>
+						</div>
+					</div>
+				{/snippet}
+				<!-- Docker's answer is the installed apps': without it no app is installed, started or
+				     stopped, which the catalog says above its apps (webui.ux-apps). "Docker is not
+				     answering" only for Docker's own 503 (ADR-0323); any other failure says that the
+				     installed apps could not be loaded. Drawn with the list, inside its LoadState, so
+				     that it pushes nothing that was shown (ADR-0430). -->
+				{#if drawn && data.installedError}
+					<Alert variant="error" title={$t(data.installedDockerDown ? 'apps.installed.loadErrorTitle' : 'apps.installed.loadFailedTitle')}>
+						<p>{$t(data.installedDockerDown ? 'apps.installed.loadError' : 'apps.installed.loadFailed')}</p>
+						<p class="mt-1 mono-xs break-words text-content-secondary">{data.installedError}</p>
+						<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.installedState === 'loading'} onclick={() => data.loadInstalled()}>
+							{$t('common.retry')}
+						</Button>
+					</Alert>
+				{/if}
+				<AppCatalog
+					catalog={data.catalog}
+					canInstall={data.installedKnown}
+					installed={data.installed}
+					{installing}
+					bind:search={searchQuery}
+					bind:category={selectedCategory}
+					onopen={openDetail}
+				/>
+			</LoadState>
+		{:else}
+			<!-- Installed Apps: their skeleton until Docker's first answer (ADR-0430), a failed load in
+			     their place with what it means, the server's reason and Retry (webui.ux-apps), or none.
+			     The Catalog is the tab beside this one: no second way there (ADR-0431). A refresh keeps
+			     the list. -->
+			<LoadState
+				loading={!drawn || (!data.installedKnown && !data.installedError)}
+				error={data.installedError}
+				errorTitle={$t(data.installedDockerDown ? 'apps.installed.loadErrorTitle' : 'apps.installed.loadFailedTitle')}
+				errorDescription={$t(data.installedDockerDown ? 'apps.installed.loadError' : 'apps.installed.loadFailed')}
+				empty={data.installed.length === 0}
+				onretry={() => data.loadInstalled()}
+				retrying={data.installedState === 'loading'}
+			>
+				{#snippet skeleton()}
+					<div class="space-y-4">
+						<Skeleton shape="card" count={2} />
+						<Skeleton shape="card" count={2} />
+					</div>
+				{/snippet}
+				{#snippet emptyState()}
+					<EmptyState icon={Package} title={$t('apps.noneInstalled')} description={$t('apps.noneInstalledHint')} />
+				{/snippet}
+				<div class="space-y-4">
+					{#each data.installed as app}
+						<InstalledAppCard
+							{app}
+							template={data.templateOf(app)}
+							installing={installing.has(app.template_id)}
+							onupdate={(target) => (updating = target)}
+							onstart={(target) => act(startApp, target, 'apps.installed.startFailed')}
+							onstop={(target) => act(stopApp, target, 'apps.installed.stopFailed')}
+							onrestart={(target) => act(restartApp, target, 'apps.installed.restartFailed')}
+							onuninstall={handleUninstall}
+							onrollback={handleRollback}
+							onremoveearlier={handleRemoveEarlier}
+							onlimits={openLimits}
+						/>
 					{/each}
 				</div>
-			</div>
-		</div>
-	{:else if activeTab === 'catalog' && data.catalogState === 'failed' && data.catalog.length === 0}
-		<!-- The error above says why nothing is listed. -->
-	{:else if activeTab === 'catalog'}
-		<AppCatalog
-			catalog={data.catalog}
-			canInstall={data.installedKnown}
-			installed={data.installed}
-			{installing}
-			bind:search={searchQuery}
-			bind:category={selectedCategory}
-			onopen={openDetail}
-		/>
-	{:else}
-		<!-- Installed Apps -->
-		{#if !drawn || (data.installedState === 'loading' && !data.installedKnown && !data.installedError)}
-			<!-- Not answered yet (ADR-0430); a refresh keeps the list. -->
-			<div class="space-y-4" aria-busy="true">
-				<Skeleton shape="card" count={2} />
-				<Skeleton shape="card" count={2} />
-			</div>
-		{:else if data.installedState === 'failed' || (data.installedState === 'loading' && !data.installedKnown)}
-			<!-- The error above says why nothing is listed. -->
-		{:else if data.installed.length === 0}
-			<!-- The Catalog is the tab beside this one: no second way there (ADR-0431). -->
-			<EmptyState icon={Package} title={$t('apps.noneInstalled')} description={$t('apps.noneInstalledHint')} />
-		{:else}
-			<div class="space-y-4">
-				{#each data.installed as app}
-					<InstalledAppCard
-						{app}
-						template={data.templateOf(app)}
-						installing={installing.has(app.template_id)}
-						onupdate={(target) => (updating = target)}
-						onstart={(target) => act(startApp, target, 'apps.installed.startFailed')}
-						onstop={(target) => act(stopApp, target, 'apps.installed.stopFailed')}
-						onrestart={(target) => act(restartApp, target, 'apps.installed.restartFailed')}
-						onuninstall={handleUninstall}
-						onrollback={handleRollback}
-						onremoveearlier={handleRemoveEarlier}
-						onlimits={openLimits}
-					/>
-				{/each}
-			</div>
+			</LoadState>
 		{/if}
-	{/if}
+	</div>
 </div>
 
 <!-- What the update of an installed app does, and its start (ADR-0408) -->
@@ -365,7 +370,7 @@
 	onsaved={limitsSaved}
 />
 
-<!-- App Detail Modal -->
+<!-- An app's details and install form (a Sheet) -->
 <AppDetailModal
 	bind:open={showDetailModal}
 	app={selectedApp}

@@ -33,7 +33,7 @@
 		setUnauthorizedHandler
 	} from '$lib/api/client';
 	import type { User } from '$lib/api/auth';
-	import { Alert, Button, ConfirmHost, Skeleton, ToastRegion } from '$lib/components/ui';
+	import { ConfirmHost, ErrorState, Skeleton, ToastRegion } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -242,10 +242,10 @@
 			{#if gate === 'allowed' && showSlot}
 				{@render children?.()}
 			{:else if userLoadError}
-				<Alert variant="error" title={$t('layout.accountError')}>
-					<p>{userLoadError}</p>
-					<Button variant="secondary" size="sm" class="mt-3" onclick={ensureUser}>{$t('common.retry')}</Button>
-				</Alert>
+				<!-- In place of the page: why the account could not be read, and Retry (ADR-0432). -->
+				<div class="page-container">
+					<ErrorState compact={false} title={$t('layout.accountError')} message={userLoadError} onretry={ensureUser} />
+				</div>
 			{:else}
 				<!-- The account is not known yet: the shape of a page, under the boot screen (ADR-0430). -->
 				<div class="page-container" aria-busy="true">

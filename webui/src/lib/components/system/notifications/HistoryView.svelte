@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Bell, ChevronDown, ChevronUp } from "lucide-svelte";
   import type { NotificationLog } from "$lib/api/notifications";
-  import { Badge, Button, Card, EmptyState, Select, Skeleton } from "$lib/components/ui";
+  import { Badge, Button, Card, EmptyState, Select, Skeleton, Segmented } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
   import { KIND_ORDER, TYPES, colorOf, iconOf, kindName, labelOf, sentWhen } from "./channels";
@@ -24,18 +24,6 @@
   ]);
 </script>
 
-<!-- A toggle of the outcome to filter by. -->
-{#snippet statusButton(status: HistoryFilter["status"], label: string)}
-  <Button
-    variant="plain"
-    class="tab-pill {filter.status === status ? 'tab-pill-active' : ''}"
-    pressed={filter.status === status}
-    onclick={() => (filter.status = status)}
-  >
-    {label}
-  </Button>
-{/snippet}
-
 <div class="space-y-4">
   <div class="flex flex-wrap items-end gap-3">
     <Select
@@ -44,11 +32,17 @@
       bind:value={filter.channel}
       options={channelOptions}
     />
-    <div class="segmented" role="group" aria-label={$t("notifications.history.status")}>
-      {@render statusButton("all", $t("notifications.history.all"))}
-      {@render statusButton("success", $t("notifications.delivered"))}
-      {@render statusButton("failed", $t("notifications.failed"))}
-    </div>
+    <!-- The outcome to filter by. -->
+    <Segmented
+      options={[
+        { value: "all", label: $t("notifications.history.all") },
+        { value: "success", label: $t("notifications.delivered") },
+        { value: "failed", label: $t("notifications.failed") }
+      ]}
+      value={filter.status}
+      label={$t("notifications.history.status")}
+      onchange={(status) => (filter.status = status)}
+    />
   </div>
 
   <Card>

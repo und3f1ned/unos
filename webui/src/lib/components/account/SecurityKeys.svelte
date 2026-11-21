@@ -8,7 +8,8 @@
 		getSecurityKeys,
 		type SecurityKey
 	} from '$lib/api/auth';
-	import { Alert, Button, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, EmptyState, LoadState, Skeleton, toast } from '$lib/components/ui';
+	import { KeyRound } from 'lucide-svelte';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { browserErrorKey, createCredential, openedByIpAddress, securityKeysSupported } from '$lib/webauthn';
@@ -22,7 +23,6 @@
 	let keys = $state<SecurityKey[]>([]);
 	let loading = $state(true);
 	let loadError = $state('');
-	let notice = $state('');
 
 	// WebAuthn needs a host name, and a browser that has it.
 	let supported = $state(true);
@@ -63,7 +63,6 @@
 	}
 
 	function openAdd() {
-		notice = '';
 		name = '';
 		password = '';
 		addError = '';
@@ -91,7 +90,7 @@
 			touching = false;
 			const key = await finishSecurityKeyRegistration(name.trim(), answer);
 			keys = [...keys, key];
-			notice = $t('securitykeys.addedNotice', { name: key.name });
+			toast.success($t('securitykeys.addedNotice', { name: key.name }));
 			password = '';
 			busy = false;
 			adding = false;
@@ -104,7 +103,6 @@
 	}
 
 	function askRemove(key: SecurityKey) {
-		notice = '';
 		removePassword = '';
 		removeError = '';
 		removing = key;
@@ -122,7 +120,7 @@
 		try {
 			await deleteSecurityKey(key.id, removePassword);
 			keys = keys.filter((k) => k.id !== key.id);
-			notice = $t('securitykeys.removedNotice', { name: key.name });
+			toast.success($t('securitykeys.removedNotice', { name: key.name }));
 			busy = false;
 			removing = null;
 		} catch (e) {
@@ -142,25 +140,15 @@
 	<h4 id="security-keys-title" class="card-title">{$t('securitykeys.title')}</h4>
 	<p class="text-sm text-content-secondary">{$t('securitykeys.hint')}</p>
 
-	{#if notice}
-		<Alert variant="success" dismissible ondismiss={() => (notice = '')}>
-			<span class="break-words">{notice}</span>
-		</Alert>
-	{/if}
-
 	{#if byIpAddress}
 		<Alert variant="warning">{$t('securitykeys.ipAddress')}</Alert>
 	{:else if !supported}
 		<Alert variant="warning">{$t('securitykeys.unsupported')}</Alert>
 	{/if}
 
-	{#if loading}
-		<div aria-busy="true"><Skeleton count={2} /></div>
-	{:else if loadError}
-		<Alert variant="error" title={$t('securitykeys.loadError')}>{loadError}</Alert>
-	{:else if keys.length === 0}
-		<p class="text-sm text-content-secondary">{$t('securitykeys.none')}</p>
-	{:else}
+	<LoadState {loading} error={loadError} errorTitle={$t('securitykeys.loadError')} empty={keys.length === 0} onretry={load}>
+		{#snippet skeleton()}<Skeleton count={2} />{/snippet}
+		{#snippet emptyState()}<EmptyState compact icon={KeyRound} title={$t('securitykeys.none')} />{/snippet}
 		<ul aria-label={$t('securitykeys.list')} class="space-y-2">
 			{#each keys as key (key.id)}
 				<li class="card-nested flex flex-wrap items-center justify-between gap-3">
@@ -191,7 +179,7 @@
 				</li>
 			{/each}
 		</ul>
-	{/if}
+	</LoadState>
 
 	{#if !byIpAddress && supported}
 		<Button variant="secondary" onclick={openAdd}>{$t('securitykeys.add')}</Button>

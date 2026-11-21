@@ -1,6 +1,9 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
+// What an action did, or why the host refused it: the toasts of the page (ADR-0432).
+const toasts = (page: Page) => page.locator('.toast-region');
+
 // System > Power acts on the host (ADR-0233). The specs never reboot anything: the stand-in and
 // the compose test stack run their host commands on their own machine (UNOS_HOST_EXEC=local), so
 // their power API refuses every action (the first test checks that answer of the real
@@ -244,8 +247,11 @@ test.describe('Power Management', () => {
     const actions = card('Reboot, shutdown and suspend');
     for (const name of ['Reboot', 'Shut down', 'Suspend']) {
       await expect(actions.getByRole('button', { name, exact: true })).toBeDisabled();
+      // The reason of a disabled button (ADR-0432).
+      await expect(actions.getByRole('button', { name, exact: true })).toHaveAccessibleDescription(
+        "Unavailable: the host's power state could not be read.",
+      );
     }
-    await expect(actions.getByText("Unavailable: the host's power state could not be read.")).toBeVisible();
     await expect(card('Status').getByText("Not available until the host's power state can be read.")).toBeVisible();
     await expect(card('Wake-on-LAN').getByText("Not available until the host's power state can be read.")).toBeVisible();
 
@@ -253,7 +259,8 @@ test.describe('Power Management', () => {
     // Save waits for a change.
     const schedule = card('Shutdown and wake schedule');
     await expect(schedule.getByRole('button', { name: 'Save schedule' })).toBeDisabled();
-    await expect(schedule.getByText('No changes')).toBeVisible();
+    // The reason of the disabled button (ADR-0432).
+    await expect(schedule.getByRole('button', { name: 'Save schedule' })).toHaveAccessibleDescription('No changes');
     await schedule.getByLabel('Daily shutdown', { exact: true }).check();
     await schedule.getByRole('button', { name: 'Save schedule' }).click();
     await expect(schedule.getByRole('alert')).toContainText('The schedule was not saved');
@@ -288,7 +295,7 @@ test.describe('Power Management', () => {
     await page.getByRole('dialog').getByRole('button', { name: 'Reboot in 1 minute' }).click();
 
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await expect(page.getByRole('status')).toContainText(REBOOTS);
+    await expect(toasts(page)).toContainText(REBOOTS);
     expect(host.changes).toEqual(['POST /reboot']);
     const at = host.pending.at as string;
     await expect(page.getByText('A reboot is pending')).toBeVisible();
@@ -296,7 +303,7 @@ test.describe('Power Management', () => {
 
     await button(page, 'Cancel reboot').click();
 
-    await expect(page.getByRole('status')).toContainText(REBOOT_CANCELLED);
+    await expect(toasts(page)).toContainText(REBOOT_CANCELLED);
     await expect(page.getByText('A reboot is pending')).toHaveCount(0);
     await expect(button(page, 'Cancel reboot')).toHaveCount(0);
     expect(host.changes).toEqual(['POST /reboot', 'POST /cancel']);
@@ -313,7 +320,7 @@ test.describe('Power Management', () => {
     await expect(dialog).toContainText('It starts again with its power button, or with a Wake-on-LAN packet where the board supports that');
     await dialog.getByRole('button', { name: 'Shut down in 1 minute' }).click();
 
-    await expect(page.getByRole('status')).toContainText(SHUTS_DOWN);
+    await expect(toasts(page)).toContainText(SHUTS_DOWN);
     await expect(page.getByText('A shutdown is pending')).toBeVisible();
     await expect(
       page.getByText(`The host shuts down at ${await shownTime(page, host.pending.at as string)}.`),
@@ -321,7 +328,7 @@ test.describe('Power Management', () => {
 
     await button(page, 'Cancel shutdown').click();
 
-    await expect(page.getByRole('status')).toContainText(SHUTDOWN_CANCELLED);
+    await expect(toasts(page)).toContainText(SHUTDOWN_CANCELLED);
     await expect(page.getByText('A shutdown is pending')).toHaveCount(0);
     expect(host.changes).toEqual(['POST /shutdown', 'POST /cancel']);
   });
@@ -336,7 +343,7 @@ test.describe('Power Management', () => {
     await expect(page.getByText(`The host reboots at ${await shownTime(page, at)}.`)).toBeVisible();
     await button(page, 'Cancel reboot').click();
 
-    await expect(page.getByRole('status')).toContainText(REBOOT_CANCELLED);
+    await expect(toasts(page)).toContainText(REBOOT_CANCELLED);
     expect(host.changes).toEqual(['POST /cancel']);
   });
 
@@ -375,7 +382,7 @@ test.describe('Power Management', () => {
 
     await button(page, 'Cancel shutdown').click();
 
-    await expect(page.getByRole('status')).toContainText(NOTHING_PENDING);
+    await expect(toasts(page)).toContainText(NOTHING_PENDING);
     await expect(page.getByText('A shutdown is pending')).toHaveCount(0);
   });
 
@@ -398,11 +405,11 @@ test.describe('Power Management', () => {
     // What the host has now, read again: the shutdown at its new time, still with its Cancel button.
     await expect(page.getByText(`The host shuts down at ${await shownTime(page, later)}.`)).toBeVisible();
     await expect(button(page, 'Cancel shutdown')).toBeEnabled();
-    await expect(page.getByRole('status')).toHaveCount(0);
+    await expect(toasts(page).locator('[data-toast="success"]')).toHaveCount(0);
     expect(host.changes).toEqual(['POST /cancel']);
   });
 
-  test('the error of a reboot that the host refused stays in the dialog', async ({ authenticatedPage: page }) => {
+  test('the error of a reboot that the host refused stays on the page with its reason', async ({ authenticatedPage: page }) => {
     const host = await fakePowerApi(page, {
       answers: { 'POST /reboot': { status: 500, json: { detail: NO_BUS } } },
     });
@@ -412,8 +419,9 @@ test.describe('Power Management', () => {
     const dialog = page.getByRole('dialog', { name: 'Reboot the host?' });
     await dialog.getByRole('button', { name: 'Reboot in 1 minute' }).click();
 
-    await expect(dialog.getByRole('alert')).toContainText('The reboot was not scheduled');
-    await expect(dialog.getByRole('alert')).toContainText(NO_BUS);
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('alert')).toContainText('The reboot was not scheduled');
+    await expect(page.getByRole('alert')).toContainText(NO_BUS);
     await expect(page.getByText('A reboot is pending')).toHaveCount(0);
     expect(host.changes).toEqual(['POST /reboot']);
   });
@@ -428,7 +436,7 @@ test.describe('Power Management', () => {
     await dialog.getByRole('button', { name: 'Suspend now' }).click();
 
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole('status')).toContainText(SUSPENDING);
+    await expect(toasts(page)).toContainText(SUSPENDING);
     expect(host.changes).toEqual(['POST /suspend']);
   });
 
@@ -440,8 +448,8 @@ test.describe('Power Management', () => {
     const dialog = page.getByRole('dialog', { name: 'Suspend the host?' });
     await dialog.getByRole('button', { name: 'Suspend now' }).click();
 
-    await expect(dialog.getByRole('alert')).toContainText('The host was not suspended');
-    await expect(dialog.getByRole('alert')).toContainText(NO_SUSPEND);
+    await expect(page.getByRole('alert')).toContainText('The host was not suspended');
+    await expect(page.getByRole('alert')).toContainText(NO_SUSPEND);
   });
 
   test('Wake-on-LAN lists the interfaces and turns magic packets on and off', async ({
@@ -461,13 +469,13 @@ test.describe('Power Management', () => {
     await button(page, 'Turn on Wake-on-LAN for eth0').click();
 
     await expect(row('eth0')).toContainText('On');
-    await expect(page.getByRole('status')).toContainText('Wake-on-LAN is on for eth0');
+    await expect(toasts(page)).toContainText('Wake-on-LAN is on for eth0');
     expect(host.changes).toEqual(['POST /wol/eth0/enable']);
 
     await button(page, 'Turn off Wake-on-LAN for eth0').click();
 
     await expect(row('eth0')).toContainText('Off');
-    await expect(page.getByRole('status')).toContainText('Wake-on-LAN is off for eth0');
+    await expect(toasts(page)).toContainText('Wake-on-LAN is off for eth0');
     expect(host.changes).toEqual(['POST /wol/eth0/enable', 'POST /wol/eth0/disable']);
   });
 
@@ -516,7 +524,7 @@ test.describe('Power Management', () => {
     await expect(dialog).toContainText('Хост перезагрузится через минуту после подтверждения');
     await dialog.getByRole('button', { name: 'Перезагрузить через 1 минуту' }).click();
 
-    await expect(page.getByRole('status')).toContainText(REBOOTS);
+    await expect(toasts(page)).toContainText(REBOOTS);
     await expect(page.getByText('Запланирована перезагрузка')).toBeVisible();
     const at = host.pending.at as string;
     const time = await page.evaluate(
@@ -525,7 +533,7 @@ test.describe('Power Management', () => {
     );
     await expect(page.getByText(`Хост перезагрузится в ${time}.`)).toBeVisible();
     await button(page, 'Отменить перезагрузку').click();
-    await expect(page.getByRole('status')).toContainText(REBOOT_CANCELLED);
+    await expect(toasts(page)).toContainText(REBOOT_CANCELLED);
     await expect(page.getByText('Запланирована перезагрузка')).toHaveCount(0);
 
     const row = (name: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name, exact: true }) });
@@ -534,7 +542,7 @@ test.describe('Power Management', () => {
     await expect(row('eth1').locator('.badge:visible')).toHaveText('Не поддерживается');
     await button(page, 'Включить Wake-on-LAN для eth0').click();
     await expect(row('eth0').locator('.badge:visible')).toHaveText('Включён');
-    await expect(page.getByRole('status')).toContainText('Wake-on-LAN включён для eth0');
+    await expect(toasts(page)).toContainText('Wake-on-LAN включён для eth0');
     await expect(button(page, 'Выключить Wake-on-LAN для eth0')).toBeVisible();
     expect(host.changes).toEqual(['POST /reboot', 'POST /cancel', 'POST /wol/eth0/enable']);
   });
@@ -718,7 +726,7 @@ test.describe('The power schedule', () => {
     await card.getByLabel('Idle minutes before the shutdown').fill('45');
     await card.getByRole('button', { name: 'Save schedule' }).click();
 
-    await expect(page.getByRole('status')).toContainText('The power schedule is saved');
+    await expect(toasts(page)).toContainText('The power schedule is saved');
     expect(host.puts).toEqual([{
       wake_on_lan: true, auto_shutdown: true, shutdown_hour: 22, shutdown_minute: 30, auto_wakeup: true,
       wakeup_hour: 6, wakeup_minute: 45, idle_shutdown: true, idle_timeout_minutes: 45,
@@ -762,7 +770,7 @@ test.describe('The power schedule', () => {
     await expect(card.getByRole('alert')).toContainText('The schedule was not saved');
     await expect(card.getByRole('alert')).toContainText(NO_WAKE_PROMISED);
     expect(host.puts).toHaveLength(1);
-    await expect(page.getByRole('status')).toHaveCount(0);
+    await expect(toasts(page).locator('[data-toast="success"]')).toHaveCount(0);
   });
 
   test('times the server or the page refuse are named, and nothing else is sent', async ({ authenticatedPage: page }) => {
@@ -800,7 +808,7 @@ test.describe('The power schedule', () => {
     await card.getByLabel('Daily shutdown', { exact: true }).check();
     await card.getByRole('button', { name: 'Save schedule' }).click();
 
-    await expect(page.getByRole('status')).toContainText('The power schedule is saved');
+    await expect(toasts(page)).toContainText('The power schedule is saved');
     await expect(card.getByRole('alert')).toHaveCount(0);
     expect(host.puts).toHaveLength(1);
     expect(host.puts[0]).toMatchObject({ auto_shutdown: true, idle_shutdown: false, idle_timeout_minutes: 45 });
@@ -895,7 +903,7 @@ test.describe('The power schedule', () => {
     await card.getByLabel('Ежедневное включение', { exact: true }).uncheck();
     await card.getByLabel('Выключение при простое', { exact: true }).check();
     await card.getByRole('button', { name: 'Сохранить расписание' }).click();
-    await expect(page.getByRole('status')).toContainText('Расписание питания сохранено');
+    await expect(toasts(page)).toContainText('Расписание питания сохранено');
     expect(host.puts.map((put) => put.idle_shutdown)).toEqual([true]);
   });
 });

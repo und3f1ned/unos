@@ -12,13 +12,12 @@
 		type FirewallRule,
 		type FirewallStatus
 	} from '$lib/api/security';
-	import { Alert, Badge, Button, Card, CardAction, Skeleton, confirm } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, CardAction, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { Flame, ShieldCheck, ShieldX } from 'lucide-svelte';
 	import FirewallAddRuleDialog from './FirewallAddRuleDialog.svelte';
 	import FirewallDetails from './FirewallDetails.svelte';
-	import FirewallEnableDialog from './FirewallEnableDialog.svelte';
-	import { emptyRule, type NewRule } from './firewall';
+		import { emptyRule, type NewRule } from './firewall';
 
 	// System > Security, administrators only: the host's ufw (ADR-0416). Turning it on adds UNOS's
 	// rules for the local networks first, and a change made while it is on is undone by the host
@@ -40,11 +39,9 @@
 	let loadError = $state('');
 	let busy = $state(false);
 	let error = $state('');
-	let success = $state('');
 	let notice = $state('');
 	let showDetails = $state(false);
 	let enabling = $state(false);
-	let showEnable = $state(false);
 	let showAdd = $state(false);
 	let addError = $state('');
 	let newRule = $state<NewRule>(emptyRule());
@@ -160,7 +157,6 @@
 	async function act(change: () => Promise<void>, failed: string) {
 		busy = true;
 		error = '';
-		success = '';
 		notice = '';
 		try {
 			await change();
@@ -172,12 +168,25 @@
 		await load();
 	}
 
+	/**
+	 * Turn the firewall on once confirmed (ADR-0416): what UNOS lets in first, that the host undoes
+	 * the change unless it is kept, and a warning for a browser outside the local networks.
+	 */
 	async function turnOn() {
-		showEnable = false;
+		const yes = await confirm({
+			title: $t('firewall.enableTitle'),
+			message: $t('firewall.enableRules', { networks: LOCAL_NETWORKS.join(', ') }),
+			// This browser reaches the NAS from outside the local networks: a warning to weigh first.
+			warning: status?.client_local === false ? $t('firewall.notLocal') : undefined,
+			consequences: [$t('firewall.enableRevert', { n: revertSeconds }), $t('firewall.enableOthers'), $t('firewall.docker')],
+			confirmLabel: $t('firewall.turnOn'),
+			tone: 'warning'
+		});
+		if (!yes) return;
 		enabling = true;
 		await act(async () => {
 			const result = await enableFirewall();
-			success = result.changed ? $t('firewall.enabledNotice') : $t('firewall.alreadyOn');
+			toast.success(result.changed ? $t('firewall.enabledNotice') : $t('firewall.alreadyOn'));
 			if (result.revert_in !== null) startCountdown(result.revert_in);
 		}, 'firewall.toggleFailed');
 		enabling = false;
@@ -187,7 +196,7 @@
 	async function turnOff() {
 		await act(async () => {
 			await disableFirewall();
-			success = $t('firewall.disabledNotice');
+			toast.success($t('firewall.disabledNotice'));
 		}, 'firewall.toggleFailed');
 	}
 
@@ -195,7 +204,7 @@
 		await act(async () => {
 			await keepFirewallChange();
 			stopCountdown();
-			success = $t('firewall.kept');
+			toast.success($t('firewall.kept'));
 		}, 'firewall.keepFailed');
 	}
 
@@ -207,7 +216,6 @@
 		busy = true;
 		addError = '';
 		error = '';
-		success = '';
 		notice = '';
 		try {
 			const result = await createFirewallRule({
@@ -219,7 +227,7 @@
 			});
 			showAdd = false;
 			newRule = emptyRule();
-			success = $t('firewall.added');
+			toast.success($t('firewall.added'));
 			if (result.revert_in !== null) startCountdown(result.revert_in);
 		} catch (e) {
 			addError = messageOf(e) || $t('firewall.addFailed');
@@ -235,7 +243,7 @@
 		if (!yes) return;
 		await act(async () => {
 			const result = await deleteFirewallRule(rule.id);
-			success = $t('firewall.deleted');
+			toast.success($t('firewall.deleted'));
 			if (result.revert_in !== null) startCountdown(result.revert_in);
 		}, 'firewall.deleteFailed');
 		await focusKeep();
@@ -251,7 +259,7 @@
 		await act(async () => {
 			await resetFirewall();
 			stopCountdown();
-			success = $t('firewall.resetDone');
+			toast.success($t('firewall.resetDone'));
 		}, 'firewall.resetFailed');
 	}
 
@@ -283,9 +291,6 @@
 		</div>
 	</div>
 
-	{#if success}
-		<Alert variant="success" class="mb-4">{success}</Alert>
-	{/if}
 	{#if notice}
 		<Alert variant="info" class="mb-4">{notice}</Alert>
 	{/if}
@@ -331,7 +336,7 @@
 		<FirewallDetails
 			{status}
 			{busy}
-			onenable={() => (showEnable = true)}
+			onenable={turnOn}
 			ondisable={turnOff}
 			onreset={reset}
 			onadd={openAdd}
@@ -339,16 +344,6 @@
 		/>
 	{/if}
 </Card>
-
-<FirewallEnableDialog
-	open={showEnable}
-	networks={LOCAL_NETWORKS}
-	{revertSeconds}
-	notLocal={status?.client_local === false}
-	{busy}
-	onconfirm={turnOn}
-	onclose={() => (showEnable = false)}
-/>
 
 <FirewallAddRuleDialog
 	open={showAdd}

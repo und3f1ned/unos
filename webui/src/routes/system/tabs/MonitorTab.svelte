@@ -3,7 +3,7 @@
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { Cpu, MemoryStick, Network, HardDrive } from "lucide-svelte";
-  import { Alert, Button, Card, Skeleton } from "$lib/components/ui";
+  import { Alert, Button, Card, Skeleton, Segmented } from "$lib/components/ui";
   import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { getMonitorHistory } from "$lib/api/monitor";
   import {
@@ -169,18 +169,12 @@
     <div class="flex flex-wrap items-center gap-3">
       <!-- The ranges as a segmented control (ADR-0428). Whether the charts are live is the
            sidebar's connection line (ADR-0431). -->
-      <div class="segmented" role="group" aria-label={$t("monitor.range")}>
-        {#each RANGES as option (option.seconds)}
-          <Button
-            variant="plain"
-            class="tab-pill {range === option ? 'tab-pill-active' : ''}"
-            pressed={range === option}
-            onclick={() => (range = option)}
-          >
-            {$t(option.key)}
-          </Button>
-        {/each}
-      </div>
+      <Segmented
+        options={RANGES.map((option) => ({ value: option.seconds, label: $t(option.key) }))}
+        value={range.seconds}
+        label={$t("monitor.range")}
+        onchange={(seconds) => (range = RANGES.find((option) => option.seconds === seconds) ?? RANGES[0])}
+      />
     </div>
   </div>
 

@@ -251,7 +251,7 @@ test.describe('Restoring backups', () => {
     expect(await usernames(page)).not.toContain(later);
     expect(await usernames(page)).toContain('admin');
 
-    await dialog.getByRole('button', { name: 'Close' }).click();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(dialog).toHaveCount(0);
   });
 
@@ -276,7 +276,7 @@ test.describe('Restoring backups', () => {
     await expect(dialog.getByText('Restore failed')).toBeVisible();
     await expect(dialog.getByText('Invalid passphrase or corrupted backup')).toBeVisible();
     expect(await usernames(page)).toContain(later);
-    await dialog.getByRole('button', { name: 'Close' }).click();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 
     await chooseAction(page, name, 'Restore');
     await dialog.getByLabel('Type the backup filename to confirm:').fill(name);
@@ -391,7 +391,7 @@ test.describe('Restoring backups', () => {
     await expect(dialog.getByText('Restore failed')).toBeVisible();
     await expect(dialog.getByText('Invalid passphrase or corrupted backup')).toBeVisible();
     expect(await usernames(page)).toContain(later);
-    await dialog.getByRole('button', { name: 'Close' }).click();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 
     await chooseAction(page, name, 'Restore');
     await dialog.getByLabel('Type the backup filename to confirm:').fill(name);

@@ -9,10 +9,9 @@
     type NetworkInterface,
   } from "$lib/api/network";
   import { ApiError } from "$lib/api/client";
-  import { Alert, Button, EmptyState, Skeleton } from "$lib/components/ui";
+  import { Alert, Button, EmptyState, Skeleton, Tabs, confirm, toast } from "$lib/components/ui";
   import ConnectionsTable from "$lib/components/network/ConnectionsTable.svelte";
   import { NetworkData } from "$lib/components/network/data.svelte";
-  import DisableInterfaceDialog from "$lib/components/network/DisableInterfaceDialog.svelte";
   import DnsDetails from "$lib/components/network/DnsDetails.svelte";
   import InterfaceCard from "$lib/components/network/InterfaceCard.svelte";
   import { labelOf, messageOf, without } from "$lib/components/network/network";
@@ -55,10 +54,10 @@
   let pendingList = $state.raw<PendingDisables | null>(null);
 
   // The interface the Disable dialog asks about, and the one being changed.
-  let confirming = $state<string | null>(null);
   let busy = $state<string | null>(null);
   let actionError = $state<string | null>(null);
-  let notice = $state<{ variant: "success" | "info"; text: string } | null>(null);
+  // What the host did with a disable that was not kept: read on the page, by the countdown's place.
+  let notice = $state<string | null>(null);
 
   // Get WebSocket interface stats for rates
   let wsInterfaces = $derived($stats?.network?.interfaces ?? []);
@@ -145,7 +144,7 @@
     } else if (!iface) {
       actionError = $t("network.revert.gone", { name });
     } else if (iface.enabled) {
-      notice = { variant: "info", text: $t("network.revert.back", { name }) };
+      notice = $t("network.revert.back", { name });
     } else if (iface.revert_in !== null && iface.revert_in > 0) {
       // The host counts a little later than the page.
       deadlines = { ...deadlines, [name]: Date.now() + iface.revert_in * 1000 };
@@ -171,9 +170,16 @@
     notice = null;
   }
 
-  async function disable() {
-    const name = confirming;
-    if (!name) return;
+  // Disable asks first: the connection to UNOS may go through the interface, and the host turns it
+  // back on by itself unless the disable is kept in time (ADR-0244).
+  async function disable(name: string) {
+    const yes = await confirm({
+      title: $t("network.disable.title", { name }),
+      message: $t("network.disable.drop", { name }),
+      consequences: [$t("network.disable.revert", { n: net.revertSeconds, name })],
+      confirmLabel: $t("network.disable.confirm", { name })
+    });
+    if (!yes) return;
     startChange(name);
     const started = Date.now();
     let counting = false;
@@ -186,13 +192,12 @@
         expiring = expiring.filter((n) => n !== name);
         counting = true;
       } else {
-        notice = { variant: "info", text: $t("network.pending.late", { name }) };
+        notice = $t("network.pending.late", { name });
       }
     } catch (e) {
       actionError = e instanceof ApiError ? e.message : $t("network.pending.lost", { name, n: net.revertSeconds });
     } finally {
       busy = null;
-      confirming = null;
     }
     if (counting) {
       await tick();
@@ -206,7 +211,7 @@
     let lost = false;
     try {
       await keepInterfaceDown(name);
-      notice = { variant: "success", text: $t("network.pending.kept", { name }) };
+      toast.success($t("network.pending.kept", { name }));
       endCountdown(name);
     } catch (e) {
       if (e instanceof ApiError) {
@@ -224,7 +229,7 @@
     const iface = net.interfaces.find((i) => i.name === name);
     if (lost && loaded && iface && !iface.enabled && iface.revert_in === null) {
       actionError = null;
-      notice = { variant: "success", text: $t("network.pending.kept", { name }) };
+      toast.success($t("network.pending.kept", { name }));
       endCountdown(name);
     }
   }
@@ -261,7 +266,7 @@
     <Alert variant="error" dismissible ondismiss={() => (actionError = null)}>{actionError}</Alert>
   {/if}
   {#if notice}
-    <Alert variant={notice.variant} dismissible ondismiss={() => (notice = null)}>{notice.text}</Alert>
+    <Alert variant="info" dismissible ondismiss={() => (notice = null)}>{notice}</Alert>
   {/if}
   {#if Object.keys(net.loadErrors).length > 0}
     <Alert variant="error" title={$t("network.loadError")}>
@@ -276,21 +281,17 @@
     <PendingDisables bind:this={pendingList} {countdowns} {now} {busy} onkeep={keep} />
   {/if}
 
-  <!-- Views -->
-  <!-- The views are page tabs, the one look of tabs (ADR-0428). -->
-  <div class="tab-bar">
-    {#each VIEWS as view (view.id)}
-      <Button
-        variant="plain"
-        class="tab-underline {activeTab === view.id ? 'tab-underline-active' : ''}"
-        pressed={activeTab === view.id}
-        onclick={() => (activeTab = view.id)}
-      >
-        {$t(PARTS[view.id])}
-      </Button>
-    {/each}
-  </div>
+  <!-- Views: page tabs (Tabs, ADR-0432), each view the panel below. -->
+  <Tabs
+    tabs={VIEWS.map((view) => ({ id: view.id, label: $t(PARTS[view.id]) }))}
+    active={activeTab}
+    label={$t("network.title")}
+    tabId={(id) => `network-tab-${id}`}
+    panelId={(id) => `network-panel-${id}`}
+    onselect={(id) => (activeTab = id)}
+  />
 
+  <div role="tabpanel" id="network-panel-{activeTab}" aria-labelledby="network-tab-{activeTab}" class="space-y-6">
   <!-- Interfaces -->
   {#if activeTab === "interfaces"}
     <div class="space-y-3">
@@ -301,7 +302,7 @@
           expanded={expandedInterface === iface.name}
           {busy}
           ontoggle={() => toggleExpand(iface.name)}
-          ondisable={() => (confirming = iface.name)}
+          ondisable={() => disable(iface.name)}
           onenable={() => enable(iface.name)}
         />
       {:else}
@@ -330,6 +331,7 @@
   {#if activeTab === "connections"}
     <ConnectionsTable connections={net.connections} onrefresh={() => net.loadConnections()} />
   {/if}
+  </div>
 
   <!-- The host's name servers and search domains: their one place (ADR-0431). The default gateway
        is the default route of Routes, the number of sockets the head of Connections. -->
@@ -340,12 +342,3 @@
   <!-- The apps' names on the LAN (ADR-0420), which reach the LAN only: no remote access. -->
   <AppNamesCard />
 </div>
-
-<!-- Disable asks first: the connection to UNOS may go through the interface (ADR-0244) -->
-<DisableInterfaceDialog
-  {confirming}
-  revertSeconds={net.revertSeconds}
-  {busy}
-  oncancel={() => (confirming = null)}
-  onconfirm={disable}
-/>

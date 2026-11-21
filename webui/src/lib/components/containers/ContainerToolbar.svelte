@@ -4,7 +4,7 @@
 	// page's one place for the counts and the filter (webui.ux-apps). Other is shown only while a
 	// container is in another state, or while it is the filter.
 	import { LayoutGrid, List, Search } from 'lucide-svelte';
-	import { Button, Input } from '$lib/components/ui';
+	import { Input, Segmented } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { StateFilter } from './labels';
 
@@ -28,19 +28,6 @@
 	const shown = $derived(SEGMENTS.filter((s) => s.id !== 'other' || counts.other > 0 || filter === 'other'));
 </script>
 
-{#snippet viewButton(id: 'table' | 'cards', Icon: typeof List, key: string)}
-	<Button
-		variant="plain"
-		class="tab-pill {view === id ? 'tab-pill-active' : ''}"
-		pressed={view === id}
-		onclick={() => onview(id)}
-		title={$t(key)}
-	>
-		<Icon class="w-4 h-4" aria-hidden="true" />
-		<span class="sr-only">{$t(key)}</span>
-	</Button>
-{/snippet}
-
 <!-- One row from sm: the search grows, the filter and the view keep their width; on a phone the
      filter takes a row of its own under the search and the view, its segments sharing the row's
      width on one line, also with Other and in Russian (webui.ux-apps). -->
@@ -53,25 +40,21 @@
 		class="flex-1 min-w-[12rem]"
 	/>
 	<!-- The filter: a segment's name and its count; the pressed one is the filter. -->
-	<div
-		class="segmented order-last w-full flex-nowrap sm:order-none sm:w-auto"
-		role="group"
-		aria-label={$t('containers.filter.label')}
-	>
-		{#each shown as segment (segment.id)}
-			<Button
-				variant="plain"
-				class="tab-pill inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 sm:flex-none sm:gap-1.5 sm:px-3 {filter === segment.id ? 'tab-pill-active' : ''}"
-				pressed={filter === segment.id}
-				onclick={() => (filter = segment.id)}
-			>
-				{$t(segment.key)}
-				<span class="tabular text-content-muted" data-count>{counts[segment.id]}</span>
-			</Button>
-		{/each}
-	</div>
-	<div class="segmented" role="group" aria-label={$t('containers.view.label')}>
-		{@render viewButton('table', List, 'containers.view.table')}
-		{@render viewButton('cards', LayoutGrid, 'containers.view.cards')}
-	</div>
+	<Segmented
+		options={shown.map((segment) => ({ value: segment.id, label: $t(segment.key), count: counts[segment.id] }))}
+		value={filter}
+		label={$t('containers.filter.label')}
+		onchange={(id) => (filter = id)}
+		class="order-last w-full flex-nowrap sm:order-none sm:w-auto"
+		itemClass="min-w-0 flex-1 justify-center whitespace-nowrap px-2 sm:flex-none sm:px-3"
+	/>
+	<Segmented
+		options={[
+			{ value: 'table', label: $t('containers.view.table'), icon: List, iconOnly: true },
+			{ value: 'cards', label: $t('containers.view.cards'), icon: LayoutGrid, iconOnly: true }
+		]}
+		value={view}
+		label={$t('containers.view.label')}
+		onchange={onview}
+	/>
 </div>

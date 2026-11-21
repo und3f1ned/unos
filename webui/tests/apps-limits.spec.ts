@@ -76,7 +76,7 @@ async function fakeLimits(page: Page, installed: FakeInstalledApp[], refuse?: { 
 
 async function openInstalled(page: Page) {
   await page.goto('/apps');
-  await page.getByRole('button', { name: /^Installed \(\d+\)$/ }).click();
+  await page.getByRole('tab', { name: /^Installed \(\d+\)$/ }).click();
 }
 
 /** The row of a container in the Resources of its app's card. */

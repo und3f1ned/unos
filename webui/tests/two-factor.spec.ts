@@ -110,7 +110,7 @@ test.describe('Two-factor authentication', () => {
     );
     await card.getByRole('button', { name: 'Enable', exact: true }).click();
     const { qr_uri: qrUri } = await (await setupAnswer).json();
-    const setup = page.locator('div:has(> h3:has-text("Setup Two-Factor Authentication"))');
+    const setup = page.getByRole('dialog', { name: 'Setup Two-Factor Authentication' });
     const qr = setup.getByRole('img', { name: 'QR code for your authenticator app' });
     await expect(qr).toHaveAttribute('src', /^data:image\/png;base64,/);
     await expect.poll(() => qr.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
@@ -184,7 +184,7 @@ test.describe('Two-factor authentication', () => {
     await page.goto('/account#security');
     await expect(card.getByText('Enabled', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Disable', exact: true }).click();
-    const disable = page.locator('div:has(> h3:has-text("Disable Two-Factor Authentication"))');
+    const disable = page.getByRole('dialog', { name: 'Disable Two-Factor Authentication' });
     const disableStep = await startOfStepAfter(loginStep);
     await disable.getByLabel('Authentication Code').fill(totpCode(secret, disableStep * TOTP_STEP_MS));
     await disable.getByRole('button', { name: 'Disable 2FA' }).click();

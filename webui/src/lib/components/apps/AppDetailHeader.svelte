@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The head of an app's details under the dialog's title (the app's name and icon): its
-	// description, its category, version and source as neutral badges, whether it is installed,
+	// description, its category, version and source as outline badges (no state, ADR-0432), whether it is installed,
 	// and the links to its website, code and documentation (webui.ux-apps).
 	import { BadgeCheck, BookOpen, Check, Github, Globe, Tag } from 'lucide-svelte';
 	import { Badge, type IconComponent } from '$lib/components/ui';
@@ -35,14 +35,14 @@
 				{$t('apps.detail.installed')}
 			</Badge>
 		{/if}
-		<Badge variant="neutral"><AppCategory category={app.category} /></Badge>
+		<Badge variant="outline"><AppCategory category={app.category} /></Badge>
 		{#if app.version}
-			<Badge variant="neutral">
+			<Badge variant="outline">
 				<Tag class="w-3 h-3" aria-hidden="true" />
 				{app.version}
 			</Badge>
 		{/if}
-		<Badge variant="neutral">
+		<Badge variant="outline">
 			{#if source.verified}<BadgeCheck class="w-3 h-3" aria-hidden="true" />{/if}
 			{$t(source.key)}
 		</Badge>

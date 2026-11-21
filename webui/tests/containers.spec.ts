@@ -1,6 +1,7 @@
 import type { Locator, Page, Route, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { pageSessionKey } from './session';
+import { actionsFor, cancelConfirmation, chooseAction, confirmWith, confirmation } from './ui';
 
 // The stand-in has no Docker. The page's requests to /api/v1/containers are
 // answered from memory, and so is the log socket /ws/v1/logs/{id}: nothing
@@ -204,13 +205,20 @@ async function openLogsOf(page: Page, name: string): Promise<Locator> {
   await page.goto('/containers');
   await rowOf(page, name).getByText(name).click();
   const drawer = page.getByRole('dialog', { name });
-  await drawer.getByRole('button', { name: 'Logs' }).click();
+  await drawer.getByRole('tab', { name: 'Logs' }).click();
   await expect(drawer.getByText(LIVE)).toBeVisible();
   return drawer;
 }
 
 // The detail of the supervisor's 503 when docker.from_env finds no Docker socket (docker.py).
 const NO_DOCKER_ANSWER = /Docker is not available: Error while fetching server API version: /;
+
+/** Docker's reason, technical, is folded in an ErrorState (ADR-0432): open it and see it. */
+async function expectReason(state: Locator, reason: RegExp) {
+  const details = state.locator('details');
+  if ((await details.getAttribute('open')) === null) await state.getByText('Technical details', { exact: true }).click();
+  await expect(state.getByText(reason)).toBeVisible();
+}
 
 test.describe('Containers without Docker (stand-in)', () => {
   // The stand-in's own supervisor, without route fakes: the stand-in has no Docker socket, and
@@ -226,10 +234,11 @@ test.describe('Containers without Docker (stand-in)', () => {
     await page.goto('/containers');
 
     expect((await answer).status()).toBe(503);
-    // A plain title, what it means, Docker's reason, and Retry (webui.ux-apps).
-    const alert = page.locator('.alert');
+    // A plain title, what it means, Docker's reason folded under its details, and Retry
+    // (webui.ux-apps, ErrorState of ADR-0432).
+    const alert = page.locator('[data-error-state]');
     await expect(alert.getByText('Docker is not answering', { exact: true })).toBeVisible();
-    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    await expectReason(alert, NO_DOCKER_ANSWER);
     // The error alone: no counts of 0, search, empty list or Create button.
     const panel = page.getByRole('tabpanel', { name: 'Containers' });
     await expect(panel.getByRole('group', { name: 'State' })).toHaveCount(0);
@@ -241,16 +250,16 @@ test.describe('Containers without Docker (stand-in)', () => {
     const again = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/v1/containers');
     await alert.getByRole('button', { name: 'Retry' }).click();
     expect((await again).status()).toBe(503);
-    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    await expectReason(alert, NO_DOCKER_ANSWER);
   });
 
   test('the Images tab says that Docker is not available', async ({ authenticatedPage: page }) => {
     await page.goto('/containers');
     await page.getByRole('tab', { name: 'Images' }).click();
 
-    const alert = page.getByRole('tabpanel', { name: 'Images' }).locator('.alert');
+    const alert = page.getByRole('tabpanel', { name: 'Images' }).locator('[data-error-state]');
     await expect(alert.getByText('The images could not be read')).toBeVisible();
-    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    await expectReason(alert, NO_DOCKER_ANSWER);
   });
 
   test('the Apps page lists the catalog and says that the installed apps cannot be loaded', async ({
@@ -276,16 +285,20 @@ test.describe('Containers without Docker (stand-in)', () => {
     await jellyfin.click();
     const details = page.getByRole('dialog', { name: 'Jellyfin' });
     await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toBeDisabled();
-    await expect(details.getByText('Docker is not answering, so no app can be installed now.', { exact: false })).toBeVisible();
+    await expect(details.locator('.alert').getByText('Docker is not answering, so no app can be installed now.', { exact: false })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Install Jellyfin' })).toHaveAccessibleDescription(
       /Docker is not answering, so no app can be installed now\./,
     );
     await details.getByRole('button', { name: 'Cancel' }).click();
 
     // The Installed tab has no count, and says why it lists nothing, instead of "No apps installed".
-    await page.getByRole('button', { name: 'Installed', exact: true }).click();
+    await page.getByRole('tab', { name: 'Installed', exact: true }).click();
     await expect(page.getByText('No apps installed')).toHaveCount(0);
-    await expect(alert.getByText(NO_DOCKER_ANSWER)).toBeVisible();
+    // In the list's place: what it means, Docker's reason folded, and Retry (ErrorState, ADR-0432).
+    const failed = page.locator('[data-error-state]', { hasText: 'The installed apps could not be loaded' });
+    await expect(failed.getByText('Docker is not answering', { exact: true })).toBeVisible();
+    await expectReason(failed, NO_DOCKER_ANSWER);
+    await expect(failed.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
 });
 
@@ -345,7 +358,7 @@ test.describe('Containers', () => {
     );
     await page.goto('/containers');
 
-    const alert = page.locator('.alert', { hasText: 'Docker failed: held by the test' });
+    const alert = page.locator('[data-error-state]', { hasText: 'Docker failed: held by the test' });
     await expect(alert.getByText('The containers could not be loaded', { exact: true })).toBeVisible();
     await expect(page.getByText(/Docker is not answering/)).toHaveCount(0);
     await expect(alert.getByRole('button', { name: 'Retry' })).toBeVisible();
@@ -397,11 +410,14 @@ test.describe('Containers', () => {
     // offers no Remove, which would break the app; Uninstall is the App Store's.
     const media = rowOf(page, 'e2e-media');
     await expect(media.getByRole('link', { name: 'jellyfin app' })).toHaveAttribute('href', '/apps#installed');
-    await expect(media.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
-    await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Remove', exact: true })).toBeVisible();
+    // Remove is a ⋯ menu's last item (ADR-0437): e2e-media, stopped, has none to offer.
+    await expect(actionsFor(media, 'e2e-media')).toHaveCount(0);
+    await actionsFor(rowOf(page, 'e2e-db'), 'e2e-db').click();
+    await expect(page.getByRole('menuitem', { name: 'Remove', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
     await media.getByRole('link', { name: 'jellyfin app' }).click();
     await expect(page).toHaveURL('/apps#installed');
-    await expect(page.getByRole('button', { name: /^Installed/ })).toHaveClass(/tab-underline-active/);
+    await expect(page.getByRole('tab', { name: /^Installed/ })).toHaveClass(/tab-underline-active/);
   });
 
   test('a phone shows the containers as cards, with their state and buttons on the screen', async ({
@@ -430,7 +446,7 @@ test.describe('Containers', () => {
     await expect(web.getByText('Stopped', { exact: true })).toBeVisible();
     await web.getByRole('button', { name: 'Start' }).click();
     await expect(web.getByText('Running', { exact: true })).toBeVisible();
-    await web.getByRole('button', { name: 'Restart' }).click();
+    await chooseAction(page, 'e2e-web', 'Restart');
     await expect.poll(() => requests.filter((r) => r.startsWith('POST'))).toEqual([
       `POST /api/v1/containers/${WEB.id}/stop`,
       `POST /api/v1/containers/${WEB.id}/start`,
@@ -459,7 +475,7 @@ test.describe('Containers', () => {
 
     await rowOf(page, 'e2e-web').getByText('e2e-web').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-web' });
-    await drawer.getByRole('button', { name: 'Logs' }).click();
+    await drawer.getByRole('tab', { name: 'Logs' }).click();
 
     const log = drawer.getByLabel('Log of e2e-web');
     await expect(drawer.getByText(LIVE)).toBeVisible();
@@ -499,7 +515,7 @@ test.describe('Containers', () => {
 
     await rowOf(page, 'e2e-db').getByText('e2e-db').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-db' });
-    await drawer.getByRole('button', { name: 'Logs' }).click();
+    await drawer.getByRole('tab', { name: 'Logs' }).click();
     await expect.poll(() => sockets.length).toBe(1);
     await expect(drawer.getByText(LIVE)).toBeVisible();
 
@@ -614,24 +630,21 @@ test.describe('Images', () => {
     await expect(imageRow('alpine:3.20')).toContainText(PULLED.id);
     expect(requests).toContain('POST /api/v1/containers/images/pull?image=alpine%3A3.20');
 
-    // Remove an image that no container uses: the dialog names the tag that goes with it.
+    // Remove an image that no container uses: the confirmation names the tag that goes with it.
     await page.getByRole('button', { name: 'Remove image alpine:3.19' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Remove image' });
+    const dialog = confirmation(page, 'Remove image alpine:3.19?');
     await expect(dialog).toContainText('Its other tags go with it: alpine:3.');
-    await dialog.getByRole('button', { name: 'Remove image' }).click();
-    await expect(dialog).toBeHidden();
+    await confirmWith(page, 'Remove image', 'Remove image alpine:3.19?');
     await expect(page.getByText('Removed alpine:3.19.')).toBeVisible();
     await expect(table.locator('tbody tr').filter({ hasText: ALPINE_OLD.id })).toHaveCount(0);
     expect(requests).toContain(`DELETE /api/v1/containers/images/${ALPINE_OLD.id}?force=false`);
 
     // An image that a container uses stays, and the answer names the container; it is never forced.
     await page.getByRole('button', { name: 'Remove image nginx:1.27' }).click();
-    await expect(dialog).not.toContainText('Its other tags go with it');
-    await dialog.getByRole('button', { name: 'Remove image' }).click();
-    await expect(dialog.getByText('The image was not removed')).toBeVisible();
-    await expect(dialog.getByText(IN_USE)).toBeVisible();
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
-    await expect(dialog).toBeHidden();
+    await expect(confirmation(page, 'Remove image nginx:1.27?')).not.toContainText('Its other tags go with it');
+    await confirmWith(page, 'Remove image', 'Remove image nginx:1.27?');
+    const refused = page.getByRole('alert').filter({ hasText: 'The image was not removed' });
+    await expect(refused).toContainText(IN_USE);
     await expect(imageRow('nginx:1.27')).toHaveCount(1);
     expect(requests).toContain(`DELETE /api/v1/containers/images/${NGINX.id}?force=false`);
     expect(requests.filter((r) => r.includes('force=true'))).toEqual([]);
@@ -714,12 +727,12 @@ test.describe('In Russian', () => {
     // first and without seconds, the ports' protocols, and the state of the log.
     await web.getByText('e2e-web').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-web' });
-    await expect(drawer.getByRole('button', { name: 'Сведения' })).toBeVisible();
+    await expect(drawer.getByRole('tab', { name: 'Сведения' })).toBeVisible();
     await expect(drawer.locator('.badge')).toHaveText(['Работает']);
     await expect(drawer.getByText('Работает', { exact: true })).toHaveCount(1);
     await expect(drawer.locator('[data-field="created"]')).toHaveText(RUSSIAN_DATE);
     await expect(drawer.getByText('running', { exact: true })).toHaveCount(0);
-    await drawer.getByRole('button', { name: 'Порты' }).click();
+    await drawer.getByRole('tab', { name: 'Порты' }).click();
     await expect(drawer.getByRole('table', { name: 'Порты' }).getByRole('columnheader')).toHaveText([
       'Хост',
       'Контейнер',
@@ -727,7 +740,7 @@ test.describe('In Russian', () => {
     ]);
     // The header's state, then a badge per port with its protocol (Docker's tcp and udp).
     await expect(drawer.locator('.badge')).toHaveText(['Работает', 'TCP', 'UDP']);
-    await drawer.getByRole('button', { name: 'Журнал' }).click();
+    await drawer.getByRole('tab', { name: 'Журнал' }).click();
     await expect(
       drawer.getByText('В реальном времени: новые строки появляются, как только контейнер их записывает'),
     ).toBeVisible();
@@ -746,13 +759,12 @@ test.describe('In Russian', () => {
     await expect(page.getByLabel('Образ', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Скачать' })).toBeVisible();
     await page.getByRole('button', { name: 'Удалить образ alpine:3.19' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Удаление образа' });
+    const dialog = confirmation(page, 'Удалить образ alpine:3.19?');
     await expect(dialog).toContainText(
-      `Удалить образ alpine:3.19 (${ALPINE_OLD.id})? Вместе с ним удаляются и другие его теги: alpine:3. ` +
-        'Образ, который используется контейнером, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
+      'Образ, который используется контейнером, не удаляется. Чтобы использовать образ позже, скачайте его снова.',
     );
-    await dialog.getByRole('button', { name: 'Отмена' }).click();
-    await expect(dialog).toBeHidden();
+    await expect(dialog).toContainText('Вместе с ним удаляются и другие его теги: alpine:3.');
+    await cancelConfirmation(page, 'Удалить образ alpine:3.19?', 'Отмена');
   });
 });
 
@@ -800,7 +812,7 @@ test.describe('Several containers at once', () => {
     await expect(button(page, 'Start selected')).toBeDisabled();
     await expect(checkbox(page, 'e2e-db')).toBeDisabled();
     await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Start', exact: true })).toBeDisabled();
-    await expect(rowOf(page, 'e2e-db').getByRole('button', { name: 'Remove', exact: true })).toBeDisabled();
+    await expect(actionsFor(rowOf(page, 'e2e-db'), 'e2e-db')).toBeDisabled();
     await rowOf(page, 'e2e-db').getByText('e2e-db').click();
     const drawer = page.getByRole('dialog', { name: 'e2e-db' });
     await expect(drawer.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
@@ -812,8 +824,8 @@ test.describe('Several containers at once', () => {
     await expect.poll(() => gates.length).toBe(1);
     gates.shift()!();
 
-    const result = page.getByRole('list', { name: 'Stopped 2 of 2 containers' });
-    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: Stopped', 'e2e-cache: Stopped']);
+    // A run that did everything says so in a toast (ADR-0432).
+    await expect(page.getByText('Stopped 2 of 2 containers', { exact: true })).toBeVisible();
     expect(posts(requests)).toEqual([
       `POST /api/v1/containers/${WEB.id}/stop`,
       `POST /api/v1/containers/${CACHE.id}/stop`,
@@ -895,9 +907,7 @@ test.describe('Several containers at once', () => {
     await expect(rows(page)).toHaveCount(1);
     await expect(toolbar(page)).toContainText('1 container selected');
     await button(page, 'Stop selected').click();
-    await expect(page.getByRole('list', { name: 'Stopped 1 of 1 container' }).getByRole('listitem')).toHaveText([
-      'e2e-web: Stopped',
-    ]);
+    await expect(page.getByText('Stopped 1 of 1 container', { exact: true })).toBeVisible();
     expect(posts(requests)).toEqual([`POST /api/v1/containers/${WEB.id}/stop`]);
     await page.getByRole('group', { name: 'State' }).getByRole('button', { name: /^All/ }).click();
     await expect(rows(page)).toHaveCount(3);
@@ -975,8 +985,7 @@ test.describe('Several containers at once', () => {
     await expect(bar).toContainText('Выбрано 3 контейнера');
     await page.getByRole('checkbox', { name: 'Выбрать e2e-cache', exact: true }).uncheck();
     await bar.getByRole('button', { name: 'Остановить выбранные', exact: true }).click();
-    const result = page.getByRole('list', { name: 'Остановлено 2 из 2 контейнеров' });
-    await expect(result.getByRole('listitem')).toHaveText(['e2e-web: Остановлен', 'e2e-db: Остановлен']);
+    await expect(page.getByText('Остановлено 2 из 2 контейнеров', { exact: true })).toBeVisible();
     await expect(bar).toHaveCount(0);
 
     await page.getByRole('checkbox', { name: 'Выбрать e2e-web', exact: true }).check();

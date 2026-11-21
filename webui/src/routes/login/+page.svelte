@@ -216,14 +216,8 @@
       </Button>
     {/if}
 
-    <Button variant="primary" class="w-full" type="submit" disabled={loading || usingKey}>
-      {#if loading}
-        {$t("login.signingIn")}
-      {:else if requiresTOTP}
-        {$t("login.verify")}
-      {:else}
-        {$t("login.signIn")}
-      {/if}
+    <Button variant="primary" class="w-full" type="submit" {loading} disabled={usingKey}>
+      {requiresTOTP ? $t("login.verify") : $t("login.signIn")}
     </Button>
   </form>
 </AuthCard>

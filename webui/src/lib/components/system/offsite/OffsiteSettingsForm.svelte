@@ -4,7 +4,7 @@
   // forgets the settings. Related fields go in a group with a legend, each field's label is short
   // and its unit and bounds stay with it (ADR-0432), and a Save that waits says for what.
   import type { OffsiteSettingsAnswer, OffsiteStatus } from "$lib/api/offsite";
-  import { Alert, Button, Checkbox, FieldGroup, Input, RadioGroup } from "$lib/components/ui";
+  import { Alert, Button, Checkbox, FieldGroup, Input, RadioGroup, HelpText } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { Key, Plus, Trash2 } from "lucide-svelte";
   import type { OffsiteForm } from "./form.svelte";
@@ -48,7 +48,7 @@
      check beside them (FieldGroup lays its fields in columns of its own). -->
 {#snippet legend(title: string, hint: string)}
   <legend class="text-sm font-semibold text-content">{title}</legend>
-  {#if hint}<p class="form-hint !mt-0.5">{hint}</p>{/if}
+  {#if hint}<HelpText text={hint} class="mt-0.5" />{/if}
 {/snippet}
 
 <!-- The limits of a target that copies over the network: the same fields for every kind, a group
@@ -93,7 +93,7 @@
           autocomplete="new-password"
         />
       </div>
-      {#if form.keepsRestPassword}<p class="form-hint -mt-2">{$t("offsite.rest.passwordKept")}</p>{/if}
+      {#if form.keepsRestPassword}<HelpText text={$t("offsite.rest.passwordKept")} class="-mt-2" />{/if}
       <div class="sm:max-w-md">
         <label for="offsite-rest-tls" class="form-label">{$t("offsite.rest.tls")}</label>
         <select id="offsite-rest-tls" class="form-select" bind:value={form.tls}>
@@ -132,7 +132,7 @@
         {#if answer.sftp_public_key}
           <p class="form-label">{$t("offsite.sftp.publicKey")}</p>
           <code class="block font-mono text-xs break-all select-all" data-testid="sftp-public-key">{answer.sftp_public_key}</code>
-          <p class="form-hint">{$t("offsite.sftp.publicKeyHint")}</p>
+          <HelpText text={$t("offsite.sftp.publicKeyHint")} class="mt-1.5" />
         {:else}
           <p class="text-status-warning">{$t("offsite.sftp.noKey")}</p>
         {/if}
@@ -149,7 +149,7 @@
       {#if form.pinShown}
         <div class="space-y-2 text-sm">
           <p class="break-all" data-testid="sftp-pinned">{$t("offsite.sftp.pinned", { fingerprint: answer.host_key_fingerprint ?? "" })}</p>
-          <p class="form-hint">{$t("offsite.sftp.pinnedHint")}</p>
+          <HelpText text={$t("offsite.sftp.pinnedHint")} class="mt-1.5" />
           <Checkbox bind:checked={form.trustNewHostKey} label={$t("offsite.sftp.trustNewKey")} />
         </div>
       {/if}
@@ -180,7 +180,7 @@
           autocomplete="new-password"
         />
       </div>
-      {#if form.keepsSecret}<p class="form-hint -mt-2">{$t("offsite.form.secretKept")}</p>{/if}
+      {#if form.keepsSecret}<HelpText text={$t("offsite.form.secretKept")} class="-mt-2" />{/if}
       {@render limits()}
     {/if}
   </fieldset></div>
@@ -234,9 +234,10 @@
       />
     </div>
     {#if !form.passwordTooShort && !(form.passwordAgain && form.passwordsDiffer)}
-      <p class="form-hint">
-        {form.keepsPassword ? $t("offsite.form.passwordKept") : $t("offsite.form.passwordNeeded", { n: MIN_PASSWORD_LENGTH })}
-      </p>
+      <HelpText
+        text={form.keepsPassword ? $t("offsite.form.passwordKept") : $t("offsite.form.passwordNeeded", { n: MIN_PASSWORD_LENGTH })}
+        class="mt-1.5"
+      />
     {/if}
   </fieldset></div>
 
@@ -262,7 +263,7 @@
        the button says it as its reason (ADR-0432), so screen readers hear it there, once. -->
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
     <Button type="submit" loading={saving} disabled={!canSave} disabledReason={needs}>
-      {saving ? $t("offsite.form.saving") : $t("offsite.form.save")}
+      {$t("offsite.form.save")}
     </Button>
     {#if !canSave && !saving && needs}
       <p id="offsite-save-why" aria-hidden="true" class="min-w-0 flex-1 basis-40 text-[13px] text-content-muted">{needs}</p>

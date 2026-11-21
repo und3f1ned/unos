@@ -119,7 +119,7 @@ test.describe('Account SMB card (fake data)', () => {
     await card.getByLabel('Password', { exact: true }).fill(fake.myPassword);
     await turnOn.click();
     await expect(card.locator('.badge', { hasText: /^Active$/ })).toBeVisible();
-    await expect(card.getByText('SMB is on for your account.')).toBeVisible();
+    await expect(page.getByText('SMB is on for your account.')).toBeVisible();
     await expect(docs).not.toContainText('Not usable until SMB is on');
     expect(fake.writes).toEqual([
       { method: 'POST', path: '/auth/me/smb/enable', body: { current_password: 'e2e-Wrong-Password-1' } },

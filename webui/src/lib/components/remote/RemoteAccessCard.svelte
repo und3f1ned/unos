@@ -13,10 +13,9 @@
 		type RemotePeerCreated,
 		type RemoteAccessStatus
 	} from '$lib/api/remoteAccess';
-	import { Alert, Badge, Button, Card, Input } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, Input, confirm, toast, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { Globe } from 'lucide-svelte';
-	import ConfirmDialog from './ConfirmDialog.svelte';
 	import FormDialog from './FormDialog.svelte';
 	import PeerConfigDialog from './PeerConfigDialog.svelte';
 	import PeerList from './PeerList.svelte';
@@ -32,13 +31,10 @@
 	let loadError = $state('');
 	let busy = $state(false);
 	let error = $state('');
-	let success = $state('');
 
 	let settings = $state({ endpoint: '', port: '', network: '' });
 	// Turn on stays enabled and says, at the field, what it waits for.
 	let settingsError = $state('');
-	let showEnable = $state(false);
-	let showDisable = $state(false);
 	let showEndpoint = $state(false);
 	let endpointValue = $state('');
 	let endpointError = $state('');
@@ -46,7 +42,6 @@
 	let peerName = $state('');
 	let peerKey = $state('');
 	let addError = $state('');
-	let revoking = $state<RemotePeer | null>(null);
 	let created = $state<RemotePeerCreated | null>(null);
 	let qrDataUrl = $state('');
 
@@ -85,7 +80,6 @@
 	async function act(change: () => Promise<void>) {
 		busy = true;
 		error = '';
-		success = '';
 		try {
 			await change();
 		} catch (e) {
@@ -96,23 +90,40 @@
 		await load();
 	}
 
+	/** Turn the tunnel on once confirmed: what reaches the NAS, and what the router and firewall need. */
 	async function turnOn() {
-		showEnable = false;
+		const yes = await confirm({
+			title: $t('remote.enableTitle'),
+			message: $t('remote.enableNasOnly'),
+			consequences: [
+				$t('remote.enableRouter', { port: settings.port, endpoint: settings.endpoint.trim() }),
+				$t('remote.enableFirewall', { port: settings.port }),
+				$t('remote.enableLan')
+			],
+			confirmLabel: $t('remote.turnOn'),
+			tone: 'warning'
+		});
+		if (!yes) return;
 		await act(async () => {
 			await enableRemoteAccess({
 				endpoint: settings.endpoint.trim(),
 				port: Number(settings.port),
 				network: settings.network.trim()
 			});
-			success = $t('remote.turnedOn');
+			toast.success($t('remote.turnedOn'));
 		});
 	}
 
 	async function turnOff() {
-		showDisable = false;
+		const yes = await confirm({
+			title: $t('remote.disableTitle'),
+			message: $t('remote.disableText'),
+			confirmLabel: $t('remote.turnOff')
+		});
+		if (!yes) return;
 		await act(async () => {
 			await disableRemoteAccess();
-			success = $t('remote.turnedOff');
+			toast.success($t('remote.turnedOff'));
 		});
 	}
 
@@ -128,7 +139,7 @@
 		try {
 			await setRemoteEndpoint(endpointValue.trim());
 			showEndpoint = false;
-			success = $t('remote.endpointSaved');
+			toast.success($t('remote.endpointSaved'));
 		} catch (e) {
 			endpointError = messageOf(e);
 		} finally {
@@ -148,7 +159,6 @@
 		busy = true;
 		addError = '';
 		error = '';
-		success = '';
 		try {
 			const result = await addRemotePeer(peerName.trim(), peerKey.trim() || null);
 			showAdd = false;
@@ -173,13 +183,16 @@
 		qrDataUrl = '';
 	}
 
-	async function revoke() {
-		const peer = revoking;
-		revoking = null;
-		if (!peer) return;
+	async function revoke(peer: RemotePeer) {
+		const yes = await confirm({
+			title: $t('remote.revokeTitle', { name: peer.name }),
+			message: $t('remote.revokeText', { name: peer.name }),
+			confirmLabel: $t('remote.revoke')
+		});
+		if (!yes) return;
 		await act(async () => {
 			await revokeRemotePeer(peer.id);
-			success = $t('remote.revoked', { name: peer.name });
+			toast.success($t('remote.revoked', { name: peer.name }));
 		});
 	}
 </script>
@@ -204,14 +217,11 @@
 		{#if status?.installed && on}
 			<div class="flex flex-wrap gap-2">
 				<Button variant="secondary" size="sm" disabled={busy} onclick={openEndpoint}>{$t('remote.changeEndpoint')}</Button>
-				<Button variant="secondary" size="sm" disabled={busy} onclick={() => (showDisable = true)}>{$t('remote.turnOff')}</Button>
+				<Button variant="secondary" size="sm" disabled={busy} onclick={turnOff}>{$t('remote.turnOff')}</Button>
 			</div>
 		{/if}
 	</div>
 
-	{#if success}
-		<Alert variant="success" class="mb-4">{success}</Alert>
-	{/if}
 	{#if error}
 		<Alert variant="error" class="mb-4"><p class="break-words">{error}</p></Alert>
 	{/if}
@@ -222,12 +232,12 @@
 		</Alert>
 	{/if}
 
-	<p class="text-sm text-content-secondary">{$t('remote.summary')}</p>
-	<details class="mt-2 text-[13px] leading-[18px] text-content-secondary">
-		<summary class="link w-fit cursor-pointer">{$t('remote.more')}</summary>
-		<p class="mt-2">{$t('remote.description')}</p>
-		{#if status?.port}<p class="mt-2">{$t('remote.outside', { port: status.port })}</p>{/if}
-	</details>
+	<HelpText text={$t('remote.summary')} moreLabel={$t('remote.more')}>
+		{#snippet more()}
+			<p>{$t('remote.description')}</p>
+			{#if status?.port}<p>{$t('remote.outside', { port: status.port })}</p>{/if}
+		{/snippet}
+	</HelpText>
 
 	{#if status && !status.installed}
 		<Alert variant="info" class="mt-4">{$t('remote.missing')}</Alert>
@@ -247,7 +257,7 @@
 				onsubmit={(e) => {
 					e.preventDefault();
 					settingsError = settings.endpoint.trim() ? '' : $t('remote.endpointNeeded');
-					if (!settingsError) showEnable = true;
+					if (!settingsError) void turnOn();
 				}}
 			>
 				<Input
@@ -291,38 +301,10 @@
 		{/if}
 
 		{#if status.configured}
-			<PeerList peers={status.peers} {clockAhead} {busy} {sizeUnits} onadd={openAdd} onrevoke={(peer) => (revoking = peer)} />
+			<PeerList peers={status.peers} {clockAhead} {busy} {sizeUnits} onadd={openAdd} onrevoke={revoke} />
 		{/if}
 	{/if}
 </Card>
-
-<ConfirmDialog
-	open={showEnable}
-	title={$t('remote.enableTitle')}
-	confirmLabel={$t('remote.turnOn')}
-	{busy}
-	oncancel={() => (showEnable = false)}
-	onconfirm={turnOn}
->
-	<div class="space-y-3 text-sm break-words">
-		<p>{$t('remote.enableNasOnly')}</p>
-		<p>{$t('remote.enableRouter', { port: settings.port, endpoint: settings.endpoint.trim() })}</p>
-		<p>{$t('remote.enableFirewall', { port: settings.port })}</p>
-		<p>{$t('remote.enableLan')}</p>
-	</div>
-</ConfirmDialog>
-
-<ConfirmDialog
-	open={showDisable}
-	title={$t('remote.disableTitle')}
-	danger
-	confirmLabel={$t('remote.turnOff')}
-	{busy}
-	oncancel={() => (showDisable = false)}
-	onconfirm={turnOff}
->
-	<p class="text-sm break-words">{$t('remote.disableText')}</p>
-</ConfirmDialog>
 
 <FormDialog
 	open={showEndpoint}
@@ -351,7 +333,7 @@
 	formId="remote-add-peer"
 	{busy}
 	error={addError}
-	submitLabel={busy ? $t('remote.adding') : $t('remote.addPeer')}
+	submitLabel={$t('remote.addPeer')}
 	submitDisabled={busy || !peerName.trim()}
 	oncancel={() => (showAdd = false)}
 	onsubmit={addPeer}
@@ -368,14 +350,3 @@
 
 <PeerConfigDialog {created} {qrDataUrl} onclose={closeCreated} />
 
-<ConfirmDialog
-	open={revoking !== null}
-	title={$t('remote.revokeTitle')}
-	danger
-	confirmLabel={$t('remote.revoke')}
-	{busy}
-	oncancel={() => (revoking = null)}
-	onconfirm={revoke}
->
-	<p class="text-sm break-words">{$t('remote.revokeText', { name: revoking?.name ?? '' })}</p>
-</ConfirmDialog>

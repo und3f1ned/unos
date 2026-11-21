@@ -67,7 +67,7 @@ test.describe('Apps whose image lacks the host platform', () => {
 
     await card(page, 'Plex Media Server').click();
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText(/^Plex Media Server is not available for linux\/riscv64: an image of the app has no build/)).toBeVisible();
+    await expect(dialog.locator('.alert').getByText(/^Plex Media Server is not available for linux\/riscv64: an image of the app has no build/)).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Install Plex Media Server' })).toBeDisabled();
     expect(installs).toEqual([]);
   });
@@ -112,7 +112,7 @@ test.describe('Apps whose image lacks the host platform', () => {
     await plex.click();
     const dialog = page.getByRole('dialog');
     await expect(
-      dialog.getByText('Plex Media Server недоступно для linux/riscv64: у образа приложения нет сборки для платформы этого сервера'),
+      dialog.locator('.alert').getByText('Plex Media Server недоступно для linux/riscv64: у образа приложения нет сборки для платформы этого сервера'),
     ).toBeVisible();
     await expect(dialog.getByRole('button', { name: /^Установить/ })).toBeDisabled();
   });

@@ -1,8 +1,8 @@
 <script lang="ts">
 	// The Logs tab of a container's drawer: the state of the log's stream, Reconnect once it ended
 	// or was lost, and the text, which follows new lines while it is scrolled to its end.
-	import { RotateCw } from 'lucide-svelte';
-	import { Alert, Button, StatusDot } from '$lib/components/ui';
+	import { RotateCw, ScrollText } from 'lucide-svelte';
+	import { Alert, Button, EmptyState, StatusDot } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { ContainerLog, LogState } from './containerLog.svelte';
 
@@ -58,9 +58,7 @@
 				aria-label={$t('containers.drawer.logOf', { name })}
 				class="bg-surface rounded-lg p-4 text-xs font-mono text-content-secondary overflow-auto h-full max-h-[60vh] scrollbar-thin whitespace-pre-wrap">{log.text}</pre>
 		{:else if log.state === 'live'}
-			<p class="text-center text-content-muted py-8">
-				{$t('containers.drawer.noLog')}
-			</p>
+			<EmptyState compact icon={ScrollText} title={$t('containers.drawer.noLog')} />
 		{/if}
 	</div>
 </div>

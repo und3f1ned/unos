@@ -1,22 +1,21 @@
 <script lang="ts">
-  import { Bell, Plus } from "lucide-svelte";
+  import { Bell } from "lucide-svelte";
   import type { NotificationConfig } from "$lib/api/notifications";
-  import { Button, Card, EmptyState, Skeleton } from "$lib/components/ui";
+  import { Card, EmptyState, Skeleton } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import ChannelCard from "./ChannelCard.svelte";
 
-  // The Channels view: the channels, or an empty state that adds the first one (the tab's header
-  // adds the others).
+  // The Channels view: the channels, or an empty state; the tab's header adds them, its one Add
+  // channel (ADR-0431).
   type Props = {
     configs: NotificationConfig[];
     loading: boolean;
-    // The outcome of each channel's last test, by channel id.
-    results: Record<string, { success: boolean; message: string }>;
+    // Why each channel's last test was not sent, by channel id.
+    results: Record<string, string>;
     // The id of the channel whose test runs.
     testing: string | null;
     // The ids of the channels whose on/off the server has not answered yet.
     toggling: ReadonlySet<string>;
-    oncreate: () => void;
     ontest: (config: NotificationConfig) => void;
     ontoggle: (config: NotificationConfig) => void;
     onedit: (config: NotificationConfig) => void;
@@ -24,7 +23,7 @@
     ondismissresult: (id: string) => void;
   };
 
-  let { configs, loading, results, testing, toggling, oncreate, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props =
+  let { configs, loading, results, testing, toggling, ontest, ontoggle, onedit, ondelete, ondismissresult }: Props =
     $props();
 </script>
 
@@ -36,13 +35,7 @@
     </div>
   {:else if configs.length === 0}
     <Card>
-      <EmptyState
-        icon={Bell}
-        title={$t("notifications.channels.none")}
-        description={$t("notifications.channels.noneHint")}
-      >
-        <Button variant="secondary" icon={Plus} onclick={oncreate}>{$t("notifications.addFirst")}</Button>
-      </EmptyState>
+      <EmptyState icon={Bell} title={$t("notifications.channels.none")} description={$t("notifications.channels.noneHint")} />
     </Card>
   {:else}
     <ul class="space-y-3" aria-label={$t("notifications.channels.list")}>

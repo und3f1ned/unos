@@ -223,7 +223,7 @@ test.describe('The progress of an install', () => {
     const notice = card.locator('.alert', { hasText: INSTALLED });
     await expect(notice).toContainText(FIRST_ADMIN);
     await expect(notice).toHaveClass(/alert-success/);
-    await expect(page.getByRole('button', { name: 'Installed (1)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (1)', exact: true })).toBeVisible();
 
     // Dismiss forgets the job.
     await card.getByRole('button', { name: 'Dismiss' }).click();
@@ -250,7 +250,7 @@ test.describe('The progress of an install', () => {
     installed.push(installedImmich(POOL.path));
     await events.update(endedJob(job, installedImmich(POOL.path)));
     await expect(jobCard(page).locator('.alert', { hasText: INSTALLED })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Installed (1)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (1)', exact: true })).toBeVisible();
 
     // The result stays after another reload, until it is dismissed.
     await page.reload();
@@ -285,7 +285,7 @@ test.describe('The progress of an install', () => {
     const card = jobCard(page);
     await expect(card.getByText('Failed', { exact: true })).toBeVisible();
     await expect(card.locator('.alert-error')).toContainText(PORT_IN_USE);
-    await expect(page.getByRole('button', { name: 'Installed (0)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (0)', exact: true })).toBeVisible();
   });
 
   test('while an install runs, the details of another app offer no install', async ({
@@ -299,7 +299,7 @@ test.describe('The progress of an install', () => {
     await catalogCard(page, 'Immich').click();
     const dialog = page.getByRole('dialog');
 
-    await expect(dialog.getByText('An install of Jellyfin is under way: install this app once it has ended.')).toBeVisible();
+    await expect(dialog.locator('.alert').getByText('An install of Jellyfin is under way: install this app once it has ended.')).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Install Immich' })).toBeDisabled();
   });
 });
@@ -319,7 +319,9 @@ test.describe('Cancel, Dismiss and a restart', () => {
       message: 'What it made so far is removed; its data folders and the downloaded images are kept.',
       action: 'Cancel install',
     });
-    await expect(card.getByRole('button', { name: 'Cancelling...' })).toBeDisabled();
+    // The cancel waits for the job's end (Button's loading).
+    await expect(card.getByRole('button', { name: 'Cancel install' })).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'Cancel install' })).toHaveAttribute('aria-busy', 'true');
     expect(requests).toEqual([`DELETE /api/v1/apps/install/jobs/${job.id}`]);
 
     // The server removes what the install made, then ends the job cancelled.
@@ -362,14 +364,14 @@ test.describe('Cancel, Dismiss and a restart', () => {
     const { events } = await fakeApps(page, installed);
     const images = await openAppStore(page);
     await events.update(starting(newInstallJob('immich', 'Immich', ['database', 'redis', 'machine-learning']), images));
-    await expect(page.getByRole('button', { name: 'Installed (0)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (0)', exact: true })).toBeVisible();
     // The install had made Immich's containers when the supervisor restarted.
     installed.push(installedImmich(POOL.path, { missing: ['immich'] }));
 
     await events.restart();
 
     await expect(jobCard(page)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Installed (1)', exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Installed (1)', exact: true })).toBeVisible();
   });
 
   test('the details say so when the supervisor restarted while the install checked', async ({

@@ -2,11 +2,10 @@
   import { messageOf } from "$lib/errors";
   import { onMount, untrack } from "svelte";
   import { cancelShutdown, getPendingAction, type PendingAction } from "$lib/api/power";
-  import { Alert, Button } from "$lib/components/ui";
+  import { Alert, Button, confirm, toast } from "$lib/components/ui";
   import {
     ACTIONS,
     PowerActionsCard,
-    PowerConfirmDialog,
     PowerPlan,
     PowerScheduleCard,
     PowerStatusCard,
@@ -28,12 +27,12 @@
   let pendingError = $state("");
   const wol = new WakeOnLan();
 
-  let asking = $state<Action | null>(null);
   let busy = $state(false);
-  let confirmError = $state("");
   let cancelling = $state(false);
-  let notice = $state("");
+  // Why the host refused an action, to read before trying again, with the action's title; what an
+  // action did is a toast (ADR-0432).
   let actionError = $state("");
+  let actionErrorTitle = $state("");
 
   // The scheduled shutdown, the wake by the RTC and the idle shutdown of the power settings
   // (ADR-0407).
@@ -46,16 +45,16 @@
     void plan.loadSchedule();
   });
 
-  /** What an action of a card did: the page says it, in place of an earlier failure. */
+  /** What an action of a card did: a toast, in place of an earlier failure. */
   function showNotice(message: string) {
-    notice = message;
-    actionError = "";
+    toast.success(message);
+    actionError = actionErrorTitle = "";
   }
 
-  /** Why the host refused an action of a card, in place of an earlier notice. */
-  function showFailure(message: string) {
-    notice = "";
+  /** Why the host refused an action, on the page until dismissed or the next action. */
+  function showFailure(message: string, title = "") {
     actionError = message;
+    actionErrorTitle = title;
   }
 
   async function loadPending() {
@@ -74,9 +73,33 @@
     await Promise.all([loadPending(), wol.load(), plan.reload()]);
   }
 
-  function ask(action: Action) {
-    asking = action;
-    confirmError = "";
+  /**
+   * Reboot, shut down or suspend once confirmed; why the host refused it stays on the page with the
+   * action's title.
+   */
+  async function ask(action: Action) {
+    if (busy) return;
+    const texts = ACTIONS[action];
+    const yes = await confirm({
+      title: $t(texts.titleKey),
+      message: $t(texts.textKey),
+      confirmLabel: $t(texts.confirmKey),
+      tone: texts.variant
+    });
+    if (!yes) return;
+    busy = true;
+    try {
+      const answer = await texts.run();
+      showNotice(answer.message);
+      if (answer.pending) {
+        pending = answer.pending;
+        pendingError = "";
+      }
+    } catch (e) {
+      showFailure(messageOf(e), $t(texts.failedKey));
+    } finally {
+      busy = false;
+    }
   }
 
   // The command palette's Reboot, Shut down and Suspend open their confirmation here, which acts
@@ -91,35 +114,7 @@
     const action = request ? REQUESTED[request.dialog] : undefined;
     if (!action) return;
     paletteRequest.set(null);
-    if (!busy) ask(action);
-  }
-
-  function closeConfirm() {
-    if (!busy) {
-      asking = null;
-      confirmError = "";
-    }
-  }
-
-  async function confirmAction() {
-    if (!asking || busy) return;
-    const action = ACTIONS[asking];
-    busy = true;
-    confirmError = "";
-    try {
-      const answer = await action.run();
-      showNotice(answer.message);
-      if (answer.pending) {
-        pending = answer.pending;
-        pendingError = "";
-      }
-      asking = null;
-    } catch (e) {
-      // The dialog stays open with the host's answer.
-      confirmError = messageOf(e);
-    } finally {
-      busy = false;
-    }
+    void ask(action);
   }
 
   async function cancelPending() {
@@ -136,8 +131,6 @@
       cancelling = false;
     }
   }
-
-  let confirmation = $derived(asking ? ACTIONS[asking] : null);
 
   // One reason for every card: when the host's power state cannot be read (no host commands, a
   // host that does not answer), the pending action, the plan, the settings and the interfaces fail
@@ -167,14 +160,11 @@
       </Alert>
     </div>
   {/if}
-  {#if notice}
-    <div role="status">
-      <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
-    </div>
-  {/if}
   {#if actionError}
     <div role="alert">
-      <Alert variant="error" dismissible ondismiss={() => (actionError = "")}>{actionError}</Alert>
+      <Alert variant="error" title={actionErrorTitle} dismissible ondismiss={() => (actionError = actionErrorTitle = "")}>
+        <p class="break-words">{actionError}</p>
+      </Alert>
     </div>
   {/if}
 
@@ -199,5 +189,3 @@
 
   <WakeOnLanCard {wol} unavailable={hostError !== "" && wol.error === hostError} onnotice={showNotice} onfailure={showFailure} />
 </div>
-
-<PowerConfirmDialog {confirmation} {busy} error={confirmError} onclose={closeConfirm} onconfirm={confirmAction} />

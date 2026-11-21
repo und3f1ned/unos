@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { ApiError } from '$lib/api/client';
 	import { generateRecoveryCodes, getRecoveryCodesStatus, type RecoveryCodesStatus } from '$lib/api/auth';
-	import { Alert, Button, Modal, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, ErrorState, Skeleton, confirm } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	// The recovery codes of the signed-in account, shown while two-factor
@@ -23,7 +23,6 @@
 	// none): the server may have stored new codes that never reached the page, and then the
 	// saved ones no longer work. Its warning stays until a generation succeeds or is refused.
 	let outcomeUnknown = $state(false);
-	let confirmNew = $state(false);
 
 	onMount(() => {
 		void load();
@@ -50,7 +49,6 @@
 			// No second request: if it failed, the codes answered only now would not be shown.
 			status = { remaining: codes.length, generated: true };
 			loadError = '';
-			confirmNew = false;
 		} catch (e) {
 			error = messageOf(e);
 			// Only a 4xx answer says that the server refused and changed nothing.
@@ -60,23 +58,20 @@
 		}
 	}
 
-	// A refusal's message goes with the dialog; the warning of an unknown outcome stays.
-	function clearRefusal() {
-		if (!outcomeUnknown) error = '';
-	}
-
-	function askForNewCodes() {
-		clearRefusal();
-		// Without codes left there is nothing to replace.
-		if (left > 0) confirmNew = true;
-		else void generate();
-	}
-
-	function closeConfirm() {
-		if (!busy) {
-			confirmNew = false;
-			clearRefusal();
+	// New codes replace the current ones once confirmed; without codes left there is nothing to
+	// replace. A refusal's message goes with the next try; the warning of an unknown outcome stays
+	// until a generation succeeds or is refused.
+	async function askForNewCodes() {
+		if (busy) return;
+		if (left > 0) {
+			const yes = await confirm({
+				title: $t('account.recovery.confirmTitle'),
+				message: $t('account.recovery.confirmText'),
+				confirmLabel: $t('account.recovery.generateNew')
+			});
+			if (!yes) return;
 		}
+		await generate();
 	}
 
 	const left = $derived(status?.remaining ?? 0);
@@ -99,7 +94,7 @@
 	{:else if loading}
 		<div aria-busy="true"><Skeleton count={2} /></div>
 	{:else if loadError || !status}
-		<Alert variant="error" title={$t('account.recovery.loadError')}>{loadError}</Alert>
+		<ErrorState title={$t('account.recovery.loadError')} message={loadError} onretry={load} />
 	{:else if !status.generated}
 		<p class="text-sm text-secondary">{$t('account.recovery.none')}</p>
 		<Button loading={busy} onclick={generate}>{$t('account.recovery.generate')}</Button>
@@ -109,38 +104,15 @@
 		{:else}
 			<p class="text-sm">{$t('account.recovery.left', { n: left })}</p>
 		{/if}
-		<Button variant="secondary" loading={busy && !confirmNew} onclick={askForNewCodes}>
+		<Button variant="secondary" loading={busy} onclick={askForNewCodes}>
 			{$t('account.recovery.generateNew')}
 		</Button>
 	{/if}
 
-	{#if error && !confirmNew}
-		<Alert variant="error" title={errorTitle}>
-			{error}
-			{#if outcomeUnknown}<p class="mt-1">{$t('account.recovery.unknownHint')}</p>{/if}
-		</Alert>
-	{/if}
-</section>
-
-<Modal
-	open={confirmNew}
-	title={$t('account.recovery.confirmTitle')}
-	size="md"
-	closable={!busy}
-	onclose={closeConfirm}
->
-	<p>{$t('account.recovery.confirmText')}</p>
 	{#if error}
 		<Alert variant="error" title={errorTitle}>
 			{error}
 			{#if outcomeUnknown}<p class="mt-1">{$t('account.recovery.unknownHint')}</p>{/if}
 		</Alert>
 	{/if}
-
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={busy} onclick={closeConfirm}>
-			{$t('common.cancel')}
-		</Button>
-		<Button class="flex-1" loading={busy} onclick={generate}>{$t('account.recovery.generateNew')}</Button>
-	{/snippet}
-</Modal>
+</section>
