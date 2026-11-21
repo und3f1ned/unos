@@ -51,6 +51,18 @@ NPM_BIN := $(call absolute,$(NPM))
 # pytest's option for TEST_WORKERS, when the Python has pytest-xdist (ADR-0383).
 xdist = $(shell $(PY) -c 'import xdist' > /dev/null 2>&1 && echo "-n $(TEST_WORKERS)")
 workers = $(or $(xdist),$(info make $@: pytest-xdist is not installed for $(PY) (make setup installs it): one process))
+# make test, when TESTS names every test (tests/, as make check runs it), measures the line coverage of
+# supervisor/src with pytest-cov in every worker, prints the total and fails below the floor of
+# supervisor/.coveragerc, its one place, which only rises (ADR-0439). PYTEST_ARGS do not turn it off:
+# a -k over every test fails the floor, so name a part in TESTS. A part measures nothing, with a line
+# that says so; make test-fast and make smoke never measure. Each run keeps its data in a file of its
+# own (.coverage.run<pid> and its workers' .coverage.run<pid>.*), so that runs in one checkout neither
+# erase nor add up each other's, and leaves it as supervisor/.coverage.
+test_paths = $(patsubst %/,%,$(patsubst ./%,%,$(TESTS)))
+every_test = $(if $(filter-out tests,$(test_paths)),,$(filter tests,$(test_paths)))
+coverage = $(if $(every_test),--cov=src --cov-report=,$(info make $@: no coverage for a part of the tests (TESTS)))
+coverage_file = $(if $(every_test),COVERAGE_FILE=.coverage.run$$$$ )
+coverage_kept = $(if $(every_test),; status=$$?; mv -f .coverage.run$$$$ .coverage 2> /dev/null; exit $$status)
 
 # make check and make check-fast record the state of the working tree when they pass, and forget
 # the record when they fail, for the Stop hook and the pre-commit hook (scripts/green-run.py,
@@ -120,8 +132,8 @@ lint-json:
 		$(PY) -m json.tool "$$f" > /dev/null || bad="$$bad $$f"; \
 	done; if [ -n "$$bad" ]; then echo "lint: not valid JSON:$$bad" >&2; exit 1; fi; echo "JSON: $(JSON_FILES)"
 
-test: ## All backend tests, supervisor/tests (TESTS=..., PYTEST_ARGS=...)
-	cd supervisor && $(PY) -m pytest $(TESTS) -q --tb=short --ignore=tests/fixtures $(workers) $(PYTEST_ARGS)
+test: ## All backend tests, supervisor/tests, and the coverage of supervisor/src against its floor (TESTS=..., PYTEST_ARGS=...)
+	cd supervisor && $(coverage_file)$(PY) -m pytest $(TESTS) -q --tb=short --ignore=tests/fixtures $(workers) $(coverage) $(PYTEST_ARGS)$(coverage_kept)
 
 test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secrets, dev and stand-in scripts
 	cd supervisor && $(PY) -m pytest $(TEST_FAST) -q --tb=short $(workers) $(PYTEST_ARGS)

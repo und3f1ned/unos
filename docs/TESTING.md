@@ -10,7 +10,7 @@ template point here.
 
 | Level | Command | Where it runs | What it proves |
 |-------|---------|---------------|----------------|
-| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere), svelte-check, the check of the web UI's texts and the production build |
+| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere) with the line coverage of `supervisor/src` at or above its floor, svelte-check, the check of the web UI's texts and the production build |
 | 2. E2E against the local stand-in | `make e2e-local` | this machine | the user flows of the web UI against the real supervisor and the built web UI |
 | 3. The dev device | `scripts/dev/` with the deploy-device and device-checks skills | the dev device | what only a real NAS host has: disks, btrfs, Samba, Docker, a reboot |
 
@@ -82,7 +82,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make check` | `lint`, `test` and `frontend`: what CI's Unit Tests, Lint and Frontend jobs run, without the network audits |
 | `make check-fast` | `lint` and `test-fast`: the pre-commit hook and the Stop hook |
 | `make lint` | `ruff check supervisor scripts .claude/hooks` with the rules of `ruff.toml` (pyflakes findings, syntax errors and the rules that find bugs, ADR-0425, in the supervisor and in the repository's own tooling), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
-| `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py`, `test_webui_design_system.py`, `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365) and `test_webui_runes.py` (`webui/scripts/runes-check.mjs`: every component in runes mode, ADR-0427); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
+| `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py`, `test_webui_design_system.py`, `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365) and `test_webui_runes.py` (`webui/scripts/runes-check.mjs`: every component in runes mode, ADR-0427); when `TESTS` names every test, the line coverage of `supervisor/src` against its floor ([Coverage](#coverage)); `TESTS=tests/test_auth.py` for one file, `TESTS=tests/test_shares.py PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
 | `make test-fast` | the convention tests, in parallel worker processes: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
 | `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run runes` (`scripts/runes-check.mjs`: every component in runes mode, without the syntax of Svelte 4, ADR-0427), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
@@ -170,6 +170,36 @@ make test TESTS=tests/test_shares.py PYTEST_ARGS='-x -k reconcile'
 make test-fast                                   # the convention tests
 make smoke                                       # seconds: startup, health, setup, login
 ```
+
+### Coverage
+
+`make test`, when `TESTS` names every test (`tests/`, the default, as `make check` runs it),
+measures the line coverage of `supervisor/src` with pytest-cov (ADR-0439): each worker of
+pytest-xdist measures its tests and the run adds them up. It prints the total and fails below
+the floor, also when every test passed, in this form (the floor, then the total):
+
+```
+Required test coverage of <floor>.0% reached. Total coverage: <total>%
+```
+
+`PYTEST_ARGS` do not turn it off: `make test PYTEST_ARGS='-k smb'` runs a part of the tests
+against the floor and fails, so name a part in `TESTS`. A part named in `TESTS` measures nothing
+and says so in one line, and neither do `make test-fast`, `make smoke` and the hooks. `make test` prints no table of files; after a run,
+`cd supervisor && .venv/bin/python -m coverage report --skip-covered --sort=cover` reads the
+git-ignored `supervisor/.coverage` for them. Each run writes its data under a name of its own,
+`.coverage.run<pid>` (and its workers' `.coverage.run<pid>.*`), and renames it to `.coverage` at
+its end, so two runs in one checkout neither erase nor add up each other's data.
+
+The floor is `fail_under` of `supervisor/.coveragerc`, its one place, compared at two decimals; the
+file sets nothing else, and no line of `supervisor/src` carries coverage's `pragma: no cover`
+(`supervisor/tests/test_repo_tooling.py`): an omitted file or an excluded line would raise the
+measure as a lower floor would. The floor is a whole percent and only rises: the same test file, in
+`make test-fast`, refuses a floor below one committed before it, on the branch or on a branch merged
+into it. A change that raises the coverage may raise the floor to the new measure, rounded down;
+lowering it, or excluding code from the measure, takes a new ADR of the owner's that supersedes
+ADR-0439. Measure on macOS, where `make check` runs: the Linux-only tests skip there, so the code
+they run counts as not run, and Linux (CI's Unit Tests job) measures more.
+`scripts/dev/linux-tests.sh` runs pytest without pytest-cov, and the coverage tests skip there.
 
 ### The Secret Scan
 
@@ -505,7 +535,7 @@ request against `main`; a new push to a pull request cancels the run for the pre
    `tests/test_feature_list.py` can compare the ledger with the one at the merge base with
    `origin/main` (it skips while main has no `feature-list.json`), then
    `pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt` on
-   Python 3.11 and `make test`.
+   Python 3.11 and `make test`, with its coverage floor ([Coverage](#coverage)).
 2. **Lint and Audit (Python)** (`lint`):
    - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff
      and pip-audit, and every package they depend on, with their hashes

@@ -513,6 +513,7 @@ and this index, and `make check-fast` runs it.
 | [0317](0317-the-e2e-specs-skip-only-on-listed-conditions-of-the-local-target-and-expect-no-failure.md) | The E2E specs skip only on listed conditions of the local target, and expect no failure | accepted | 2026-11-10 |
 | [0383](0383-backend-tests-run-in-parallel-with-paths-of-their-own-and-a-green-tree-skips-the-pre-commit-check.md) | Backend tests run in parallel with paths of their own, and a green tree skips the pre-commit check | accepted | 2026-11-17 |
 | [0433](0433-a-feature-runs-the-e2e-specs-of-its-area-and-the-full-suite-runs-once-per-batch.md) | A feature runs the E2E specs of its area, and the full suite runs once per batch | accepted | 2026-11-20 |
+| [0439](0439-the-backend-tests-measure-their-line-coverage-and-fail-below-a-floor-that-only-rises.md) | The backend tests measure their line coverage and fail below a floor that only rises | accepted | 2026-11-21 |
 
 ## CI
 

@@ -49,6 +49,9 @@ Thumbs.db
 test-results/
 playwright-report/
 coverage/
+# make test's coverage data and its workers' (supervisor/.coveragerc, ADR-0439).
+.coverage
+.coverage.*
 # The local stand-in of make e2e-local (scripts/standin/e2e.sh): data, logs, certificate.
 .standin/
 

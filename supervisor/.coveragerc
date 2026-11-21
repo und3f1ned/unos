@@ -1,0 +1,13 @@
+# The coverage that make test measures when TESTS names every test: the line coverage of
+# supervisor/src (the Makefile's --cov=src), with pytest-cov over the workers of pytest-xdist
+# (ADR-0439, ADR-0383). docs/TESTING.md explains it. This file sets the floor and its precision
+# and nothing else: an omitted file or an excluded line would raise the measure as a lower floor.
+
+[report]
+# The floor: make test fails when the total is below it. It is a whole percent, it only rises
+# (tests/test_repo_tooling.py refuses a floor below one committed before) and it lives here alone.
+# Raise it to a new measure on macOS, where make check runs and the Linux-only tests skip, rounded
+# down; lowering it, or excluding code from the measure, takes an ADR that supersedes ADR-0439.
+fail_under = 91
+# The total to two decimals, compared with the floor at that precision.
+precision = 2

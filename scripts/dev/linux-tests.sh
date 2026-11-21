@@ -105,7 +105,7 @@ dev_remote_ro "$REMOTE_LIST" "$UNOS_DEV_ROOTFS" > "$work/dists" || rc=$?
 [ "$rc" -eq 0 ] || dev_die "could not list $UNOS_DEV_ROOTFS on the device"
 machine=$(sed -n 's/^machine=//p' "$work/dists")
 "$PYTHON" "$UNOS_DEV_DIR/tree.py" bundle "$work/bundle.tgz" --rootfs-dists "$work/dists" \
-    --machine "${machine:-aarch64}" --skip pytest-cov -- "$@"
+    --machine "${machine:-aarch64}" --skip pytest-cov --skip coverage -- "$@"
 
 run=/dev/shm/unos-dev-tests-$$-$RANDOM
 start=$(dev_sd_sectors) || start=
