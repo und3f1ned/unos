@@ -3,6 +3,7 @@ status: accepted
 date: 2026-11-21
 area: testing
 decided-by: agent
+supersedes: [ADR-0210]
 ---
 
 # ADR-0439: Each worktree runs a compose test stack of its own, with a project, ports and a subnet derived from its path

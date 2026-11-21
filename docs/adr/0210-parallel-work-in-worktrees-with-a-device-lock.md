@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0439
 date: 2026-11-07
 area: process
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0210: Parallel agents work in separate worktrees, and one agent at a time uses the device
 
 ## Context
+
+Superseded by ADR-0439: only in part, the rule that the compose test stack of `scripts/test-cycle.sh` runs once per machine; each worktree now runs a stack of its own. Every other rule here stays in force.
 
 The SMB slice and this conversion were built by several agents at once. git isolates only files: shared state such as the backend suite's fixed paths under `/tmp`, the stand-in's ports, the git index and the one dev device can still collide, and parallel device deploys would multiply the writes to its system disk (ADR-0214). Every change must stay attributable and reviewable (the book's Isolated Parallel Work pattern).
 

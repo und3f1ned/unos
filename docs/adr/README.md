@@ -48,7 +48,7 @@ and this index, and `make check-fast` runs it.
 | [0207](0207-no-backward-compatibility.md) | UNOS keeps no backward compatibility, because it has no older installs to migrate | accepted | 2026-11-07 |
 | [0208](0208-commits-and-pushes-only-when-the-owner-asks.md) | Commits and pushes happen only when the owner asks, and the owner opens pull requests | accepted | 2026-11-07 |
 | [0209](0209-conventional-commits-in-english.md) | Commit messages follow Conventional Commits in English | accepted | 2026-11-07 |
-| [0210](0210-parallel-work-in-worktrees-with-a-device-lock.md) | Parallel agents work in separate worktrees, and one agent at a time uses the device | accepted | 2026-11-07 |
+| [0210](0210-parallel-work-in-worktrees-with-a-device-lock.md) | Parallel agents work in separate worktrees, and one agent at a time uses the device | superseded by [0439](0439-each-worktree-runs-a-compose-test-stack-of-its-own-with-a-project-ports-and-a-subnet-derived-from-its-path.md) | 2026-11-07 |
 | [0211](0211-executable-guardrails-for-agents.md) | A committed settings file and a PreToolUse guard block risky agent commands | accepted | 2026-11-07 |
 | [0335](0335-every-background-command-of-an-agent-has-a-deadline.md) | Every background command of an agent has a deadline | accepted | 2026-11-11 |
 
