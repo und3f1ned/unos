@@ -288,8 +288,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `DEFAULT (CURRENT_TIMESTAMP)` where the baseline writes it without parentheses (create_all of
   January), users' 2FA columns of an old ALTER TABLE (`totp_secret TEXT`, `totp_enabled INTEGER
   DEFAULT 0`), and smb_state of ADR-0319's older layout. GET /api/v1/health 200, a sign-in and
-  GET /api/v1/auth/users (2 users) work. `architecture.database-migrations` stays false: its notes
-  expected a warning naming smb_state at most, and the restart's check is not done.
+  GET /api/v1/auth/users (2 users) work; after a restart of the supervisor (1.430 MiB) neither
+  line again. The owner accepted the four tables as they are: `architecture.database-migrations`
+  passes (Log).
 - Before it, a64f891e of the branch `mvp.batch-18`: every page on the shared components and the
   design check without a baseline (ADR-0438), deployed on 2026-11-21 at the owner's request after
   `make check` and the full E2E (SD MiB sync 6.098, build-supervisor 4.766, build-webui 19.445,
@@ -757,6 +758,20 @@ Open owner actions:
     GB on the SD card).
 
 ## Log
+
+### 2026-11-21: architecture.database-migrations passes on the dev device (ADR-0444)
+
+- The deploy of 0c7b84b9 brought the dev device's unos.db from no revision to 0001, and the
+  supervisor's WARNING named api_tokens, login_attempts, smb_state and users, where the entry's
+  notes had expected smb_state alone. In a RAM copy they differ from the baseline only as
+  create_all of January and an old ALTER TABLE left them: `DEFAULT (CURRENT_TIMESTAMP)` in
+  parentheses, users' `totp_secret TEXT` and `totp_enabled INTEGER DEFAULT 0`, and smb_state of
+  ADR-0319's older layout. Asked whether to accept them as they are or rebuild them in a revision
+  0002, the owner answered "yes, accept" (in translation): a revision that changes one of them
+  copies the table it finds (batch_alter_table), and the warning is logged once, at the adoption.
+- After `docker restart unos-supervisor` (1.430 MiB on the SD card) neither line was logged again
+  and GET /api/v1/health answered 200; a sign-in and GET /api/v1/auth/users (2 users) worked
+  before it. The BPI-F3's unos.db was brought to 0001 with no warning. `passes` is true.
 
 ### 2026-11-21: The nineteenth batch, merged on `mvp.batch-19` (ADR-0439 to ADR-0449)
 
