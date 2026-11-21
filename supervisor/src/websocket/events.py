@@ -70,6 +70,10 @@ It sends administrators ``{"type": "app_installs", "data": [...]}``, the running
 app with its progress and the last install of each app since the start, each as
 ``GET /api/v1/apps/install/jobs`` answers it (``apps.install_jobs.current``), after auth_ok once
 there is one and whenever they change (ADR-0384); regular users never get it.
+
+It sends administrators ``{"type": "update", "data": {...}}``, the progress of the update or rollback
+of UNOS that runs or ran last, as ``GET /api/v1/updates/progress`` answers it, after auth_ok once
+one ran since the start and whenever a step of it changes (ADR-0439); regular users never get it.
 """
 import asyncio
 import functools
@@ -102,6 +106,7 @@ from ..network import links
 from ..storage import balances, devices, scrubs
 from ..shares import repair_router
 from ..system.sensors import cpu_temperature
+from ..updates import updater as updates
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -718,6 +723,17 @@ async def _send_installs(websocket: WebSocket, is_admin: bool, sent: int | None)
     return version
 
 
+async def _send_update(websocket: WebSocket, is_admin: bool, sent: int) -> int:
+    """Send an administrator the update's progress when a step changed it since the version
+    ``sent`` (0: none seen; an updater that ran nothing since the start sends nothing). Returns the
+    version it is up to date with (ADR-0439)."""
+    updater = updates._updater
+    if not is_admin or updater is None or updater.version == sent:
+        return sent
+    await websocket.send_json({"type": "update", "data": updater.current_progress().model_dump(mode="json")})
+    return updater.version
+
+
 def _for_role(message: dict, is_admin: bool) -> dict:
     """The stats message for a socket of this role. The host's interfaces with their traffic are
     System > Network's, an administrator's page (ADR-0030): a regular user's dashboard gets the
@@ -759,6 +775,7 @@ async def websocket_endpoint(websocket: WebSocket):
     sent_removals = 0
     sent_repair: object = _NO_REPAIR_SENT
     sent_installs: int | None = None
+    sent_update = 0
     try:
         # Start sending stats
         while not (disconnected.done() or revoked.done()):
@@ -768,6 +785,7 @@ async def websocket_endpoint(websocket: WebSocket):
             sent_removals = await _send_disk_removals(websocket, role["admin"], sent_removals)
             sent_repair = await _send_repair(websocket, role["admin"], sent_repair)
             sent_installs = await _send_installs(websocket, role["admin"], sent_installs)
+            sent_update = await _send_update(websocket, role["admin"], sent_update)
             stats = await asyncio.to_thread(shared_system_stats)
             await websocket.send_json(_for_role(stats, role["admin"]))
             await asyncio.wait(

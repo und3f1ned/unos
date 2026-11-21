@@ -175,8 +175,9 @@ print(json.dumps({
     },
     "env": {name: os.environ.get(name) for name in (
         "DOCKER_HOST", "DOCKER_TLS_VERIFY", "UNOS_HOST_EXEC", "UNOS_DISABLE_BACKGROUND_TASKS",
-        "UNOS_INSTALL_DIR", "UNOS_DEBUG_MODE", "container", "TMPDIR")},
+        "UNOS_DEBUG_MODE", "container", "TMPDIR")},
     "login_limit": importlib.import_module("src.auth.router").limiter.enabled,
+    "installer": type(importlib.import_module("src.updates.installer").current).__name__,
     "serving": {
         "dir": str(importlib.import_module("src.security.serving").SERVED_DIR),
         "host": importlib.import_module("src.security.serving").CADDY_TLS_HOST,
@@ -365,7 +366,8 @@ class TestIsolation:
         assert configured["power_off"] is True
         # The UPS monitor shuts nothing down inside a container (system.ups-monitoring).
         assert env["container"] == "docker"
-        assert _inside(env["UNOS_INSTALL_DIR"], state) and not Path(env["UNOS_INSTALL_DIR"]).exists()
+        # The updater's release installer is not decided: it installs nothing here (ADR-0439).
+        assert configured["installer"] == "Undecided"
         assert _inside(env["TMPDIR"], state)
 
     def test_login_rate_limit_is_off(self, configured):

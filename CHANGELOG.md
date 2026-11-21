@@ -12,6 +12,17 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- System > Updates' in-app updater is built up to its release installer (ADR-0439): an update gets
+  the release's images, backs up the database with SQLite's backup API into
+  `/var/lib/unos/backups/in-app-<time>/` (mounted into the supervisor), switches, waits up to 5
+  minutes for the release to answer and otherwise rolls back with the backup's database put back
+  through the open database; Rollback, the progress over the events socket, the history and an
+  automatic install at an interval come with it. No NAS can install yet: where a release's images
+  come from and how the supervisor replaces its own container are the owner's to decide, and until
+  then the tab names `update.sh` and why. Gone with the old path, which could not run in the
+  container: `POST /api/v1/updates/reset`, the release's `checksum_sha256`, the update settings
+  `auto_check`, `include_prereleases` and `github_repo`, and `UNOS_INSTALL_DIR`; a restore of a
+  backup answers 409 while an update runs.
 - The off-device copy (System > Backup & Restore) also goes to a restic REST server over HTTPS,
   with its user and password (only in restic's environment, never answered or logged) and its
   certificate checked by the system's roots, by a CA certificate or by the SHA-256 fingerprint of

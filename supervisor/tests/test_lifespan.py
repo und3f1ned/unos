@@ -27,6 +27,7 @@ power_schedule = importlib.import_module("src.power.schedule")
 app_usage = importlib.import_module("src.apps.usage")
 monitor_history = importlib.import_module("src.monitor.history")
 scheduler = importlib.import_module("src.scheduler.router")
+updater = importlib.import_module("src.updates.updater")
 
 LOOPS = {
     "scheduler": (scheduler, "scheduler_loop", "_scheduler_task"),
@@ -45,6 +46,8 @@ LOOPS = {
     "app_resources": (app_usage, "app_resources_loop", "_loop_task"),
     # The Resource Monitor's history, a point every 10 s kept for an hour in RAM (ADR-0399).
     "monitor_history": (monitor_history, "history_loop", "_loop_task"),
+    # The automatic install of System > Updates (ADR-0439).
+    "automatic_install": (updater, "automatic_install_loop", "_automatic_task"),
 }
 
 

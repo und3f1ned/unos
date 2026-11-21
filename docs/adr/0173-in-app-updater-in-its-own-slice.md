@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: superseded
+superseded-by: ADR-0439
 date: 2026-11-06
 area: system
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0173: Redesign the in-app updater in its own slice; until then update.sh is the way
 
 ## Context
+
+Superseded by ADR-0439: the updater's defects are fixed, and Install Update and Rollback run through a release installer, refused with its reason until the owner decides where a release's images come from and how the supervisor replaces its own container.
 
 Install Update and Rollback on System > Updates start nothing, as in 1.0.0: the routes of `supervisor/src/updates/router.py` hand `asyncio.create_task` to FastAPI's BackgroundTasks, which runs it in a worker thread, so the update never starts. It could not work anyway: the updater (`supervisor/src/updates/updater.py`) runs git and `docker compose` in a checkout at `/opt/unos`, and the supervisor container has no such checkout, no git and no Docker CLI. Making it work is a design question, not a bug fix.
 

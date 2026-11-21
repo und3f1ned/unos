@@ -2727,7 +2727,21 @@ fact has one place: the dashboard summarizes some of them and links there.
 - **How to update**: UNOS is updated on the host, with
   `sudo /opt/unos/deploy/update.sh` (see
   [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
-  or roll them back yet (feature-list entry `system.in-app-updater`).
+  or roll them back yet: where a release's images come from and how UNOS
+  replaces its own container are still to be decided, and **Why not from here**
+  shows the server's reason (feature-list entry `system.in-app-updater`,
+  ADR-0439).
+- **Install, Rollback and the automatic install** show only on a NAS whose
+  supervisor can install releases, which none can yet. There **Install
+  &lt;release&gt;** asks first, then gets the release's images, backs up the
+  database into `/var/lib/unos/backups/in-app-<time>/` on the host (the newest
+  3 are kept), starts the release and waits up to 5 minutes for it to answer;
+  when it does not, UNOS goes back to the version before with the database of
+  the backup. **Last update** follows each step and says how it ended,
+  **Roll back** returns to the version before with the database of the backup
+  (changes made since are lost), **Update history** lists the updates, and
+  **Automatic install** installs a newer stable release at the interval you set
+  (1 to 168 hours), the first time one interval after you turn it on.
 
 ### Resource Monitor
 

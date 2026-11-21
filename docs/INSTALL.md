@@ -880,7 +880,9 @@ The script:
    a rebuild gives the images the name of a release that was tagged on the
    commit UNOS already runs.
 2. Backs up the database (consistently, with SQLite's online backup API) and
-   the rest of the data volume to `/var/lib/unos/backups/update-<date>/`. Only
+   the rest of the data volume to `/var/lib/unos/backups/update-<date>/` (the
+   supervisor mounts that folder and keeps its own copies of the database
+   before an in-app update in `in-app-<time>/` beside them, ADR-0439). Only
    root can read the backups: they contain the JWT signing secret, the keys
    of the backup tasks next to the scheduled backups those keys decrypt (a
    restored data volume needs both), and `offsite_secrets.json`, the password
