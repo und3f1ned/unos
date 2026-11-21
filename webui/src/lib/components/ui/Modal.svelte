@@ -68,7 +68,8 @@
 
 	const toneOf = $derived(tone ?? (danger ? 'danger' : null));
 
-	const titleId = `modal-title-${++titleCount}`;
+	titleCount += 1;
+	const titleId = `modal-title-${titleCount}`;
 
 	const sizeClasses = {
 		sm: 'modal-sm',

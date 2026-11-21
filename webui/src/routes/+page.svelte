@@ -207,7 +207,8 @@
   async function hide(id: string) {
     if (!(await apply(setHidden(layout, id, true), $t("dashboard.layout.hidden", { name: nameOf(id) })))) return;
     await tick();
-    document.querySelectorAll<HTMLElement>("[data-hidden-list] button")[hiddenWidgets.findIndex((e) => e.id === id)]?.focus();
+    const buttons = document.querySelectorAll<HTMLElement>("[data-hidden-list] button");
+    buttons[hiddenWidgets.findIndex((e) => e.id === id)]?.focus();
   }
 
   async function show(id: string) {

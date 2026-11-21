@@ -3,7 +3,7 @@
   import { onMount, untrack } from "svelte";
   import { get } from "svelte/store";
   import { Cpu, MemoryStick, Network, HardDrive } from "lucide-svelte";
-  import { Alert, Button, Card, Skeleton, Segmented } from "$lib/components/ui";
+  import { Alert, Card, Skeleton, Segmented } from "$lib/components/ui";
   import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from "$lib/stores/stats";
   import { getMonitorHistory } from "$lib/api/monitor";
   import {

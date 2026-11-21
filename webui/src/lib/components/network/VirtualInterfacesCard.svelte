@@ -9,7 +9,6 @@
 		keepVirtualChange,
 		type VirtualChange,
 		type VirtualInterface,
-		type VirtualKind,
 		type VirtualStatus,
 		type WaitingChange
 	} from '$lib/api/network';

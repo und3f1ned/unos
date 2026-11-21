@@ -39,8 +39,8 @@
       certificates.generateOpen = false;
       newCert = { domain: "", validity_days: 365, organization: "", country: "" };
       await certificates.load();
-    } catch (e: any) {
-      certificates.generateError = e.message || $t("account.certs.generateFailed");
+    } catch (e) {
+      certificates.generateError = (e as Error).message || $t("account.certs.generateFailed");
     } finally {
       certificates.loading = false;
     }

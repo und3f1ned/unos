@@ -41,8 +41,8 @@
         twoFactor.qrDataUrl = "";
       }
       twoFactor.setupOpen = true;
-    } catch (e: any) {
-      twoFactor.error = e.message || $t("account.totp.setupFailed");
+    } catch (e) {
+      twoFactor.error = (e as Error).message || $t("account.totp.setupFailed");
     } finally {
       twoFactor.loading = false;
     }

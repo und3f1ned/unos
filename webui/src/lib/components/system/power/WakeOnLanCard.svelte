@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Network } from "lucide-svelte";
   import { disableWol, enableWol, type WolInterface } from "$lib/api/power";
-  import { Alert, Badge, Button, Card, EmptyState, Skeleton, LoadState, HelpText } from "$lib/components/ui";
+  import { Badge, Button, Card, EmptyState, Skeleton, LoadState, HelpText } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import type { WakeOnLan } from "./wol.svelte";
 

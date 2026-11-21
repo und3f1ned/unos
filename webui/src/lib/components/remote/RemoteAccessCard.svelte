@@ -15,7 +15,6 @@
 	} from '$lib/api/remoteAccess';
 	import { Alert, Badge, Button, Card, Input, confirm, toast, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { Globe } from 'lucide-svelte';
 	import FormDialog from './FormDialog.svelte';
 	import PeerConfigDialog from './PeerConfigDialog.svelte';
 	import PeerList from './PeerList.svelte';

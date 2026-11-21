@@ -85,7 +85,7 @@
   async function loadTasks() {
     try {
       tasks = (await getTasks()).filter((task) => task.task_type === "offsite_copy");
-    } catch (e) {
+    } catch {
       tasks = [];
     }
   }

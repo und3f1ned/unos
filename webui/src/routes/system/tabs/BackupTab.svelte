@@ -11,7 +11,6 @@
   import OffsiteCopy from "./OffsiteCopy.svelte";
 
   let backups = $state<BackupInfo[]>([]);
-  let loading = $state(true);
   // The first load has answered: a reload keeps the list (ADR-0430).
   let loaded = $state(false);
   let creating = $state(false);
@@ -60,14 +59,12 @@
   onMount(() => loadBackups());
 
   async function loadBackups() {
-    loading = true;
     try {
       const result = await listBackups();
       backups = result.backups;
     } catch (e) {
       showError($t("backup.loadFailed"), e);
     }
-    loading = false;
     loaded = true;
   }
 

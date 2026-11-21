@@ -86,8 +86,8 @@
       await deleteCertificate(cert.id);
       toast.success($t("account.certs.deleted"));
       await certificates.load();
-    } catch (e: any) {
-      certificates.error = e.message || $t("account.certs.deleteFailed");
+    } catch (e) {
+      certificates.error = (e as Error).message || $t("account.certs.deleteFailed");
     } finally {
       certificates.loading = false;
     }

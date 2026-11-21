@@ -39,8 +39,8 @@
       await login(username, password);
       connectWebSocket();
       goto('/');
-    } catch (e: any) {
-      error = e.message || $t('setup.failed');
+    } catch (e) {
+      error = (e as Error).message || $t('setup.failed');
     } finally {
       loading = false;
     }

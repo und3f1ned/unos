@@ -71,7 +71,7 @@
       }
 
       await signedIn();
-    } catch (e: any) {
+    } catch (e) {
       failed(e);
     } finally {
       loading = false;
@@ -99,9 +99,9 @@
     goto(me.two_factor_required ? TWO_FACTOR_SETUP_PATH : "/");
   }
 
-  function failed(e: any) {
+  function failed(e: unknown) {
     const key = browserErrorKey(e);
-    error = key ? $t(key) : e.message || $t("login.failed");
+    error = key ? $t(key) : (e as Error).message || $t("login.failed");
     // Only a rejected password leads back to the password form. An invalid
     // or already used code ("Invalid 2FA code", "This two-factor code was
     // already used; wait for the next one", "Invalid recovery code"), a refused
@@ -134,7 +134,7 @@
       keyRequest = null;
       await login(username, password, undefined, undefined, answer);
       await signedIn();
-    } catch (e: any) {
+    } catch (e) {
       failed(e);
     } finally {
       usingKey = false;

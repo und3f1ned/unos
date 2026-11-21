@@ -33,8 +33,8 @@
       twoFactor.setupData = null;
       twoFactor.qrDataUrl = "";
       twoFactor.code = "";
-    } catch (e: any) {
-      twoFactor.error = e.message || $t("account.totp.invalidCode");
+    } catch (e) {
+      twoFactor.error = (e as Error).message || $t("account.totp.invalidCode");
     } finally {
       twoFactor.loading = false;
     }
@@ -58,8 +58,8 @@
       // While it is required, an account past its grace period can now only set it up again: the
       // account, loaded again, says so, and the layout leads to the setup page.
       if (twoFactor.required) void loadCurrentUser().catch(() => {});
-    } catch (e: any) {
-      twoFactor.error = e.message || $t("account.totp.invalidCode");
+    } catch (e) {
+      twoFactor.error = (e as Error).message || $t("account.totp.invalidCode");
     } finally {
       twoFactor.loading = false;
     }

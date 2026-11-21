@@ -39,8 +39,8 @@
       currentPassword = "";
       newPassword = "";
       confirmPassword = "";
-    } catch (e: any) {
-      passwordError = e.message || $t("account.password.failed");
+    } catch (e) {
+      passwordError = (e as Error).message || $t("account.password.failed");
     } finally {
       changingPassword = false;
     }

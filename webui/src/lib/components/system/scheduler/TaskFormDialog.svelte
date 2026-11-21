@@ -112,7 +112,7 @@
       }
 
       await onsaved();
-    } catch (e: any) {
+    } catch (e) {
       saveError = messageOf(e);
     }
     saving = false;
@@ -305,7 +305,7 @@
             {#if formData.frequency !== "hourly"}
               <label for="task-hour" class="sr-only">{$t("scheduler.form.hour")}</label>
               <select id="task-hour" aria-describedby={timeZoneHint} bind:value={formData.hour} class="form-select w-24 tabular">
-                {#each Array(24) as _, i}
+                {#each Array(24), i}
                   <option value={i}>{String(i).padStart(2, "0")}</option>
                 {/each}
               </select>
@@ -348,7 +348,7 @@
               bind:value={formData.day_of_month}
               class="form-select"
             >
-              {#each Array(28) as _, i}
+              {#each Array(28), i}
                 <option value={i + 1}>{i + 1}</option>
               {/each}
             </select>

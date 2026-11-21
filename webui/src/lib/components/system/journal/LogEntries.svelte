@@ -108,7 +108,7 @@
               </tr>
             </thead>
             <tbody class="font-mono text-xs max-sm:block">
-              {#each entries as entry, i}
+              {#each entries as entry}
                 <tr
                   class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-3 max-sm:py-2"
                 >

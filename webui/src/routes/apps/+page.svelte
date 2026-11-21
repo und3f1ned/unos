@@ -181,8 +181,8 @@
 		try {
 			await call(app.container_id);
 			await refresh();
-		} catch (e: any) {
-			error = e.message || $t(failedKey);
+		} catch (e) {
+			error = (e as Error).message || $t(failedKey);
 		}
 	}
 

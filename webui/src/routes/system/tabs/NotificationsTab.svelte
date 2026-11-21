@@ -116,7 +116,8 @@
   }
 
   function dismissResult(id: string) {
-    const { [id]: _, ...others } = results;
+    const others = { ...results };
+    delete others[id];
     results = others;
   }
 

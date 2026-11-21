@@ -2,7 +2,7 @@
   import { messageOf } from "$lib/errors";
   import { Clock, History, MapPin, Monitor, RefreshCw, User } from "lucide-svelte";
   import { getLoginHistory, type LoginAttempt } from "$lib/api/security";
-  import { Alert, Badge, Button, CardAction, Skeleton, EmptyState, LoadState } from "$lib/components/ui";
+  import { Badge, Button, CardAction, Skeleton, EmptyState, LoadState } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { formatDateTime } from "$lib/time";
 

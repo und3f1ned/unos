@@ -132,8 +132,8 @@
 			loadError = '';
 			const listed = new Set(containers.map((c) => c.id));
 			selection.set([...selection.ids].filter((id) => listed.has(id)));
-		} catch (e: any) {
-			loadError = e.message;
+		} catch (e) {
+			loadError = (e as Error).message;
 			dockerDown = e instanceof ApiError && e.status === 503;
 		} finally {
 			loading = false;
@@ -172,8 +172,8 @@
 			await createContainer(form.config());
 			closeCreateModal();
 			await loadData();
-		} catch (e: any) {
-			error = e.message;
+		} catch (e) {
+			error = (e as Error).message;
 		} finally {
 			submitting = false;
 		}
@@ -195,8 +195,8 @@
 		try {
 			await containerAction(containerId, action);
 			await loadData();
-		} catch (e: any) {
-			error = e.message;
+		} catch (e) {
+			error = (e as Error).message;
 		}
 	}
 
