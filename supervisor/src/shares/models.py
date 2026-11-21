@@ -18,12 +18,14 @@ host command.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import (
-    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, String, Text,
+    Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text,
     UniqueConstraint,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -35,30 +37,30 @@ class SmbShare(Base):
 
     __tablename__ = "smb_shares"
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # Samba share names are case-insensitive: NOCASE makes UNIQUE and lookups so (names are ASCII).
-    name = Column(String(32, collation="NOCASE"), nullable=False, unique=True)
-    path = Column(Text, nullable=False)
-    comment = Column(Text, nullable=False, default="", server_default="")
-    browseable = Column(Boolean, nullable=False, default=True, server_default="1")
+    name: Mapped[str] = mapped_column(String(32, collation="NOCASE"), nullable=False, unique=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    browseable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
     # Guests (no password) may read the share; they can never write.
-    guest_ok = Column(Boolean, nullable=False, default=False, server_default="0")
+    guest_ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # JSON list of messages from the one-time smb.conf import; NULL when none or dismissed.
-    import_notes = Column(Text, nullable=True)
+    import_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Incremented on every change of the share or of its access rows (PATCH expected_version).
-    version = Column(Integer, nullable=False, default=1, server_default="1")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, onupdate=func.now())
 
-    access = relationship(
+    access: Mapped[list[SmbShareAccess]] = relationship(
         "SmbShareAccess", back_populates="share", cascade="all, delete-orphan", lazy="selectin"
     )
     # The share's protocol options (ADR-0380); no row: every option is off.
-    options = relationship(
+    options: Mapped[SmbShareOptions | None] = relationship(
         "SmbShareOptions", back_populates="share", cascade="all, delete-orphan", lazy="selectin", uselist=False
     )
     # The groups that have access.
-    group_access = relationship(
+    group_access: Mapped[list[SmbShareGroupAccess]] = relationship(
         "SmbShareGroupAccess", back_populates="share", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -73,15 +75,15 @@ class SmbShareAccess(Base):
         Index("ix_smb_share_access_user_id", "user_id"),
     )
 
-    id = Column(Integer, primary_key=True)
-    share_id = Column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    share_id: Mapped[int] = mapped_column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     # users.username when the row was written; a row whose user now has another name is purged.
-    username = Column(String(64), nullable=False)
-    level = Column(String(8), nullable=False)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    level: Mapped[str] = mapped_column(String(8), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
-    share = relationship("SmbShare", back_populates="access")
+    share: Mapped[SmbShare] = relationship("SmbShare", back_populates="access")
 
 
 class SmbShareOptions(Base):
@@ -90,15 +92,15 @@ class SmbShareOptions(Base):
 
     __tablename__ = "smb_share_options"
 
-    share_id = Column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), primary_key=True)
+    share_id: Mapped[int] = mapped_column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), primary_key=True)
     # The share's section requires SMB3 encryption: a client that cannot encrypt is refused there.
-    encryption_required = Column(Boolean, nullable=False, default=False, server_default="0")
+    encryption_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # A Mac can use the share as a Time Machine backup disk (vfs_fruit).
-    time_machine = Column(Boolean, nullable=False, default=False, server_default="0")
+    time_machine: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Windows' Previous Versions list the snapshots of the share's pool or volume (vfs_shadow_copy2).
-    previous_versions = Column(Boolean, nullable=False, default=False, server_default="0")
+    previous_versions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
-    share = relationship("SmbShare", back_populates="options")
+    share: Mapped[SmbShare] = relationship("SmbShare", back_populates="options")
 
 
 class SmbBindInterface(Base):
@@ -110,7 +112,7 @@ class SmbBindInterface(Base):
 
     # A Linux interface name (security.validators.INTERFACE_NAME_PATTERN), checked when stored and
     # again when rendered.
-    name = Column(String(15), primary_key=True)
+    name: Mapped[str] = mapped_column(String(15), primary_key=True)
 
 
 class UserGroup(Base):
@@ -123,11 +125,11 @@ class UserGroup(Base):
     __tablename__ = "user_groups"
     __table_args__ = {"sqlite_autoincrement": True}
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # The rule of usernames (shares.groups.GROUP_NAME_RULE), unique whatever the letter case.
-    name = Column(String(32, collation="NOCASE"), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(32, collation="NOCASE"), nullable=False, unique=True)
     # Incremented on every change of the group (PATCH expected_version).
-    version = Column(Integer, nullable=False, default=1, server_default="1")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
 
 class UserGroupMember(Base):
@@ -141,10 +143,10 @@ class UserGroupMember(Base):
         Index("ix_user_group_members_user_id", "user_id"),
     )
 
-    id = Column(Integer, primary_key=True)
-    group_id = Column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    username = Column(String(64), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class SmbShareGroupAccess(Base):
@@ -158,12 +160,12 @@ class SmbShareGroupAccess(Base):
         Index("ix_smb_share_group_access_group_id", "group_id"),
     )
 
-    id = Column(Integer, primary_key=True)
-    share_id = Column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), nullable=False)
-    group_id = Column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=False)
-    level = Column(String(8), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    share_id: Mapped[int] = mapped_column(Integer, ForeignKey("smb_shares.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_groups.id", ondelete="CASCADE"), nullable=False)
+    level: Mapped[str] = mapped_column(String(8), nullable=False)
 
-    share = relationship("SmbShare", back_populates="group_access")
+    share: Mapped[SmbShare] = relationship("SmbShare", back_populates="group_access")
 
 
 class SmbAccount(Base):
@@ -178,18 +180,18 @@ class SmbAccount(Base):
         ),
     )
 
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     # Host (Linux and Samba) account name; users.username when the row was made.
-    linux_name = Column(String(32), nullable=False, unique=True)
+    linux_name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     # Allocated at the first activation, then kept for this user; never reused.
-    uid = Column(Integer, nullable=True, unique=True)
+    uid: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
     # An administrator allowed SMB access for this user.
-    enabled = Column(Boolean, nullable=False, default=False, server_default="0")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # "set": Samba has the user's current UNOS password; "needed": Samba has no entry.
-    password_state = Column(String(8), nullable=False, default="needed", server_default="needed")
-    password_set_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=True, onupdate=func.now())
+    password_state: Mapped[str] = mapped_column(String(8), nullable=False, default="needed", server_default="needed")
+    password_set_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, onupdate=func.now())
 
 
 class SmbState(Base):
@@ -204,16 +206,16 @@ class SmbState(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # Next uid to try. Only ever increases, so uids are never reused.
-    next_uid = Column(Integer, nullable=False, default=SMB_UID_MIN, server_default=str(SMB_UID_MIN))
+    next_uid: Mapped[int] = mapped_column(Integer, nullable=False, default=SMB_UID_MIN, server_default=str(SMB_UID_MIN))
     # When the shares of smb.conf were imported (once). NULL: not yet.
-    shares_imported_at = Column(DateTime, nullable=True)
+    shares_imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # JSON list of messages from that import for the administrator; NULL when none or dismissed.
-    import_report = Column(Text, nullable=True)
+    import_report: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Set by a restore whose database is not authoritative for SMB (ADR-0319): the next
     # import reads the live file ('live'), never turns guest access on, and clears it.
-    pending_import_source = Column(String(8), nullable=True)
+    pending_import_source: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
 
 class SmbUid(Base):
@@ -232,8 +234,8 @@ class SmbUid(Base):
         CheckConstraint(f"uid BETWEEN {SMB_UID_MIN} AND {SMB_UID_MAX}", name="ck_smb_uids_uid_range"),
     )
 
-    uid = Column(Integer, primary_key=True, autoincrement=False)
-    linux_name = Column(String(32), nullable=False)
+    uid: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    linux_name: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
 class SmbUidName(Base):
@@ -249,8 +251,8 @@ class SmbUidName(Base):
         CheckConstraint(f"uid BETWEEN {SMB_UID_MIN} AND {SMB_UID_MAX}", name="ck_smb_uid_names_uid_range"),
     )
 
-    uid = Column(Integer, primary_key=True, autoincrement=False)
-    linux_name = Column(String(32), primary_key=True)
+    uid: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    linux_name: Mapped[str] = mapped_column(String(32), primary_key=True)
 
 
 class IscsiTarget(Base):
@@ -263,18 +265,18 @@ class IscsiTarget(Base):
 
     __tablename__ = "iscsi_targets"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String(32), nullable=False, unique=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     # 32 random hex digits: the key of the secrets, the name of the LUN's storage object in configfs
     # and its VPD unit serial; its first 8 make the IQN unique.
-    uid = Column(String(32), nullable=False, unique=True)
-    iqn = Column(String(223), nullable=False, unique=True)
-    pool = Column(String(63), nullable=False)
-    volume = Column(String(63), nullable=False)
-    size_gib = Column(Integer, nullable=False)
-    chap_user = Column(String(64), nullable=False)
-    mutual = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    uid: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    iqn: Mapped[str] = mapped_column(String(223), nullable=False, unique=True)
+    pool: Mapped[str] = mapped_column(String(63), nullable=False)
+    volume: Mapped[str] = mapped_column(String(63), nullable=False)
+    size_gib: Mapped[int] = mapped_column(Integer, nullable=False)
+    chap_user: Mapped[str] = mapped_column(String(64), nullable=False)
+    mutual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
 
 class IscsiInitiator(Base):
@@ -284,9 +286,9 @@ class IscsiInitiator(Base):
     __tablename__ = "iscsi_initiators"
     __table_args__ = (UniqueConstraint("target_id", "name", name="uq_iscsi_initiators_target_name"),)
 
-    id = Column(Integer, primary_key=True)
-    target_id = Column(Integer, ForeignKey("iscsi_targets.id"), nullable=False, index=True)
-    name = Column(String(223), nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    target_id: Mapped[int] = mapped_column(Integer, ForeignKey("iscsi_targets.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(223), nullable=False)
 
 
 async def get_smb_state(db: AsyncSession) -> SmbState:

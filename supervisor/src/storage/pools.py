@@ -532,7 +532,7 @@ def classify_pool_health(
     missing_devices: int,
     device_errors: int | None,
     forced_read_only: bool = False,
-) -> str:
+) -> Literal["healthy", "degraded", "unmounted", "error", "unknown"]:
     """Pool health, from most to least specific cause.
 
     ``mounted`` is None when the mount table could not be read and
@@ -1727,7 +1727,9 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
 # --------------------------------------------------------------------------
 
 
-def _label_problem(fs: BtrfsFilesystem, chosen: dict[str, BtrfsFilesystem]) -> str | None:
+def _label_problem(
+    fs: BtrfsFilesystem, chosen: dict[str, BtrfsFilesystem]
+) -> Literal["missing", "invalid", "duplicate"] | None:
     """Why ``fs`` is not the pool its label names, or None when it is.
 
     ``chosen`` is _pool_choices: of several filesystems with one label, at
@@ -1756,7 +1758,7 @@ def importable_filesystems() -> list[ImportableFilesystem]:
     filesystems = btrfs_filesystems()
     mounts = disks.host_mounts()
     chosen = _pool_choices(filesystems, mounts, parse_managed_fstab(_read_fstab()))
-    found: list[tuple[BtrfsFilesystem, str]] = []
+    found: list[tuple[BtrfsFilesystem, Literal["missing", "invalid", "duplicate"]]] = []
     for fs in filesystems:
         problem = _label_problem(fs, chosen)
         if problem is None or _is_system_filesystem(fs, mounts):
@@ -2499,7 +2501,7 @@ def _folder_on_host(path: str, mounts: list[disks.HostMount]) -> tuple[str, str]
             holder is None or len(mount.target.rstrip("/")) >= len(holder.target.rstrip("/"))
         ):
             holder = mount
-    if holder is None:
+    if holder is None or holder.majmin is None:  # the loop takes mounts with a majmin alone
         return None
     rest = path.rstrip("/")[len(holder.target.rstrip("/")):]
     return holder.majmin, ((holder.fsroot or "/").rstrip("/") + rest) or "/"
@@ -2908,6 +2910,7 @@ def create_volume(pool_name: str, volume: VolumeCreate) -> VolumeInfo:
             )
         logger.info("Created volume '%s' in pool '%s'", name, pool)
         if volume.quota is not None:
+            assert newest is not None  # read above for a quota
             reason = _limit_new_volume(pool, target, name, volume.quota, newest)
             if reason is not None:
                 try:
@@ -3124,8 +3127,9 @@ def list_restore_copies(pool_name: str, volume_name: str | None) -> list[Restore
                     if _made_by_restore(target, subvol_id, path[len(place):])), reverse=True)
     return [
         RestoreCopyInfo(name=name, pool=pool, volume=volume, subvolume=folder, path=os.path.join(folder, name),
-                        created=_copy_time(name))
+                        created=created)
         for name in names
+        if (created := _copy_time(name)) is not None  # each candidate has one (_copy_candidates)
     ]
 
 

@@ -61,3 +61,6 @@ coverage/
 tmp/
 temp/
 *.tmp
+
+# mypy (make lint)
+.mypy_cache/

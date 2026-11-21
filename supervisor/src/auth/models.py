@@ -1,46 +1,50 @@
-from sqlalchemy import Column, Integer, LargeBinary, String, Boolean, DateTime, ForeignKey, Text
+from datetime import datetime
+
+from sqlalchemy import Integer, LargeBinary, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.sql import func
-from sqlalchemy.orm import deferred, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..database import Base
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    is_admin: Mapped[bool | None] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, onupdate=func.now())
     # TOTP 2FA fields
-    totp_secret = Column(String, nullable=True)
-    totp_enabled = Column(Boolean, default=False)
+    totp_secret: Mapped[str | None] = mapped_column(String, nullable=True)
+    totp_enabled: Mapped[bool | None] = mapped_column(Boolean, default=False)
     # Recovery codes for 2FA: a JSON array of their SHA-256 hashes, null once used (ADR-0238)
-    recovery_codes = Column(Text, nullable=True)
+    recovery_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationship to API tokens
-    api_tokens = relationship("APIToken", back_populates="user", cascade="all, delete-orphan")
+    api_tokens: Mapped[list["APIToken"]] = relationship(
+        "APIToken", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class APIToken(Base):
     __tablename__ = "api_tokens"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)  # User-friendly name for the token
-    token_hash = Column(String, unique=True, index=True, nullable=False)
-    token_prefix = Column(String, nullable=False)  # First 8 chars for identification
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, server_default=func.now())
-    last_used_at = Column(DateTime, nullable=True)
-    expires_at = Column(DateTime, nullable=True)  # Optional expiration
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)  # User-friendly name for the token
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    token_prefix: Mapped[str] = mapped_column(String, nullable=False)  # First 8 chars for identification
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    is_active: Mapped[bool | None] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # Optional expiration
     # The token's scope (src/auth/scopes.py, ADR-0392): "*" full, else "read" and the areas,
     # comma-separated. Deferred: a restored value that is not UTF-8 cannot be read as text, so the
     # queries that need it select scopes.stored_columns, and the others never load it.
-    permissions = deferred(Column(String, default="*"))
+    permissions: Mapped[str | None] = mapped_column(String, default="*", deferred=True)
 
-    user = relationship("User", back_populates="api_tokens")
+    user: Mapped[User] = relationship("User", back_populates="api_tokens")
 
 
 class UserSession(Base):
@@ -56,11 +60,11 @@ class UserSession(Base):
     # pages (ADR-0308), and the table holds about a day of sessions, so a scan costs nothing.
     __table_args__ = {"sqlite_with_rowid": False}
 
-    id = Column(String, primary_key=True)  # the token's jti
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # the token's jti
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     # When the token expires (UTC, without a zone, as SQLite keeps it): rows of expired
     # sessions go at the next sign-in.
-    expires_at = Column(DateTime, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class UsernameTaken(Base):
@@ -74,9 +78,9 @@ class UsernameTaken(Base):
 
     __tablename__ = "usernames_taken"
 
-    username = Column(String, primary_key=True)
+    username: Mapped[str] = mapped_column(String, primary_key=True)
     # SQLite's CURRENT_TIMESTAMP, as users.created_at and login_attempts.timestamp have it.
-    taken_at = Column(DateTime, nullable=False, server_default=func.now())
+    taken_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
 
 class TwoFactorRequirement(Base):
@@ -87,11 +91,11 @@ class TwoFactorRequirement(Base):
 
     __tablename__ = "two_factor_requirement"
 
-    id = Column(Integer, primary_key=True)
-    grace_days = Column(Integer, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    grace_days: Mapped[int] = mapped_column(Integer, nullable=False)
     # When it was turned on (UTC, without a zone, as SQLite keeps it).
-    enabled_at = Column(DateTime, nullable=False)
-    enabled_by = Column(String, nullable=False)
+    enabled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    enabled_by: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class DashboardLayout(Base):
@@ -105,9 +109,9 @@ class DashboardLayout(Base):
 
     __tablename__ = "dashboard_layouts"
 
-    user_id = Column(Integer, primary_key=True, autoincrement=False)
-    layout = Column(Text, nullable=False)
-    updated_at = Column(DateTime, server_default=func.now())
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    layout: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
 class UserTheme(Base):
@@ -121,9 +125,9 @@ class UserTheme(Base):
 
     __tablename__ = "user_themes"
 
-    user_id = Column(Integer, primary_key=True, autoincrement=False)
-    theme = Column(Text, nullable=False)
-    updated_at = Column(DateTime, server_default=func.now())
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    theme: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
 
 
 class SecurityKey(Base):
@@ -140,17 +144,17 @@ class SecurityKey(Base):
 
     __tablename__ = "security_keys"
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    name = Column(String, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     # The credential id in base64url without padding: unique across every user.
-    credential_id = Column(String, nullable=False, unique=True)
+    credential_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     # The credential public key as the authenticator gave it (a COSE_Key), and its COSE algorithm.
-    public_key = Column(LargeBinary, nullable=False)
-    algorithm = Column(Integer, nullable=False)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    algorithm: Mapped[int] = mapped_column(Integer, nullable=False)
     # The signature counter of the last accepted sign-in; 0 for a key that keeps none.
-    sign_count = Column(Integer, nullable=False, default=0)
-    rp_id = Column(String, nullable=False)
-    origin = Column(String, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    last_used_at = Column(DateTime, nullable=True)
+    sign_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rp_id: Mapped[str] = mapped_column(String, nullable=False)
+    origin: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -35,7 +35,7 @@ from pydantic import ValidationError
 from .. import paths
 from ..auth.utils import client_ip, require_admin
 from ..auth.models import User
-from ..openapi import ADMIN, answer, errors, file_answer
+from ..openapi import ADMIN, answer, errors, file_answer, model_example
 from ..times import as_utc, parse_time, utc_now, utc_text
 from .schemas import AuditEntry, AuditEntryView, AuditAction, AuditSeverity
 
@@ -548,9 +548,9 @@ def chained(entries: list[AuditEntry]) -> list[AuditEntryView]:
     return [_view(entry, chain) for entry, chain in zip(entries, _chain_of(entries))]
 
 
-def _chain_of(entries: list[AuditEntry]) -> list[str | None]:
+def _chain_of(entries: list[AuditEntry]) -> list[Literal["ok", "broken"] | None]:
     """Where each entry stands in the hash chain (chained): over the fields as the lines hold them."""
-    verdicts: list[str | None] = []
+    verdicts: list[Literal["ok", "broken"] | None] = []
     chain_seen = False
     for i, entry in enumerate(entries):
         if entry.hash is None:
@@ -565,7 +565,7 @@ def _chain_of(entries: list[AuditEntry]) -> list[str | None]:
     return verdicts
 
 
-def _view(entry: AuditEntry, chain: str | None) -> AuditEntryView:
+def _view(entry: AuditEntry, chain: Literal["ok", "broken"] | None) -> AuditEntryView:
     """``entry`` as the API answers it: its time in UTC with its offset (ADR-0401), and its place in
     the chain."""
     return AuditEntryView(**{**entry.model_dump(), "timestamp": entry_time(entry)}, chain=chain)
@@ -633,7 +633,7 @@ _EXPORT_ANSWER = answer(
     {
         "exported_at": "2026-11-19T09:00:00.125000Z",
         "count": 1,
-        "entries": [AuditEntryView.model_config["json_schema_extra"]["examples"][0]],
+        "entries": [model_example(AuditEntryView)],
     },
     "A file to download (Content-Disposition: attachment): as JSON, the time of the export, the number of "
     "entries and the entries as GET /audit/logs answers them; as CSV, a header row and a row per entry with "
@@ -664,7 +664,7 @@ async def export_audit_logs(
         ])
         for entry in entries:
             writer.writerow([_spreadsheet_text(cell) for cell in (
-                entry.id, utc_text(entry.timestamp), entry.action, entry.severity.value,
+                entry.id, utc_text(entry_time(entry)), entry.action, entry.severity.value,
                 entry.username or "", entry.ip_address or "",
                 entry.resource_type or "", entry.resource_id or "",
                 entry.details or "", entry.success
@@ -717,7 +717,7 @@ async def get_audit_summary(
     entries = [e for e in entries if entry_time(e) >= cutoff]
 
     # Count by action
-    action_counts = {}
+    action_counts: dict[str, int] = {}
     for entry in entries:
         action = entry.action
         action_counts[action] = action_counts.get(action, 0) + 1
@@ -728,7 +728,7 @@ async def get_audit_summary(
         severity_counts[entry.severity.value] += 1
 
     # Count by user
-    user_counts = {}
+    user_counts: dict[str, int] = {}
     for entry in entries:
         if entry.username:
             user_counts[entry.username] = user_counts.get(entry.username, 0) + 1

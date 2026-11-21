@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy import delete, select
@@ -67,7 +67,7 @@ def _label(value: object) -> str:
     return service._label(value)
 
 
-async def _group_rows(db: AsyncSession) -> list:
+async def _group_rows(db: AsyncSession) -> Sequence[Any]:
     return (
         await db.execute(
             select(models.UserGroup.id, models.UserGroup.name, models.UserGroup.version)
@@ -208,7 +208,9 @@ async def _infos(db: AsyncSession, only: object = None) -> list[schemas.GroupInf
             continue  # purged at the next start or restore (ADR-0137)
         for group_id, level in granted.items():
             shares.setdefault(group_id, []).append(
-                schemas.GroupShareInfo(share=service._text(share_names[share_id]), level=level)
+                schemas.GroupShareInfo(
+                    share=service._text(share_names[share_id]), level=schemas.ShareAccessLevel(level)
+                )
             )
     infos = [
         schemas.GroupInfo(
@@ -217,7 +219,7 @@ async def _infos(db: AsyncSession, only: object = None) -> list[schemas.GroupInf
             version=service._stored_version(row.version),
             members=[
                 schemas.GroupMemberInfo(
-                    user_id=user_id, username=states[user_id].username, smb_state=states[user_id].state
+                    user_id=user_id, username=service._text(states[user_id].username), smb_state=states[user_id].state
                 )
                 for user_id in members.get(row.id, ())
             ],
@@ -291,7 +293,9 @@ async def update_group(db: AsyncSession, group_id: int, data: schemas.GroupUpdat
             if "expected_version" in sent and data.expected_version != service._stored_version(group.version):
                 raise HTTPException(status_code=409, detail=GROUP_VERSION_CONFLICT)
             changes: list[str] = []
+            # A field that is sent is never null (GroupUpdate refuses it): the asserts narrow the types.
             if "new_name" in sent and data.new_name != group.name:
+                assert data.new_name is not None
                 problem = group_name_problem(data.new_name)
                 if problem is not None:
                     raise HTTPException(status_code=400, detail=problem)
@@ -302,6 +306,7 @@ async def update_group(db: AsyncSession, group_id: int, data: schemas.GroupUpdat
                 await _bump_shares_of(db, group_id)
             members_changed = False
             if "members" in sent:
+                assert data.members is not None
                 diff = await _replace_members(db, group_id, await _check_members(db, data.members))
                 if diff:
                     members_changed = True

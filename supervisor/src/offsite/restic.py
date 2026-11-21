@@ -102,7 +102,7 @@ async def _read_errors(stream: asyncio.StreamReader, on_line: Callable[[bytes], 
                 on_line(bytes(line))
             skipping = False
         if len(rest) > LINE_LIMIT:
-            rest, skipping = b"", True
+            rest, skipping = bytearray(), True
         pending = bytearray(rest)
     if pending and not skipping:
         on_line(bytes(pending))
@@ -114,12 +114,14 @@ async def _communicate(process: asyncio.subprocess.Process, stdin: bytes | None,
     reads = []
     if process.stdout is not None:
         reads.append(asyncio.create_task(_read(process.stdout, STDOUT_LIMIT, keep_end=False)))
+    assert process.stderr is not None  # every restic runs with stderr=PIPE
     if on_error_line is None:
         errors = asyncio.create_task(_read(process.stderr, STDERR_KEPT, keep_end=True))
     else:
         errors = asyncio.create_task(_read_errors(process.stderr, on_error_line))
     try:
         if stdin is not None:
+            assert process.stdin is not None  # stdin=PIPE whenever there is input
             # restic that ends early (a wrong password) closes the pipe: its exit status says why.
             with contextlib.suppress(BrokenPipeError, ConnectionResetError):
                 process.stdin.write(stdin)

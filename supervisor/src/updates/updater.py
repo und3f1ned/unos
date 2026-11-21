@@ -134,10 +134,10 @@ class Updater:
         parsed2 = self._parse_version(v2)
 
         # Compare major, minor, patch
-        for i in range(3):
-            if parsed1[i] < parsed2[i]:
+        for part1, part2 in zip(parsed1[:3], parsed2[:3]):
+            if part1 < part2:
                 return -1
-            if parsed1[i] > parsed2[i]:
+            if part1 > part2:
                 return 1
 
         # Compare prerelease (empty string means stable release, which is higher)
@@ -567,7 +567,9 @@ class Updater:
     ):
         """Add an entry to the update history."""
         try:
-            history = state_files.load_json(UPDATE_HISTORY_FILE, _history_list, list, what="the update history")
+            history: list[dict] = state_files.load_json(
+                UPDATE_HISTORY_FILE, _history_list, list, what="the update history"
+            )
 
             new_id = max([e.get("id", 0) for e in history], default=0) + 1
 

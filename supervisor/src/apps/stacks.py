@@ -384,10 +384,10 @@ def wait_ready(container: Any, *, started_now: bool, check: Callable[[], None] |
         if status == "healthy":
             return
         if status is None and running and ready_command is not None:
-            answered, output = _answers(container, ready_command)
+            answered, answer = _answers(container, ready_command)
             if answered:
                 return
-            said = said if output is None else output
+            said = said if answer is None else answer
             waited = time.monotonic() - began
         elif status is None and running and (not started_now or waited >= POLL_SECONDS):
             return

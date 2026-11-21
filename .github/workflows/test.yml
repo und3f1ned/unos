@@ -57,12 +57,15 @@ jobs:
 
   # make lint: ruff with the rules of ruff.toml (pyflakes findings, syntax
   # errors and the rules that find bugs, ADR-0425) in the supervisor, scripts/
-  # and .claude/hooks/, bash -n on the shell scripts, and the JSON syntax of
-  # feature-list.json and .claude/settings.json; each of the three runs even
+  # and .claude/hooks/, mypy with the settings of mypy.ini over supervisor/src
+  # (ADR-0439), bash -n on the shell scripts, and the JSON syntax of
+  # feature-list.json and .claude/settings.json; each part runs even
   # when another one failed (ADR-0190). Then the known vulnerabilities of the supervisor's
-  # runtime dependencies. ruff and pip-audit, and every package they depend on,
+  # runtime dependencies. ruff, mypy and pip-audit, and every package they depend on,
   # come from .github/lint-requirements.txt with their hashes, so that a new
-  # release cannot change the tools.
+  # release cannot change the tools. mypy reads the supervisor's packages and their
+  # type stubs, which are not hashed: they go into a venv of their own after the
+  # audit, never into the tools' Python, and make lint takes it as PYTHON.
   lint:
     name: Lint and Audit (Python)
     runs-on: ubuntu-latest
@@ -80,25 +83,30 @@ jobs:
           cache: 'pip'
           cache-dependency-path: |
             supervisor/requirements.txt
+            supervisor/requirements-dev.txt
             .github/lint-requirements.txt
 
-      - name: Install ruff and pip-audit
+      - name: Install ruff, mypy and pip-audit
         id: tools
         run: 'pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt'
-
-      # Each check runs even if the other one failed.
-      - name: Lint
-        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
-        run: make lint
 
       # Resolves requirements.txt, with the dependencies of its packages, in a
       # temporary virtual environment of pip, setuptools and wheel pinned with
       # their hashes (.github/audit-env-requirements.txt), then pip-audit checks
       # what it resolved (ADR-0423). The weekly audit workflow (audit.yml) runs
-      # it too, for advisories published between pull requests.
+      # it too, for advisories published between pull requests. Each check runs
+      # even if the other one failed.
       - name: Audit the runtime dependencies
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: scripts/audit-python.sh
+
+      - name: Install the supervisor's packages for mypy
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: 'python -m venv supervisor/.venv && supervisor/.venv/bin/pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt'
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: make lint
 
   # The web UI: make frontend (svelte-check, the check of the web UI's texts
   # and the production build, each also when another one failed), and the

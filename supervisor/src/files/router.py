@@ -54,7 +54,7 @@ import stat
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, UTC
 from typing import Annotated, BinaryIO
@@ -715,6 +715,7 @@ class _FileUpload(UploadSink):
         self.dir_fd = _open_dir(self.parts)
 
     def open(self, filename: str) -> int:
+        assert self.dir_fd is not None  # prepare() opened the folder
         name = _upload_name(filename)
         existing = _lstat_at(self.dir_fd, name)
         if existing is not None and stat.S_ISDIR(existing.st_mode):
@@ -756,7 +757,7 @@ class _FileUpload(UploadSink):
             # A folder removed since prepare() is not found, whatever its
             # filesystem answers for an unnamed file there: ext4 refuses one
             # with EPERM, which would otherwise read as 403.
-            if _removed(self.dir_fd):
+            if self.dir_fd is not None and _removed(self.dir_fd):
                 raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT)) from exc
             raise
         try:
@@ -764,7 +765,7 @@ class _FileUpload(UploadSink):
             # prepare() (ENOENT), but tmpfs still creates an unnamed file there,
             # and btrfs does too by its code: refuse it now as well, not once
             # the whole file has arrived.
-            if _removed(self.dir_fd):
+            if self.dir_fd is not None and _removed(self.dir_fd):
                 raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT))
             # Checked now, before any of the file is written: it can only be
             # linked into the folder through /proc/self/fd.
@@ -1281,7 +1282,7 @@ def _transfer(sources: list[str], destination: str, *, moving: bool) -> list[str
             _refuse_separate_filesystems(plan, "moved", moving_to=os.fstat(dest_fd).st_dev)
 
         share = _share_folder(dest_fd)
-        done = []
+        done: list[str] = []
         for parts in plan:
             try:
                 went = _transfer_one(parts, dest_fd, moving, share)
@@ -1349,7 +1350,7 @@ def _delete(paths: list[str], permanent: bool = False) -> list[str]:
         for parts in plan:
             _check_trash_of(parts, mount_points)
 
-    deleted = []
+    deleted: list[str] = []
     for path, parts in targets:
         try:
             done = _delete_one(parts, permanent)
@@ -1646,6 +1647,7 @@ def _move_to_trash(dir_fd: int, parts: list[str]) -> None:
     scope_fd, scope_len = _open_trash_scope(dir_fd, parts)
     try:
         trash_fd = _open_trash(scope_fd, parts[:scope_len], create=True)
+        assert trash_fd is not None  # create=True makes a missing one
         try:
             entry = f"{_now().strftime(_TRASH_STAMP)}-{secrets.token_hex(8)}"
             os.mkdir(entry, 0o700, dir_fd=trash_fd)
@@ -1777,7 +1779,9 @@ def _open_scope(scope: list[str]) -> int | None:
         os.close(pool_fd)
 
 
-def _each_trash(problems: list[str], due: Callable[[str], bool] | None = None) -> Iterator[tuple[list[str], int]]:
+def _each_trash(
+    problems: list[str], due: Callable[[str], bool] | None = None
+) -> Generator[tuple[list[str], int], None, None]:
     """(the pool or volume, its open trash folder) for each trash; what cannot be read goes to ``problems``.
 
     With ``due``, of the pools for which it answers True (_trash_scopes). Close the iterator when
@@ -1835,6 +1839,7 @@ def _trash_item(scope: list[str], trash_fd: int, entry: str) -> TrashItem | None
     if st is None:
         return None
     deleted = _entry_time(entry)
+    assert deleted is not None  # _trash_entries lists the entries that have one
     file_type = _file_type(st)
     # Shown: an origin that someone changed may hold bytes that are not UTF-8, which JSON cannot carry.
     return TrashItem(
@@ -2083,7 +2088,8 @@ def _expire_trash(now: datetime, due: Callable[[str], bool] | None = None) -> tu
                 problems.append(_unreadable([*scope, TRASH], exc))
                 continue
             for entry in names:
-                if _entry_time(entry) > cutoff:
+                deleted_at = _entry_time(entry)
+                if deleted_at is None or deleted_at > cutoff:  # _trash_entries lists those that have one
                     continue
                 where = _shown(_display_path([*scope, TRASH, entry]))
                 try:

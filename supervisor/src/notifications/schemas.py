@@ -24,18 +24,22 @@ class EmailConfig(BaseModel):
 
     smtp_host: str = Field(description="The mail server's host name or address.")
     smtp_port: int = Field(
-        587, description="The mail server's port: 465 speaks TLS from the start, any other starts in plain text.",
+        default=587,
+        description="The mail server's port: 465 speaks TLS from the start, any other starts in plain text.",
     )
     smtp_user: str = Field(description="The user name to log in with; empty: the channel sends without a login.")
     smtp_password: str = Field(
         description="The password of smtp_user. The answers hold it as stored.",
     )
-    smtp_tls: bool = Field(True, description="Whether to switch to TLS with STARTTLS, on a port other than 465.")
+    smtp_tls: bool = Field(
+        default=True, description="Whether to switch to TLS with STARTTLS, on a port other than 465."
+    )
     # Check the mail server's certificate and host name (TLS on port 465 and
     # STARTTLS). Turn off only for a server with a self-signed certificate:
     # without the check, anyone on the network path can read the password.
     smtp_verify_tls: bool = Field(
-        True, description="Whether to check the mail server's certificate and host name. Turn it off only for a "
+        default=True,
+        description="Whether to check the mail server's certificate and host name. Turn it off only for a "
                           "server with a self-signed certificate.",
     )
     from_address: str = Field(description="The sender's address.")
@@ -55,26 +59,27 @@ class WebhookConfig(BaseModel):
     """The settings of a webhook channel: the request that each notification sends."""
 
     url: str = Field(description="The http or https URL that the request goes to.")
-    method: str = Field("POST", description="POST or PUT, in any case; with another method every send fails.")
+    method: str = Field(default="POST", description="POST or PUT, in any case; with another method every send fails.")
     headers: dict[str, str] = Field(
-        {}, description="More headers of the request, such as one with a key.",
+        default={}, description="More headers of the request, such as one with a key.",
     )
     # Template for body - uses {title}, {message}, {type}, {timestamp} placeholders
     body_template: str | None = Field(
-        None, description="The body of the request, in which {title}, {message}, {type} and {timestamp} are "
+        default=None, description="The body of the request, in which {title}, {message}, {type} and {timestamp} are "
                           "replaced, and other braces are written doubled. Null: a JSON object of title, message, "
                           "type, timestamp and source.",
     )
-    content_type: str = Field("application/json", description="The Content-Type header of the request.")
+    content_type: str = Field(default="application/json", description="The Content-Type header of the request.")
 
 
 class DiscordConfig(BaseModel):
     """The settings of a Discord channel: a webhook of a Discord channel."""
 
     webhook_url: str = Field(description="The URL of the Discord webhook, which holds its key.")
-    username: str = Field("UNOS", description="The name that the messages show as their sender.")
+    username: str = Field(default="UNOS", description="The name that the messages show as their sender.")
     avatar_url: str | None = Field(
-        None, description="The URL of the picture that the messages show for their sender; null: the webhook's.",
+        default=None,
+        description="The URL of the picture that the messages show for their sender; null: the webhook's.",
     )
 
 
@@ -83,11 +88,12 @@ class SlackConfig(BaseModel):
 
     webhook_url: str = Field(description="The URL of the Slack incoming webhook, which holds its key.")
     channel: str | None = Field(
-        None, description="The Slack channel that the message names, such as #alerts; null: none, the webhook's "
+        default=None,
+        description="The Slack channel that the message names, such as #alerts; null: none, the webhook's "
                           "own.",
     )  # Optional override
-    username: str = Field("UNOS", description="The name that the messages show as their sender.")
-    icon_emoji: str = Field(":server:", description="The emoji that the messages show for their sender.")
+    username: str = Field(default="UNOS", description="The name that the messages show as their sender.")
+    icon_emoji: str = Field(default=":server:", description="The emoji that the messages show for their sender.")
 
 
 class NotificationConfig(BaseModel):
@@ -105,25 +111,30 @@ class NotificationConfig(BaseModel):
     }]})
 
     id: str | None = Field(
-        None, description="The channel's id, which the server gives it: notif_ and 12 hex digits. A request's is "
+        default=None,
+        description="The channel's id, which the server gives it: notif_ and 12 hex digits. A request's is "
                           "ignored.",
     )
-    name: str = Field("", description="The channel's name, as the history and the audit log show it; may be empty.")
+    name: str = Field(
+        default="", description="The channel's name, as the history and the audit log show it; may be empty."
+    )
     enabled: bool = Field(
-        True, description="Whether alerts and POST /notifications/send go to the channel; a test goes to it either "
+        default=True,
+        description="Whether alerts and POST /notifications/send go to the channel; a test goes to it either "
                           "way.",
     )
     channel: NotificationChannel = Field(
         description="The kind of channel: email, telegram, webhook, discord or slack. Its settings are in the "
                     "field of that kind; a channel without them fails every send.",
     )
-    email_config: EmailConfig | None = Field(None, description="The settings of an email channel.")
-    telegram_config: TelegramConfig | None = Field(None, description="The settings of a telegram channel.")
-    webhook_config: WebhookConfig | None = Field(None, description="The settings of a webhook channel.")
-    discord_config: DiscordConfig | None = Field(None, description="The settings of a discord channel.")
-    slack_config: SlackConfig | None = Field(None, description="The settings of a slack channel.")
+    email_config: EmailConfig | None = Field(default=None, description="The settings of an email channel.")
+    telegram_config: TelegramConfig | None = Field(default=None, description="The settings of a telegram channel.")
+    webhook_config: WebhookConfig | None = Field(default=None, description="The settings of a webhook channel.")
+    discord_config: DiscordConfig | None = Field(default=None, description="The settings of a discord channel.")
+    slack_config: SlackConfig | None = Field(default=None, description="The settings of a slack channel.")
     events: list[str] = Field(
-        [], description="The event types chosen for the channel, as GET /notifications/events lists them. Stored "
+        default=[],
+        description="The event types chosen for the channel, as GET /notifications/events lists them. Stored "
                         "only: alerts go to every enabled channel.",
     )  # disk_warning, smart_error, backup_complete, etc.
 
@@ -142,7 +153,8 @@ class NotificationEvent(BaseModel):
     title: str = Field(description="The title; an e-mail's subject is [UNOS] and the title.")
     message: str = Field(description="The text of the notification.")
     timestamp: UtcDatetime | None = Field(
-        None, description="When it happened, in UTC; a time without an offset is UTC. Null: the channels get the "
+        default=None,
+        description="When it happened, in UTC; a time without an offset is UTC. Null: the channels get the "
                           "time of the send.",
     )  # when it happened; a time without an offset is UTC
 
@@ -169,4 +181,4 @@ class NotificationLog(BaseModel):
     # ISO 8601 with the UTC offset (one that the file holds without an offset is UTC, ADR-0401).
     sent_at: UtcText = Field(description="When the send ended, in UTC.")
     success: bool = Field(description="Whether the channel took the notification.")
-    error: str | None = Field(None, description="Why the send failed; null for a success.")
+    error: str | None = Field(default=None, description="Why the send failed; null for a success.")

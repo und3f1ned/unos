@@ -10,7 +10,10 @@ database are checked again before an install gives them to Docker (limits.stored
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String
+from datetime import datetime
+
+from sqlalchemy import BigInteger, DateTime, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from ..database import Base
@@ -21,14 +24,16 @@ class AppResourceLimit(Base):
 
     __tablename__ = "app_resource_limits"
 
-    id = Column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # The app: its template id (stacks.app_key).
-    app = Column(String(64), nullable=False, index=True)
+    app: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     # The container's Docker name: <app> for the main container, <app>-<companion> for a companion.
-    container = Column(String(128), nullable=False, unique=True)
+    container: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     # The memory limit in bytes (Docker's Memory, and MemorySwap the same); None: none.
-    memory_bytes = Column(BigInteger, nullable=True)
+    memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # The CPU limit as Docker's CpuQuota, microseconds of CPU time per period of limits.CPU_PERIOD
     # (100 ms): 150000 is 1.5 CPUs; None: none.
-    cpu_quota = Column(Integer, nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    cpu_quota: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

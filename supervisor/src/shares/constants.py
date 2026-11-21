@@ -14,6 +14,7 @@ import re
 import stat
 import unicodedata
 from pathlib import Path
+from typing import TypeGuard
 
 # Host group of every SMB account UNOS creates; share folders belong to it.
 SMB_GROUP_NAME = "unos-smb"
@@ -113,7 +114,7 @@ def linux_name_problem(name: object) -> str | None:
     return None
 
 
-def is_valid_linux_name(name: object) -> bool:
+def is_valid_linux_name(name: object) -> TypeGuard[str]:
     return linux_name_problem(name) is None
 
 

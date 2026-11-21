@@ -121,12 +121,12 @@ class Finding(BaseModel):
         "activity on a disk, a running job (task, task_due, backup, restore, scrub, balance, disk_replace, "
         "app_install, app_update, app_rollback, offsite, share_repair, update), a wake alarm that the RTC does not "
         "hold (wake_alarm), or something that could not be read (unreadable)."))
-    subject: str | None = Field(None, description=(
+    subject: str | None = Field(default=None, description=(
         "Whom or what it concerns, such as a task's, an app's or a share's name, a pool's path, a client's address, "
         "a user or a disk; null for none."))
-    amount: int | None = Field(None, description=(
+    amount: int | None = Field(default=None, description=(
         "The pages open (web_session) or the bytes moved since the last pass (disk_activity); null for the others."))
-    detail: str | None = Field(None, description=(
+    detail: str | None = Field(default=None, description=(
         "In English: why something could not be read (unreadable), or the wake alarm's problem (wake_alarm); null "
         "for the others."))
 
@@ -136,27 +136,29 @@ class RtcState(BaseModel):
     available: bool = Field(description=(
         "Whether the RTC rtc0 can wake the host: it exists, has a wake alarm, and its clock is within 5 minutes of "
         "the system clock."))
-    reason: str | None = Field(None, description="Why it cannot, in English; null when it can.")
-    alarm: UtcDatetime | None = Field(None, description="The wake alarm it holds, in UTC; null when none is set.")
+    reason: str | None = Field(default=None, description="Why it cannot, in English; null when it can.")
+    alarm: UtcDatetime | None = Field(
+        default=None, description="The wake alarm it holds, in UTC; null when none is set."
+    )
 
 
 class ShutdownSchedule(BaseModel):
     """The scheduled shutdown."""
     enabled: bool = Field(description="Whether the scheduled shutdown is on.")
     time: str = Field(description="Its time, HH:MM on the host's clock.")
-    next: UtcDatetime | None = Field(None, description=(
+    next: UtcDatetime | None = Field(default=None, description=(
         "When the host shuts down next at the earliest, in UTC; null while the scheduled shutdown is off."))
     state: Literal["off", "planned", "announced", "postponed", "issued"] = Field(description=(
         "off; planned; announced: its problem is out, 10 minutes ahead; postponed: a running job holds it; issued: "
         "the host shuts down at next."))
-    held_by: list[Finding] = Field([], description="What holds it while it is postponed; none otherwise.")
+    held_by: list[Finding] = Field(default=[], description="What holds it while it is postponed; none otherwise.")
 
 
 class WakeSchedule(BaseModel):
     """The wake by the RTC's wake alarm."""
     enabled: bool = Field(description="Whether the wake is on.")
     time: str = Field(description="Its time, HH:MM on the host's clock.")
-    next: UtcDatetime | None = Field(None, description=(
+    next: UtcDatetime | None = Field(default=None, description=(
         "The next wake, in UTC; null while the wake is off or the RTC cannot wake the host: no wake is promised."))
     rtc: RtcState = Field(description="The RTC and the wake alarm it holds.")
 
@@ -166,12 +168,12 @@ class IdleState(BaseModel):
     enabled: bool = Field(description="Whether the idle shutdown is on.")
     minutes: int = Field(description="The idle minutes after which the idle shutdown shuts the host down.")
     idle: bool = Field(description="Whether the host is idle now: found is empty; also while the idle shutdown is off.")
-    since: UtcDatetime | None = Field(None, description=(
+    since: UtcDatetime | None = Field(default=None, description=(
         "Since when the host has been idle, in UTC; null while the idle shutdown is off or the host is not idle, "
         "and until a pass of the power schedule has seen it idle."))
-    shutdown_at: UtcDatetime | None = Field(None, description=(
+    shutdown_at: UtcDatetime | None = Field(default=None, description=(
         "When the idle shutdown shuts the host down at the earliest, in UTC; null when since is null."))
-    found: list[Finding] = Field([], description="Why the host is not idle; none when it is.")
+    found: list[Finding] = Field(default=[], description="Why the host is not idle; none when it is.")
 
 
 class PowerSchedule(BaseModel):
@@ -514,12 +516,14 @@ def _processes() -> list[tuple[str, list[str]]]:
     return found
 
 
-_BTRFS_JOBS = {("scrub", "start"): "scrub", ("scrub", "resume"): "scrub",
+_BTRFS_JOBS: dict[tuple[str, str], FindingKind] = {("scrub", "start"): "scrub", ("scrub", "resume"): "scrub",
                ("balance", "start"): "balance", ("balance", "resume"): "balance",
                ("replace", "start"): "disk_replace", ("device", "remove"): "disk_replace",
                ("device", "delete"): "disk_replace"}
 # The kernel's threads of a balance resumed at a mount and of a replace.
-_BTRFS_THREADS = {"btrfs-balance": "balance", "btrfs-devrepl": "disk_replace"}
+_BTRFS_THREADS: dict[str, FindingKind] = {"btrfs-balance": "balance", "btrfs-devrepl": "disk_replace"}
+# The jobs of apps.install_jobs.
+_APP_JOBS: dict[str, FindingKind] = {"install": "app_install", "update": "app_update", "rollback": "app_rollback"}
 
 
 def _btrfs_command(cmdline: list[str]) -> Finding | None:
@@ -587,7 +591,7 @@ def _jobs(now: datetime, zone: tzinfo) -> list[Finding]:
     if backup.restore_running():
         found.append(Finding(kind="restore"))
     # An install, an update or a rollback of an app (ADR-0408), one job of install_jobs at a time.
-    found += [Finding(kind=f"app_{job.kind}", subject=job.name)
+    found += [Finding(kind=_APP_JOBS[job.kind], subject=job.name)
               for job in _module("..apps.install_jobs").current() if job.state == "running"]
     activity = _module("..offsite.service")._activity
     if activity is not None:
@@ -795,7 +799,7 @@ async def _follow_shutdown(config: PowerConfig, zone: tzinfo, now: datetime, mon
         logger.info("The scheduled shutdown of %s is dropped for today: the wake time passed while it waited", at)
         _finish(planned, False)
         return {}
-    if _wake_too_close(now, wake):
+    if wake is not None and _wake_too_close(now, wake):
         logger.info("The scheduled shutdown of %s is skipped: the host wakes at %s", at, _on_the_clock(wake, zone))
         _finish(planned, False)
         return {}
@@ -814,6 +818,7 @@ async def _follow_shutdown(config: PowerConfig, zone: tzinfo, now: datetime, mon
         logger.info("The scheduled shutdown of %s no longer waits: it comes at %s", at,
                     _on_the_clock(planned.expected, zone))
         return _shutdown_problems(planned, zone)
+    assert planned.announced is not None  # announced once its decision time came
     if mono - planned.announced < WARNING.total_seconds() - SLACK_SECONDS:
         return _shutdown_problems(planned, zone)
     announced = _shutdown_problems(planned, zone)
@@ -977,8 +982,9 @@ async def status() -> PowerSchedule:
         key = (config.shutdown_hour, config.shutdown_minute, zone_name(zone))
         planned = _planned if _planned is not None and _planned.key == key else None
         if planned is not None:
-            state = ("postponed" if planned.postponed and planned.held_by
-                     else "announced" if planned.announced is not None else "planned")
+            state: Literal["postponed", "announced", "planned"] = (
+                "postponed" if planned.postponed and planned.held_by
+                else "announced" if planned.announced is not None else "planned")
             shutdown = ShutdownSchedule(enabled=True, time=shutdown_time, next=planned.expected, state=state,
                                         held_by=planned.held_by if state == "postponed" else [])
         elif _finished is not None and _finished[0] == key and _finished[2] and _finished[1] > now:

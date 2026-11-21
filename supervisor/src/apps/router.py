@@ -585,7 +585,7 @@ def _plan_volumes(
 
     planned: list[_PlannedMount] = []
     for volume in spec.volumes:
-        mount = {"container": container, "companion": companion}
+        mount: dict[str, Any] = {"container": container, "companion": companion}
         if not volume.on_pool:
             if volume.container in overrides:
                 raise HTTPException(
@@ -1368,7 +1368,7 @@ def _create_options(
     """The arguments of the create of one container but its image, masked paths and network."""
     main = c.companion is None
     labels = {UNOS_APP_LABEL: template.id, VERSION_LABEL: template.version}
-    if main:
+    if c.companion is None:
         labels.update({"unos.app.name": template.name, "unos.app.icon": template.icon})
     else:
         labels[COMPANION_LABEL] = c.companion
@@ -2229,7 +2229,7 @@ def _apply_limits(app: stacks.InstalledContainers, container: Any, wanted: limit
             "it again",
         )
     lowered = wanted.memory is not None and (before.memory is None or wanted.memory < before.memory)
-    if lowered and container.status in RUNNING_STATES:
+    if wanted.memory is not None and lowered and container.status in RUNNING_STATES:
         floor = usage.memory_floor(container.id)
         if floor is None:
             raise HTTPException(
@@ -2364,24 +2364,24 @@ def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_Planned
                 f"not on a mounted storage pool. Mount the pool ('{_pool_folder(bind.source, bases)}' "
                 "holds the app's data) and start the app again.",
             )
-        known = volume is not None and volume.on_pool
-        secret = known and volume.generated_secret
+        known = volume if volume is not None and volume.on_pool else None
+        secret = known is not None and known.generated_secret
         planned.append(
             _PlannedMount(
                 source=Path(bind.source),
                 target=bind.target,
                 readonly=bind.readonly,
-                is_file=volume.is_file if known else _is_regular_file(bind.source),
+                is_file=known.is_file if known is not None else _is_regular_file(bind.source),
                 pool=pool,
                 # Recreate a missing folder only where the install created it, and never a
                 # password file: the data it unlocks keeps its first password (ADR-0381).
-                creatable=known and not secret and app_pool is not None and pool.name == app_pool,
-                uid=volume.uid if known else None,
-                gid=volume.gid if known else None,
+                creatable=known is not None and not secret and app_pool is not None and pool.name == app_pool,
+                uid=known.uid if known is not None else None,
+                gid=known.gid if known is not None else None,
                 generated_secret=secret,
                 secret_for=(
-                    _on_same_pool(bind.source, volume.host, volume.secret_for)
-                    if secret and volume.secret_for is not None else None
+                    _on_same_pool(bind.source, known.host, known.secret_for)
+                    if known is not None and secret and known.secret_for is not None else None
                 ),
             )
         )

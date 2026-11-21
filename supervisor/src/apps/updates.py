@@ -37,7 +37,7 @@ import stat
 import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from docker.errors import NotFound
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -71,7 +71,10 @@ from .stacks import APP_POOL_LABEL, COMPANION_LABEL, UNOS_APP_LABEL
 
 # The apps' router module, whose install this reuses (src/apps/__init__.py names the package's
 # ``router`` after its APIRouter, so the module is taken by its name).
-base = importlib.import_module(".router", __package__)
+if TYPE_CHECKING:
+    import src.apps.router as base
+else:
+    base = importlib.import_module(".router", __package__)
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 logger = logging.getLogger(__name__)
@@ -219,7 +222,8 @@ def _kept_sources(template: AppTemplate, planned: list[Any], old: Any | None, po
     if old is None:
         return planned
     binds = {b.target: b for b in base._bind_mounts(old)}
-    spec_volumes = {v.container: v for v in _spec_of(template, old).volumes} if _spec_of(template, old) else {}
+    spec = _spec_of(template, old)
+    spec_volumes = {v.container: v for v in spec.volumes} if spec else {}
     kept = []
     for m in planned:
         bind = binds.get(m.target)
@@ -986,7 +990,8 @@ def _newer(app: stacks.InstalledContainers) -> tuple[list[Any], list[Any]]:
     rollback removes the first and keeps the second."""
     earliest = [registry.parse_time((c.attrs or {}).get("Created")) for c in app.previous]
     latest = max((t for t in earliest if t is not None), default=None)
-    newer, kept = [], []
+    newer: list[Any] = []
+    kept: list[Any] = []
     for container in app.containers:
         created = registry.parse_time((container.attrs or {}).get("Created"))
         (newer if latest is not None and created is not None and created > latest else kept).append(container)

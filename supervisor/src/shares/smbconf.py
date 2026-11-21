@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from ..security.validators import (
     INTERFACE_NAME_PATTERN, RESERVED_SMB_NAMES, SHARE_NAME_PATTERN, SMB_PATH_UNSAFE_PATTERN,
@@ -124,7 +124,7 @@ def _safe_name(name: object) -> str:
     return name
 
 
-def is_bindable_name(name: object) -> bool:
+def is_bindable_name(name: object) -> TypeGuard[str]:
     """A name that a choice of interfaces may hold (ADR-0391): a Linux interface name (no Samba
     wildcard, list separator, quote, '/' or address literal), neither the loopback nor one that System >
     Network hides: Docker's (docker0, br-*, veth*) and dummy0 (network.links.is_hidden)."""
@@ -143,14 +143,14 @@ def _safe_interface(name: object) -> str:
     address or a pattern, or start another directive."""
     if not is_bindable_name(name):
         raise smb.SambaConfigError(f"Refusing to write an invalid interface name into smb.conf: {str(name)[:64]!r}")
-    return name  # type: ignore[return-value]
+    return name
 
 
 def _safe_user(name: object) -> str:
     """Principals are SMB account names (constants.LINUX_NAME_PATTERN, not reserved)."""
     if not constants.is_valid_linux_name(name):
         raise smb.SambaConfigError(f"Refusing to write an invalid account name into smb.conf: {str(name)[:64]!r}")
-    return name  # type: ignore[return-value]
+    return name
 
 
 # --- rendering (ADR-0281, ADR-0088) ------------------------------------------------------

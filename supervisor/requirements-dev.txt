@@ -11,3 +11,8 @@ PyYAML==6.0.3
 # Transport for starlette.testclient; Starlette 1.x deprecates using httpx
 # (still a runtime dependency, see requirements.txt) for it.
 httpx2==2.16.0
+# The type information of the runtime dependencies that publish none, for mypy (make lint
+# checks src/ against this environment, ADR-0439).
+types-croniter==6.2.4.20261006
+types-docker==7.2.0.20261102
+types-psutil==7.2.2.20260906

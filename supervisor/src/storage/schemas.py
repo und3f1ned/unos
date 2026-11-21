@@ -1,6 +1,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.config import JsonDict
 
 from ..times import UtcDatetime
 
@@ -19,9 +20,9 @@ SPINDOWN_MINUTES = (0, 5, 10, 20, 30, 60, 120, 180, 240, 300)
 
 # The API documentation's examples (ADR-0417): made-up disks, serials and UUIDs.
 _DISK_SIZE = 4000787030016
-_SDA_IDENTITY = {"path": "/dev/sda", "serial": "EXAMPLE-SERIAL-0001", "wwn": "0x5000000000000001", "size": _DISK_SIZE}
-_SDB_IDENTITY = {"path": "/dev/sdb", "serial": "EXAMPLE-SERIAL-0002", "wwn": "0x5000000000000002", "size": _DISK_SIZE}
-_IDLE_REMOVAL = {
+_SDA_IDENTITY: JsonDict = {"path": "/dev/sda", "serial": "EXAMPLE-SERIAL-0001", "wwn": "0x5000000000000001", "size": _DISK_SIZE}
+_SDB_IDENTITY: JsonDict = {"path": "/dev/sdb", "serial": "EXAMPLE-SERIAL-0002", "wwn": "0x5000000000000002", "size": _DISK_SIZE}
+_IDLE_REMOVAL: JsonDict = {
     "pool": "data", "status": "idle", "devid": None, "device": None, "left": None, "total": None,
     "result": None, "error": None,
 }
@@ -33,8 +34,10 @@ class PartitionInfo(BaseModel):
     name: str = Field(description="The partition's name, such as sda1 or nvme0n1p1.")
     path: str = Field(description="Its device path, such as /dev/sda1.")
     size: int = Field(description="Its size in bytes.")
-    fstype: str | None = Field(None, description="The filesystem or signature on it, such as ext4; null for none.")
-    label: str | None = Field(None, description="Its filesystem's label; null for none.")
+    fstype: str | None = Field(
+        default=None, description="The filesystem or signature on it, such as ext4; null for none."
+    )
+    label: str | None = Field(default=None, description="Its filesystem's label; null for none.")
     # Host mountpoints of the partition and of anything built on it (LVM, LUKS, md).
     mountpoints: list[str] = Field(
         default_factory=list,
@@ -56,21 +59,26 @@ class DiskInfo(BaseModel):
 
     name: str = Field(description="The disk's name, such as sda or nvme0n1.")
     path: str = Field(description="Its device path, such as /dev/sda.")
-    model: str | None = Field(None, description="Its model, as the disk reports it; null when it reports none.")
-    serial: str | None = Field(None, description="Its serial number; null when it reports none.")
-    wwn: str | None = Field(None, description="Its World Wide Name; null when it reports none.")  # World Wide Name, if the disk reports one
+    model: str | None = Field(default=None, description="Its model, as the disk reports it; null when it reports none.")
+    serial: str | None = Field(default=None, description="Its serial number; null when it reports none.")
+    # World Wide Name, if the disk reports one
+    wwn: str | None = Field(
+        default=None, description="Its World Wide Name; null when it reports none."
+    )
     size: int = Field(description="Its size in bytes.")
     rotational: bool = Field(description="Whether the kernel reports it rotational: a spinning hard disk.")
-    mountpoint: str | None = Field(None, description="The first of mountpoints; null when nothing on it is mounted.")
+    mountpoint: str | None = Field(
+        default=None, description="The first of mountpoints; null when nothing on it is mounted."
+    )
     type: str = Field(description="lsblk's device type: always disk here.")
     # Everything below is gathered from the HOST view (lsblk/findmnt/swapon/wipefs
     # run in the host namespaces), not from inside the supervisor container.
     fstype: str | None = Field(
-        None, description="The filesystem or signature on the whole disk, such as btrfs; null for none.",
+        default=None, description="The filesystem or signature on the whole disk, such as btrfs; null for none.",
     )  # signature on the whole disk, e.g. "btrfs"
-    label: str | None = Field(None, description="The label of the filesystem on the whole disk; null for none.")
+    label: str | None = Field(default=None, description="The label of the filesystem on the whole disk; null for none.")
     pttype: str | None = Field(
-        None, description="Its partition table, gpt or dos; null without one.",
+        default=None, description="Its partition table, gpt or dos; null without one.",
     )  # partition table type ("gpt"/"dos")
     partitions: list[PartitionInfo] = Field(default_factory=list, description="Its partitions.")
     mountpoints: list[str] = Field(
@@ -78,35 +86,38 @@ class DiskInfo(BaseModel):
         description="Where the host mounts the disk or anything on it (partitions, LVM, LUKS, md), swap left out.",
     )
     has_data: bool = Field(
-        False,
+        default=False,
         description="Whether it holds a filesystem, a partition table, partitions or another signature; true for "
         "a disk in standby whose contents are unknown.",
     )  # a filesystem, partition table, partition or other signature
     is_system: bool = Field(
-        False, description="Whether it holds the host's system: /, /boot, /boot/efi, active swap or the boot device.",
+        default=False,
+        description="Whether it holds the host's system: /, /boot, /boot/efi, active swap or the boot device.",
     )  # backs /, /boot, /boot/efi, active swap, or the boot device
     in_use: bool = Field(
-        False,
+        default=False,
         description="Whether it is in use: the system disk, mounted, a member of a mounted pool, or held by md, "
         "LVM or LUKS.",
     )  # is_system, mounted, member of a mounted btrfs pool, or held by md/LVM/LUKS
-    in_use_reason: str | None = Field(None, description="Why it is in use, in English; null when it is not.")
+    in_use_reason: str | None = Field(default=None, description="Why it is in use, in English; null when it is not.")
     pool: str | None = Field(
-        None, description="The label of the btrfs filesystem on it or on a partition of it; null for none.",
+        default=None, description="The label of the btrfs filesystem on it or on a partition of it; null for none.",
     )  # btrfs label when the disk (or a partition) belongs to a btrfs filesystem
     # Read before anything else (disks.power_state), which leaves a sleeping disk alone; a disk in
     # standby is not probed with wipefs, so has_data is true for it unless lsblk knows more.
     power_state: PowerState = Field(
-        "unknown",
+        default="unknown",
         description="Its power state, read without waking it: active (spinning or idle), standby (asleep), or "
         "unknown when the disk cannot tell.",
     )
     # The idle timeout in minutes that UNOS's udev rule sets for the disk (by its serial), 0 for none.
-    spindown: int = Field(0, description="Its idle timeout in minutes, as UNOS's udev rule sets it; 0 for none.")
+    spindown: int = Field(
+        default=0, description="Its idle timeout in minutes, as UNOS's udev rule sets it; 0 for none."
+    )
     # Why the disk gets no idle timeout (the system disk, an NVMe disk, no serial a udev rule can
     # match, no hdparm on the host); None when it can have one.
     spindown_problem: str | None = Field(
-        None,
+        default=None,
         description="Why it can have no idle timeout (the system disk, an NVMe disk, no serial that a udev rule "
         "can match, no hdparm on the host, a rule that cannot be read); null when it can have one.",
     )
@@ -139,7 +150,7 @@ class DiskSpindown(BaseModel):
     # Set when the disk's own automatic offline scans could not be turned off for the timeout, or on
     # again once it was removed (ADR-0378): the timeout is set all the same.
     warning: str | None = Field(
-        None,
+        default=None,
         description="Set when the disk's own automatic offline scans could not be turned off for the timeout, or "
         "on again without one: the timeout is set all the same. Null otherwise.",
     )
@@ -161,17 +172,19 @@ class SmartData(BaseModel):
         "null for a disk in standby, which was not read.",
     )
     power_state: PowerState = Field(
-        "unknown",
+        default="unknown",
         description="active when smartctl read the disk, standby when it left a sleeping disk alone, unknown "
         "otherwise.",
     )
-    temperature: int | None = Field(None, description="Its temperature in degrees Celsius; null when not read.")
-    power_on_hours: int | None = Field(None, description="Its power-on hours (attribute 9); null when not read.")
+    temperature: int | None = Field(default=None, description="Its temperature in degrees Celsius; null when not read.")
+    power_on_hours: int | None = Field(
+        default=None, description="Its power-on hours (attribute 9); null when not read."
+    )
     reallocated_sectors: int | None = Field(
-        None, description="Its reallocated sectors (attribute 5); null when not read.",
+        default=None, description="Its reallocated sectors (attribute 5); null when not read.",
     )
     raw_data: dict | None = Field(
-        None,
+        default=None,
         description="smartctl's whole JSON output, or {\"error\": ...} when smartctl gave none; null for a disk "
         "in standby.",
     )
@@ -184,8 +197,8 @@ class DeviceIdentity(BaseModel):
     """A selected disk as GET /storage/disks listed it (``path``, ``serial``, ``wwn``, ``size``)."""
 
     path: str = Field(description="The disk's device path, such as /dev/sda.")
-    serial: str | None = Field(None, description="Its serial number as listed; null when it had none.")
-    wwn: str | None = Field(None, description="Its World Wide Name as listed; null when it had none.")
+    serial: str | None = Field(default=None, description="Its serial number as listed; null when it had none.")
+    wwn: str | None = Field(default=None, description="Its World Wide Name as listed; null when it had none.")
     size: int = Field(description="Its size in bytes as listed.")
 
 
@@ -203,14 +216,16 @@ class PoolCreate(BaseModel):
     )
     devices: list[str] = Field(description="The disks or partitions to format, by device path, each once.")
     raid_level: Literal["single", "raid0", "raid1", "raid1c3", "raid1c4", "raid10"] = Field(
-        "single",
+        default="single",
         description="The profile of data and metadata: single, raid0 (at least 2 disks), raid1 (2), raid1c3 (3), "
         "raid1c4 (4) or raid10 (4).",
     )
     # Typed confirmation of the destructive operation; must equal ``name`` (HTTP 400 otherwise).
     confirm_name: str = Field(description="The pool's name typed again, the confirmation: it must equal name.")
     # Required when any selected device already contains data (HTTP 409 otherwise).
-    force: bool = Field(False, description="Erase devices that hold data; without it, such a device is refused.")
+    force: bool = Field(
+        default=False, description="Erase devices that hold data; without it, such a device is refused."
+    )
     # What the client saw for the selected devices. Device names are not
     # stable (USB disks are re-enumerated after a reset or replug), so with
     # identities the pool is only created if every device path still holds
@@ -237,7 +252,7 @@ class PoolInfo(BaseModel):
     }]})
 
     name: str = Field(description="The pool's name, its filesystem's label.")
-    uuid: str | None = Field(None, description="The UUID of its btrfs filesystem.")
+    uuid: str | None = Field(default=None, description="The UUID of its btrfs filesystem.")
     devices: list[str] = Field(description="The device paths of its disks that are present.")
     total_size: int = Field(
         description="The bytes of its disks: as btrfs filesystem usage reports them while it is mounted, else "
@@ -247,33 +262,36 @@ class PoolInfo(BaseModel):
         description="The bytes used: on its disks, every copy counted, as btrfs filesystem usage reports them "
         "while it is mounted; else the bytes of its data, as btrfs filesystem show reports them.",
     )
-    mountpoint: str | None = Field(None, description="/mnt/pools/<name> while it is mounted there; null otherwise.")
+    mountpoint: str | None = Field(
+        default=None, description="/mnt/pools/<name> while it is mounted there; null otherwise."
+    )
     raid_level: str | None = Field(
-        None, description="The profile of its data, lower case, such as single or raid1; null when not mounted or not read.",
+        default=None,
+        description="The profile of its data, lower case, such as single or raid1; null when not mounted or not read.",
     )
     mounted: bool = Field(
-        False, description="Whether it is mounted on the host at /mnt/pools/<name>.",
+        default=False, description="Whether it is mounted on the host at /mnt/pools/<name>.",
     )  # mounted on the HOST at <pools_base_path>/<name>
     persistent: bool = Field(
-        False, description="Whether it is a managed pool: UNOS's entry in the host's fstab mounts it at boot.",
+        default=False, description="Whether it is a managed pool: UNOS's entry in the host's fstab mounts it at boot.",
     )  # a UNOS-managed /etc/fstab entry for this filesystem exists on the HOST
     health: PoolHealth = Field(
-        "unknown",
+        default="unknown",
         description="healthy; degraded while a disk is missing; error after device errors or when btrfs made it "
         "read-only; unmounted; unknown when the mount table or the error counters cannot be read.",
     )
-    missing_devices: int = Field(0, description="How many of its disks are missing.")
+    missing_devices: int = Field(default=0, description="How many of its disks are missing.")
     device_errors: int = Field(
-        0, description="The sum of btrfs's device error counters; 0 when not mounted or not read.",
+        default=0, description="The sum of btrfs's device error counters; 0 when not mounted or not read.",
     )  # sum of btrfs device stats error counters (0 if unmounted/unknown)
     # Mounted, but writes fail: mounted read-only on purpose, or forced read-only.
     read_only: bool = Field(
-        False, description="Mounted, but read-only: on purpose, or forced by btrfs after an error.",
+        default=False, description="Mounted, but read-only: on purpose, or forced by btrfs after an error.",
     )
     # Mounted read-write, but btrfs made the filesystem read-only after a serious
     # error such as an aborted transaction (health "error"; read_only is set too).
     forced_read_only: bool = Field(
-        False,
+        default=False,
         description="Mounted read-write, but btrfs made it read-only after a serious error (health is error, "
         "read_only true).",
     )
@@ -297,7 +315,7 @@ class ImportableFilesystem(BaseModel):
 
     uuid: str = Field(description="The filesystem's UUID, which the import names.")
     label: str | None = Field(
-        None, description="Its label as btrfs prints it; null without one.",
+        default=None, description="Its label as btrfs prints it; null without one.",
     )  # as btrfs prints it; None without a label
     label_problem: LabelProblem = Field(
         description="Why it is not the pool its label names: missing (no label), invalid (no valid pool name), "
@@ -305,7 +323,7 @@ class ImportableFilesystem(BaseModel):
     )
     devices: list[str] = Field(description="The device paths of its disks that are present.")  # the members that are present
     total_devices: int = Field(description="How many disks it has, the missing ones included.")
-    missing_devices: int = Field(0, description="How many of its disks are missing.")
+    missing_devices: int = Field(default=0, description="How many of its disks are missing.")
     size: int = Field(description="The bytes of its disks that are present.")  # bytes, of the members that are present
     used: int = Field(description="The bytes used, as btrfs filesystem show reports them.")  # bytes used, as btrfs filesystem show reports them
 
@@ -365,15 +383,15 @@ class VolumeInfo(BaseModel):
     path: str = Field(description="Its folder, /mnt/pools/<pool>/<name>.")
     # The bytes it references, which its quota limits; None unless counted.
     used: int | None = Field(
-        None,
+        default=None,
         description="Its quota use: the bytes it references, data shared with its snapshots included; null when "
         "quotas are off or its quota group cannot be read, and in the answer to a create.",
     )
     # The limit of its quota group on them, in bytes; None without one.
-    quota: int | None = Field(None, description="Its quota in bytes; null without one.")
+    quota: int | None = Field(default=None, description="Its quota in bytes; null without one.")
     # How the list read them; None in the answer to a create, which reads nothing.
     usage: VolumeUsageState | None = Field(
-        None, description=f"How used was read: {_USAGE_STATES}. Null in the answer to a create.",
+        default=None, description=f"How used was read: {_USAGE_STATES}. Null in the answer to a create.",
     )
 
 
@@ -382,7 +400,7 @@ class VolumeUsagePoint(BaseModel):
 
     time: str = Field(description="When, in UTC with its offset.")  # ISO 8601 with the UTC offset
     used: int = Field(description="Its quota use then, in bytes.")
-    quota: int | None = Field(None, description="Its quota then, in bytes; null without one.")
+    quota: int | None = Field(default=None, description="Its quota then, in bytes; null without one.")
 
 
 class VolumeUsageHistory(BaseModel):
@@ -399,8 +417,10 @@ class VolumeUsageHistory(BaseModel):
 
     name: str = Field(description="The volume's name.")
     pool: str = Field(description="The pool's name.")
-    used: int | None = Field(None, description="Its quota use now, in bytes; null when usage is quotas_off or unknown.")
-    quota: int | None = Field(None, description="Its quota now, in bytes; null without one.")
+    used: int | None = Field(
+        default=None, description="Its quota use now, in bytes; null when usage is quotas_off or unknown."
+    )
+    quota: int | None = Field(default=None, description="Its quota now, in bytes; null without one.")
     usage: VolumeUsageState = Field(description=f"How used was read now: {_USAGE_STATES}.")
     points: list[VolumeUsagePoint] = Field(
         description="One point per hour of the last 30 days that the supervisor kept, oldest first, and the "
@@ -421,7 +441,7 @@ class RestoreCopyInfo(BaseModel):
     name: str = Field(description="The restored copy's name, restore_<date>_<time> in UTC.")
     pool: str = Field(description="The pool it is in.")
     # The volume it is in; None for one in the pool's top folder.
-    volume: str | None = Field(None, description="The volume it is in; null for one in the pool's top folder.")
+    volume: str | None = Field(default=None, description="The volume it is in; null for one in the pool's top folder.")
     # The folder it is in: the pool's mountpoint or the volume's folder.
     subvolume: str = Field(description="The folder it is in: the pool's mountpoint or the volume's folder.")
     path: str = Field(description="Its own folder.")
@@ -446,17 +466,20 @@ class ScrubStatus(BaseModel):
         description="running, finished, aborted (cancelled), interrupted (ended neither by finishing nor by a "
         "cancel), or idle (no scrub recorded and none running).",
     )
-    duration: float | None = Field(None, description="How long it ran, in seconds; null when not reported.")  # seconds
-    bytes_scrubbed: int | None = Field(None, description="The bytes scrubbed so far; null when not reported.")
-    total_bytes: int | None = Field(None, description="The bytes to scrub; null when not reported.")
-    rate: int | None = Field(None, description="Bytes per second; null when not reported.")  # bytes per second
+    # seconds
+    duration: float | None = Field(
+        default=None, description="How long it ran, in seconds; null when not reported."
+    )
+    bytes_scrubbed: int | None = Field(default=None, description="The bytes scrubbed so far; null when not reported.")
+    total_bytes: int | None = Field(default=None, description="The bytes to scrub; null when not reported.")
+    rate: int | None = Field(default=None, description="Bytes per second; null when not reported.")  # bytes per second
     errors: int = Field(
-        0, description="The errors found: the sum of its read, super, verify and checksum errors.",
+        default=0, description="The errors found: the sum of its read, super, verify and checksum errors.",
     )  # the sum of the error summary: read, super, verify and csum errors (ADR-0313)
     # When the scrub started (ADR-0401): btrfs prints it in the clock of the supervisor's container,
     # UTC; None when btrfs printed no start, or one of another form.
     last_run: UtcDatetime | None = Field(
-        None, description="When the scrub started, in UTC; null when btrfs reports no start.",
+        default=None, description="When the scrub started, in UTC; null when btrfs reports no start.",
     )
 
 
@@ -480,7 +503,9 @@ class BalanceStart(BaseModel):
         "for 20. Not with full.",
     )
     # Rewrite every chunk (--full-balance): hours on a hard disk; the page asks first.
-    full: bool = Field(False, description="Rewrite every chunk (a full balance), which takes hours on a hard disk.")
+    full: bool = Field(
+        default=False, description="Rewrite every chunk (a full balance), which takes hours on a hard disk."
+    )
 
     @model_validator(mode="after")
     def _one_kind(self) -> "BalanceStart":
@@ -513,18 +538,19 @@ class BalanceStatus(BaseModel):
     # ``expected``, and those it considered. Of a finished one: the chunks it relocated, of
     # ``considered``.
     completed: int | None = Field(
-        None,
+        default=None,
         description="Of a balance that runs or is paused: the chunks balanced since its start or resume. Of a "
         "finished one: the chunks it relocated. Null otherwise.",
     )
     expected: int | None = Field(
-        None, description="Of a balance that runs or is paused: about how many chunks it balances; null otherwise.",
+        default=None,
+        description="Of a balance that runs or is paused: about how many chunks it balances; null otherwise.",
     )
-    considered: int | None = Field(None, description="The chunks it considered; null when not reported.")
+    considered: int | None = Field(default=None, description="The chunks it considered; null when not reported.")
     # Of a balance that runs: the seconds it needs still, at the rate of the chunks it balanced
     # since UNOS first saw it run; None until it balanced one.
     seconds_left: int | None = Field(
-        None,
+        default=None,
         description="Of a balance that runs: the seconds it still needs, at the rate seen so far; null until it "
         "balanced a chunk.",
     )
@@ -532,11 +558,11 @@ class BalanceStatus(BaseModel):
     # ended, from its output: "finished", "cancelled" or "failed" (``error``: btrfs's error);
     # None when that is not known.
     result: str | None = Field(
-        None,
+        default=None,
         description="Of an idle pool: how the last balance that UNOS started or resumed since the host started "
         "ended: finished, cancelled or failed; null when not known.",
     )
-    error: str | None = Field(None, description="btrfs's error of a failed balance; null otherwise.")
+    error: str | None = Field(default=None, description="btrfs's error of a failed balance; null otherwise.")
 
 
 class DiskAdd(BaseModel):
@@ -560,12 +586,12 @@ class DiskAdd(BaseModel):
         "disk, since disks change names when they are reconnected.",
     )
     # Erase what the disk holds: needed for a disk with data (HTTP 409 otherwise).
-    force: bool = Field(False, description="Erase what the disk holds; needed for a disk with data.")
+    force: bool = Field(default=False, description="Erase what the disk holds; needed for a disk with data.")
     # What the list showed the disk to hold (its data_description): an add of a disk with data is
     # refused when it now holds something else (HTTP 409), such as a sleeping disk listed with
     # unknown contents, which the add's read wakes.
     contents: str | None = Field(
-        None,
+        default=None,
         description="What the list showed the disk to hold (its data_description): a disk with data that now "
         "holds something else is refused.",
     )
@@ -599,11 +625,11 @@ class PoolMember(BaseModel):
     size: int = Field(description="The bytes that btrfs may use on it; 0 while the kernel removes it from the pool.")
     # The bytes of the chunks allocated on it.
     used: int = Field(description="The bytes of the chunks allocated on it.")
-    model: str | None = Field(None, description="The disk's model; null when unknown.")
-    serial: str | None = Field(None, description="The disk's serial number; null when unknown.")
+    model: str | None = Field(default=None, description="The disk's model; null when unknown.")
+    serial: str | None = Field(default=None, description="The disk's serial number; null when unknown.")
     # Why it cannot be removed from the pool (the only disk, the profile, the space); None when it can.
     problem: str | None = Field(
-        None,
+        default=None,
         description="Why it cannot be removed from the pool (the only disk, the profile, the space); null when it "
         "can.",
     )
@@ -617,16 +643,16 @@ class DiskCandidate(BaseModel):
 
     name: str = Field(description="The disk's name, such as sdc.")
     path: str = Field(description="Its device path.")
-    model: str | None = Field(None, description="Its model; null when it reports none.")
-    serial: str | None = Field(None, description="Its serial number; null when it reports none.")
-    wwn: str | None = Field(None, description="Its World Wide Name; null when it reports none.")
+    model: str | None = Field(default=None, description="Its model; null when it reports none.")
+    serial: str | None = Field(default=None, description="Its serial number; null when it reports none.")
+    wwn: str | None = Field(default=None, description="Its World Wide Name; null when it reports none.")
     size: int = Field(description="Its size in bytes.")
     # What it holds, which an add erases (with ``force``).
     has_data: bool = Field(
         description="Whether it holds data, which an add erases with force; true for a sleeping disk, whose "
         "contents are unknown.",
     )
-    data_description: str | None = Field(None, description="What it holds, in English; null when nothing.")
+    data_description: str | None = Field(default=None, description="What it holds, in English; null when nothing.")
 
 
 class DiskRemovalStatus(BaseModel):
@@ -643,24 +669,26 @@ class DiskRemovalStatus(BaseModel):
     status: str = Field(description="running while the kernel moves the data off a disk of the pool; idle otherwise.")
     # Of a removal that runs, or of the last one when its result is known: the disk.
     devid: int | None = Field(
-        None, description="The disk's devid, of a removal that runs or of the last one whose result is known.",
+        default=None, description="The disk's devid, of a removal that runs or of the last one whose result is known.",
     )
     device: str | None = Field(
-        None, description="The disk's device path, of a removal that runs or of the last one whose result is known.",
+        default=None,
+        description="The disk's device path, of a removal that runs or of the last one whose result is known.",
     )
     # Of a removal that runs: the bytes still allocated on the disk, and those at its start when known.
-    left: int | None = Field(None, description="Of a removal that runs: the bytes still allocated on the disk.")
+    left: int | None = Field(default=None, description="Of a removal that runs: the bytes still allocated on the disk.")
     total: int | None = Field(
-        None, description="Of a removal that runs: the bytes allocated on the disk at its start; null when unknown.",
+        default=None,
+        description="Of a removal that runs: the bytes allocated on the disk at its start; null when unknown.",
     )
     # Of an idle pool: how the last removal that UNOS started since the host started ended,
     # "finished" or "failed" (``error``: btrfs's error); None when that is not known.
     result: str | None = Field(
-        None,
+        default=None,
         description="Of an idle pool: how the last removal that UNOS started since the host started ended, "
         "finished or failed; null when not known.",
     )
-    error: str | None = Field(None, description="btrfs's error of a failed removal; null otherwise.")
+    error: str | None = Field(default=None, description="btrfs's error of a failed removal; null otherwise.")
 
 
 class PoolDevices(BaseModel):

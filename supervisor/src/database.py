@@ -1,7 +1,8 @@
 import logging
 import sqlite3
+from typing import TYPE_CHECKING, ClassVar, cast
 
-from sqlalchemy import event
+from sqlalchemy import CursorResult, Result, Table, event
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -92,7 +93,15 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 class Base(DeclarativeBase):
-    pass
+    if TYPE_CHECKING:
+        # Every model is a declared table: DeclarativeBase types __table__ as any FromClause.
+        __table__: ClassVar[Table]
+
+
+def rowcount(result: Result) -> int:
+    """The rows that an UPDATE or DELETE matched: Session.execute returns a CursorResult for them,
+    typed as the Result of a query, which has no rowcount."""
+    return cast(CursorResult, result).rowcount
 
 
 async def get_db():
@@ -123,7 +132,7 @@ async def checkpoint_db():
     """
     try:
         async with engine.connect() as conn:
-            busy, _, _ = (await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")).one()
+            busy = (await conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")).one()[0]  # (busy, log, checkpointed)
     except SQLAlchemyError as exc:
         logger.warning("The database's last commits stay in unos.db-wal: the checkpoint failed (%s)", exc)
         return

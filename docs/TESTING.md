@@ -44,8 +44,9 @@ It first checks the prerequisites (git, make, Python 3.11, Node.js 22 or later w
 stops before changing anything when one is missing, then sets up what is missing or outdated:
 
 1. `supervisor/.venv`: Python 3.11 with `supervisor/requirements-dev.txt` (the runtime
-   dependencies, pytest and the other test tools).
-2. `.venv-lint`: ruff and pip-audit from `.github/lint-requirements.txt`, with their hashes
+   dependencies, pytest and the other test tools, and the type stubs of the runtime dependencies
+   that publish none, which mypy reads there).
+2. `.venv-lint`: ruff, mypy and pip-audit from `.github/lint-requirements.txt`, with their hashes
    (`pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`).
 3. `webui/node_modules`: `npm ci` from `webui/package-lock.json` (a symbolic link there is left
    as it is).
@@ -72,8 +73,9 @@ installed from, so a rerun installs only what changed. Steps 1-4 need the networ
 `scripts/setup.sh --check` only reports what is missing or outdated; it changes nothing and needs
 no network. Python 3.11 is found as `python3.11` on `PATH`, or set `PYTHON311=/path/to/python`.
 
-The make targets use these environments when they exist, and `python3`, `ruff`, `pip-audit` and
-`npm` from `PATH` otherwise; override them with `PYTHON=`, `RUFF=`, `PIP_AUDIT=` and `NPM=`.
+The make targets use these environments when they exist, and `python3`, `ruff`, `mypy`,
+`pip-audit` and `npm` from `PATH` otherwise; override them with `PYTHON=`, `RUFF=`, `MYPY=`,
+`PIP_AUDIT=` and `NPM=`.
 
 ## Make Targets
 
@@ -81,7 +83,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 |--------|------|
 | `make check` | `lint`, `test` and `frontend`: what CI's Unit Tests, Lint and Frontend jobs run, without the network audits |
 | `make check-fast` | `lint` and `test-fast`: the pre-commit hook and the Stop hook |
-| `make lint` | `ruff check supervisor scripts .claude/hooks` with the rules of `ruff.toml` (pyflakes findings, syntax errors and the rules that find bugs, ADR-0425, in the supervisor and in the repository's own tooling), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
+| `make lint` | `ruff check supervisor scripts .claude/hooks` with the rules of `ruff.toml` (pyflakes findings, syntax errors and the rules that find bugs, ADR-0425, in the supervisor and in the repository's own tooling), `mypy --python-executable <PYTHON> supervisor/src` with the settings of `mypy.ini`, against the packages of the supervisor's environment (ADR-0439), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
 | `make test` | all backend tests (`supervisor/tests`), in parallel worker processes (below), with the checks of the web UI's code that run under node: `test_i18n.py`, `test_webui_design_system.py`, `test_webui_polling.py` (`webui/scripts/polling-check.mjs`: no `setInterval` reaches the API, ADR-0365) and `test_webui_runes.py` (`webui/scripts/runes-check.mjs`: every component in runes mode, ADR-0427); `TESTS=tests/test_auth.py` for one file, `PYTEST_ARGS='-x -k smb'` for pytest options, `TEST_WORKERS=4` for the number of workers |
 | `make test-fast` | the convention tests, in parallel worker processes: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
@@ -507,12 +509,16 @@ request against `main`; a new push to a pull request cancels the run for the pre
    `pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt` on
    Python 3.11 and `make test`.
 2. **Lint and Audit (Python)** (`lint`):
-   - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff
-     and pip-audit, and every package they depend on, with their hashes
-   - `make lint`: ruff with the rules of `ruff.toml`, `bash -n` and the JSON check, each also when
-     another one failed
+   - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff,
+     mypy and pip-audit, and every package they depend on, with their hashes
    - `scripts/audit-python.sh`: known vulnerabilities in the runtime dependencies of the
      supervisor, and in their dependencies, resolved in the audit environment (below)
+   - `python -m venv supervisor/.venv && supervisor/.venv/bin/pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt`:
+     the supervisor's packages and their type stubs, which mypy checks the supervisor against. They
+     have no hashes, so they go into a venv of their own after the audit, not into the Python of the
+     tools; `make lint` takes that venv as `PYTHON`
+   - `make lint`: ruff with the rules of `ruff.toml`, mypy with the settings of `mypy.ini`,
+     `bash -n` and the JSON check, each also when another one failed
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
@@ -586,7 +592,7 @@ example:
 pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt   # Python 3.11
 python3.11 -m venv ~/.venvs/unos-lint
 ~/.venvs/unos-lint/bin/pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt
-make lint RUFF=~/.venvs/unos-lint/bin/ruff
+make lint RUFF=~/.venvs/unos-lint/bin/ruff MYPY=~/.venvs/unos-lint/bin/mypy
 (cd webui && npm ci)
 make frontend
 ```
@@ -596,6 +602,11 @@ make frontend
   a manual fix: an assignment may hold a call that must stay. A finding that stays gets
   `# noqa: <code>` with its reason on the line, or a per-file ignore with its reason in
   `ruff.toml` (ADR-0425); ruff fails for a `noqa` that suppresses nothing (RUF100).
+- `make lint-mypy` runs mypy alone. An error that stays gets `# type: ignore[<code>]` with its
+  reason on the line, or a section of its module with the reason in `mypy.ini` (ADR-0439); mypy
+  fails for an ignore that suppresses nothing and for one without its code. A runtime dependency
+  that publishes no type information gets its stubs (`types-<name>`) pinned in
+  `supervisor/requirements-dev.txt`, the environment that mypy reads.
 - `scripts/audit-python.sh` resolves `requirements.txt` in the audit environment, a temporary
   virtual environment of Python 3.11 (`PYTHON`, `python3` by default) that it removes at the end:
   pip, setuptools and wheel (and packaging, which wheel needs) from
@@ -610,7 +621,7 @@ make frontend
   `.svelte-kit/tsconfig.json`: `tsconfig.json` extends it (`npm run build`
   writes it too).
 
-### Updating ruff and pip-audit
+### Updating the lint tools
 
 `.github/lint-requirements.txt` is generated from
 `.github/lint-requirements.in` with [uv](https://docs.astral.sh/uv/). Change
@@ -623,11 +634,12 @@ uv pip compile --universal --python-version 3.11 --generate-hashes .github/lint-
 `--universal` resolves for every platform, the Linux x86_64 of the CI runners
 included, and `--python-version 3.11` for Python 3.11 and later (the lint job
 runs 3.11). Where it can, uv keeps the versions that the `.txt` already pins
-for the packages ruff and pip-audit depend on; add `--upgrade` to update those
+for the packages the tools depend on; add `--upgrade` to update those
 too, or `--upgrade-package <name>` for one of them. Commit both files, then run `make setup`
 to update `.venv-lint`. `supervisor/tests/test_deploy_scripts.py` checks that every package has
-hashes and that ruff and pip-audit have the versions of the `.in` file. Dependabot leaves these
-two files alone.
+hashes and that the tools have the versions of the `.in` file. Dependabot leaves these
+two files alone. A new mypy can find errors that the old one did not: fix them in the same
+change.
 
 The file pins pip too (pip-audit depends on it through pip-api), so the
 install replaces the pip of the environment with that version.

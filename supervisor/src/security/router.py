@@ -8,7 +8,7 @@ import secrets
 import threading
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import Path as PathParam
@@ -20,7 +20,7 @@ from .. import host, paths
 from . import firewall, serving
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
-from ..database import get_db
+from ..database import get_db, rowcount
 from ..openapi import ADMIN, BODY, SIGNED_IN, answer, errors
 from ..times import db_now
 from ..auth import requirement
@@ -179,15 +179,15 @@ async def clear_login_history(
     result = await db.execute(stmt)
     await db.commit()
 
-    if result.rowcount:
-        count = result.rowcount
+    if rowcount(result):
+        count = rowcount(result)
         await audit_change(
             AuditAction.LOGIN_HISTORY_CLEARED, request, current_user.username, resource_type="login_history",
             details=f"Cleared {count} login attempt{'' if count == 1 else 's'} older than {older_than_days} days",
             severity=AuditSeverity.WARNING,
         )
 
-    return {"status": "ok", "deleted_count": result.rowcount}
+    return {"status": "ok", "deleted_count": rowcount(result)}
 
 
 # ==================== Firewall Management ====================
@@ -691,7 +691,7 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
         if result.returncode != 0:
             return None
 
-        info = {
+        info: dict[str, Any] = {
             "domain": "",
             "issuer": "",
             "valid_from": None,
@@ -716,7 +716,8 @@ def _certificate_info(source: list[str], pem: str | None = None) -> dict | None:
                 # Extract issuer organization or CN
                 org_match = re.search(r'O\s*=\s*([^,/]+)', line)
                 cn_match = re.search(r'CN\s*=\s*([^,/]+)', line)
-                info["issuer"] = (org_match or cn_match).group(1).strip() if (org_match or cn_match) else "Unknown"
+                issuer_match = org_match or cn_match
+                info["issuer"] = issuer_match.group(1).strip() if issuer_match else "Unknown"
             elif line.startswith("notBefore="):
                 info["valid_from"] = openssl_time(line.split("=", 1)[1])
             elif line.startswith("notAfter="):
@@ -754,7 +755,7 @@ def get_custom_certificates() -> list[Certificate]:
 
     Runs openssl for each: call this in a worker thread.
     """
-    certs = []
+    certs: list[Certificate] = []
     now = datetime.now(UTC)
     certs_path = Path(CERTS_DIR)
 
@@ -888,6 +889,7 @@ async def serve_certificate(
         if name is None:
             details = "Browsers get the certificate of Caddy's local CA"
         else:
+            assert prepared is not None  # _serve_stored prepared it
             details = f"Browsers get the stored certificate {name}, until {prepared.not_after:%Y-%m-%d}"
             if prepared.expires_soon:
                 details += f"; it expires within {serving.EXPIRY_WARNING_DAYS} days"
@@ -1234,7 +1236,7 @@ async def disable_two_factor_requirement(
     # Every row, whatever the table's layout (src/auth/requirement.py).
     result = await db.execute(text(requirement.DELETE_ALL))
     await db.commit()
-    if result.rowcount < 1:  # another administrator turned it off meanwhile
+    if rowcount(result) < 1:  # another administrator turned it off meanwhile
         raise HTTPException(status_code=409, detail=NOT_REQUIRED)
     await audit_change(
         AuditAction.SETTINGS_CHANGED, request, username, resource_type="two_factor_requirement",

@@ -5,6 +5,7 @@ import requests
 import urllib3
 from docker.errors import APIError, DockerException, NotFound
 from docker.models.containers import Container
+from docker.models.resource import Model
 from docker.types import LogConfig
 from ..config import get_settings
 from .schemas import ContainerInfo, ContainerCreate, ContainerState, PortMapping, ImageInfo
@@ -44,6 +45,27 @@ DOCKER_TIMEOUT_SECONDS = 60
 # What an image's removal may take: Docker deletes its layers before it answers, which took more
 # than a minute for an image of 480 MiB on the dev device's SD card (2026-11-19).
 IMAGE_REMOVE_TIMEOUT_SECONDS = 600
+
+
+# types-docker types the attributes of Docker's objects Optional, as docker-py reads them from the
+# answer's dictionary; Docker gives every container a name, and every container and image an ID.
+def _name(container: Container) -> str:
+    name = container.name
+    assert name is not None
+    return name
+
+
+def _id(model: Model) -> str:
+    model_id = model.id
+    assert model_id is not None
+    return model_id
+
+
+def _image_label(container: Container) -> str:
+    """The first tag of the container's image, else the image's short ID (one request to Docker)."""
+    image = container.image
+    assert image is not None  # docker-py looks the image up by the container's ImageID
+    return image.tags[0] if image.tags else image.short_id
 
 
 def is_system_container(name: str) -> bool:
@@ -107,7 +129,7 @@ def list_containers(all: bool = True) -> list[ContainerInfo]:
     result = []
     for c in containers:
         # Skip system containers
-        if is_system_container(c.name):
+        if is_system_container(_name(c)):
             continue
 
         ports = []
@@ -135,8 +157,8 @@ def list_containers(all: bool = True) -> list[ContainerInfo]:
         result.append(
             ContainerInfo(
                 id=c.short_id,
-                name=c.name,
-                image=c.image.tags[0] if c.image.tags else c.image.short_id,
+                name=_name(c),
+                image=_image_label(c),
                 status=c.status,
                 state=container_state,
                 created=c.attrs.get("Created", ""),
@@ -178,8 +200,8 @@ def get_container(container_id: str) -> ContainerInfo:
 
     return ContainerInfo(
         id=c.short_id,
-        name=c.name,
-        image=c.image.tags[0] if c.image.tags else c.image.short_id,
+        name=_name(c),
+        image=_image_label(c),
         status=c.status,
         state=container_state,
         created=c.attrs.get("Created", ""),
@@ -198,7 +220,7 @@ def create_container(config: ContainerCreate) -> ContainerInfo:
 
     # Build port bindings
     port_bindings = {}
-    exposed_ports = {}
+    exposed_ports: dict[str, dict] = {}
     for p in config.ports:
         port_key = f"{p.container_port}/{p.protocol}"
         exposed_ports[port_key] = {}
@@ -206,14 +228,14 @@ def create_container(config: ContainerCreate) -> ContainerInfo:
             port_bindings[port_key] = p.host_port
 
     # Build volume bindings
-    volumes = {}
+    volumes: dict[str, dict] = {}
     binds = []
     for v in config.volumes:
         volumes[v.container_path] = {}
         binds.append(f"{v.host_path}:{v.container_path}:{v.mode}")
 
-    # Create container
-    container = client.containers.run(
+    # Create container. types-docker's restart policies lack Docker's "unless-stopped" and "no".
+    container = client.containers.run(  # type: ignore[call-overload]
         config.image,
         name=config.name,
         detach=True,
@@ -260,7 +282,7 @@ def _app_change(container: Container) -> contextlib.AbstractContextManager:
     # Imported here: apps.stacks imports this module.
     from ..apps import stacks
 
-    return stacks.app_lock(stacks.app_key(container), container.labels.get(UNOS_APP_LABEL) or container.name)
+    return stacks.app_lock(stacks.app_key(container), container.labels.get(UNOS_APP_LABEL) or _name(container))
 
 
 # Held, per container, from reading its state to the start or stop that follows, so that of two
@@ -273,7 +295,7 @@ _STATE_CHANGE_GUARD = threading.Lock()
 
 def _state_lock(container: Container) -> threading.Lock:
     with _STATE_CHANGE_GUARD:
-        return _STATE_CHANGE.setdefault(container.id, threading.Lock())
+        return _STATE_CHANGE.setdefault(_id(container), threading.Lock())
 
 
 def start_container(container_id: str) -> tuple[ContainerInfo, bool]:
@@ -302,7 +324,7 @@ def stop_container(container_id: str) -> tuple[ContainerInfo, bool]:
     try:
         # Prevent stopping system containers
         known = client.containers.get(container_id)
-        if is_system_container(known.name):
+        if is_system_container(_name(known)):
             raise ValueError("Cannot stop system container")
 
         with _state_lock(known):
@@ -322,7 +344,7 @@ def restart_container(container_id: str) -> ContainerInfo:
         container = client.containers.get(container_id)
 
         # As stop and remove: UNOS's own containers are not restarted from the Containers page.
-        if is_system_container(container.name):
+        if is_system_container(_name(container)):
             raise ValueError("Cannot restart system container")
 
         with _app_change(container):
@@ -341,12 +363,12 @@ def remove_container(container_id: str, force: bool = False) -> str:
         container = client.containers.get(container_id)
         
         # Prevent removing system containers
-        if is_system_container(container.name):
+        if is_system_container(_name(container)):
             raise ValueError("Cannot remove system container")
 
         with _app_change(container):
             container.remove(force=force)
-        return container.name
+        return _name(container)
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
 
@@ -419,7 +441,7 @@ class ImageInUse(Exception):
 
 
 def _in_use_message(image: str, containers: list[Container]) -> str:
-    names = sorted(c.name for c in containers)
+    names = sorted(_name(c) for c in containers)
     if len(names) == 1:
         return f"The image {image} is used by the container {names[0]}. Remove the container first."
     return f"The image {image} is used by the containers {', '.join(names)}. Remove the containers first."
@@ -445,9 +467,9 @@ def remove_image(image_id: str, force: bool = False) -> str:
             raise ValueError("Cannot remove system image")
         label = img.tags[0] if img.tags else img.short_id
         if force:
-            client.images.remove(img.id, force=True)
+            client.images.remove(_id(img), force=True)
             return label
-        users = client.containers.list(all=True, filters={"ancestor": img.id})
+        users = client.containers.list(all=True, filters={"ancestor": _id(img)})
         if users:
             raise ImageInUse(_in_use_message(img.tags[0] if img.tags else img.short_id, users))
         for tag in img.tags:
@@ -455,7 +477,7 @@ def remove_image(image_id: str, force: bool = False) -> str:
     except NotFound:
         raise ValueError(f"Image {image_id} not found")
     try:
-        client.images.remove(img.id, force=False)
+        client.images.remove(_id(img), force=False)
     except NotFound:
         pass  # removing its last tag removed the image
     return label

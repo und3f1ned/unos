@@ -820,10 +820,10 @@ def _target_ops(serve: Serve, target: TargetState | None, portals: list[str] | N
         ops += [("write", f"{g}/attrib/{name}", value) for name, value in TPG_ATTRIBUTES]
         ops.append(("write", f"{g}/param/AuthMethod", "CHAP"))
     lun = f"{g}/lun/{LUN}"
-    for other, names in sorted(tpg.luns.items()):
-        if other != LUN:
-            ops += [("unlink", f"{g}/lun/{other}/{link}", "") for link in names]
-            ops.append(("rmdir", f"{g}/lun/{other}", ""))
+    for other_lun, names in sorted(tpg.luns.items()):
+        if other_lun != LUN:
+            ops += [("unlink", f"{g}/lun/{other_lun}/{link}", "") for link in names]
+            ops.append(("rmdir", f"{g}/lun/{other_lun}", ""))
     if LUN not in tpg.luns:
         ops.append(("mkdir", lun, ""))
     if not tpg.luns.get(LUN):
@@ -832,9 +832,9 @@ def _target_ops(serve: Serve, target: TargetState | None, portals: list[str] | N
         wanted = set(portals)
         ops += [("mkdir", f"{g}/np/{portal}", "") for portal in portals if portal not in tpg.portals]
         ops += [("rmdir", f"{g}/np/{portal}", "") for portal in sorted(tpg.portals - wanted)]
-    for name, acl in sorted(tpg.acls.items()):
+    for name, old_acl in sorted(tpg.acls.items()):
         if name not in serve.initiators:
-            ops += _teardown_acl(g, name, acl)
+            ops += _teardown_acl(g, name, old_acl)
     for name in serve.initiators:
         acl = tpg.acls.get(name)
         mapped = f"{g}/acls/{name}/{LUN}"

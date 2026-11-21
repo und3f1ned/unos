@@ -39,6 +39,7 @@ import unicodedata
 from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from typing import TypeGuard
 
 from fastapi import HTTPException
 from sqlalchemy import DateTime, delete, insert, select, update
@@ -198,7 +199,7 @@ class HostGroup:
 # --------------------------------------------------------------------------
 
 
-def _valid_uid(uid: object) -> bool:
+def _valid_uid(uid: object) -> TypeGuard[int]:
     """An int (not a bool) in the UNOS uid range."""
     return (
         isinstance(uid, int)
@@ -207,7 +208,7 @@ def _valid_uid(uid: object) -> bool:
     )
 
 
-def _valid_next_uid(value: object) -> bool:
+def _valid_next_uid(value: object) -> TypeGuard[int]:
     """A stored next_uid that can be kept: an int in [SMB_UID_MIN, SMB_UID_MAX + 1]."""
     return (
         isinstance(value, int)
@@ -219,13 +220,13 @@ def _valid_next_uid(value: object) -> bool:
 def _checked_name(name: object, tool: str) -> str:
     if not constants.is_valid_linux_name(name):
         raise SmbHostError(500, f"Refused to run {tool} with an invalid name")
-    return name  # type: ignore[return-value]
+    return name
 
 
 def _checked_uid(uid: object, tool: str) -> int:
     if not _valid_uid(uid):
         raise SmbHostError(500, f"Refused to run {tool} with an invalid user id")
-    return uid  # type: ignore[return-value]
+    return uid
 
 
 def _shown(value: object, limit: int = 64) -> str:
@@ -455,9 +456,9 @@ def is_unos_passdb_entry(name: object, accounts: dict[str, HostAccount], passdb:
     name (UNOS names are lower case), while the host account of that name is
     ours or missing. An entry stored in another case only holds the key and is
     foreign; so is an entry of a host account that UNOS did not create."""
-    if not constants.is_valid_linux_name(name) or passdb.get(name.lower()) != name:  # type: ignore[union-attr]
+    if not constants.is_valid_linux_name(name) or passdb.get(name.lower()) != name:
         return False
-    account = accounts.get(name)  # type: ignore[arg-type]
+    account = accounts.get(name)
     return account is None or account.ours
 
 
@@ -991,7 +992,7 @@ async def _apply(db: AsyncSession) -> list[str]:
 async def _end_sessions(name: object) -> list[str]:
     if not constants.is_valid_linux_name(name):
         return []
-    return await asyncio.to_thread(end_smb_sessions, [name])  # type: ignore[list-item]
+    return await asyncio.to_thread(end_smb_sessions, [name])
 
 
 def _reset_mismatched_row(row: models.SmbAccount, user: User) -> None:
@@ -1159,13 +1160,13 @@ async def activate(
             db.add(row)
         elif row.linux_name != name:
             _reset_mismatched_row(row, user)
-        if own_uid is None:
-            row.uid = await _allocate_uid(db, {account.uid for account in plan.accounts.values()}, name)
+        uid = own_uid  # the row's own, else a new one
+        if uid is None:
+            uid = row.uid = await _allocate_uid(db, {account.uid for account in plan.accounts.values()}, name)
         row.linux_name = name
     except BaseException:
         await _rollback(db)
         raise
-    uid = row.uid
     await _commit(db)
 
     # Step 4: host changes (thread).
@@ -1328,7 +1329,7 @@ def _revoke_on_host(name: object, uid: object, password_state: object) -> bool:
             reason = "the check for the Samba tools failed" if missing is None else f"{', '.join(missing)} missing"
             raise SmbHostError(503, reason)
         return False  # no Samba, and no password to revoke
-    return _delete_unos_entry(name, read_host_accounts(), read_passdb_names())  # type: ignore[arg-type]
+    return _delete_unos_entry(name, read_host_accounts(), read_passdb_names())
 
 
 async def _revoke(row: models.SmbAccount, prefix: str, *, by_admin: bool = True) -> bool:
@@ -1354,7 +1355,7 @@ async def _turn_off(db: AsyncSession, user: User, row: models.SmbAccount | None,
     user_id, name = row.user_id, row.linux_name
     shown = _shown(name)
     removed = await _revoke(row, f"SMB access of {shown} could not be revoked", by_admin=disallow)
-    changes = {"password_state": "needed", "password_set_at": None}
+    changes: dict[str, object] = {"password_state": "needed", "password_set_at": None}
     if disallow:
         changes["enabled"] = False
     dirty = any(getattr(row, key) != value for key, value in changes.items())
@@ -1412,7 +1413,7 @@ async def update_password_before_store(
     problem = constants.smb_password_problem(new_password)
     if problem is not None:
         raise HTTPException(status_code=400, detail=problem)
-    user_id, name = user.id, row.linux_name  # type: ignore[union-attr]
+    user_id, name = user.id, row.linux_name  # type: ignore[union-attr]  # an active account has its row
     by_admin = current_password is None
     try:
         await asyncio.to_thread(set_own_samba_password, name, new_password)
@@ -1427,7 +1428,7 @@ async def update_password_before_store(
         raise _compensation_error(failure, error, by_admin=by_admin) from None
     except SmbHostError as error:
         raise _http(error, self_flow=None if by_admin else "The password was not changed", user=name) from None
-    row.password_set_at = db_now()  # type: ignore[union-attr]
+    row.password_set_at = db_now()  # type: ignore[union-attr]  # an active account has its row
     return PasswordUpdate(user_id=user_id, name=name, current_password=current_password)
 
 
@@ -1570,7 +1571,7 @@ async def begin_user_removal(db: AsyncSession, user: User, row: models.SmbAccoun
             # Its files on the pools keep the uid: smb_uids keeps it under the row's name, when a row
             # from before the table existed left it unrecorded (ADR-0353).
             if _valid_uid(row.uid) and constants.is_valid_linux_name(row.linux_name):
-                await _record_uids(db, [(row.uid, row.linux_name)])  # type: ignore[list-item]
+                await _record_uids(db, [(row.uid, row.linux_name)])
             await db.delete(row)
     return removal
 
@@ -1585,7 +1586,7 @@ def _remove_account_of_deleted_user(name: str, uid: object) -> list[str]:
         if account is None or not account.ours or account.uid != uid:
             return warnings  # only the marked account with the row's uid is the user's
         for attempt in range(USERDEL_ATTEMPTS):
-            outcome = _remove_host_account(name, expected_uid=uid)  # type: ignore[arg-type]
+            outcome = _remove_host_account(name, expected_uid=uid)
             if outcome == "removed":
                 flush_etc()
                 return warnings
@@ -1682,7 +1683,7 @@ def _rename_on_host(rename: Rename) -> None:
     old, new, uid = rename.old, rename.new, rename.uid
     rename.warnings += end_smb_sessions([old])
     for attempt in range(USERDEL_ATTEMPTS):
-        outcome = _rename_host_account(old, new, uid)  # type: ignore[arg-type]
+        outcome = _rename_host_account(old, new, uid)  # type: ignore[arg-type]  # run only with the row's uid
         if outcome != "busy":
             rename.renamed = outcome == "renamed"
             break
@@ -1708,7 +1709,7 @@ def _rename_back(rename: Rename) -> str | None:
     if not rename.renamed:
         return None
     try:
-        outcome = _rename_host_account(rename.new, rename.old, rename.uid)  # type: ignore[arg-type]
+        outcome = _rename_host_account(rename.new, rename.old, rename.uid)  # type: ignore[arg-type]  # as above
     except SmbHostError as error:
         outcome = error.message
     if outcome == "renamed":
@@ -1847,7 +1848,7 @@ class _HostOutcome:
 def _row_keys(rows: Iterable[_Row]) -> set[tuple[str, int]]:
     """(linux_name, uid) of every row with a valid name and uid."""
     return {
-        (row.linux_name, row.uid) for row in rows  # type: ignore[misc]
+        (row.linux_name, row.uid) for row in rows
         if constants.is_valid_linux_name(row.linux_name) and _valid_uid(row.uid)
     }
 
@@ -1867,7 +1868,7 @@ def _rows_with_a_stale_uid(rows: list[_Row], accounts: dict[str, HostAccount]) -
             stale.setdefault(account.uid, account)
     found = []
     for row in rows:
-        holder = stale.get(row.uid) if (row.linux_name, row.uid) in keys else None  # type: ignore[arg-type]
+        holder = stale.get(row.uid) if _valid_uid(row.uid) and (row.linux_name, row.uid) in keys else None
         if holder is not None and holder.name != row.linux_name:
             found.append((row, holder))
     return found
@@ -1973,13 +1974,14 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
     for name, uid in plan.active:
         if name in out.needed:
             continue  # not active any more: no host account is needed now
-        account = accounts.get(name)
-        if account is not None:
-            if account.ours and account.uid == uid:
+        existing = accounts.get(name)
+        if existing is not None:
+            if existing.ours and existing.uid == uid:
                 continue
-            if account.ours:
+            if existing.ours:
                 out.problems.append(
-                    f"The host account {name} still has uid {account.uid}, not {uid}; UNOS replaces it at its next start"
+                    f"The host account {name} still has uid {existing.uid}, not {uid}; "
+                    "UNOS replaces it at its next start"
                 )
             else:
                 out.needed[name] = _not_ours(name)
@@ -2030,7 +2032,7 @@ def _reconcile_host(plan: _HostPlan) -> _HostOutcome:
 
 async def _uid_floor(db: AsyncSession, uids: Iterable[object]) -> str | None:
     """Step 5 of reconcile_accounts (ADR-0109): next_uid is at least one above every uid seen; written only on a difference."""
-    floor = max([constants.SMB_UID_MIN] + [uid + 1 for uid in uids if _valid_uid(uid)])  # type: ignore[operator]
+    floor = max([constants.SMB_UID_MIN] + [uid + 1 for uid in uids if _valid_uid(uid)])
     table = models.SmbState.__table__
     found = (await db.execute(select(table.c.next_uid).where(table.c.id == 1))).first()
     if found is None:
@@ -2123,7 +2125,7 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
     async def set_row(row: _Row, **values: object) -> None:
         nonlocal db_changed
         if live(row) and not (values.get("enabled", row.enabled) and values.get("password_state", row.password_state) == "set"):
-            turned_off.add(row.linux_name)  # type: ignore[arg-type]
+            turned_off.add(row.linux_name)  # type: ignore[arg-type]  # live() checked the name
         await db.execute(update(accounts_t).where(accounts_t.c.user_id == row.user_id).values(**values))
         for key, value in values.items():
             if hasattr(row, key):
@@ -2237,8 +2239,13 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
         (account.uid, account.name) for account in sorted(accounts.values(), key=lambda a: a.name)
         if account.ours and (account.name, account.uid) not in row_keys and constants.is_valid_linux_name(account.name)
     ]
-    held = [(row.uid, row.linux_name) for row in rows if (row.linux_name, row.uid) in row_keys]
-    if await _record_uids(db, stale + held):  # type: ignore[arg-type]
+    # The checks of the name and uid only narrow their types: row_keys holds valid ones alone.
+    held = [
+        (row.uid, row.linux_name) for row in rows
+        if _valid_uid(row.uid) and constants.is_valid_linux_name(row.linux_name)
+        and (row.linux_name, row.uid) in row_keys
+    ]
+    if await _record_uids(db, stale + held):
         db_changed = True
 
     # The database rules are stored before the host actions, so that no write
@@ -2259,11 +2266,11 @@ async def reconcile_accounts(db: AsyncSession) -> interfaces.ReconcileResult:
         by_gid=by_gid,
         passdb=passdb,
         row_keys=row_keys,
-        active=active,  # type: ignore[arg-type]
+        active=active,
         inactive={
             row.linux_name for row in rows
             if constants.is_valid_linux_name(row.linux_name) and (row.linux_name, row.uid) not in active
-        },  # type: ignore[misc]
+        },
         turned_off=turned_off,
     )
     outcome = await asyncio.to_thread(_reconcile_host, plan)
@@ -2486,17 +2493,17 @@ def prepare_restored_accounts(
                 or prev.linux_name in names
             ):
                 continue
-            uid = prev.uid if _valid_uid(prev.uid) and prev.uid not in uids else None
-            proven = _proven(prev, prev.username, hashed, is_admin, prev.linux_name, uid)
+            kept_uid = prev.uid if _valid_uid(prev.uid) and prev.uid not in uids else None
+            proven = _proven(prev, prev.username, hashed, is_admin, prev.linux_name, kept_uid)
             conn.execute(
                 "INSERT INTO smb_accounts (user_id, linux_name, uid, enabled, password_state, password_set_at, "
                 "created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, NULL)",
-                (user_id, prev.linux_name, uid, 1 if prev.enabled else 0, "set" if proven else "needed"),
+                (user_id, prev.linux_name, kept_uid, 1 if prev.enabled else 0, "set" if proven else "needed"),
             )
             row_users.add(user_id)
             names.add(prev.linux_name)
-            if uid is not None:
-                uids.add(uid)
+            if kept_uid is not None:
+                uids.add(kept_uid)
             if prev.active and not proven:
                 say(f"SMB must be turned on again for {_shown(prev.username)}")
 
@@ -2512,13 +2519,13 @@ def prepare_restored_accounts(
     restored = conn.execute("SELECT uid, linux_name FROM smb_accounts").fetchall()
     backup_record = _uid_pairs(conn, "smb_uids")
     known_here = set(known_names) | {p.uid for p in snapshot.accounts if _valid_uid(p.uid)}
-    names = sorted(
+    uid_names = sorted(
         {(uid, name) for uid, name in snapshot.uid_names if constants.is_valid_linux_name(name)}
         | {(uid, name) for uid, name in _uid_pairs(conn, "smb_uid_names")
            if uid not in known_here and constants.is_valid_linux_name(name)}
     )
     live_accounts = [(p.uid, p.linux_name) for p in snapshot.accounts]
-    for uid, name in live_accounts + restored + backup_record + names:
+    for uid, name in live_accounts + restored + backup_record + uid_names:
         if _valid_uid(uid) and constants.is_valid_linux_name(name):
             handed_out.setdefault(uid, name)
     conn.execute("DROP TABLE IF EXISTS smb_uids")
@@ -2526,7 +2533,7 @@ def prepare_restored_accounts(
     conn.executemany("INSERT INTO smb_uids (uid, linux_name) VALUES (?, ?)", sorted(handed_out.items()))
     conn.execute("DROP TABLE IF EXISTS smb_uid_names")
     conn.execute(_SMB_UID_NAMES_DDL)
-    conn.executemany("INSERT INTO smb_uid_names (uid, linux_name) VALUES (?, ?)", names)
+    conn.executemany("INSERT INTO smb_uid_names (uid, linux_name) VALUES (?, ?)", uid_names)
 
     # uid floor: never below the restored value, the live value or any uid seen or handed out.
     restored_uids = [uid for uid, _ in restored if _valid_uid(uid)]

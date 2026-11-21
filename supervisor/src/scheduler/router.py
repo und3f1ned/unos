@@ -447,7 +447,7 @@ def disk_device(target_disk: str | None) -> str:
 
 def _command_problem(command: str | None) -> str | None:
     """Why ``command`` cannot be the command of a custom task, or None (checked when saved and before each run)."""
-    if not (command or "").strip():
+    if command is None or not command.strip():
         return "No command specified"
     if "\x00" in command or len(command) > MAX_COMMAND_LENGTH:
         return f"Command must be at most {MAX_COMMAND_LENGTH} characters without NUL bytes"
@@ -697,7 +697,7 @@ def _pool_is_mounted(pool: Path) -> bool:
     return _real_dir(pool) and os.path.ismount(pool)
 
 
-def _create_snapshot(pool_name: str) -> tuple[bool, str]:
+def _create_snapshot(pool_name: str | None) -> tuple[bool, str]:
     """A read-only snapshot ``auto_<date>_<time>`` (UTC, ADR-0243) of a mounted pool.
 
     Made like those of the Snapshots page, by make_snapshot of the snapshot
@@ -731,6 +731,7 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
 
             # Cleanup old snapshots if keep_count is set
             if task.keep_count and task.keep_count > 0:
+                assert task.target_pool is not None  # _create_snapshot took it
                 try:
                     cleanup_result = await cleanup_old_snapshots(
                         task.target_pool, task.keep_count
@@ -754,8 +755,9 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             # on a pool that is not mounted, whose path is a folder on the root filesystem; killed
             # at its timeout and not waited for (ADR-0290), so a hung filesystem neither holds a
             # worker thread nor leaves the run "running".
+            assert task.target_pool is not None  # pool_path took it
             try:
-                result = await asyncio.to_thread(storage_pools.scrub_start, pool, SCRUB_START_TIMEOUT)
+                started = await asyncio.to_thread(storage_pools.scrub_start, pool, SCRUB_START_TIMEOUT)
             except storage_pools.PoolConflictError as exc:
                 return False, str(exc)
             except subprocess.TimeoutExpired:
@@ -763,8 +765,8 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
                     f"btrfs scrub start timed out: {task.target_pool} did not answer within "
                     f"{SCRUB_START_TIMEOUT} seconds. The pool may not be responding."
                 )
-            if result.returncode != 0:
-                return False, result.stderr
+            if started.returncode != 0:
+                return False, started.stderr
             # The Storage page follows it over the events socket (ADR-0367).
             storage_scrubs.note(task.target_pool, ScrubStatus(pool=task.target_pool, status="running"))
             return True, "Scrub started"
@@ -775,7 +777,7 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
             # Killed at its timeout and not waited for (ADR-0290): a hung disk
             # or USB bridge neither holds a worker thread nor leaves the run "running".
             try:
-                result = await asyncio.to_thread(
+                test = await asyncio.to_thread(
                     host.run_smartctl, ["-t", "short"], device, timeout=SMART_TEST_TIMEOUT
                 )
             except subprocess.TimeoutExpired:
@@ -783,8 +785,8 @@ async def execute_task(task: ScheduledTask) -> tuple[bool, str]:
                     f"smartctl timed out: {device} did not answer within {SMART_TEST_TIMEOUT} "
                     "seconds. The disk or its USB bridge may not be responding."
                 )
-            if result.returncode != 0:
-                return False, result.stderr or result.stdout
+            if test.returncode != 0:
+                return False, test.stderr or test.stdout
             return True, "SMART test started"
 
         elif task.task_type == TaskType.BACKUP:
@@ -944,6 +946,7 @@ async def run_command(command: str) -> CommandResult:
     if timed_out:
         return CommandResult(None, output.text(),
                              f"The command did not end within {_duration(COMMAND_TIMEOUT)} and was stopped")
+    assert code is not None  # process.wait() returned
     if code < 0:
         return CommandResult(None, output.text(), f"The command was ended by {_signal_name(-code)}")
     return CommandResult(code, output.text(), None if code == 0 else f"The command exited with status {code}")
@@ -956,6 +959,7 @@ async def _run_custom_task(task: ScheduledTask, run: TaskRun) -> bool:
     if problem:
         run.error = problem
         return False
+    assert task.command is not None  # _command_problem refused a missing one
     try:
         result = await run_command(task.command)
     except Exception as e:  # as execute_task: the run is recorded as failed, never left running
@@ -1136,8 +1140,8 @@ def task_problems(
         if not task.enabled or not task.id:
             continue
         if task.last_status == "failed":
-            run = last_runs.get(task.id)
-            error = run.error if run is not None and run.status == "failed" else None
+            last = last_runs.get(task.id)
+            error = last.error if last is not None and last.status == "failed" else None
             found[f"task_failed:{task.id}"] = problems.Problem(
                 key=f"task_failed:{task.id}", severity="warning", kind="task_failed", subject=task.name,
                 title=f"Task '{task.name}' failed",

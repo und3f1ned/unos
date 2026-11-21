@@ -65,7 +65,7 @@ _SCHEDULED_SHUTDOWN = [
 ]
 # logind's actions as the web UI names them. Dry runs (shutdown -k) only send
 # the wall message: nothing is pending.
-_PENDING_ACTIONS = {
+_PENDING_ACTIONS: dict[str, Literal["reboot", "shutdown"]] = {
     "reboot": "reboot", "kexec": "reboot", "soft-reboot": "reboot",
     "poweroff": "shutdown", "halt": "shutdown",
 }
@@ -104,19 +104,19 @@ class PowerConfig(BaseModel):
         "idle_timeout_minutes": 30,
     }]})
 
-    wake_on_lan: bool = Field(True, description=(
+    wake_on_lan: bool = Field(default=True, description=(
         "Kept, but nothing acts on it: Wake-on-LAN is turned on and off per interface (POST /power/wol/...)."))
-    auto_shutdown: bool = Field(False, description=(
+    auto_shutdown: bool = Field(default=False, description=(
         "Whether the scheduled shutdown is on: daily at shutdown_hour:shutdown_minute, announced 10 minutes ahead "
         "and postponed while a running job runs."))
     shutdown_hour: int = Field(default=23, ge=0, le=23, description="The hour of the scheduled shutdown, 0 to 23.")
     shutdown_minute: int = Field(default=0, ge=0, le=59, description="The minute of the scheduled shutdown, 0 to 59.")
-    auto_wakeup: bool = Field(False, description=(
+    auto_wakeup: bool = Field(default=False, description=(
         "Whether the wake is on: the RTC's wake alarm is kept at wakeup_hour:wakeup_minute, which must come at "
         "least 10 minutes after the shutdown time when the scheduled shutdown is on too."))
     wakeup_hour: int = Field(default=7, ge=0, le=23, description="The hour of the wake, 0 to 23.")
     wakeup_minute: int = Field(default=0, ge=0, le=59, description="The minute of the wake, 0 to 59.")
-    idle_shutdown: bool = Field(False, description=(
+    idle_shutdown: bool = Field(default=False, description=(
         "Whether the idle shutdown is on: the host shuts down once it has been idle for idle_timeout_minutes."))
     idle_timeout_minutes: int = Field(default=30, ge=20, le=1440, description=(
         "The minutes the host must be idle before the idle shutdown, 20 to 1440."))
@@ -129,20 +129,22 @@ class PowerConfig(BaseModel):
 
 class UPSSettings(BaseModel):
     """The UPS settings without the NUT password, which no answer shows (ADR-0356)."""
-    enabled: bool = Field(False, description="Whether the UPS monitor reads the UPS, every 30 seconds.")
+    enabled: bool = Field(default=False, description="Whether the UPS monitor reads the UPS, every 30 seconds.")
     host: str = Field(default="localhost", pattern=UPS_HOST_PATTERN, description=(
         "The host of the NUT server (upsd): a host name, an IPv4 address, or an IPv6 address in brackets."))
     port: int = Field(default=3493, ge=1, le=65535, description="upsd's TCP port.")
     ups_name: str = Field(default="ups", pattern=UPS_NAME_PATTERN, description=(
         "The UPS's name on the NUT server, as its ups.conf names it."))
-    username: str | None = Field(None, description="The NUT user; null for none.")
+    username: str | None = Field(default=None, description="The NUT user; null for none.")
     # The monitor's shutdown runs only outside a container (is_in_container).
-    auto_shutdown: bool = Field(True, description=(
+    auto_shutdown: bool = Field(default=True, description=(
         "Whether the UPS monitor shuts the host down while the UPS is on battery at or below "
         "shutdown_battery_percent or shutdown_runtime_minutes, or reports a low battery. It does so only where "
         "the supervisor runs outside a container, never in UNOS's own."))
-    shutdown_battery_percent: int = Field(20, description="The battery charge, in percent, for auto_shutdown.")
-    shutdown_runtime_minutes: int = Field(5, description="The battery runtime left, in minutes, for auto_shutdown.")
+    shutdown_battery_percent: int = Field(default=20, description="The battery charge, in percent, for auto_shutdown.")
+    shutdown_runtime_minutes: int = Field(
+        default=5, description="The battery runtime left, in minutes, for auto_shutdown."
+    )
 
     @property
     def ups_identifier(self) -> str:
@@ -179,7 +181,7 @@ class UPSConfigAnswer(UPSSettings):
         "has_password": True,
     }]})
 
-    has_password: bool = Field(False, description="Whether a NUT password is stored; no answer shows it.")
+    has_password: bool = Field(default=False, description="Whether a NUT password is stored; no answer shows it.")
 
 
 class UPSStatus(BaseModel):
@@ -193,22 +195,34 @@ class UPSStatus(BaseModel):
     }]})
 
     available: bool = Field(description="Whether upsc read the UPS.")
-    reason: str | None = Field(None, description=(
+    reason: str | None = Field(default=None, description=(
         "Why it could not: the host has no upsc, upsc gave no answer in time, or what it reported; null when it read it."))
-    name: str | None = Field(None, description="The UPS's name of the settings; null when it could not be read.")
-    status: str | None = Field(None, description=(
+    name: str | None = Field(
+        default=None, description="The UPS's name of the settings; null when it could not be read."
+    )
+    status: str | None = Field(default=None, description=(
         "NUT's status flags, such as OL (online), OB (on battery) and LB (low battery); empty when upsc gave none, "
         "null when the UPS could not be read."))
-    charge_percent: int | None = Field(None, description="The battery's charge in percent; null when upsc gave none.")
-    runtime_minutes: int | None = Field(None, description=(
+    charge_percent: int | None = Field(
+        default=None, description="The battery's charge in percent; null when upsc gave none."
+    )
+    runtime_minutes: int | None = Field(default=None, description=(
         "The battery runtime left, in whole minutes; null when upsc gave none."))
-    load_percent: int | None = Field(None, description="The load in percent of the UPS's capacity; null when upsc gave none.")
-    input_voltage: float | None = Field(None, description="The input voltage in volts; null when upsc gave none.")
-    output_voltage: float | None = Field(None, description="The output voltage in volts; null when upsc gave none.")
-    manufacturer: str | None = Field(None, description="The UPS's manufacturer; null when upsc gave none.")
-    model: str | None = Field(None, description="The UPS's model; null when upsc gave none.")
-    battery_type: str | None = Field(None, description="The battery's chemistry, such as PbAc; null when upsc gave none.")
-    last_checked: UtcDatetime | None = Field(None, description="When upsc was run, in UTC.")
+    load_percent: int | None = Field(
+        default=None, description="The load in percent of the UPS's capacity; null when upsc gave none."
+    )
+    input_voltage: float | None = Field(
+        default=None, description="The input voltage in volts; null when upsc gave none."
+    )
+    output_voltage: float | None = Field(
+        default=None, description="The output voltage in volts; null when upsc gave none."
+    )
+    manufacturer: str | None = Field(default=None, description="The UPS's manufacturer; null when upsc gave none.")
+    model: str | None = Field(default=None, description="The UPS's model; null when upsc gave none.")
+    battery_type: str | None = Field(
+        default=None, description="The battery's chemistry, such as PbAc; null when upsc gave none."
+    )
+    last_checked: UtcDatetime | None = Field(default=None, description="When upsc was run, in UTC.")
 
 
 class UPSMonitorStatus(BaseModel):
@@ -226,10 +240,10 @@ class UPSMonitorStatus(BaseModel):
     enabled: bool = Field(description="Whether the UPS settings are enabled.")
     available: bool = Field(description=(
         "Whether the monitor's last check read the UPS; false before its first check and while the settings are off."))
-    reason: str | None = Field(None, description=(
+    reason: str | None = Field(default=None, description=(
         "Why the last check could not read the UPS; null when it could, before the first check and while the "
         "settings are off."))
-    last_checked: UtcDatetime | None = Field(None, description=(
+    last_checked: UtcDatetime | None = Field(default=None, description=(
         "When the last check ran, in UTC; null before the first check and while the settings are off."))
     auto_shutdown: bool = Field(description="auto_shutdown of the UPS settings.")
     shutdown_battery_percent: int = Field(description="shutdown_battery_percent of the UPS settings.")
@@ -255,9 +269,9 @@ class PendingAction(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"action": "shutdown", "at": "2026-11-19T22:01:00Z"}]})
 
-    action: Literal["reboot", "shutdown"] | None = Field(None, description=(
+    action: Literal["reboot", "shutdown"] | None = Field(default=None, description=(
         "reboot or shutdown; null when nothing is pending."))
-    at: UtcDatetime | None = Field(None, description=(
+    at: UtcDatetime | None = Field(default=None, description=(
         "When logind acts, in UTC; null when nothing is pending, or after a reboot or shutdown when it could not "
         "be read."))
 
@@ -273,7 +287,7 @@ class PowerAnswer(BaseModel):
     status: Literal["scheduled", "cancelled", "none", "suspending"] = Field(description=(
         "scheduled (a reboot or shutdown), cancelled, none (nothing was pending to cancel) or suspending."))
     message: str = Field(description="What happened, in English.")
-    pending: PendingAction | None = Field(None, description=(
+    pending: PendingAction | None = Field(default=None, description=(
         "What is pending after a reboot, shutdown or cancel; null after a suspend."))
 
 
@@ -285,7 +299,7 @@ class WolInterface(BaseModel):
     }]})
 
     name: str = Field(description="The interface's name, such as eth0 or enp3s0.")
-    mac_address: str | None = Field(None, description="Its MAC address; null when ip reports none.")
+    mac_address: str | None = Field(default=None, description="Its MAC address; null when ip reports none.")
     supported: bool = Field(description=(
         "Whether it can wake the host by magic packet: g in ethtool's Supports Wake-on."))
     wol: str = Field(description="ethtool's Wake-on letters, d when nothing wakes the host; empty when ethtool shows none.")
@@ -649,7 +663,7 @@ def _read_pending() -> PendingAction:
     return PendingAction(action=pending, at=at)
 
 
-def _schedule(action: str) -> PowerAnswer:
+def _schedule(action: Literal["reboot", "shutdown"]) -> PowerAnswer:
     """Reboot or shut down the host one minute from now."""
     cmd, message = _SCHEDULE[action]
     result = _run(cmd)
@@ -712,7 +726,7 @@ async def get_pending_action(_: dict = Depends(verify_token)):
 _AUDIT_ACTIONS = {"reboot": AuditAction.SYSTEM_REBOOT, "shutdown": AuditAction.SYSTEM_SHUTDOWN}
 
 
-async def _schedule_and_audit(request: Request, user, action: str) -> PowerAnswer:
+async def _schedule_and_audit(request: Request, user, action: Literal["reboot", "shutdown"]) -> PowerAnswer:
     """Schedule ``action`` and write its audit entry (ADR-0351). The entry is appended as soon as
     the host accepted the command, a minute before logind acts; the clean reboot or shutdown that
     follows writes the page cache out with the file systems, so the entry is on the disk when the

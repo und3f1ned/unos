@@ -792,7 +792,7 @@ def _open_subdir_nofollow(dir_fd: int, name: str) -> int:
         raise
 
 
-def sanitize_error_message(error: Exception) -> str:
+def sanitize_error_message(error: BaseException) -> str:
     """
     Sanitize error messages to avoid information disclosure.
 

@@ -213,7 +213,7 @@ class BackupInfo(BaseModel):
     version: str = Field(description="The backup format in its manifest, such as 1.0. The list says unknown for "
                                      "an encrypted backup or a manifest that cannot be read; the answer of a new "
                                      "backup gives its format, encrypted or not.")
-    encrypted: bool = Field(False, description="Whether it is encrypted with a passphrase (.tar.gz.enc).")
+    encrypted: bool = Field(default=False, description="Whether it is encrypted with a passphrase (.tar.gz.enc).")
 
 
 class BackupConfig(BaseModel):
@@ -223,10 +223,10 @@ class BackupConfig(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={"examples": [{"encrypt": True, "passphrase": "example-passphrase"}]})
 
-    encrypt: bool = Field(False, description="Whether to encrypt it with AES-256-GCM, with a key derived from the "
+    encrypt: bool = Field(default=False, description="Whether to encrypt it with AES-256-GCM, with a key derived from the "
                                              "passphrase.")
     # Required if encrypt=True
-    passphrase: str | None = Field(None, description="The passphrase to encrypt it with; required with encrypt. "
+    passphrase: str | None = Field(default=None, description="The passphrase to encrypt it with; required with encrypt. "
                                                         "It is not stored: a restore needs it again.")
 
 
@@ -236,7 +236,7 @@ class DecryptRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{"passphrase": "example-passphrase"}]})
 
     # Optional so that the UI's empty body ({}) is accepted for unencrypted backups.
-    passphrase: str | None = Field(None, description="The passphrase of an encrypted backup (.tar.gz.enc); "
+    passphrase: str | None = Field(default=None, description="The passphrase of an encrypted backup (.tar.gz.enc); "
                                                         "none for an unencrypted one.")
 
 
@@ -566,7 +566,7 @@ class _BackupTarInfo(tarfile.TarInfo):
             tar.extended_bytes += max(self.size, 0)
             if tar.extended_bytes > MAX_CONFIG_BYTES:
                 raise BackupValidationError("Invalid backup: corrupt archive")
-        member = super()._proc_member(tar)
+        member = super()._proc_member(tar)  # type: ignore[misc]  # private: typeshed omits it
         # A map from PAX records (format 0.0 or 0.1), or GNU.sparse records without one.
         if member.sparse is not None or any(key.startswith("GNU.sparse.") for key in member.pax_headers):
             raise BackupValidationError("Invalid backup: corrupt archive")
@@ -590,7 +590,8 @@ def _restore_filter(member: tarfile.TarInfo, dest_path: str) -> tarfile.TarInfo:
     out of range (base-256 or PAX "nan") made os.utime raise OverflowError
     or ValueError.
     """
-    return tarfile.data_filter(member, dest_path).replace(mtime=None, deep=False)
+    # mtime=None makes tarfile skip the file's times, as its filters may; typeshed allows a float only.
+    return tarfile.data_filter(member, dest_path).replace(mtime=None, deep=False)  # type: ignore[arg-type]
 
 
 def _extract(tar: tarfile.TarFile, members: dict[str, tarfile.TarInfo], dest: Path) -> None:
@@ -672,7 +673,9 @@ def _stream_members(
             continue
         name = _member_name(member)
         if name == "manifest.json":
-            with tar.extractfile(member) as data:
+            data = tar.extractfile(member)
+            assert data is not None  # a regular file's member
+            with data:
                 manifest.append(data.read(MAX_CONFIG_BYTES + 1))
         elif name == "unos.db" and dest is not None:
             _extract(tar, {name: member}, dest)
@@ -699,7 +702,8 @@ def _read_archive(source: BinaryIO, dest: Path | None) -> tuple[dict, dict[str, 
     with gzip.GzipFile(fileobj=source, mode="rb") as gz:
         stream = _DecompressedStream(gz)
         try:
-            with _BackupTarFile.open(fileobj=stream, mode="r|") as tar:
+            # The stream mode only reads: typeshed asks every mode's file for write, tell, seek and close.
+            with _BackupTarFile.open(fileobj=stream, mode="r|") as tar:  # type: ignore[call-overload]
                 members = _scan_members(_stream_members(tar, stream, manifest, dest))
         except _DataPastTheLimit as e:
             if dest is None:
@@ -853,14 +857,16 @@ class _BackupUpload(UploadSink):
         Encrypted backups cannot be read without their passphrase and have no
         manifest here.
         """
+        tmp = self.tmp
+        assert tmp is not None  # open() made it
         if self.encrypted:
-            _check_encrypted_archive(self.tmp)
-            _refuse_plain_archive(self.tmp)
+            _check_encrypted_archive(tmp)
+            _refuse_plain_archive(tmp)
             manifest = None
         else:
-            manifest = _inspect_archive(self.tmp)
+            manifest = _inspect_archive(tmp)
         extension = ENCRYPTED_EXTENSION if self.encrypted else PLAIN_EXTENSION
-        name = publish_backup_file(self.tmp, "uploaded", extension)
+        name = publish_backup_file(tmp, "uploaded", extension)
         return name, manifest, (BACKUP_DIR / name).stat().st_size
 
     def discard(self) -> None:
@@ -970,6 +976,7 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
         two_factor_change = None
         unreadable_scopes = 0
         if db_file is not None:
+            assert db_path is not None  # db_file is None without one
             warnings.extend(_prepare_smb(db_file, db_path))
             two_factor_change = _two_factor_requirement_change(db_path, db_file)
             # API tokens come back with their scopes; one that cannot be read refuses its token
@@ -977,6 +984,7 @@ def _restore_locked(backup_path: Path, passphrase: str | None) -> dict:
             unreadable_scopes = scopes.unreadable_in(db_file)
 
         if db_file is not None:
+            assert db_path is not None  # db_file is None without one
             previous_db = _keep_copy_of_database(db_path)
             _replace_database(db_file, db_path)
             forget_unstored_sessions()
@@ -1068,8 +1076,11 @@ def _keep_caller_session(caller: CallerSession) -> None:
     """After a restore, which ended every session: the session of the administrator who restored
     goes on when the restored database has them as an administrator, under the same id and name
     (ADR-0329), so that they see the result. Otherwise, or when it cannot be stored, they sign in again."""
+    db_path = _live_db_path()
+    if db_path is None:
+        return  # no database file: no session was restored either
     try:
-        with contextlib.closing(sqlite3.connect(_live_db_path(), timeout=DB_BUSY_TIMEOUT)) as conn:
+        with contextlib.closing(sqlite3.connect(db_path, timeout=DB_BUSY_TIMEOUT)) as conn:
             same = conn.execute("SELECT 1 FROM users WHERE id = ? AND username = ? AND is_admin",
                                 (caller.user_id, caller.username)).fetchone()
             if same:
@@ -1291,6 +1302,7 @@ def _create_backup(config: BackupConfig) -> dict:
             _collect_backup_content(content, encrypted=config.encrypt)
             with open(tmp, "xb") as out:
                 if config.encrypt:
+                    assert config.passphrase  # refused before without one
                     plain = io.BytesIO()
                     _write_archive(content, plain)
                     out.write(encrypt_file(plain.getbuffer(), config.passphrase))

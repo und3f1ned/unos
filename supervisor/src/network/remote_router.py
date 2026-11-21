@@ -4,6 +4,8 @@ entry after it was made, for a real change only."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 
 from ..audit.changes import audit_change
@@ -28,16 +30,18 @@ from .remote_schemas import (
 
 router = APIRouter(prefix="/network", tags=["network"])
 
-_LOCAL = {503: {"description": "UNOS runs its host commands locally (UNOS_HOST_EXEC=local): not a NAS host"}}
-_ERRORS = {
+# FastAPI's responses: status -> what the route answers with it.
+_Responses = dict[int | str, dict[str, Any]]
+_LOCAL: _Responses = {503: {"description": "UNOS runs its host commands locally (UNOS_HOST_EXEC=local): not a NAS host"}}
+_ERRORS: _Responses = {
     **_LOCAL,
     409: {"description": "Refused: wireguard-tools is missing, a value conflicts with the host, or a firewall "
                          "change waits to be kept"},
     500: {"description": "A host command failed; what was changed before it was undone"},
 }
 # A route that takes a body (src/request_limits.py).
-_BODY = {status: {"description": text} for status, text in BODY.items()}
-_CADDY = {
+_BODY: _Responses = {status: {"description": text} for status, text in BODY.items()}
+_CADDY: _Responses = {
     502: {"description": "Caddy did not load the app names and serves what it served before"},
     503: {"description": "The web UI's Caddy cannot be reached, or UNOS runs its host commands locally"},
     504: {"description": "The web UI's Caddy did not answer in time"},

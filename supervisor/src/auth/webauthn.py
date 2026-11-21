@@ -307,7 +307,7 @@ def parse_attestation_object(raw: bytes) -> AuthenticatorData:
 # ==================== Public keys and signatures ====================
 
 
-def _load(cose: bytes):
+def _load(cose: object):
     """The algorithm and the public key of a COSE_Key: ES256 on P-256 (EC2), EdDSA on Ed25519 (OKP),
     or RS256 with a modulus of 2048 to 4096 bits (RSA). Anything else is refused."""
     if not isinstance(cose, bytes) or len(cose) > MAX_PUBLIC_KEY:
@@ -346,7 +346,7 @@ def _load(cose: bytes):
     raise WebAuthnError("key type or algorithm not offered")
 
 
-def public_key_algorithm(cose: bytes) -> int:
+def public_key_algorithm(cose: object) -> int:
     """The algorithm of a COSE_Key that UNOS can verify; WebAuthnError for any other."""
     return _load(cose)[0]
 

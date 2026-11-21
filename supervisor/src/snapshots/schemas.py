@@ -31,11 +31,11 @@ class SnapshotSubvolume(BaseModel):
     path: str = Field(description="Its folder: the pool's mountpoint or the volume's folder.")
     pool: str = Field(description="The pool's name.")
     # The volume's name; None for the pool itself.
-    volume: str | None = Field(None, description="The volume's name; null for the pool itself.")
+    volume: str | None = Field(default=None, description="The volume's name; null for the pool itself.")
     # For a pool: why its volumes are not offered, when they could not be read
     # (btrfs failed on the pool or did not answer, ADR-0243); None otherwise.
     volumes_error: str | None = Field(
-        None,
+        default=None,
         description="For a pool: why its volumes are not offered, when btrfs failed on the pool or did not "
         "answer; null otherwise.",
     )
@@ -53,7 +53,7 @@ class SnapshotCreate(BaseModel):
         "/mnt/pools/data/documents.",
     )
     name: str | None = Field(
-        None,
+        default=None,
         description="The snapshot's name: up to 128 letters, digits, spaces and _ - . @ : +, starting with a "
         "letter, digit or _, without .. and without a space at the end. Null or empty for snap_<date>_<time> "
         "in UTC.",
@@ -69,7 +69,7 @@ class SnapshotRestore(BaseModel):
 
     snapshot_path: str = Field(description="The snapshot's path: <subvolume>/.snapshots/<name>.")
     target_path: str | None = Field(
-        None,
+        default=None,
         description="The existing folder below /mnt/pools to put the restored copy in; null or empty for the "
         "folder that the snapshot was taken of.",
     )

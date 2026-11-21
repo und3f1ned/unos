@@ -79,7 +79,7 @@ import os
 import pwd
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -248,7 +248,7 @@ def _top_processes() -> list[dict]:
         psutil.process_iter(["cpu_percent"]), key=lambda proc: proc.info["cpu_percent"] or 0, reverse=True
     )
     host_names = _host_user_names()
-    processes = []
+    processes: list[dict[str, Any]] = []
     for proc in listed:
         if len(processes) == 10:
             break
@@ -473,7 +473,7 @@ async def _close(websocket: WebSocket, code: int, reason: str) -> None:
         pass  # the client is already gone
 
 
-def _token_from_auth_message(websocket: WebSocket, message: dict[str, Any]) -> str | None:
+def _token_from_auth_message(websocket: WebSocket, message: Mapping[str, Any]) -> str | None:
     """The token that the first message ``message`` authenticates with: its own, or, without one, the
     session cookie of the handshake, from the web UI's own page only (ADR-0397). None when there is
     none or the message is no auth message."""
@@ -585,7 +585,7 @@ async def _handshake(websocket: WebSocket, admin_only: bool) -> tuple[str, User]
     except _SetupOnly:
         await _close(websocket, WS_CLOSE_FORBIDDEN, "forbidden")
         return None
-    if user is None:
+    if token is None or user is None:  # no user without a token
         await _close(websocket, WS_CLOSE_UNAUTHORIZED, "unauthorized")
         return None
     if admin_only and not user.is_admin:
@@ -742,10 +742,10 @@ async def websocket_endpoint(websocket: WebSocket):
         return
     token, user = signed_in
     # Whether the user is an administrator, as the last check of the token found (ADR-0332).
-    role = {"admin": user.is_admin}
+    role = {"admin": bool(user.is_admin)}
 
     def note_role(user: User) -> None:
-        role["admin"] = user.is_admin
+        role["admin"] = bool(user.is_admin)
 
     # Reading the socket notices a closed client right away (not only when the
     # next send fails) and drains anything the client sends.

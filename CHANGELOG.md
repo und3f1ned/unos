@@ -171,6 +171,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   tables and toolbars of grouped buttons; the hand-written cards and the certificate dialog take
   the shared components.
 - `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
+  the types of `supervisor/src` with mypy and the settings of `mypy.ini`, against the supervisor's
+  packages and the type stubs of `supervisor/requirements-dev.txt` (ADR-0439). The code was fixed
+  first, with no module exempted: the models declare `Field(default=...)` and SQLAlchemy's
+  `Mapped[...]`, with the same tables; an error kept in the code carries `# type: ignore[<code>]`
+  with its reason.
+- `make lint`, and with it `make check`, the pre-commit hook and the CI workflow's Lint job, checks
   the rules of ruff that find bugs, set in `ruff.toml`, beyond pyflakes findings and syntax errors:
   bugbear, pycodestyle's imports and statements, pyupgrade, bandit (not in the tests), pylint's
   errors and warnings, ruff's own rules and a few single ones, less the rules of style and the

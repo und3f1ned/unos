@@ -9,10 +9,11 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Annotated
+from collections.abc import Awaitable
+from typing import Annotated, Any
 
 from . import problems
 from .. import host, paths, state_files
@@ -26,7 +27,7 @@ from ..storage.schemas import PoolInfo
 from ..notifications.router import load_configs as load_notification_configs
 from ..notifications.router import history_entry, save_logs, send_email, send_through
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
-from ..openapi import answer, errors
+from ..openapi import answer, errors, model_example
 
 router = APIRouter(prefix="/health", tags=["health"])
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class SmartInfo(BaseModel):
         "PASSED or FAILED: the disk's overall health self-assessment; UNKNOWN when smartctl cannot tell; "
         "STANDBY when the disk sleeps: it is left asleep, and no SMART data is read."))
     attributes: list[SmartAttribute] = Field(description="The disk's ATA SMART attributes; none for NVMe disks.")
-    nvme_health: dict[str, int] | None = Field(None, description=(
+    nvme_health: dict[str, int] | None = Field(default=None, description=(
         "An NVMe disk's SMART/Health Information log: its numbers by smartctl's names and in its order, such as "
         "critical_warning, available_spare and media_errors; null for other disks."))
     self_test_status: str | None = Field(description=(
@@ -118,9 +119,9 @@ class RaidHealthInfo(BaseModel):
         "The error counters of each device; none when the pool is not mounted or they cannot be read."))
     total_errors: int = Field(description="The sum of the error counters of its devices; 0 when it is not mounted.")
     last_checked: str = Field(description="When the pool was read, in UTC.")
-    missing_devices: int = Field(0, description="How many devices of the pool btrfs cannot find.")
-    read_only: bool = Field(False, description="Whether it is mounted read-only, on purpose or after an error.")
-    forced_read_only: bool = Field(False, description=(
+    missing_devices: int = Field(default=0, description="How many devices of the pool btrfs cannot find.")
+    read_only: bool = Field(default=False, description="Whether it is mounted read-only, on purpose or after an error.")
+    forced_read_only: bool = Field(default=False, description=(
         "Whether btrfs made the filesystem read-only after an error (read_only is true then too)."))
 
 
@@ -171,12 +172,16 @@ class SmartHistoryEntry(BaseModel):
     device: str = Field(description="The disk's path then, such as /dev/sda.")
     serial: str = Field(description="The disk's serial as smartctl reports it: the key of its history; unknown without one.")
     # Tells which connected disk the history belongs to (ADR-0235).
-    lsblk_serial: str | None = Field(None, description=(
+    lsblk_serial: str | None = Field(default=None, description=(
         "The disk's serial as lsblk reported it then; null when lsblk reports none, as behind some USB bridges."))
     attributes: dict[int, int] = Field(description=(
         "The raw values of the counters 5, 187, 188, 197, 198 and 199 that the disk reports, by attribute id."))
-    temperature: int | None = Field(None, description="The temperature in degrees Celsius; null when the disk reports none.")
-    power_on_hours: int | None = Field(None, description="The hours the disk has been powered on; null when it reports none.")
+    temperature: int | None = Field(
+        default=None, description="The temperature in degrees Celsius; null when the disk reports none."
+    )
+    power_on_hours: int | None = Field(
+        default=None, description="The hours the disk has been powered on; null when it reports none."
+    )
     # What smartctl said of the disk's health with this snapshot, which the SMART monitor keeps in
     # RAM for the disk problems (ADR-0332); never stored in the history (exclude).
     health_failed: bool = Field(default=False, exclude=True, description=(
@@ -500,7 +505,7 @@ def analyze_smart_trends(serial: str, history: list[dict]) -> list[SmartTrendAle
     values (a day of hourly snapshots), or with its oldest one: of the
     snapshots that hold the counter.
     """
-    alerts = []
+    alerts: list[SmartTrendAlert] = []
 
     if len(history) < 2:
         return alerts
@@ -536,6 +541,7 @@ async def _deliver_alert(event: NotificationEvent) -> None:
     for config in load_notification_configs():
         if not config.enabled:
             continue
+        sending: Awaitable[tuple[bool, str | None]]
         try:
             if config.channel == NotificationChannel.EMAIL and config.email_config:
                 sending = loop.run_in_executor(
@@ -704,7 +710,7 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
         return []
     counts = storage_disks.io_counts()
     timeouts: dict[str, int] | None = None  # UNOS's udev rule, read once a disk had no I/O since its read
-    snapshots = []
+    snapshots: list[dict] = []
     verdicts: dict[str, _DiskVerdict] = {}
     io_at_read: dict[str, tuple[int, int]] = {}
     read: list[storage_disks.HostDisk] = []
@@ -759,14 +765,14 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
         else:
             # New lists: the endpoints may be reading the ones they got.
             history = {serial: list(entries) for serial, entries in state.history.items()}
-        for snapshot in snapshots:
-            serial = snapshot["serial"]
+        for taken in snapshots:
+            serial = taken["serial"]
             entries = history.setdefault(serial, [])
-            if _changes_the_history(_snapshots_of_one_disk(serial, entries, snapshot["device"]), snapshot):
+            if _changes_the_history(_snapshots_of_one_disk(serial, entries, taken["device"]), taken):
                 state.changed = True
-            entries.append(snapshot)
+            entries.append(taken)
             del entries[:-SMART_HISTORY_LIMIT]
-            alerts.extend(_new_trend_alerts(serial, _snapshots_of_one_disk(serial, entries, snapshot["device"])))
+            alerts.extend(_new_trend_alerts(serial, _snapshots_of_one_disk(serial, entries, taken["device"])))
         state.history = history
         state.unsaved = state.unsaved or bool(snapshots)
         if state.changed:
@@ -814,7 +820,7 @@ def parse_btrfs_device_stats(pool_path: str) -> list[RaidDeviceStats] | None:
     if result.returncode != 0:
         return None
 
-    devices = {}
+    devices: dict[str, dict[str, Any]] = {}
     # Parse output like: [/dev/sda].write_io_errs    0
     for line in result.stdout.strip().split("\n"):
         if not line:
@@ -1471,7 +1477,6 @@ def get_disk_smart(device: _DISK_DEVICE, _: dict = Depends(verify_token)):
 def start_smart_test(
     device: _DISK_DEVICE,
     test_type: Annotated[str, Query(description="The self-test: short, long or conveyance.")] = "short",
-    background_tasks: BackgroundTasks = None,
     _: dict = Depends(verify_token)
 ):
     """Start a SMART self-test on a whole disk of the host, given as ``sda`` or ``/dev/sda``. The
@@ -1586,7 +1591,7 @@ async def get_raid_health(_: dict = Depends(verify_token)):
 @router.get(
     "/raid/{pool_name}", summary="Read a pool's RAID health",
     responses={
-        **answer(RaidHealthInfo.model_config["json_schema_extra"]["examples"][0],
+        **answer(model_example(RaidHealthInfo),
                  "The pool's RAID health: pool, mount_point, profile (null when not mounted), status (healthy, "
                  "degraded, error, unmounted or unknown), devices with their error counters, total_errors, "
                  "last_checked in UTC, missing_devices, read_only and forced_read_only, as GET /health/raid has them."),
@@ -1970,7 +1975,8 @@ def _histories_of_connected_disks(
         if lsblk_serial and reported[lsblk_serial] == 1 and held[lsblk_serial] == 1:
             by_identity[by_lsblk_serial[lsblk_serial].path] = serial
             continue
-        disk = by_path.get(entry.get("device"))
+        device = entry.get("device")
+        disk = by_path.get(device) if isinstance(device, str) else None
         if disk is None or (lsblk_serial and disk.serial != lsblk_serial):
             continue
         taken = str(stored_time_text(str(entry.get("timestamp", ""))))

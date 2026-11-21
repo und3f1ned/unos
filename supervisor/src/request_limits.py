@@ -33,7 +33,7 @@ import os
 import threading
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import aclosing
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import python_multipart
 from python_multipart.exceptions import FormParserError
@@ -43,6 +43,9 @@ from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+if TYPE_CHECKING:
+    from python_multipart.multipart import MultipartCallbacks
 
 logger = logging.getLogger(__name__)
 
@@ -265,15 +268,18 @@ class _Destination:
         await self._call(self._open, filename)
 
     def _write(self, data: bytearray) -> None:
+        fd = self._fd
+        assert fd is not None  # opened by _open
         view = memoryview(data)
         while view:
-            view = view[os.write(self._fd, view):]
+            view = view[os.write(fd, view):]
 
     async def write(self, data: bytearray) -> None:
         await self._call(self._write, data)
 
     def _finish(self) -> Any:
         fd, self._fd = self._fd, None
+        assert fd is not None  # opened by _open
         os.close(fd)
         return self.sink.finish()
 
@@ -363,7 +369,7 @@ class _UploadForm:
         self._header_name = bytearray()
         self._header_value = bytearray()
         self._disposition: bytes | None = None
-        callbacks = {
+        callbacks: MultipartCallbacks = {
             "on_part_begin": self._on_part_begin,
             "on_header_field": self._on_header_field,
             "on_header_value": self._on_header_value,
@@ -458,6 +464,7 @@ class _UploadForm:
 
     def take_filename(self) -> str:
         filename, self.filename = self.filename, None
+        assert filename is not None  # taken once the headers named it
         return filename
 
     def take_data(self) -> bytearray:

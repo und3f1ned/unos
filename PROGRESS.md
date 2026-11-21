@@ -732,6 +732,20 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-21: mypy checks supervisor/src in make lint (ci.python-type-check, ADR-0439)
+
+- mypy 2.4.1, hashed in `.github/lint-requirements.txt` and in `.venv-lint`, runs in `make lint`
+  over `supervisor/src` with `mypy.ini`, against `supervisor/.venv` (stubs of croniter, docker and
+  psutil in `requirements-dev.txt`); the CI Lint job installs those packages and runs `make lint`.
+  The code meets it, no module exempted: `Field(default=...)`, `Mapped[...]` models with the same
+  tables, narrowed Optionals. `passes` stays false: the Lint job's failure on a type error cannot
+  be seen while CI is off on GitHub (ADR-0230).
+- Review in a fresh context: no blocker; fixed: the supervisor's unhashed packages now go into a
+  venv of their own after the audit in CI, reasons on the older `type: ignore`s, a split table
+  row and stray blank lines, docs (AGENTS.md, supervisor/AGENTS.md, Dependabot, CHANGELOG), the
+  ADR's claims, `MYPYPATH` in the green-run rules and a test case for `mypy_path`. Left: the test
+  cannot see a missing `python_version`, which the Python of `.venv-lint` (3.11) hides.
+
 ### 2026-11-21: Every page on the shared components; the design check keeps no baseline (ADR-0438)
 
 - At the owner's word (the design was left half done), two builders moved the data and sharing

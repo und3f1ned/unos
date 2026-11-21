@@ -20,7 +20,8 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NamedTuple
+from collections.abc import Mapping
+from typing import Any, Literal, NamedTuple
 
 from sqlalchemy import LargeBinary, cast, func
 
@@ -261,7 +262,7 @@ def stored_refusal(stored: object, operation: Operation) -> str | None:
     return refusal(scope, operation.method, operation.path)
 
 
-def routed_path(scope: dict) -> str:
+def routed_path(scope: Mapping[str, Any]) -> str:
     """The path of an ASGI request or socket as the router matched it: without the root path."""
     path, root = scope.get("path", ""), scope.get("root_path", "")
     if root and path.startswith(root):

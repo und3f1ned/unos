@@ -170,35 +170,35 @@ class AuditEntry(BaseModel):
         description="What was done: one of the values that GET /audit/actions lists, such as login_failed, or an "
                     "older entry's action that the list no longer has."
     )
-    severity: AuditSeverity = Field(AuditSeverity.INFO, description="info, warning or critical.")
+    severity: AuditSeverity = Field(default=AuditSeverity.INFO, description="info, warning or critical.")
     username: str | None = Field(
-        None,
+        default=None,
         description="Who did it: the user, the name that a failed sign-in gave, or system for the supervisor "
                     "itself.",
     )
-    ip_address: str | None = Field(None, description="The client's address; null without a request.")
+    ip_address: str | None = Field(default=None, description="The client's address; null without a request.")
     user_agent: str | None = Field(
-        None, description="The client's User-Agent; null without one."
+        default=None, description="The client's User-Agent; null without one."
     )
     resource_type: str | None = Field(
-        None, description="The kind of thing the entry is about, such as pool, share or user; null for none."
+        default=None, description="The kind of thing the entry is about, such as pool, share or user; null for none."
     )  # e.g., "pool", "share", "user"
     resource_id: str | None = Field(
-        None, description="Which one, such as a pool's, a share's or a user's name; null for none."
+        default=None, description="Which one, such as a pool's, a share's or a user's name; null for none."
     )  # e.g., pool name, share name
     details: str | None = Field(
-        None, description="What happened, in English; null for none."
+        default=None, description="What happened, in English; null for none."
     )  # Additional context
-    success: bool = Field(True, description="Whether the action succeeded.")
+    success: bool = Field(default=True, description="Whether the action succeeded.")
     # The hash chain (ADR-0328): the hash of the entry before it in the log, and its own hash over
     # its fields but this one. An entry written before the chain has neither.
     prev_hash: str | None = Field(
-        None,
+        default=None,
         description="The hash of the entry before it in the log, hex; null for the log's first entry and for an "
                     "entry from before the hash chain.",
     )
     hash: str | None = Field(
-        None,
+        default=None,
         description="The SHA-256 of the entry's fields but this one, hex; null for an entry from before the hash "
                     "chain.",
     )
@@ -227,12 +227,13 @@ class AuditEntryView(AuditEntry):
     }]})
 
     chain: Literal["ok", "broken"] | None = Field(
-        None,
+        default=None,
         description="Where the entry stands in the hash chain: ok while its hash and its link to the entry "
                     "before it hold, broken where they do not, null for an entry from before the chain.",
     )
-    # The entry's time in UTC with its offset, also for an entry whose line holds none (ADR-0401).
-    timestamp: UtcDatetime = Field(
+    # The entry's time in UTC with its offset, also for an entry whose line holds none (ADR-0401):
+    # the view answers the stored text as a time, so its type differs from the line's.
+    timestamp: UtcDatetime = Field(  # type: ignore[assignment]
         description="When the entry was written, in UTC with Z; an older entry whose line holds no offset was "
                     "written in UTC too."
     )

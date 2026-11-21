@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select, func, update
 import pyotp
-from ..database import get_db
+from ..database import get_db, rowcount
 from ..openapi import ADMIN, BODY, RATE_LIMITED, SIGNED_IN, answer, errors
 from ..times import db_now
 from ..audit.router import log_action
@@ -187,9 +187,9 @@ async def _my_smb_status(db: AsyncSession, user: User, row: SmbAccount | None) -
         for entry in share.access:
             if entry.user_id == user.id and entry.username == user.username and entry.level in ("read", "write"):
                 grants.setdefault("own", set()).add(entry.level)
-        for entry in share.group_access:
-            if entry.group_id in groups and entry.level in ("read", "write"):
-                grants.setdefault(entry.group_id, set()).add(entry.level)
+        for group_entry in share.group_access:
+            if group_entry.group_id in groups and group_entry.level in ("read", "write"):
+                grants.setdefault(group_entry.group_id, set()).add(group_entry.level)
         levels = {"read" if "read" in rows else "write" for rows in grants.values()}
         guest = bool(share.guest_ok)
         if not levels and not guest:
@@ -597,7 +597,7 @@ async def setup_totp(
         .execution_options(synchronize_session=False)
     )
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         raise HTTPException(status_code=400, detail="2FA is already enabled")
 
     totp = pyotp.TOTP(secret)
@@ -657,10 +657,10 @@ async def enable_totp(
         .execution_options(synchronize_session=False)
     )
     # Nor with security keys of an earlier setup, which a restored database may hold (ADR-0409).
-    if result.rowcount == 1:
+    if rowcount(result) == 1:
         await security_keys.delete_keys_of(db, user_id)
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         enabled = await db.scalar(select(User.totp_enabled).where(User.id == user_id))
         raise HTTPException(status_code=400, detail="2FA is already enabled" if enabled else "Run /totp/setup first")
     await _own_account_audit(
@@ -715,9 +715,9 @@ async def disable_totp(
         .execution_options(synchronize_session=False)
     )
     # The security keys are an alternative to the app's codes: they go in the same commit (ADR-0409).
-    keys = await security_keys.delete_keys_of(db, user_id) if result.rowcount == 1 else 0
+    keys = await security_keys.delete_keys_of(db, user_id) if rowcount(result) == 1 else 0
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         raise HTTPException(status_code=400, detail="2FA is not enabled")
     details = "Two-factor authentication turned off by the user, with its recovery codes"
     await _own_account_audit(
@@ -907,6 +907,7 @@ async def update_user(
                 smb_update = await accounts.update_password_before_store(
                     db, user, row, data.password, current_password=None
                 )
+                assert new_hash is not None  # hashed above, for data.password
                 user.hashed_password = new_hash
                 changes.append("password changed (also for SMB)" if smb_update else "password changed")
                 # Every session of the user ends in this commit (ADR-0329), but the administrator's
@@ -929,6 +930,7 @@ async def update_user(
             user, row = await _reload_target(db, user_id)
 
     if renamed is not None:
+        assert new_name is not None  # the rename's
         changes = [f"renamed from {username}"]
         if data.password:
             changes.append("password changed (also for SMB)" if renamed.smb_on else "password changed")
@@ -1404,7 +1406,7 @@ async def create_api_token(
     # Counted after the flush, which takes SQLite's write lock: two requests at the same moment
     # cannot both pass the limit.
     await db.flush()
-    count = await db.scalar(select(func.count()).select_from(APIToken).where(APIToken.user_id == user_id))
+    count = await db.scalar(select(func.count()).select_from(APIToken).where(APIToken.user_id == user_id)) or 0
     if count > MAX_API_TOKENS_PER_USER:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=TOO_MANY_API_TOKENS)
@@ -1550,7 +1552,7 @@ async def generate_new_recovery_codes(
         .execution_options(synchronize_session=False)
     )
     await db.commit()
-    if result.rowcount != 1:
+    if rowcount(result) != 1:
         raise HTTPException(status_code=400, detail=RECOVERY_CODES_NEED_2FA)
 
     # The new codes are stored and the earlier ones no longer work: an audit entry that cannot
@@ -1621,4 +1623,4 @@ async def _use_recovery_code(db: AsyncSession, user_id: int, code: str) -> bool:
         .execution_options(synchronize_session=False)
     )
     await db.commit()
-    return result.rowcount == 1
+    return rowcount(result) == 1

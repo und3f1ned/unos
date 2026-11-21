@@ -6,6 +6,9 @@ Python 3.11 and FastAPI. The package is `src`: tests import `src.*`, some from `
 
 - Pydantic models for request and response bodies, and type hints. Read command-line tools' JSON
   output (`lsblk -J`, `smartctl -j`); errors are `HTTPException(status, detail="...")`.
+- `make lint` checks the types of `src/` with mypy and `mypy.ini` (ADR-0439): a field's default is
+  `Field(default=...)`, a table's column `Mapped[...] = mapped_column(...)` with the nullability of
+  the table, and an error kept in the code has `# type: ignore[<code>]` with its reason.
 - Background loops start and stop only in the lifespan of `src/main.py` (ADR-0043).
 - Paths below the pools are opened one component at a time without following symlinks:
   `open_dir_nofollow` and `open_subdirs_nofollow` of `src/security/validators.py` (ADR-0042).
