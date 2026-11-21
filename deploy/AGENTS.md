@@ -14,8 +14,11 @@
   dockerd starts the containers it still has at once, without `depends_on`: after a power cut,
   and on a host without the `unos` unit, such as the dev device (ADR-0307);
   `UNOS_JWT_SECRET` stays empty so that each install generates its own (ADR-0028).
-- `docker-compose.test.yml` is the Docker test stack (project `unos-test`, ports 3443 and 3080 on
-  127.0.0.1, the Playwright runner of the `test` profile), for a machine that runs Docker.
+- `docker-compose.test.yml` is the Docker test stack (the Playwright runner of the `test` profile),
+  for a machine that runs Docker. Its project, its ports on 127.0.0.1 and its subnet come from the
+  `UNOS_TEST_*` settings that `scripts/test-cycle.sh` derives from its worktree, one stack per
+  worktree (ADR-0439); the defaults, `unos-test`, 3080 and 3443 and `172.31.253.0/24`, are those of
+  a stack started by hand.
 - Caddy's configuration is `webui/Caddyfile`, which the web UI image copies, and no compose file
   mounts another: HTTPS from Caddy's local CA, without HSTS (ADR-0025), or from the served
   certificate, which the supervisor writes into the `served-certificate` volume that only it and

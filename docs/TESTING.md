@@ -660,24 +660,41 @@ this guide does.
 ```
 
 The E2E part starts the test containers (supervisor and web UI), creates the test account, runs
-Playwright against `https://localhost:3443` (`./node_modules/.bin/playwright test` in `webui/`,
+Playwright against the stack's HTTPS address (`./node_modules/.bin/playwright test` in `webui/`,
 the version of `webui/package-lock.json`, never through npx; with `E2E_STAND_IN=1`: the stack takes
 the stand-in's skips) and removes the containers again.
 
+Each worktree runs a stack of its own, so several worktrees run the cycle at once (ADR-0439). The
+script derives the stack's compose project from the checkout's path, `unos-test-` and the eight
+hex digits of its `cksum`, and takes the first of 100 slots, from the one the path gives onward,
+whose subnet no Docker network has: slot n publishes HTTP on `127.0.0.1:13080+n` and HTTPS on
+`127.0.0.1:13443+n` and has the network `172.31.(100+n).0/24`. It chooses the slot after the
+build, right before `docker compose up` creates the network that holds it, and prints them then
+(`Test stack <project>: https://localhost:<port>, ...`). Every compose call names the project
+with `-p`, so its `down -v` (at the start, at the end and with `--cleanup`) removes only this
+worktree's containers, network and volumes, whatever `COMPOSE_PROJECT_NAME` says. When all 100
+subnets are taken it stops before `up`; a port that another program holds makes
+`docker compose up` fail. `./scripts/test-cycle.sh --help` names the worktree's project.
+
 ### Test Environment
 
-The test environment uses `docker-compose.test.yml`. Its compose project is
-`unos-test`, so it never touches the containers or images of a production stack
-on the same host. It:
+The test environment uses `docker-compose.test.yml`. It has a compose project of its own, so it
+never touches the containers or images of a production stack on the same host. The project, the
+two published ports and the subnet come from `UNOS_TEST_PROJECT`, `UNOS_TEST_HTTP_PORT`,
+`UNOS_TEST_HTTPS_PORT` and `UNOS_TEST_SUBNET_PREFIX` (the first three numbers of the /24), which
+`scripts/test-cycle.sh` sets for its worktree; without them the file has the stack of the
+commands below: the project `unos-test`, the ports 3080 and 3443 and `172.31.253.0/24`. The
+script's stack lives while the script runs; `docker compose -p <project> -f docker-compose.test.yml
+ps` (or `logs`), with the project that it prints, reaches it meanwhile. It:
 
 - Runs the supervisor unprivileged, with `UNOS_HOST_EXEC=local`: host commands run inside the
   container
 - Keeps the SQLite database and the generated JWT secret in the `test-data`
   volume
-- Serves the web UI and API over HTTPS on `https://localhost:3443`, with a
-  certificate from Caddy's local CA issued for `webui`
-- Answers plain HTTP on `http://localhost:3080` only with a redirect to HTTPS,
-  except the health check `/api/v1/health`
+- Serves the web UI and API over HTTPS on `https://localhost:3443` (`UNOS_TEST_HTTPS_PORT`), with
+  a certificate from Caddy's local CA issued for `webui`
+- Answers plain HTTP on `http://localhost:3080` (`UNOS_TEST_HTTP_PORT`) only with a redirect to
+  HTTPS, except the health check `/api/v1/health`
 
 Both ports are bound to 127.0.0.1: the test account is public and the test
 supervisor has the Docker socket.
@@ -792,15 +809,16 @@ docker compose -f docker-compose.test.yml up -d --wait-timeout 120
 
 Then create the test account again (see [Test Environment](#test-environment)).
 
-If port 3080 or 3443 is in use (`lsof -i :3080 -i :3443`), change the published ports of the
-`webui` service in `deploy/docker-compose.test.yml` (for example `"127.0.0.1:3081:80"` and
-`"127.0.0.1:3444:443"`) and point the tests at them:
+If port 3080 or 3443 is in use (`lsof -i :3080 -i :3443`), start the stack with other ports
+(`UNOS_TEST_HTTP_PORT=3081 UNOS_TEST_HTTPS_PORT=3444 docker compose ...`) and point the tests at
+them:
 
 ```bash
 E2E_STAND_IN=1 BASE_URL=https://localhost:3444 HTTP_URL=http://localhost:3081 npx playwright test
 ```
 
-`scripts/test-cycle.sh` reads the addresses from `TEST_URL` and `TEST_HTTPS_URL` at its top.
+`scripts/test-cycle.sh` chooses the ports of its stack itself (see
+[Run the Test Cycle](#run-the-test-cycle)).
 For slow machines, raise `timeout` and `expect.timeout` in `webui/playwright.config.ts`.
 
 ## Adding New Tests

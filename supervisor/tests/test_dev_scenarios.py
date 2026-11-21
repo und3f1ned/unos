@@ -4580,10 +4580,13 @@ def test_the_container_io_helper_lists_nothing_without_containers(tmp_path):
 def test_the_smart_check_takes_unos_s_own_containers_as_the_supervisor_does():
     from src.containers import docker
 
+    from .test_deploy_scripts import _test_stack
+
     names = re.findall(r"^\s*container_name:\s*(\S+)\s*$", (REPO_ROOT / "deploy/docker-compose.yml").read_text(), re.M)
     assert sorted(names) == ["unos-supervisor", "unos-webui"]
-    test_names = re.findall(r"^\s*container_name:\s*(\S+)\s*$", (REPO_ROOT / "deploy/docker-compose.test.yml").read_text(),
-                            re.M)
+    # The test stack's, of a stack started by hand and of a worktree's (ADR-0439).
+    test_names = [service["container_name"] for settings in ({}, {"UNOS_TEST_PROJECT": "unos-test-0badf00d"})
+                  for service in _test_stack(settings)["services"].values()]
     for name in [*names, *test_names, "immich", "immich-database", "transmission", "unos", "my-unos-app"]:
         assert scenario.is_unos_container(name) == docker.is_system_container(name), name
 

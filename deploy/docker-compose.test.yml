@@ -7,14 +7,19 @@
 # directory name) with docker-compose.yml: its build would replace the
 # production images (deploy-supervisor, deploy-webui) and its `down` would
 # remove the production containers of the same services.
-name: unos-test
+# The project, the published ports and the subnet come from the UNOS_TEST_*
+# settings, which scripts/test-cycle.sh derives from its worktree, so that the
+# stacks of several worktrees run at once and the `down -v` of one removes
+# only its own containers, network and volumes (ADR-0439). The defaults are
+# those of a stack started by hand (docs/TESTING.md).
+name: ${UNOS_TEST_PROJECT:-unos-test}
 
 services:
   supervisor:
     build:
       context: ../supervisor
       dockerfile: Dockerfile.test
-    container_name: unos-supervisor-test
+    container_name: ${UNOS_TEST_PROJECT:-unos-test}-supervisor
     environment:
       - UNOS_DB_PATH=/data/unos.db
       # Same as production: the secret is generated into /data/jwt_secret.
@@ -25,12 +30,12 @@ services:
       # Not privileged: run "host" commands inside the container instead of nsenter.
       - UNOS_HOST_EXEC=local
       # Same trust rule as production: X-Forwarded-For only from webui.
-      - FORWARDED_ALLOW_IPS=172.31.253.2
+      - FORWARDED_ALLOW_IPS=${UNOS_TEST_SUBNET_PREFIX:-172.31.253}.2
       - PYTHONUNBUFFERED=1
       # As in docker-compose.yml: SQLite's temporary files on the tmpfs.
       - TMPDIR=/tmp
       # The container whose Caddy loads the served certificate again (ADR-0404).
-      - UNOS_WEBUI_CONTAINER=unos-webui-test
+      - UNOS_WEBUI_CONTAINER=${UNOS_TEST_PROJECT:-unos-test}-webui
     volumes:
       - test-data:/data
       - test-pools:/mnt/pools
@@ -51,7 +56,7 @@ services:
       - /var/lib/btrfs:noexec,nosuid,nodev,size=1m,mode=755
     networks:
       unos-test-net:
-        ipv4_address: 172.31.253.3
+        ipv4_address: ${UNOS_TEST_SUBNET_PREFIX:-172.31.253}.3
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 5s
@@ -63,14 +68,14 @@ services:
     build:
       context: ../webui
       dockerfile: Dockerfile
-    container_name: unos-webui-test
+    container_name: ${UNOS_TEST_PROJECT:-unos-test}-webui
     # The UI is served over HTTPS only (see webui/Caddyfile); plain HTTP
     # answers with a redirect, except /api/v1/health. Loopback only: the test
     # account (admin/unos-e2e-pass) is public and the supervisor has the Docker
     # socket. The test-runner uses the compose network instead.
     ports:
-      - "127.0.0.1:3080:80"
-      - "127.0.0.1:3443:443"
+      - "127.0.0.1:${UNOS_TEST_HTTP_PORT:-3080}:80"
+      - "127.0.0.1:${UNOS_TEST_HTTPS_PORT:-3443}:443"
     environment:
       # Certificate name: the test-runner connects to https://webui.
       - UNOS_HOSTNAME=webui
@@ -107,7 +112,7 @@ services:
         exec caddy run --config /etc/caddy/Caddyfile
     networks:
       unos-test-net:
-        ipv4_address: 172.31.253.2
+        ipv4_address: ${UNOS_TEST_SUBNET_PREFIX:-172.31.253}.2
     # As in docker-compose.yml: Caddy and the API behind it, over plain HTTP.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/v1/health"]
@@ -121,7 +126,7 @@ services:
     build:
       context: ../webui
       dockerfile: Dockerfile.test
-    container_name: unos-test-runner
+    container_name: ${UNOS_TEST_PROJECT:-unos-test}-runner
     environment:
       # HTTPS; the plain-HTTP URL (http://webui) is derived from it in
       # tests/https.spec.ts.
@@ -199,6 +204,7 @@ networks:
     ipam:
       config:
         # Fixed addresses as in docker-compose.yml, on a different subnet so
-        # both stacks can run on one host.
-        - subnet: 172.31.253.0/24
-          gateway: 172.31.253.1
+        # both stacks can run on one host: a /24 of its own for each test
+        # stack (UNOS_TEST_SUBNET_PREFIX, its first three numbers).
+        - subnet: ${UNOS_TEST_SUBNET_PREFIX:-172.31.253}.0/24
+          gateway: ${UNOS_TEST_SUBNET_PREFIX:-172.31.253}.1

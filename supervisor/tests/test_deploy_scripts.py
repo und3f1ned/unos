@@ -3441,11 +3441,51 @@ def test_compose_versions_before_2_30(script):
 class TestTestStack:
     @pytest.fixture
     def compose(self):
-        return yaml.safe_load((REPO_ROOT / "deploy" / "docker-compose.test.yml").read_text())
+        return _test_stack()
 
     def test_has_its_own_project(self, compose):
         # Otherwise it shares "deploy" with docker-compose.yml and replaces its images.
         assert compose["name"] == "unos-test"
+
+    @pytest.mark.parametrize("settings", [
+        {},
+        {"UNOS_TEST_PROJECT": "unos-test-0badf00d", "UNOS_TEST_HTTP_PORT": "13107",
+         "UNOS_TEST_HTTPS_PORT": "13470", "UNOS_TEST_SUBNET_PREFIX": "172.31.127"},
+    ])
+    def test_takes_its_project_ports_and_subnet_from_the_settings(self, settings):
+        # scripts/test-cycle.sh sets them for its worktree (testing.compose-stack-per-worktree,
+        # step 1); without them the stack has the values of docs/TESTING.md.
+        text = (REPO_ROOT / "deploy" / "docker-compose.test.yml").read_text()
+        assert set(re.findall(r"(?<!\$)\$\{(\w+)", text)) == set(TEST_STACK_DEFAULTS)
+        project, http, https, prefix = ({**TEST_STACK_DEFAULTS, **settings}[name] for name in TEST_STACK_DEFAULTS)
+        compose = _test_stack(settings)
+        services = compose["services"]
+        env = dict(item.split("=", 1) for item in services["supervisor"]["environment"])
+
+        assert compose["name"] == project
+        assert {name: service["container_name"] for name, service in services.items()} == {
+            "supervisor": f"{project}-supervisor", "webui": f"{project}-webui", "test-runner": f"{project}-runner"}
+        assert env["UNOS_WEBUI_CONTAINER"] == f"{project}-webui"
+        assert set(services["webui"]["ports"]) == {f"127.0.0.1:{http}:80", f"127.0.0.1:{https}:443"}
+        assert compose["networks"]["unos-test-net"]["ipam"]["config"] == [
+            {"subnet": f"{prefix}.0/24", "gateway": f"{prefix}.1"}]
+        assert services["webui"]["networks"]["unos-test-net"]["ipv4_address"] == f"{prefix}.2"
+        assert services["supervisor"]["networks"]["unos-test-net"]["ipv4_address"] == f"{prefix}.3"
+        assert env["FORWARDED_ALLOW_IPS"] == f"{prefix}.2"
+
+    def test_down_reaches_only_its_own_project(self):
+        # docker compose -p <project> down -v removes the containers, networks and volumes of that
+        # project (step 3): no container has a name that another worktree's stack shares, and no
+        # volume or network is external or named outside the project, which Compose would share.
+        compose = _test_stack({"UNOS_TEST_PROJECT": "unos-test-0badf00d"})
+
+        for name, service in compose["services"].items():
+            assert service["container_name"].startswith("unos-test-0badf00d-"), name
+            named = [str(volume).split(":")[0] for volume in service.get("volumes", [])]
+            assert [v for v in named if not v.startswith(("/", "."))] == [v for v in named if v in compose["volumes"]]
+        for kind in ("volumes", "networks"):
+            for name, config in compose[kind].items():
+                assert not (config or {}).keys() & {"name", "external"}, (kind, name)
 
     def test_serves_https_on_loopback(self, compose):
         webui = compose["services"]["webui"]
@@ -3590,6 +3630,173 @@ class TestTestRunner:
         assert not any("/api/v1/auth/setup" in call or call.startswith("npx") for call in calls)
 
 
+def _test_cycle_lib(root):
+    """scripts/test-cycle.sh of a checkout at `root`, without the lines that run it: its functions."""
+    script = (REPO_ROOT / "scripts" / "test-cycle.sh").read_text()
+    tail = '\n# Handle Ctrl+C\ntrap cleanup EXIT\n\n# Run main\nmain "$@"\n'
+    assert script.endswith(tail)
+    for directory in ("scripts", "deploy", "bin"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    lib = root / "scripts" / "test-cycle-lib.sh"
+    lib.write_text(script[: -len(tail)] + "\n")
+    return lib
+
+
+# Docker as scripts/test-cycle.sh sees it: the subnets of its networks are the lines of the file
+# subnets; docker compose and docker network ls record their arguments and the settings they get in
+# calls.
+NETWORK_DOCKER_STUB = textwrap.dedent(
+    """
+    #!/bin/bash
+    case "$1 $2" in
+      "network ls" | compose*)
+        echo "docker $* | $UNOS_TEST_PROJECT $UNOS_TEST_HTTP_PORT $UNOS_TEST_HTTPS_PORT $UNOS_TEST_SUBNET_PREFIX" >> "$STUB_DIR/calls" ;;
+    esac
+    case "$1 $2" in
+      "network ls") [ -s "$STUB_DIR/subnets" ] && echo n1 n2 ;;
+      "network inspect") cat "$STUB_DIR/subnets" ;;
+    esac
+    exit 0
+    """
+).lstrip()
+
+
+def _run_test_cycle(root, functions, subnets="", **env):
+    """Run `functions` of the test cycle of the checkout at `root` against NETWORK_DOCKER_STUB and a curl
+    that answers 200; the settings it chose and the calls of docker compose and docker network ls."""
+    lib = _test_cycle_lib(root)
+    (root / "subnets").write_text(subnets)
+    (root / "calls").write_text("")
+    for name, body in (("docker", NETWORK_DOCKER_STUB), ("curl", "#!/bin/bash\necho 200\n")):
+        (root / "bin" / name).write_text(body)
+        (root / "bin" / name).chmod(0o755)
+    names = [*TEST_STACK_DEFAULTS, "TEST_URL", "TEST_HTTPS_URL"]
+    result = subprocess.run(
+        ["bash", "-c", f'. "$LIB"; {functions}; ' + "; ".join(f'echo "{name}=${{{name}}}"' for name in names)],
+        env={**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}", "LIB": str(lib), "STUB_DIR": str(root),
+             **env},
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60,
+    )
+    found = dict(line.split("=", 1) for line in result.stdout.splitlines() if line.split("=", 1)[0] in names)
+    return result, found, (root / "calls").read_text().splitlines()
+
+
+def _test_cycle_project(root):
+    """The project that the test cycle of the checkout at `root` (_test_cycle_lib) derives."""
+    return subprocess.run(
+        ["bash", "-c", '. "$LIB"; echo "$UNOS_TEST_PROJECT"'],
+        env={**os.environ, "LIB": str(root / "scripts" / "test-cycle-lib.sh")},
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60, check=True,
+    ).stdout.strip()
+
+
+class TestTestStackPerWorktree:
+    """testing.compose-stack-per-worktree (ADR-0439): scripts/test-cycle.sh derives the project, the ports
+    and the subnet of its stack from its worktree, so that the stacks of two worktrees run at once and
+    its down -v removes only its own."""
+
+    @staticmethod
+    def slot(settings):
+        slot = int(settings["UNOS_TEST_HTTP_PORT"]) - 13080
+        assert 0 <= slot < 100, settings
+        assert settings["UNOS_TEST_HTTPS_PORT"] == str(13443 + slot)
+        assert settings["UNOS_TEST_SUBNET_PREFIX"] == f"172.31.{100 + slot}"
+        assert settings["TEST_URL"] == f"http://localhost:{13080 + slot}"
+        assert settings["TEST_HTTPS_URL"] == f"https://localhost:{13443 + slot}"
+        return slot
+
+    def test_each_worktree_gets_a_project_of_its_own(self, tmp_path):
+        # Two checkouts of the same name beside different checkouts, and the first one again.
+        first, other = tmp_path / "a" / "unos-x", tmp_path / "b" / "unos-x"
+        projects = []
+        for root in (first, other, first):
+            result, settings, _ = _run_test_cycle(root, "choose_test_stack")
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert re.fullmatch(r"unos-test-[0-9a-f]{8}", settings["UNOS_TEST_PROJECT"]), settings
+            self.slot(settings)
+            projects.append(settings["UNOS_TEST_PROJECT"])
+
+        assert projects[0] != projects[1]
+        assert projects[2] == projects[0]
+
+    def test_a_second_worktree_takes_ports_and_a_subnet_that_no_stack_holds(self, tmp_path):
+        # Step 2: the first worktree's stack runs, with the subnet of its slot, when the second starts,
+        # even where both worktrees derive the same slot.
+        result, running, _ = _run_test_cycle(tmp_path / "a" / "unos-x", "choose_test_stack")
+        assert result.returncode == 0, result.stdout + result.stderr
+        second = tmp_path / "b" / "unos-x"
+        result, alone, _ = _run_test_cycle(second, "choose_test_stack")
+        assert result.returncode == 0, result.stdout + result.stderr
+        held = {running["UNOS_TEST_SUBNET_PREFIX"], alone["UNOS_TEST_SUBNET_PREFIX"]}
+        subnets = "".join(f"{prefix}.0/24 fd00:{n}::/64\n" for n, prefix in enumerate(sorted(held)))
+
+        result, settings, _ = _run_test_cycle(second, "choose_test_stack", subnets=f"172.17.0.0/16\n{subnets}\n")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert settings["UNOS_TEST_SUBNET_PREFIX"] not in held
+        # The next slot after its own that no stack holds.
+        following = ((self.slot(alone) + n) % 100 for n in range(1, 100))
+        assert self.slot(settings) == next(slot for slot in following if f"172.31.{100 + slot}" not in held)
+        assert settings["UNOS_TEST_PROJECT"] == alone["UNOS_TEST_PROJECT"]
+
+    def test_stops_when_every_slot_is_held(self, tmp_path):
+        subnets = "".join(f"172.31.{100 + slot}.0/24\n" for slot in range(100))
+
+        result, _, calls = _run_test_cycle(tmp_path / "unos-x", "start_test_containers", subnets=subnets)
+
+        assert result.returncode == 1
+        assert "every subnet of the test stacks, 172.31.100.0/24 to 172.31.199.0/24, is in use" in result.stdout
+        assert not [call for call in calls if " up " in call]
+
+    def test_has_no_project_without_a_hash_of_its_path(self, tmp_path):
+        # Without one every worktree would have the project unos-test-00000000 and slot 0, and each
+        # worktree's down -v would remove another's stack.
+        root = tmp_path / "unos-x"
+        (root / "bin").mkdir(parents=True)
+        (root / "bin" / "cksum").write_text("#!/bin/bash\nexit 1\n")
+        (root / "bin" / "cksum").chmod(0o755)
+
+        result, settings, calls = _run_test_cycle(root, "cleanup")
+
+        assert result.returncode == 1
+        assert "cksum gave no hash of" in result.stderr
+        assert calls == [] and settings == {}
+
+    def test_starts_and_takes_down_the_stack_of_its_own_worktree(self, tmp_path):
+        # Step 3: every docker compose call names the project, which COMPOSE_PROJECT_NAME of the
+        # caller's shell would otherwise choose (it comes before the file's name:), and gets the
+        # settings that the compose file reads.
+        root = tmp_path / "unos-x"
+        result, settings, calls = _run_test_cycle(root, "cleanup; start_test_containers; cleanup",
+                                                  COMPOSE_PROJECT_NAME="deploy")
+        assert result.returncode == 0, result.stdout + result.stderr
+        project = settings["UNOS_TEST_PROJECT"]
+        compose = f"docker compose -p {project} -f docker-compose.test.yml "
+        args = [call.split(" | ")[0] for call in calls]
+        given = [call.split(" | ")[1].split(" ") for call in calls]
+
+        assert args[0] == args[-1] == compose + "down -v --remove-orphans"
+        # The slot is chosen after the build, right before up creates the network that holds it: a
+        # second worktree that chooses meanwhile, during a build of minutes, sees it held.
+        assert [arg.removeprefix(compose).split(" ")[0] if arg.startswith(compose) else arg for arg in args] == [
+            "down", "build", "docker network ls -q", "up", "down"]
+        assert [values[0] for values in given] == [project] * 5
+        assert given[3] == [settings[name] for name in TEST_STACK_DEFAULTS]
+        assert f"Test stack {project}: {settings['TEST_HTTPS_URL']}" in result.stdout
+
+    def test_cleanup_alone_needs_no_slot(self, tmp_path):
+        # --cleanup takes down the project of its worktree whatever the subnets of Docker's networks.
+        root = tmp_path / "unos-x"
+        _, settings, _ = _run_test_cycle(root, "choose_test_stack")
+        subnets = "".join(f"172.31.{100 + slot}.0/24\n" for slot in range(100))
+
+        result, _, calls = _run_test_cycle(root, "cleanup", subnets=subnets)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call.split(" | ")[0] for call in calls] == [
+            f"docker compose -p {settings['UNOS_TEST_PROJECT']} -f docker-compose.test.yml down -v --remove-orphans"]
+
+
 class TestTestCycle:
     """scripts/test-cycle.sh and the commands of docs/TESTING.md start the
     test stack, whose webui waits for the supervisor to be healthy."""
@@ -3629,7 +3836,8 @@ class TestTestCycle:
         calls = (tmp_path / "calls").read_text().splitlines()
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "docker compose -f docker-compose.test.yml build --quiet" in calls
+        assert [call for call in calls if call.endswith(" build --quiet")] == [
+            f"docker compose -p {_test_cycle_project(tmp_path)} -f docker-compose.test.yml build --quiet"]
         assert _wait_timeouts(calls) == [_supervisor_decided_within("docker-compose.test.yml")]
 
     def test_playwright_runs_from_the_web_uis_node_modules_never_through_npx(self, tmp_path):
@@ -3979,7 +4187,35 @@ SUPERVISOR_HEALTH_URL = "http://127.0.0.1:8080/api/v1/health"
 
 
 def _compose_file(name):
+    if name == "docker-compose.test.yml":
+        return _test_stack()
     return yaml.safe_load((REPO_ROOT / "deploy" / name).read_text())
+
+
+# The settings of deploy/docker-compose.test.yml, which scripts/test-cycle.sh derives for its worktree
+# (testing.compose-stack-per-worktree, ADR-0439), and the file's own values, those of a stack started
+# by hand (docs/TESTING.md).
+TEST_STACK_DEFAULTS = {
+    "UNOS_TEST_PROJECT": "unos-test",
+    "UNOS_TEST_HTTP_PORT": "3080",
+    "UNOS_TEST_HTTPS_PORT": "3443",
+    "UNOS_TEST_SUBNET_PREFIX": "172.31.253",
+}
+
+
+def _test_stack(settings=None):
+    """deploy/docker-compose.test.yml as Compose reads it with the environment `settings`: ${NAME:-default}
+    is NAME's value, or the default where NAME is unset or empty. $$ stays, for _compose_string."""
+    settings = settings or {}
+
+    def value(match):
+        if match[0] == "$$":
+            return "$$"
+        assert match[1] in TEST_STACK_DEFAULTS and match[2] == TEST_STACK_DEFAULTS[match[1]], match[0]
+        return settings.get(match[1]) or match[2]
+
+    text = (REPO_ROOT / "deploy" / "docker-compose.test.yml").read_text()
+    return yaml.safe_load(re.sub(r"\$\$|\$\{(\w+):-([^}]*)\}", value, text))
 
 
 def _seconds(duration):
@@ -4008,7 +4244,7 @@ def _supervisor_decided_within(compose_file):
 
 def _wait_timeouts(calls):
     """The --wait-timeout values of the `docker compose ... up` calls."""
-    ups = [call for call in calls if re.match(r"docker compose (-f \S+ )?up ", call) and not call.endswith(" --help")]
+    ups = [call for call in calls if re.match(r"docker compose (-p \S+ )?(-f \S+ )?up ", call) and not call.endswith(" --help")]
     assert ups
     values = [re.search(r" --wait-timeout (\d+)(?: |$)", up) for up in ups]
     assert all(values), ups

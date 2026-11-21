@@ -4055,10 +4055,16 @@
         "Two worktrees run scripts/test-cycle.sh at once",
         "Its down -v removes only its own project"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0210"
-      ]
+      ],
+      "verified_by": [
+        "supervisor/tests/test_deploy_scripts.py",
+        "supervisor/tests/test_authz.py",
+        "supervisor/tests/test_dev_scenarios.py"
+      ],
+      "notes": "Built 2026-11-21 (ADR-0439). Step 1: deploy/docker-compose.test.yml takes its name:, container names, UNOS_WEBUI_CONTAINER, published ports, subnet, gateway, addresses and FORWARDED_ALLOW_IPS from UNOS_TEST_PROJECT, UNOS_TEST_HTTP_PORT, UNOS_TEST_HTTPS_PORT and UNOS_TEST_SUBNET_PREFIX, with the old values as defaults; scripts/test-cycle.sh derives the project from the cksum of the checkout's physical path (unos-test-<8 hex>) and, after the build, the first of 100 slots from the path's own whose 172.31.(100+n).0/24 no Docker network has (HTTP 13080+n, HTTPS 13443+n). test_deploy_scripts.py: TestTestStack (the file read with and without the settings, as Compose interpolates it; docker compose config gave the same), TestTestStackPerWorktree (two checkouts of one name get two projects; a held slot moves a second worktree to the next free one; all 100 held stops before up; no project without a hash; the slot is chosen after the build). Step 2: this worktree and a temporary second one ran scripts/test-cycle.sh --quick at the same time, as unos-test-c31cae12 (13533, 172.31.190.0/24) and unos-test-e8769e4a (13525, 172.31.182.0/24): both stacks built, ran side by side and exited 0 (53 passed, 1 flaky, 18 skipped each); the held-slot path also ran against real Docker with a network on the slot's subnet. Step 3: every compose call passes -p, ahead of COMPOSE_PROJECT_NAME (TestTestStackPerWorktree, with COMPOSE_PROJECT_NAME=deploy), and no volume or network of the file is external or named; in the run, the first stack's down -v removed its 2 containers, network and 6 volumes while the other's stayed, and nothing was left after both. The flaky spec, tests/auth.spec.ts 'should show error on invalid credentials', meets the sign-in rate limit (every spec reaches the supervisor from the network's gateway) and fails on the base code's stack too. Reviewed in a fresh context (ADR-0017): the slot was chosen before the build, a minutes-long window for two worktrees of one slot (now after it), an empty hash gave every worktree one project (now refused), GLOSSARY.md's test stack, the help text, the wording of docs/TESTING.md and webui/playwright.config.ts: all fixed. Left to the lead: whether ADR-0439 supersedes ADR-0210, whose 'runs once per machine' it ends (ADR-0383 did the same without superseding). Not host-level."
     },
     {
       "id": "testing.remove-dead-mock-layer",

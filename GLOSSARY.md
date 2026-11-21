@@ -690,8 +690,10 @@ session wakes when it ends, so it is one call of `timeout` with a deadline of at
 their data in a git-ignored folder: the default target of the E2E specs (ADR-0215).
 Avoid: mock server, staging, test stack.
 
-**Test stack**: The Docker Compose project `unos-test`, for a machine that runs Docker: the other
-local target of the E2E specs (ADR-0215). Avoid: stand-in.
+**Test stack**: The Docker Compose project of `deploy/docker-compose.test.yml`, for a machine that
+runs Docker: the other local target of the E2E specs (ADR-0215). `scripts/test-cycle.sh` runs one
+per worktree, named `unos-test-<hash of the checkout's path>`; started by hand it is `unos-test`
+(ADR-0439). Avoid: stand-in.
 
 **Fake host**: An in-memory double of the host in backend tests, which keeps state and fails on
 commands it does not know (ADR-0189). Avoid: mock.

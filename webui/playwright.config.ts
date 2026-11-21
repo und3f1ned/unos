@@ -13,7 +13,9 @@ import { checkedLocalUrl, targetUrl } from './tests/target';
  * 2. The compose test stack (deploy/docker-compose.test.yml, which
  *    scripts/test-cycle.sh runs): its test-runner sets BASE_URL=https://webui;
  *    from this machine, E2E_STAND_IN=1 BASE_URL=https://localhost:3443
- *    HTTP_URL=http://localhost:3080. The test-runner and scripts/test-cycle.sh
+ *    HTTP_URL=http://localhost:3080 for a stack started by hand, and the ports
+ *    that scripts/test-cycle.sh chooses and prints for its own stack, one per
+ *    worktree (docs/TESTING.md). The test-runner and scripts/test-cycle.sh
  *    set E2E_STAND_IN=1 too, so the stand-in's skips apply there as well
  *    (TEST_STACK_TOO in tests/target.ts).
  *

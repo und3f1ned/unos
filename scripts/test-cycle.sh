@@ -4,6 +4,9 @@
 # (make test, in the environment of make setup), then the deviceless test stack of
 # deploy/docker-compose.test.yml and the E2E specs against it. The quicker local
 # route is make e2e-local (the stand-in); neither needs the device.
+# Each worktree runs a stack of its own, with a compose project, ports and a
+# subnet of its own, so that several worktrees run this script at once
+# (ADR-0439).
 #
 # Usage:
 #   ./scripts/test-cycle.sh              # Run all tests
@@ -26,11 +29,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
-COMPOSE_FILE="$PROJECT_ROOT/deploy/docker-compose.test.yml"
-# The test stack serves the UI over HTTPS only. Plain HTTP (3080) answers with
-# a redirect, except the health check.
-TEST_URL="http://localhost:3080"
-TEST_HTTPS_URL="https://localhost:3443"
+# The settings of this worktree's test stack, which deploy/docker-compose.test.yml
+# reads (ADR-0439). Its compose project comes from the checkout's path: each
+# worktree has one of its own, and its down -v removes only that project's
+# containers, network and volumes. The CRC of the path also gives the first of
+# the 100 slots that choose_test_stack tries for its ports and subnet.
+TEST_STACK_HASH=$(printf '%s' "$(cd "$PROJECT_ROOT" && pwd -P)" | cksum | awk '{print $1}')
+# Without it every worktree would have the same project, whose down -v removes
+# another worktree's stack.
+case "$TEST_STACK_HASH" in
+    '' | *[!0-9]*)
+        echo "test-cycle.sh: cksum gave no hash of $PROJECT_ROOT, from which this worktree's test stack is named" >&2
+        exit 1
+        ;;
+esac
+UNOS_TEST_PROJECT=unos-test-$(printf '%08x' "$TEST_STACK_HASH")
+export UNOS_TEST_PROJECT
+TEST_STACK_SLOTS=100
 MAX_WAIT_TIME=120  # seconds
 # --wait-timeout of `docker compose up`, which starts webui only once the
 # supervisor is healthy: as long as Docker can take to report the supervisor
@@ -57,10 +72,47 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# docker compose on this worktree's test stack, from deploy/. -p names its
+# project, which COMPOSE_PROJECT_NAME of the caller's environment would
+# otherwise choose ahead of the file's name:.
+test_compose() {
+    docker compose -p "$UNOS_TEST_PROJECT" -f docker-compose.test.yml "$@"
+}
+
+# The ports and the subnet of the first free slot, from the worktree's own: slot
+# n has HTTP on 127.0.0.1:13080+n, HTTPS on 127.0.0.1:13443+n and the network
+# 172.31.(100+n).0/24. A slot is free when no Docker network has its subnet,
+# which every test stack that holds the slot has, so that a second worktree
+# whose path gives the same slot takes the next one. A port that another
+# program holds makes docker compose up fail instead.
+choose_test_stack() {
+    local ids subnets=" " slot n=0
+    ids=$(docker network ls -q) || { log_error "Docker does not answer (docker network ls)"; return 1; }
+    if [ -n "$ids" ]; then
+        # One argument per network; one that is removed meanwhile only drops out.
+        # shellcheck disable=SC2086
+        subnets=" $(docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' $ids 2> /dev/null | tr '\n' ' ') "
+    fi
+    while [ "$n" -lt "$TEST_STACK_SLOTS" ]; do
+        slot=$(((TEST_STACK_HASH + n) % TEST_STACK_SLOTS))
+        n=$((n + 1))
+        case "$subnets" in *" 172.31.$((100 + slot)).0/24 "*) continue ;; esac
+        export UNOS_TEST_HTTP_PORT=$((13080 + slot)) UNOS_TEST_HTTPS_PORT=$((13443 + slot))
+        export UNOS_TEST_SUBNET_PREFIX="172.31.$((100 + slot))"
+        # The test stack serves the UI over HTTPS only. Plain HTTP answers with a
+        # redirect, except the health check.
+        TEST_URL="http://localhost:$UNOS_TEST_HTTP_PORT"
+        TEST_HTTPS_URL="https://localhost:$UNOS_TEST_HTTPS_PORT"
+        return 0
+    done
+    log_error "every subnet of the test stacks, 172.31.100.0/24 to 172.31.199.0/24, is in use: ./scripts/test-cycle.sh --cleanup in the worktrees that hold them removes their stacks"
+    return 1
+}
+
 cleanup() {
-    log_info "Cleaning up test containers..."
+    log_info "Cleaning up the test stack $UNOS_TEST_PROJECT..."
     cd "$PROJECT_ROOT/deploy"
-    docker compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
+    test_compose down -v --remove-orphans 2>/dev/null || true
     log_success "Cleanup complete"
 }
 
@@ -122,9 +174,12 @@ start_test_containers() {
     log_info "Starting test containers..."
     cd "$PROJECT_ROOT/deploy"
 
-    # Build and start containers
-    docker compose -f docker-compose.test.yml build --quiet
-    docker compose -f docker-compose.test.yml up -d --wait-timeout "$STACK_START_TIMEOUT"
+    # Build and start containers. The slot is chosen after the build, which can
+    # take minutes, right before up creates the network that holds it.
+    test_compose build --quiet
+    choose_test_stack
+    log_info "Test stack $UNOS_TEST_PROJECT: $TEST_HTTPS_URL, plain HTTP $TEST_URL, subnet $UNOS_TEST_SUBNET_PREFIX.0/24"
+    test_compose up -d --wait-timeout "$STACK_START_TIMEOUT"
 
     # Wait for services to be ready: the health check over plain HTTP, then
     # over HTTPS (Caddy has issued its certificate)
@@ -132,7 +187,7 @@ start_test_containers() {
         ! wait_for_service "$TEST_HTTPS_URL" "$MAX_WAIT_TIME" ||
         ! seed_test_admin; then
         log_error "Failed to start test containers"
-        docker compose -f docker-compose.test.yml logs
+        test_compose logs
         cleanup
         exit 1
     fi
@@ -191,6 +246,8 @@ show_help() {
     echo "  --quick      Run quick smoke test"
     echo "  --cleanup    Clean up test containers and volumes"
     echo "  --help       Show this help message"
+    echo ""
+    echo "This worktree's test stack is the compose project $UNOS_TEST_PROJECT."
     echo ""
     echo "Examples:"
     echo "  $0                  # Run all tests"
