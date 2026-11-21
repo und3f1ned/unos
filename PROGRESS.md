@@ -55,7 +55,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs 8297e142 of the branch `mvp.batch-18` since 2026-11-21, deployed at the owner's request
+  runs a64f891e of the branch `mvp.batch-18` since 2026-11-21 (SD MiB, its eMMC: sync 5.309,
+  build-supervisor 0.246, build-webui 0.156, up 0.344, check 0.000; check: OK). Before it, the
+  same day, 8297e142, deployed at the owner's request
   with `UNOS_DEV_HOST=10.1.1.56`, an empty `UNOS_DEV_SYSTEM_DISK` and its own
   `UNOS_DEV_STATE_DIR=tmp/dev-f3`, after the owner allowed the pull of the pinned
   `caddy:2-alpine` base (MiB written to its eMMC: sync 18.793, build-supervisor 2.051, pull
@@ -265,7 +267,11 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 9daf179a of the branch `mvp.batch-18` (the eighteenth batch: loading without flicker,
+- Runs a64f891e of the branch `mvp.batch-18`: every page on the shared components and the
+  design check without a baseline (ADR-0438), deployed on 2026-11-21 at the owner's request after
+  `make check` and the full E2E (SD MiB sync 6.098, build-supervisor 4.766, build-webui 19.445,
+  up 5.945, check 0.348; total 36.602). Both containers healthy, `post-up check: OK`, check: OK.
+- Before it, 9daf179a of the branch `mvp.batch-18` (the eighteenth batch: loading without flicker,
   ADR-0430; every setting in one place, ADR-0431; the shared components, ADR-0432; area E2E per
   feature and the full suite once per batch, ADR-0433; the data, sharing, System and apps pages,
   ADR-0434 to ADR-0437), deployed on 2026-11-20 at the owner's request after `make check` and the
@@ -741,7 +747,7 @@ Open owner actions:
   everywhere") the Live/Disconnected line left the dashboard and the sidebar, with its spec
   assertions. `make check` 10765 passed; full E2E 1163 passed, 2 failed (a class `times.spec`
   reads, restored, and a sign-in timeout of shares.spec that passed alone), 14 skipped.
-- Not deployed yet: the dev device and the BPI-F3 run 9daf179a and 8297e142.
+- Deployed at the owner's request to the dev device and the BPI-F3 (Dev device).
 
 ### 2026-11-20: A seventeenth batch: ruff, ghcr.io, Svelte 5, the redesign, TRIM; the BPI-F3 moved
 
