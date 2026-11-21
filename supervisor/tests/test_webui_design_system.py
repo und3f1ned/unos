@@ -5,10 +5,11 @@ Svelte's and TypeScript's parsers. It fails for a raw <button>, an <a> styled as
 field, select or textarea without a `form-*` class, and a raw Tailwind palette colour (bg-slate-700,
 hover:text-red-400) in a class attribute, a `class:` directive or a string literal; and since
 ADR-0432 for the browser's own dialogs (window.confirm, alert, prompt, also in a .ts module), the
-class `uppercase`, and, against a baseline of file counts that only shrinks
-(scripts/design-baseline.json), a raw checkbox or radio button and a filled primary Button in a
-card's header or a table's row. A comment `design-ignore: <reason>` exempts one use. Each test
-builds a small web UI in tmp_path and checks it, and the real one passes.
+class `uppercase`, a raw checkbox or radio button and a filled primary Button in a card's header or a
+table's row; and since ADR-0438, which removed the baseline of file counts, for a success Alert (a
+success after an action is a toast), a hand-made spinner (animate-spin, loading-spinner) and a raw
+<details>. A comment `design-ignore: <reason>` exempts one use. Each test builds a small web UI in
+tmp_path and checks it, and the real one passes.
 
 Without node, or without webui/node_modules (make setup), the tests skip.
 """
@@ -213,12 +214,6 @@ class TestRawColors:
         assert "lacks" in result.stderr
 
 
-def with_baseline(webui: Path, baseline: dict) -> Path:
-    (webui / "scripts").mkdir(parents=True, exist_ok=True)
-    (webui / "scripts" / "design-baseline.json").write_text(json.dumps(baseline))
-    return webui
-
-
 class TestFoundations:
     """The rules of webui.design-foundations (ADR-0432)."""
 
@@ -274,24 +269,25 @@ class TestFoundations:
         assert result.stderr.count("class 'uppercase'") == 1 and "class 'sm:uppercase'" in result.stderr
         assert "eyebrow" in result.stderr
 
-    def test_a_raw_checkbox_or_radio_fails_without_a_baseline(self, node, tmp_path):
+    def test_a_raw_checkbox_or_radio_fails(self, node, tmp_path):
         result = check(node, tmp_path, '<input type="checkbox" bind:checked={a} />\n<input type="radio" />\n', "let a = $state(false);\n")
         assert result.returncode == 1
-        assert "raw <input type=\"checkbox\">: use Checkbox or Switch" in result.stderr
-        assert "raw <input type=\"radio\">: use RadioGroup" in result.stderr
-        assert "[2 in the file, baseline 0]" in result.stderr
+        assert "+page.svelte:5:1: raw <input type=\"checkbox\">: use Checkbox or Switch" in result.stderr
+        assert "+page.svelte:6:1: raw <input type=\"radio\">: use RadioGroup" in result.stderr
 
-    def test_the_baseline_admits_its_count_and_only_shrinks(self, node, tmp_path):
+    def test_no_baseline_admits_a_use(self, node, tmp_path):
+        """ADR-0438: the baseline of ADR-0432 is gone; a file of counts beside the check admits nothing."""
         name = "src/routes/a/+page.svelte"
-        markup = '<input type="checkbox" />\n<input type="checkbox" />\n'
-        webui = demo(tmp_path, {"routes/a/+page.svelte": markup})
-
-        assert run_check(node, with_baseline(webui, {"raw-choice": {name: 2}})).returncode == 0
-        more = run_check(node, with_baseline(webui, {"raw-choice": {name: 1}}))
-        assert more.returncode == 1 and "[2 in the file, baseline 1]" in more.stderr
-        fewer = run_check(node, with_baseline(webui, {"//": "a note", "raw-choice": {"//": "a note", name: 3}}))
-        assert fewer.returncode == 1
-        assert f"raw-choice of {name} is 3, the file has 2: lower it to 2" in fewer.stderr
+        webui = demo(tmp_path, {"routes/a/+page.svelte": '<input type="checkbox" />\n<table><tr><td><Button>Edit</Button></td></tr></table>\n'})
+        (webui / "scripts").mkdir()
+        (webui / "scripts" / "design-baseline.json").write_text(
+            json.dumps({"raw-choice": {name: 1}, "primary-in-card": {name: 1}})
+        )
+        result = run_check(node, webui)
+        assert result.returncode == 1
+        assert "raw <input type=\"checkbox\">" in result.stderr and "a filled primary Button in a table's row" in result.stderr
+        assert "baseline" not in result.stderr + result.stdout
+        assert not (WEBUI / "scripts" / "design-baseline.json").exists()
 
     def test_the_components_choices_pass(self, node, tmp_path):
         result = check(
@@ -352,16 +348,86 @@ class TestFoundations:
         assert result.returncode == 0, result.stderr
         assert "2 use(s) exempted" in result.stdout
 
-    def test_the_real_baseline_names_only_files_that_exist(self):
-        baseline = json.loads((WEBUI / "scripts" / "design-baseline.json").read_text(encoding="utf-8"))
-        assert set(baseline) == {"//", "raw-choice", "primary-in-card"}
-        for rule in ("raw-choice", "primary-in-card"):
-            for name, count in baseline[rule].items():
-                assert (WEBUI / name).is_file(), name
-                assert isinstance(count, int) and count > 0, name
-        # The foundations' own areas are not in it: ui, security, the account.
-        names = [name for rule in ("raw-choice", "primary-in-card") for name in baseline[rule]]
-        assert not [n for n in names if "/components/ui/" in n or "/security/" in n or "/account/" in n]
+
+
+class TestLockIn:
+    """The rules of ADR-0438: what the pages hand-made before the shared components came back never."""
+
+    @pytest.mark.parametrize(
+        "markup",
+        [
+            '<Alert variant="success">Saved</Alert>\n',
+            '<Alert\n  variant="success"\n  title="Done"\n>Saved</Alert>\n',
+            "<Alert variant={ok ? 'success' : 'error'}>{text}</Alert>\n",
+        ],
+    )
+    def test_a_success_alert_fails(self, node, tmp_path, markup):
+        result = check(node, tmp_path, markup, "import { Alert } from '$lib/components/ui';\nlet ok = true, text = '';\n")
+        assert result.returncode == 1, result.stdout
+        assert "+page.svelte:6:1: a success Alert" in result.stderr
+        assert "toast.success" in result.stderr and "ADR-0438" in result.stderr
+
+    def test_other_alerts_success_badges_and_a_toast_pass(self, node, tmp_path):
+        result = check(
+            node,
+            tmp_path,
+            """\
+            <Alert variant="error">{text}</Alert>
+            <Alert variant={ok ? 'warning' : 'info'}>{text}</Alert>
+            <Badge variant="success">On</Badge>
+            <Button onclick={() => toast.success(text)}>Save</Button>
+            """,
+            "import { Alert, Badge, Button, toast } from '$lib/components/ui';\nlet ok = true, text = '';\n",
+        )
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        "markup,script,found",
+        [
+            ('<Loader2 class="w-4 h-4 animate-spin" />\n', "", "animate-spin"),
+            ('<span class="motion-safe:animate-spin">x</span>\n', "", "motion-safe:animate-spin"),
+            ("<Loader2 class:animate-spin={busy} />\n", "", "animate-spin"),
+            ('<Loader2 class="w-4 h-4 loading-spinner" />\n', "", "loading-spinner"),
+            ("<Loader2 class={spin} />\n", "const spin = busy ? 'animate-spin' : '';\n", "animate-spin"),
+        ],
+    )
+    def test_a_hand_made_spinner_fails(self, node, tmp_path, markup, script, found):
+        result = check(node, tmp_path, markup, "let busy = true;\n" + script)
+        assert result.returncode == 1, result.stdout
+        assert f"class '{found}': a hand-made spinner" in result.stderr
+        assert "Button's loading, LoadState or Skeleton" in result.stderr
+
+    def test_a_raw_details_fails(self, node, tmp_path):
+        result = check(node, tmp_path, "<p>x</p>\n<details class=\"mt-2\"><summary>More</summary><p>y</p></details>\n")
+        assert result.returncode == 1
+        assert "+page.svelte:2:1: raw <details>: use TechDetails" in result.stderr
+
+    def test_the_components_and_a_reason_pass(self, node, tmp_path):
+        webui = demo(
+            tmp_path,
+            {
+                "routes/a/+page.svelte": (
+                    '<script lang="ts">\nimport { Alert, Button, TechDetails } from "$lib/components/ui";\n</script>\n'
+                    "<Button loading>Save</Button>\n"
+                    '<TechDetails text="errno 5" />\n'
+                    "<!-- design-ignore: where the restored items went, to read before going there -->\n"
+                    '<Alert variant="success">Restored to /a</Alert>\n'
+                    "<!-- design-ignore: the export's options, which its spec opens -->\n"
+                    "<details><summary>Options</summary></details>\n"
+                ),
+                "lib/components/ui/Button.svelte": '<span class="loading-spinner animate-spin"></span>\n',
+                "lib/components/ui/TechDetails.svelte": "<details><summary>Details</summary></details>\n",
+                "lib/components/ui/Thing.svelte": '<Alert variant="success">x</Alert>\n',
+            },
+        )
+        result = run_check(node, webui)
+        assert result.returncode == 0, result.stderr
+        assert "2 use(s) exempted" in result.stdout
+
+    def test_a_comment_without_a_reason_keeps_nothing(self, node, tmp_path):
+        result = check(node, tmp_path, '<!-- design-ignore: -->\n<Alert variant="success">x</Alert>\n<!-- design-ignore -->\n<details></details>\n')
+        assert result.returncode == 1
+        assert "a success Alert" in result.stderr and "raw <details>" in result.stderr
 
 
 def test_make_frontend_runs_the_check():

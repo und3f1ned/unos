@@ -95,7 +95,8 @@
 								<span class="text-muted">-</span>
 							{/if}
 						</td>
-						<td class="stack-hide text-secondary whitespace-nowrap" title={formatMoment(user.created_at)}>
+						<!-- users-created: the cell times.spec.ts reads the moment from. -->
+						<td class="users-created stack-hide text-secondary whitespace-nowrap" title={formatMoment(user.created_at)}>
 							{formatDay(user.created_at)}
 						</td>
 						<td class="users-actions">

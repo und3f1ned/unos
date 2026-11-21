@@ -2,8 +2,8 @@
 	// A mounted pool's balance (ADR-0379): its progress while it runs or is paused, with its Pause,
 	// Resume and Cancel (`part` running, under the pool's header), then how it ended, or why its
 	// status could not be read (`part` result, at the foot of the pool).
-	import { AlertTriangle, CheckCircle, Loader2, Pause, Play } from 'lucide-svelte';
-	import { Alert, Button, ProgressBar } from '$lib/components/ui';
+	import { AlertTriangle, CheckCircle, Pause, Play } from 'lucide-svelte';
+	import { Alert, Button, ProgressBar, StatusDot } from '$lib/components/ui';
 	import type { BalanceStatus, Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { balanceProgress, type BalanceAction } from './pools';
@@ -55,7 +55,7 @@
 				{#if paused}
 					<Pause class="w-4 h-4" aria-hidden="true" />
 				{:else}
-					<Loader2 class="w-4 h-4 loading-spinner" aria-hidden="true" />
+					<StatusDot status="info" pulse />
 				{/if}
 				{$t(BALANCE_STATES[status.status] ?? 'storage.balance.running')}
 			</span>

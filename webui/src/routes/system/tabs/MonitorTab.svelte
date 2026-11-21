@@ -167,8 +167,7 @@
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 class="text-xl font-semibold">{$t("monitor.title")}</h2>
     <div class="flex flex-wrap items-center gap-3">
-      <!-- The ranges as a segmented control (ADR-0428). Whether the charts are live is the
-           sidebar's connection line (ADR-0431). -->
+      <!-- The ranges as a segmented control (ADR-0428). -->
       <Segmented
         options={RANGES.map((option) => ({ value: option.seconds, label: $t(option.key) }))}
         value={range.seconds}

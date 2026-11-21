@@ -251,6 +251,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   archive 64 MiB (was 640). A database over the limit is refused before it is copied by Create
   Backup (413), by a scheduled backup task and by the off-device copy, and every refusal of a
   backup's size now names the limit (ADR-0406).
+- No line says any longer whether the page's live connection is up: the dashboard's Live /
+  Disconnected line and the sidebar's Connected / Not connected line are gone (ADR-0438). A scrub,
+  a balance or a disk's removal that runs shows a pulsing dot in place of a spinner.
 
 ### Security
 - The checks take their tools from pins: the workflows name every GitHub Action by the commit of its

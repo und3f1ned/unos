@@ -545,8 +545,6 @@ test.describe('System > Network', () => {
     await fakeNetworkApi(page);
     await fakeLiveTraffic(page, { eth0: TRAFFIC });
     await page.goto('/system#network');
-    // The connection's one place is the sidebar's line (ADR-0431).
-    await expect(page.locator('aside').getByText('Подключено', { exact: true })).toBeVisible();
     const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
 
     // Beside the link speed, which is written the same way.

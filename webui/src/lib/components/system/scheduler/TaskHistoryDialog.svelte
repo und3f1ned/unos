@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CheckCircle, History, XCircle } from "lucide-svelte";
-  import { Badge, Button, EmptyState, Sheet, Alert, StatusDot } from "$lib/components/ui";
+  import { Badge, Button, EmptyState, Sheet, Alert, StatusDot, TechDetails } from "$lib/components/ui";
   import { intlLocale, t } from "$lib/i18n";
   import { apiTime, formatDateTime } from "$lib/time";
   import type { TaskHistory } from "./history.svelte";
@@ -88,12 +88,7 @@
             <Alert variant="error" size="sm" class="mt-2"><p class="mono text-xs break-all">{run.error}</p></Alert>
           {/if}
           {#if run.output}
-            <details class="mt-2">
-              <summary class="text-xs text-content-muted cursor-pointer hover:text-content-secondary">{$t("scheduler.runs.output")}</summary>
-              <div class="mt-1 p-2 bg-surface rounded text-xs text-content-soft font-mono whitespace-pre-wrap break-all">
-                {run.output}
-              </div>
-            </details>
+            <TechDetails text={run.output} summary={$t("scheduler.runs.output")} />
           {/if}
         </li>
       {/each}

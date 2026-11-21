@@ -94,16 +94,20 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   `Select`, or a raw field with a `form-input` or `form-select` class when it needs an attribute
   they lack. No `.svelte` file outside `ui` uses a palette colour (`bg-slate-700`, `text-red-400`, `text-white`; the classes a `.ts` module returns are for review): the
   tokens above are the colours, and `brand`, `brand-hover`, `brand-ring`, `brand-disabled`,
-  `surface-hover`, `border-strong`, `content-soft`, `content-on-brand`, `content-link` and `status-neutral` cover
-  the rest; a dialog's backdrop is the class `scrim`. `npm run design` (`scripts/design-check.mjs`,
+  `surface-hover`, `surface-inverse` (a tooltip, under `content-inverse`), `border-strong`, `content-soft`,
+  `content-on-brand`, `content-link` and `status-neutral` cover the rest; a dialog's backdrop is the class `scrim`. `npm run design` (`scripts/design-check.mjs`,
   run by `make frontend`, tested by `supervisor/tests/test_webui_design_system.py`) fails for a
   raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without a
   `form-*` class, and a raw palette class in a class attribute, a `class:` directive or a string
   literal, outside `src/lib/components/ui`, and names the token to use (ADR-0400; the mapping is
-  in the ADR). It also fails for `window.confirm`, `alert` and `prompt` (also in a `.ts` module) and
-  the class `uppercase`, and, beyond each file's count in `scripts/design-baseline.json`, which only
-  shrinks, for a raw checkbox or radio and a filled primary `Button` in a card's header or a table's
-  row (ADR-0432). `// design-ignore: <reason>` (an HTML comment above an element) exempts a use.
+  in the ADR). It also fails for `window.confirm`, `alert` and `prompt` (also in a `.ts` module),
+  the class `uppercase`, a raw checkbox or radio and a filled primary `Button` in a card's header or
+  a table's row (ADR-0432), and for a success `Alert` (a success after an action is a `toast`), a
+  hand-made spinner (`animate-spin`, `loading-spinner`: use Button's `loading`, `LoadState`,
+  `Skeleton`, or a `StatusDot` with `pulse` for a job that runs) and a raw `<details>` (use
+  `TechDetails`, whose `children` take a list) (ADR-0438). `// design-ignore: <reason>` (an HTML
+  comment above an element) exempts a use: an outcome to read before going on keeps its success
+  `Alert` so, with its reason.
 
 ## Patterns (ADR-0432)
 

@@ -155,8 +155,8 @@
     </div>
   {/if}
   {#if notice}
-    <!-- Not a toast: where the items went is to be read before going there. -->
     <div role="status">
+      <!-- design-ignore: where the restored items went, to read before going there -->
       <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
     </div>
   {/if}

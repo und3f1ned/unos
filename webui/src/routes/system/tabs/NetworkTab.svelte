@@ -256,7 +256,6 @@
   <!-- Header -->
   <div class="flex items-center justify-between gap-3">
     <h2 class="text-xl font-semibold">{$t("network.title")}</h2>
-    <!-- Whether the live traffic comes is the sidebar's connection line (ADR-0431). -->
     <Button variant="ghost" size="icon" icon={RefreshCw} loading={net.loading} title={$t("common.refresh")} onclick={() => net.loadAll()}>
       <span class="sr-only">{$t("common.refresh")}</span>
     </Button>

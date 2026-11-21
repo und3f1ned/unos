@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0438
 date: 2026-11-20
 area: webui
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0266, ADR-0401]
 # ADR-0432: The web UI's shared components carry its states, confirmations, menus, form controls and tables, and a check keeps pages on them
 
 ## Context
+
+Superseded by ADR-0438: only in part, the baseline of the design check (`webui/scripts/design-baseline.json`), which is gone, so that a raw checkbox or radio and a filled primary button in a card's header or a table's row fail outright; every other rule here stays in force.
 
 The owner found the redesign careless: "the design is slapdash, the UX limps". A UX audit of every
 page found the same faults on many of them: a failed load drawn as an empty list, eight shapes of a

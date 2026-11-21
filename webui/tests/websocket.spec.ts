@@ -85,7 +85,5 @@ test.describe('Live stats WebSocket', () => {
     expect(JSON.parse(socket.received[2])).toEqual({ type: 'repair', data: null });
     expect(JSON.parse(socket.received[3]).type).toBe('stats');
     expect(socket.closed).toBe(false);
-    // The dashboard's chip for a lost connection (dashboard.disconnected, ADR-0428) is not shown.
-    await expect(page.getByText('Disconnected from the NAS')).toHaveCount(0);
   });
 });

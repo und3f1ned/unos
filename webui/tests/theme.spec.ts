@@ -74,14 +74,7 @@ async function foreignColours(page: Page): Promise<string[]> {
   const values = await tokens(page, theme);
   const allowed = (excluded: string[]) =>
     Object.entries(values).filter(([name]) => !excluded.includes(name)).map(([, value]) => value);
-  const sets = {
-    text: allowed(NOT_TEXT),
-    background: allowed(NOT_BACKGROUND),
-    border: allowed(NOT_BORDER),
-    // A disabled button's reason (Button's tooltip, ADR-0432) is drawn in the other theme's
-    // colours on purpose: content-inverse on content, and no other.
-    tooltip: { text: [values['content-inverse']], background: [values['content']] },
-  };
+  const sets = { text: allowed(NOT_TEXT), background: allowed(NOT_BACKGROUND), border: allowed(NOT_BORDER) };
   return page.evaluate((sets) => {
     // A colour on its way to another (transition-colors, as a tab that was selected) counts as
     // where it goes.
@@ -89,10 +82,6 @@ async function foreignColours(page: Page): Promise<string[]> {
       if (animation instanceof CSSTransition) animation.finish();
     }
     const known = { text: new Set(sets.text), background: new Set(sets.background), border: new Set(sets.border) };
-    const inverse: Record<string, Set<string>> = {
-      text: new Set(sets.tooltip.text),
-      background: new Set(sets.tooltip.background),
-    };
     const found = new Set<string>();
     const rgb = (css: string) => {
       const match = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
@@ -117,7 +106,6 @@ async function foreignColours(page: Page): Promise<string[]> {
       for (const [kind, property, value] of colours) {
         const colour = rgb(value);
         if (colour === null || known[kind].has(colour)) continue;
-        if (element.classList.contains('tooltip') && inverse[kind]?.has(colour)) continue;
         const words = (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
         found.add(`<${element.tagName.toLowerCase()} class="${element.getAttribute('class') ?? ''}"> ${property} ${value} ${words}`);
       }

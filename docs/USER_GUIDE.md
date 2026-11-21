@@ -223,11 +223,8 @@ disk to replace soon (see [Disks to Replace](#disks-to-replace)), and a failed
 check of them. Each problem is a link to the page where it is dealt with. The
 banner lists three problems, errors first; **Show all** lists the rest. The
 header counts them ("3 issues", a link to the banner); while there is none, an
-administrator's dashboard says **No problems**. The header says **Live** while
-the statistics come (the time of the last one in its tooltip), **Connecting…**
-until the page's live connection has been up once, or **Disconnected from the
-NAS** while the page has lost it. Until the statistics come, each stats card is
-a grey shape in its place.
+administrator's dashboard says **No problems**. Until the statistics come, each
+stats card is a grey shape in its place.
 
 ### Arranging the Dashboard
 Each widget (the five stats cards below and, for administrators, **Storage

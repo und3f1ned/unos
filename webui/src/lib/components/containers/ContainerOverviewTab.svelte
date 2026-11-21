@@ -3,7 +3,7 @@
 	// id with a copy button, creation, image, the app of the App Store that made it) and its
 	// Docker labels behind a disclosure. The state is the drawer's header's alone (webui.ux-apps).
 	import { Check, Copy, Package } from 'lucide-svelte';
-	import { Button } from '$lib/components/ui';
+	import { Button, TechDetails } from '$lib/components/ui';
 	import type { Container } from '$lib/api/containers';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
@@ -19,6 +19,8 @@
 	let { container, copied, oncopy }: Props = $props();
 
 	const labels = $derived(Object.entries(container.labels || {}));
+	// As docker run --label takes them: one key=value a line, to copy.
+	const labelText = $derived(labels.map(([key, value]) => `${key}=${value}`).join('\n'));
 	const app = $derived(appOf(container));
 
 	// It reads $intlLocale, so that an open drawer follows a change of the language; no seconds.
@@ -70,18 +72,6 @@
 
 	<!-- Docker's labels: technical, so behind a disclosure. -->
 	{#if labels.length > 0}
-		<details class="group rounded-lg border border-border">
-			<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium text-content-secondary hover:text-content">
-				{$t('containers.drawer.labels', { n: labels.length })}
-			</summary>
-			<dl class="space-y-2 border-t border-border px-4 py-3">
-				{#each labels as [key, value] (key)}
-					<div>
-						<dt class="mono-xs text-content-secondary break-all">{key}</dt>
-						<dd class="mono-xs text-content break-all">{value}</dd>
-					</div>
-				{/each}
-			</dl>
-		</details>
+		<TechDetails text={labelText} summary={$t('containers.drawer.labels', { n: labels.length })} />
 	{/if}
 </div>

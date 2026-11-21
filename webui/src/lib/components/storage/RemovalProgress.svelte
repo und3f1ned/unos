@@ -2,8 +2,8 @@
 	// A disk removal from a mounted pool (ADR-0411): its progress while it runs (`part` running,
 	// under the pool's header), then how it ended, or why its status could not be read (`part`
 	// result, at the foot of the pool).
-	import { CheckCircle, Loader2 } from 'lucide-svelte';
-	import { Alert, ProgressBar } from '$lib/components/ui';
+	import { CheckCircle } from 'lucide-svelte';
+	import { Alert, ProgressBar, StatusDot } from '$lib/components/ui';
 	import type { DiskRemovalStatus } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { removalProgress } from './pools';
@@ -29,7 +29,7 @@
 {:else if part === 'running' && mounted && !error && status?.status === 'running'}
 	<div class="space-y-2">
 		<span class="flex items-center gap-2 text-sm text-info break-all">
-			<Loader2 class="w-4 h-4 loading-spinner shrink-0" />
+			<StatusDot status="info" pulse />
 			{$t('storage.removal.running', { device: status.device ?? '' })}
 		</span>
 		{#if status.total}

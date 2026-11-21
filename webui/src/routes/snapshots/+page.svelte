@@ -158,7 +158,7 @@
 	{/if}
 
 	{#if restoredTo}
-		<!-- Not a toast: where the copy was made is to be read, and kept, before going on. -->
+		<!-- design-ignore: where the restored copy was made, to read and keep before going on -->
 		<Alert
 			variant="success"
 			title={$t('snapshots.restored')}

@@ -1001,8 +1001,8 @@ const VIEWS: View[] = [
     shows: (page) => page.getByText('e2e-immich-machine-learning'),
   },
   {
-    // A long host name with no place to break beside the live stats' time and Refresh (on the
-    // stand-in, the workstation's name reached past the screen this way): the header wraps.
+    // A long host name with no place to break beside Customize and Refresh (on the stand-in, the
+    // workstation's name reached past the screen this way): the header wraps.
     name: 'Dashboard with a long host name',
     path: '/',
     fake: async (page) => {
@@ -1013,10 +1013,9 @@ const VIEWS: View[] = [
         '/api/v1/system/info': { ...SYSTEM_INFO, hostname: LONG_HOST_NAME },
       });
     },
-    // The name and the time come in apart: the page lists the host after all its requests, and
-    // the time with the first live stats.
+    // The page lists the host after all its requests.
     open: (page) => expect(page.getByRole('heading', { name: LONG_HOST_NAME })).toBeVisible(),
-    shows: (page) => page.getByText(/^(Live|Онлайн)$/),
+    shows: (page) => page.getByRole('heading', { name: LONG_HOST_NAME }),
   },
   {
     // The banner shows above every page of an administrator but the dashboard, which draws it under

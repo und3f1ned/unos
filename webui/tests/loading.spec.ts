@@ -207,7 +207,7 @@ test.describe('Loading without flicker', () => {
     await expect(page.getByText('Held by the test')).toBeVisible();
   });
 
-  test('a live connection that does not answer holds the page a second at most, and says so', async ({
+  test('a live connection that does not answer holds the page a second at most, and no card waits for it', async ({
     authenticatedPage: page,
   }) => {
     const sockets: WebSocketRoute[] = [];
@@ -218,16 +218,11 @@ test.describe('Loading without flicker', () => {
     await page.goto('/');
     await expect(page.locator('#boot')).toHaveCount(0, { timeout: 4000 });
     expect(Date.now() - opened).toBeLessThan(4000);
-    // Connecting, with the stats cards waiting in their places.
-    await expect(page.getByText('Connecting…', { exact: true }).first()).toBeVisible();
+    // The stats cards wait in their places.
     await expect(page.locator('main [data-widget="cpu"] [data-skeleton]')).toBeVisible();
     // The attempt ends without stats: not connected, and no stats card waits any more.
     await expect.poll(() => sockets.length).toBeGreaterThan(0);
     await sockets[0].close();
-    await expect(page.getByText('Disconnected from the NAS', { exact: true })).toBeVisible();
-    // The sidebar's line says the same: not "Connecting…" for ever.
-    await expect(page.locator('aside [aria-live="polite"]')).toHaveText('Not connected');
-    await expect(page.getByText('Connecting…', { exact: true })).toHaveCount(0);
     await expect(page.locator('main [data-widget="cpu"]')).toHaveCount(0);
     await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
   });

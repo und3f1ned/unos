@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0438
 date: 2026-11-20
 area: webui
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0327]
 # ADR-0430: The web UI loads behind a boot screen, draws its shell once and shows skeletons in each page's final layout
 
 ## Context
+
+Superseded by ADR-0438: only in part, the dashboard's status chip and the sidebar's connection line, which say "Connecting…" until the first attempt has ended and are gone now; every other rule here stays in force.
 
 The owner asked, in translation, "why does the interface flicker while it loads? why is there no
 proper loader?". The causes, measured on the stand-in with a filmstrip of each main page and its

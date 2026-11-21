@@ -25,10 +25,13 @@
 // - a filled primary Button (the default variant) in a card's header (Card's `actions`, an element
 //   of class card-header, a header row of a card: a justify-between box with an h3 to h6 or a
 //   card-title in it) or in a table's row (tr, td, table-actions): use CardAction, a secondary or
-//   ghost Button or an ActionMenu; the primary action is the page header's.
-// The last two have a baseline (scripts/design-baseline.json): the files that had such uses when
-// the rules came, with their count. A file may have up to its count; one that has fewer fails until
-// its count is lowered, so that the baseline only shrinks (the UX work's chunks 2 to 5 empty it).
+//   ghost Button or an ActionMenu; the primary action is the page header's;
+// and, since ADR-0438:
+// - a success Alert (`variant="success"`, or a 'success' in its variant's expression): what an
+//   action did is a toast; an outcome to read before going on keeps its Alert with a reason;
+// - a hand-made spinner, the class `animate-spin` or app.css's `loading-spinner`: use Button's
+//   `loading`, LoadState or Skeleton, and a StatusDot with `pulse` for a job that runs;
+// - a raw <details>: use TechDetails.
 // A comment `design-ignore: <reason>` exempts what it stands for: above an element (an HTML comment
 // <!-- design-ignore: ... -->), or above or at the end of the statement or property of a script
 // (as `i18n-ignore:` does). Review reads the reasons; the summary counts the exemptions.
@@ -53,6 +56,7 @@ const UPPERCASE = /^(?:[a-z0-9-]+:)*!?uppercase$/;
 const NATIVE_DIALOGS = new Set(['confirm', 'alert', 'prompt']);
 const GLOBALS = new Set(['window', 'globalThis', 'self']);
 const CHOICE_TYPES = new Set(['checkbox', 'radio']);
+const SPINNER = /^(?:[a-z0-9-]+:)*!?(?:animate-spin|loading-spinner)$/;
 const TAG_LIKE = new Set(['Element', 'InlineComponent', 'Slot', 'Head', 'Options', 'Window', 'Body', 'Document']);
 
 const webui = path.resolve(process.argv[2] ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
@@ -61,16 +65,6 @@ const UI = path.join(SRC, 'lib', 'components', 'ui') + path.sep;
 const relative = (file) => path.relative(webui, file).split(path.sep).join('/');
 const errors = [];
 let exempt = 0;
-// The uses that a baseline admits: rule -> file -> count found (ADR-0432).
-const counted = { 'raw-choice': new Map(), 'primary-in-card': new Map() };
-const BASELINE_FILE = path.join(webui, 'scripts', 'design-baseline.json');
-const baseline = existsSync(BASELINE_FILE) ? JSON.parse(readFileSync(BASELINE_FILE, 'utf8')) : {};
-/** A use of a rule with a baseline: kept to compare with the file's count at the end. */
-function countUse(rule, file, text) {
-	const uses = counted[rule].get(file) ?? [];
-	uses.push(text);
-	counted[rule].set(file, uses);
-}
 
 /** "line:column" of `offset` in `text`, both counted from 1. */
 function position(text, offset) {
@@ -147,12 +141,12 @@ function rawColors(value) {
 	return found;
 }
 
-/** The `uppercase` classes of the text `value`, as { name, at }. */
-function upperCases(value) {
+/** The class words of the text `value` that `pattern` matches, as { name, at }. */
+function classesLike(value, pattern) {
 	const found = [];
 	const words = /\S+/g;
 	for (let match = words.exec(value); match; match = words.exec(value)) {
-		if (UPPERCASE.test(match[0])) found.push({ name: match[0], at: match.index });
+		if (pattern.test(match[0])) found.push({ name: match[0], at: match.index });
 	}
 	return found;
 }
@@ -242,6 +236,18 @@ function classText(node) {
 	return parts.join(' ');
 }
 
+/** Whether an Alert node is a success one: the static variant "success", or a 'success' in its expression. */
+function successAlert(node) {
+	const variant = node.attributes.find((a) => a.type === 'Attribute' && a.name === 'variant');
+	if (!variant || variant.value === true) return false;
+	let success = false;
+	for (const part of variant.value) {
+		if (part.type === 'Text') success ||= part.data.trim() === 'success';
+		else walk(part, { enter(inner) { if (inner.type === 'Literal' && inner.value === 'success') success = true; } });
+	}
+	return success;
+}
+
 /** Whether a Button node is a filled primary one: no variant, or the static variant "primary". */
 function primaryButton(node) {
 	const variant = node.attributes.find((a) => a.type === 'Attribute' && a.name === 'variant');
@@ -293,9 +299,13 @@ function checkFile(file) {
 			if (exempted()) exempt += 1;
 			else report(offset + found.at, `raw colour class '${found.name}': use ${found.use}`);
 		}
-		for (const found of upperCases(value)) {
+		for (const found of classesLike(value, UPPERCASE)) {
 			if (exempted()) exempt += 1;
 			else report(offset + found.at, `class '${found.name}': a badge is sentence case, a group label the class eyebrow (ADR-0432)`);
+		}
+		for (const found of classesLike(value, SPINNER)) {
+			if (exempted()) exempt += 1;
+			else report(offset + found.at, `class '${found.name}': a hand-made spinner; use Button's loading, LoadState or Skeleton of $lib/components/ui, a pulsing StatusDot for a job that runs (ADR-0438)`);
 		}
 	};
 	// The scripts' declared names: a component's own `confirm` function is no browser dialog.
@@ -333,13 +343,13 @@ function checkFile(file) {
 					else report(node.start, text);
 				};
 				if (node.name === 'button') tag('raw <button>: use Button of $lib/components/ui (variant="plain" for a tab or a clickable card)');
+				else if (node.name === 'details') tag('raw <details>: use TechDetails of $lib/components/ui (ADR-0438)');
 				else if (node.name === 'a' && /(^|\s)btn(-|\s|$)/.test(classText(node))) {
 					tag('raw <a> styled as a button: use Button with href');
 				} else if (node.name === 'input' || node.name === 'select' || node.name === 'textarea') {
 					const type = node.name === 'input' ? staticAttribute(node, 'type') : '';
 					if (type !== null && CHOICE_TYPES.has(type)) {
-						if (own()) exempt += 1;
-						else countUse('raw-choice', name, `${name}:${position(source, node.start)}: raw <input type="${type}">: use ${type === 'radio' ? 'RadioGroup' : 'Checkbox or Switch'} of $lib/components/ui (ADR-0432)`);
+						tag(`raw <input type="${type}">: use ${type === 'radio' ? 'RadioGroup' : 'Checkbox or Switch'} of $lib/components/ui (ADR-0432)`);
 					} else if (type === null || FIELD_TYPES_EXEMPT.has(type)) {
 						// A type that is not static, or one that no component covers.
 					} else if (!/(^|\s)form-(?:input|select|textarea)(\s|$)/.test(classText(node))) {
@@ -350,8 +360,12 @@ function checkFile(file) {
 				const where = cardOrRow(ancestors, node);
 				if (where) {
 					if (markupExempted(markup, node.start)) exempt += 1;
-					else countUse('primary-in-card', name, `${name}:${position(source, node.start)}: a filled primary Button in ${where}: use CardAction, a secondary or ghost Button or an ActionMenu; the primary action is the page header's (ADR-0432)`);
+					else report(node.start, `a filled primary Button in ${where}: use CardAction, a secondary or ghost Button or an ActionMenu; the primary action is the page header's (ADR-0432)`);
 				}
+			} else if (node.type === 'InlineComponent' && node.name === 'Alert' && successAlert(node)) {
+				if (markupExempted(markup, node.start)) exempt += 1;
+				else report(node.start, 'a success Alert: what an action did is a toast (toast.success of $lib/components/ui); an outcome ' +
+					'to read before going on keeps its Alert with `design-ignore: <reason>` (ADR-0438)');
 			} else if (node.type === 'CallExpression') {
 				const callee = node.callee;
 				const called = callee?.type === 'Identifier' && NATIVE_DIALOGS.has(callee.name) && !declared.has(callee.name)
@@ -425,27 +439,6 @@ function checkModule(file) {
 	visit(sourceFile);
 }
 
-/** The rules with a baseline: a file over its count fails with each use, one under it until it is lowered. */
-function checkBaseline() {
-	for (const [rule, files] of Object.entries(counted)) {
-		const allowed = baseline[rule] ?? {};
-		for (const [file, uses] of files) {
-			const limit = allowed[file] ?? 0;
-			if (uses.length > limit) {
-				for (const use of uses) errors.push(`${use} [${uses.length} in the file, baseline ${limit}]`);
-			}
-		}
-		for (const [file, limit] of Object.entries(allowed)) {
-			if (file.startsWith('//')) continue;
-			const found = files.get(file)?.length ?? 0;
-			if (found < limit) {
-				errors.push(`scripts/design-baseline.json: ${rule} of ${file} is ${limit}, the file has ${found}: lower it to ${found}` +
-					`${found === 0 ? ' (remove the line)' : ''}, so that the baseline only shrinks`);
-			}
-		}
-	}
-}
-
 const files = readdirSync(SRC, { recursive: true })
 	.filter((entry) => entry.endsWith('.svelte'))
 	.map((entry) => path.join(SRC, entry))
@@ -458,7 +451,6 @@ const modules = readdirSync(SRC, { recursive: true })
 	.filter((file) => !file.startsWith(UI))
 	.sort();
 for (const file of modules) checkModule(file);
-checkBaseline();
 await checkTable();
 
 if (errors.length > 0) {
@@ -467,7 +459,6 @@ if (errors.length > 0) {
 		'tokens of tailwind.config.js (webui/AGENTS.md, ADR-0400); `design-ignore: <reason>` exempts a use.');
 	process.exit(1);
 }
-const admitted = Object.values(counted).reduce((sum, map) => sum + [...map.values()].reduce((n, uses) => n + uses.length, 0), 0);
-console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, no bare field, ` +
-	`no raw colour class, no browser dialog and no uppercase; ${admitted} raw choice(s) and primary button(s) in cards ` +
-	`left in the baseline; ${exempt} use(s) exempted with design-ignore`);
+console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, choice, ` +
+	'<details> or bare field, no raw colour class, no browser dialog, no uppercase, no primary button in a card\'s header ' +
+	`or a row, no success Alert and no hand-made spinner; ${exempt} use(s) exempted with design-ignore`);

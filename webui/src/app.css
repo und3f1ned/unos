@@ -21,6 +21,7 @@
 		--color-surface-overlay: 34 38 46; /* #22262e */
 		--color-surface-hover: 45 50 60; /* #2d323c */
 		--color-surface-muted: 34 38 46; /* #22262e */
+		--color-surface-inverse: 221 225 231; /* #dde1e7, a tooltip: the other theme's surface */
 		/* Borders */
 		--color-border: 43 48 57; /* #2b3039 */
 		--color-border-strong: 122 130 144; /* #7a8290 */
@@ -79,6 +80,7 @@
 		--color-surface-overlay: 236 238 242; /* #eceef2 */
 		--color-surface-hover: 221 225 231; /* #dde1e7 */
 		--color-surface-muted: 236 238 242; /* #eceef2 */
+		--color-surface-inverse: 34 38 46; /* #22262e, a tooltip: the other theme's surface */
 		/* Borders */
 		--color-border: 218 221 227; /* #dadde3 */
 		--color-border-strong: 110 117 130; /* #6e7582 */
@@ -298,7 +300,7 @@
 	/* The tooltip of a reason: dark on light and light on dark, above the control. */
 	.tooltip {
 		@apply fixed z-[200] max-w-[280px] px-2.5 py-1.5 rounded text-xs font-medium leading-snug pointer-events-none
-		       bg-content text-content-inverse shadow-popover;
+		       bg-surface-inverse text-content-inverse shadow-popover;
 	}
 
 	/* Button sizes */
@@ -746,6 +748,10 @@
 
 	.status-dot-error {
 		@apply bg-status-error;
+	}
+
+	.status-dot-info {
+		@apply bg-status-info;
 	}
 
 	.status-dot-neutral {

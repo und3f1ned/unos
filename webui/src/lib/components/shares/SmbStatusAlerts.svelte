@@ -65,6 +65,7 @@
 				{/each}
 				{#if status.import_report.length > 0}
 					<li>
+						<!-- design-ignore: the smb.conf import's report, a list of lines inside the alert that shares.spec.ts opens by its summary -->
 						<details>
 							<summary class="cursor-pointer">
 								{$t('shares.status.imported', { n: status.import_report.length })}

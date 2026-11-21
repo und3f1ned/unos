@@ -766,7 +766,7 @@ test.describe('Scheduler: custom tasks', () => {
     await expect(page.getByText('The command exited with status 3', { exact: true })).toBeVisible();
     // Both output streams, in the order the command wrote them.
     await page.getByText('View output').click();
-    await expect(page.locator('details > div')).toHaveText(/^e2e to stdout\ne2e to stderr\n$/);
+    await expect(page.locator('details pre')).toHaveText(/^e2e to stdout\ne2e to stderr\n$/);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
 
     // A command that succeeds: exit status 0, its output, no error.
@@ -779,7 +779,7 @@ test.describe('Scheduler: custom tasks', () => {
     await expect(page.getByText('Exit status 0', { exact: true })).toBeVisible();
     const succeeded = page.locator('details').nth(1);
     await succeeded.getByText('View output').click();
-    await expect(succeeded.locator('div')).toHaveText('e2e all good');
+    await expect(succeeded.locator('pre')).toHaveText('e2e all good');
     await expect(page.getByText('The command exited with status', { exact: false })).toHaveCount(1);
   });
 

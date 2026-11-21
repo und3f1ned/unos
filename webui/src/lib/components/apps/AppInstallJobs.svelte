@@ -176,9 +176,9 @@
 			</div>
 
 			<!-- The end of a job stays on its card, no toast (ADR-0432): the card is the job's record,
-			     kept by the server across reloads and tabs until dismissed, and an install's end says
-			     how to sign in to the app, to read before going on. -->
+			     kept by the server across reloads and tabs until dismissed. -->
 			{#if job.state === 'succeeded' && job.kind !== 'install'}
+				<!-- design-ignore: an update's or a rollback's end, on the job's card that the server keeps until dismissed -->
 				<Alert variant="success" class="mt-4">
 					<p>
 						{$t(job.kind === 'update' ? 'appUpdates.updatedNotice' : 'appUpdates.rolledBackNotice', {
@@ -188,6 +188,7 @@
 				</Alert>
 			{:else if job.state === 'succeeded' && job.result}
 				{@const missing = template ? missingHardware(template, job.result).length > 0 : false}
+				<!-- design-ignore: an install's end says how to sign in to the app, to read before going on -->
 				<Alert variant={missing ? 'warning' : 'success'} class="mt-4">
 					<p>
 						{job.result.pool

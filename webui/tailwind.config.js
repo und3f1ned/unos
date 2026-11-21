@@ -25,7 +25,8 @@ export default {
 					elevated: token('surface-elevated'), // cards, modals
 					overlay: token('surface-overlay'), // fields, secondary buttons, hover states, nested
 					hover: token('surface-hover'), // hover over overlay
-					muted: token('surface-muted', 0.5) // subtle backgrounds (nested cards)
+					muted: token('surface-muted', 0.5), // subtle backgrounds (nested cards)
+					inverse: token('surface-inverse') // a tooltip, under content-inverse: the other theme's surface
 				},
 				// Border colors
 				border: {

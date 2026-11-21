@@ -87,6 +87,7 @@
 						{/each}
 					</ul>
 					{#if exp.clients.some((client) => client.options.length > 0)}
+						<!-- design-ignore: each client's export options as exportfs takes them, a list that nfs-exports.spec.ts reads in this details -->
 						<details class="text-sm">
 							<summary class="cursor-pointer text-content-secondary">{$t('shares.nfs.options')}</summary>
 							<ul class="mt-1 space-y-0.5">

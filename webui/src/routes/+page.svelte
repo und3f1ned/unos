@@ -43,15 +43,9 @@
   // The first load has answered: until then the page is its skeleton, in the default layout of the
   // widgets; a refresh keeps what is shown (ADR-0430).
   let loaded = $state(false);
-  let lastUpdate = $state<Date | null>(null);
 
   // Subscribe to WebSocket stats
   const currentStats: WebSocketStats | null = $derived($stats);
-  // Every message of the socket, before the markup updates; the time of the last one stays while
-  // the store is empty.
-  $effect.pre(() => {
-    if ($stats) lastUpdate = new Date();
-  });
 
   // The user's layout of the widgets, kept on the server (ADR-0395). It is read with the rest of the
   // page's data, on opening and on Refresh, and written only when the user changes it: nothing polls.
@@ -263,7 +257,6 @@
 <div class="page-container">
   <DashboardHeader
     {systemInfo}
-    {lastUpdate}
     customizable={!layoutFailed}
     pending={!loaded}
     {arranging}

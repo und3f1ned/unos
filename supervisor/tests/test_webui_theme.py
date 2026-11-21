@@ -77,6 +77,8 @@ def text_pairs() -> list[tuple[str, tuple, float, str]]:
     pairs.append(("content", HOVER, TEXT, "a secondary button under the pointer"))
     pairs.append(("content-link", HOVER, TEXT, "a link in a row under the pointer"))
     pairs.append(("content-secondary", HOVER, TEXT, "a ghost button or navigation item under the pointer"))
+    # A disabled button's reason, Button's tooltip, in the other theme's colours (ADR-0438).
+    pairs.append(("content-inverse", (("surface-inverse", 1.0),), TEXT, "a disabled button's reason (Button's tooltip)"))
     for fill in SOLID_FILLS:
         pairs.append(("content-on-brand", ((fill, 1.0),), TEXT,
                       "buttons, the active tab and navigation item, a count on the selected category"))

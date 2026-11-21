@@ -7,7 +7,7 @@
     type DiskPrediction,
     type SmartInfo
   } from "$lib/api/health";
-  import { Alert, Badge, Button, EmptyState, ErrorState, Skeleton } from "$lib/components/ui";
+  import { Alert, Badge, Button, EmptyState, ErrorState, Skeleton, TechDetails } from "$lib/components/ui";
   import { SmartDataDialog } from "$lib/components/system/health";
   import { capacityText, diskState, orUnknown, predictionOf } from "$lib/components/system/health/texts";
   import { intlLocale, t } from "$lib/i18n";
@@ -139,14 +139,13 @@
           {#if prediction}
             <div class="mt-2 pl-8 text-sm">
               <p class="text-content">{prediction.recommendation}</p>
-              <details class="mt-1 text-content-secondary">
-                <summary class="link w-fit cursor-pointer text-[13px]">{$t("health.why")}</summary>
-                <ul class="mt-1 list-disc pl-5 text-[13px]">
+              <TechDetails summary={$t("health.why")}>
+                <ul class="list-disc pl-5 text-[13px] text-content-secondary">
                   {#each prediction.risk_factors as factor}
                     <li class="break-words">{factor}</li>
                   {/each}
                 </ul>
-              </details>
+              </TechDetails>
             </div>
           {/if}
         </li>

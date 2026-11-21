@@ -1,6 +1,0 @@
-{
-  "//": "The uses of the rules raw-choice and primary-in-card of scripts/design-check.mjs that were left when the rules came (ADR-0432): file and count. A file may have up to its count, a new file none; a count is lowered as the file is fixed, and a file whose count is too high fails too, so that the baseline only shrinks. The UX work's chunks 2 to 5 empty it: 2 Data (storage, files), 3 Sharing and people (shares, users), 4 Applications (apps, containers), 5 System tabs (network, notifications, power, updates, offsite, remote).",
-  "raw-choice": {},
-  "primary-in-card": {
-  }
-}

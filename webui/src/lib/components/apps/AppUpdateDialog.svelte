@@ -5,7 +5,7 @@
 	// after, what the pulls write to the system disk, the copy of the database on the pool) or why
 	// it cannot run; Update now starts its job, whose progress the App Store's job cards show.
 	import { untrack } from 'svelte';
-	import { Alert, Badge, Button, Modal, Skeleton } from '$lib/components/ui';
+	import { Alert, Badge, Button, Modal, Skeleton, TechDetails } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatSize as formatSizeIn } from './size';
 	import {
@@ -167,11 +167,8 @@
 				</div>
 			{/if}
 			<p class="text-sm">{$t('appUpdates.failureNote')}</p>
-			<details class="rounded-lg border border-border">
-				<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-medium text-content-secondary hover:text-content">
-					{$t('appUpdates.details')}
-				</summary>
-				<div class="space-y-3 border-t border-border px-4 py-3">
+			<TechDetails summary={$t('appUpdates.details')}>
+				<div class="space-y-3">
 					<p class="text-sm text-content-secondary">{$t('appUpdates.kept')}</p>
 					<ul class="space-y-2">
 						{#each plan.containers as container (container.name)}
@@ -190,7 +187,7 @@
 						{/each}
 					</ul>
 				</div>
-			</details>
+			</TechDetails>
 		{/if}
 	</div>
 	{#snippet footer()}

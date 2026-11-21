@@ -4,8 +4,7 @@ import { fakeHealthApi } from './health-fakes';
 import { FAKE_POOLS, HEALTHY_POOL, fakeStorageApi } from './storage-fakes';
 
 // webui.redesign (ADR-0428): the states that the redesign adds to the frame and the dashboard.
-// The sidebar's connection line, the dashboard's "No problems" once the socket has sent its
-// problems, the problems banner that lists three and shows the rest on request, and the dashboard
+// The dashboard's "No problems" once the socket has sent its problems, the problems banner that lists three and shows the rest on request, and the dashboard
 // with every widget hidden. A fake of the events socket sends what the server would; the layout
 // of the widgets comes from a fake of its API, so that the administrator's own stays as it is.
 
@@ -47,23 +46,7 @@ async function fakeEvents(page: Page, problems: object[] | null): Promise<WebSoc
   return sockets;
 }
 
-const connectionLine = (page: Page) => page.locator('aside [aria-live="polite"]');
-
 test.describe('The redesign', () => {
-  test('the sidebar says whether the page is connected, and speaks only when that changes', async ({
-    authenticatedPage: page,
-  }) => {
-    const sockets = await fakeEvents(page, []);
-    await page.goto('/');
-    await expect(connectionLine(page)).toHaveText('Connected');
-    // No role status: the page's own statuses stay the only ones.
-    await expect(page.locator('aside [role="status"]')).toHaveCount(0);
-
-    await sockets[0].close();
-    await expect(connectionLine(page)).toHaveText('Not connected');
-    await expect(page.getByText('Disconnected from the NAS', { exact: true })).toBeVisible();
-  });
-
   test('"No problems" waits for the problems message, and goes when there are problems', async ({
     authenticatedPage: page,
   }) => {
@@ -74,7 +57,7 @@ test.describe('The redesign', () => {
     await fakeHealthApi(page);
     await fakeStorageApi(page, { pools: [HEALTHY_POOL] });
     await page.goto('/');
-    await expect(connectionLine(page)).toHaveText('Connected');
+    await expect.poll(() => sockets.length).toBeGreaterThan(0);
     await expect(page.getByText('No problems', { exact: true })).toHaveCount(0);
 
     await sockets[0].send(JSON.stringify({ type: 'problems', data: [] }));

@@ -111,7 +111,7 @@
 {#snippet content()}
 	{#if done}
 		<div class="space-y-4">
-			<!-- The end of the setup, which leads on: it stays to be read, no toast (ADR-0432). -->
+			<!-- design-ignore: the end of the setup, in place of its form, leads on to recovery codes; mandatory-two-factor.spec.ts reads it -->
 			<Alert variant="success" title={$t('twofactor.done')}>{$t('twofactor.doneHint')}</Alert>
 			<div class="flex flex-wrap gap-3">
 				<Button href="/account#security">{$t('twofactor.recoveryCodes')}</Button>

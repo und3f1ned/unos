@@ -1,6 +1,7 @@
 <script lang="ts">
 	type Props = {
-		status?: 'success' | 'warning' | 'error' | 'neutral';
+		status?: 'success' | 'warning' | 'error' | 'info' | 'neutral';
+		/** A job that runs (a scrub, a balance): the dot pulses. */
 		pulse?: boolean;
 		/** The state the dot shows, for screen readers: a dot is never the only carrier of a state. */
 		label?: string;
@@ -13,6 +14,7 @@
 		success: 'status-dot-success',
 		warning: 'status-dot-warning',
 		error: 'status-dot-error',
+		info: 'status-dot-info',
 		neutral: 'status-dot-neutral'
 	};
 </script>

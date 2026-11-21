@@ -228,11 +228,6 @@ test.describe('Dashboard', () => {
     await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
     await page.waitForLoadState('networkidle');
     const loaded = requests.length;
-    // The header says "Live", with the time of the last stats in its tooltip: nothing on the page
-    // ticks every 2 seconds.
-    await expect(page.locator('main').getByText('Live', { exact: true })).toBeVisible();
-    const updated = page.locator('main span[title^="Updated "]');
-    const firstUpdate = await updated.getAttribute('title');
 
     // A busy host 2 seconds later: a copy to a share, written to the pool.
     await page.clock.fastForward('00:02');
@@ -246,7 +241,6 @@ test.describe('Dashboard', () => {
     await expect(statsCard(page, 'CPU').locator('.stat-card-value')).toHaveClass(/text-warning/);
     await expect(statsCard(page, 'Memory').locator('.stat-card-value')).toHaveText('75.0%');
     await expect(statsCard(page, 'Temperature').locator('.stat-card-value')).toHaveText('61°C');
-    await expect(updated).not.toHaveAttribute('title', firstUpdate ?? '');
 
     // A minute without a message: the cards keep the last one, and nothing asks the API.
     await page.clock.fastForward('01:00');
@@ -506,8 +500,6 @@ test.describe('Dashboard', () => {
     await expect(card('Дисковый ввод-вывод').getByText('Чтение', { exact: true })).toBeVisible();
     await expect(card('Дисковый ввод-вывод').getByText('Запись', { exact: true })).toBeVisible();
     await expect(card('Температура').locator('.stat-card-value')).toHaveText('46 °C');
-    await expect(main.getByText('Онлайн', { exact: true })).toBeVisible();
-    await expect(main.locator('span[title^="Обновлено "]')).toHaveAttribute('title', /^Обновлено \d{2}:\d{2}:\d{2}$/);
     await expect(main.getByText(/ · Время работы (\d+ дн\. \d+ ч|\d+ ч \d+ мин|\d+ мин)\s*$/)).toBeVisible();
 
     // The pools: their health through a map, their problems counted in Russian.
