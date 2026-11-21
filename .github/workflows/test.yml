@@ -58,12 +58,17 @@ jobs:
   # make lint: ruff with the rules of ruff.toml (pyflakes findings, syntax
   # errors and the rules that find bugs, ADR-0425) in the supervisor, scripts/
   # and .claude/hooks/, mypy with the settings of mypy.ini over supervisor/src
-  # (ADR-0447), bash -n on the shell scripts, and the JSON syntax of
-  # feature-list.json and .claude/settings.json; each part runs even
+  # (ADR-0447), bash -n and shellcheck with the settings of .shellcheckrc on the
+  # shell scripts of deploy/, scripts/ and .claude/hooks/ (ADR-0448), and the JSON
+  # syntax of feature-list.json and .claude/settings.json; each part runs even
   # when another one failed (ADR-0190). Then the known vulnerabilities of the supervisor's
-  # runtime dependencies. ruff, mypy and pip-audit, and every package they depend on,
-  # come from .github/lint-requirements.txt with their hashes, so that a new
-  # release cannot change the tools. mypy reads the supervisor's packages and their
+  # runtime dependencies. ruff, mypy, shellcheck (the wheel shellcheck-py, which
+  # carries the binary) and pip-audit, and every package they depend on, come from
+  # .github/lint-requirements.txt with their hashes, so that a new release cannot
+  # change the tools. The runner has a shellcheck of its own on PATH: make lint takes
+  # the pinned one from setup-python's folder (SHELLCHECK in the step's environment),
+  # where pip put it, and prints the version that ran.
+  # mypy reads the supervisor's packages and their
   # type stubs, which are not hashed: they go into a venv of their own after the
   # audit, never into the tools' Python, and make lint takes it as PYTHON.
   lint:
@@ -86,7 +91,7 @@ jobs:
             supervisor/requirements-dev.txt
             .github/lint-requirements.txt
 
-      - name: Install ruff, mypy and pip-audit
+      - name: Install ruff, mypy, shellcheck and pip-audit
         id: tools
         run: 'pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt'
 
@@ -104,8 +109,11 @@ jobs:
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
         run: 'python -m venv supervisor/.venv && supervisor/.venv/bin/pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt'
 
+      # The pinned shellcheck, from setup-python's folder: the runner has its own on PATH.
       - name: Lint
         if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        env:
+          SHELLCHECK: ${{ env.pythonLocation }}/bin/shellcheck
         run: make lint
 
   # The web UI: make frontend (svelte-check, the check of the web UI's texts

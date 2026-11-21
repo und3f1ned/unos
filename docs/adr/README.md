@@ -537,3 +537,4 @@ and this index, and `make check-fast` runs it.
 | [0445](0445-the-history-is-scanned-by-gitleaks-pinned-by-digest-with-an-allowlist-by-commit-and-path.md) | The history is scanned by gitleaks pinned by digest, with an allowlist by commit and path | accepted | 2026-11-21 |
 | [0446](0446-both-images-are-scanned-weekly-by-trivy-pinned-by-digest-and-a-fixable-high-finding-fails.md) | Both images are scanned weekly by trivy pinned by digest, and a fixable high finding fails | accepted | 2026-11-21 |
 | [0447](0447-mypy-checks-supervisor-src-in-make-lint-with-the-settings-of-mypy-ini.md) | Mypy checks supervisor/src in make lint, with the settings of mypy.ini, against the supervisor's environment | accepted | 2026-11-21 |
+| [0448](0448-shellcheck-checks-the-shell-scripts-in-make-lint-and-a-finding-kept-in-a-script-says-why.md) | Shellcheck checks the shell scripts in make lint, with no check turned off, and a finding kept in a script says why | accepted | 2026-11-21 |

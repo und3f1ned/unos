@@ -19,6 +19,7 @@
 #
 # Written for bash 3.2 (macOS /bin/bash) as well as current bash.
 
+# shellcheck disable=SC2016 # the scripts for the device's shell are in single quotes: it expands them
 UNOS_DEV_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || return 1
 UNOS_REPO_ROOT=$(cd "$UNOS_DEV_DIR/../.." && pwd) || return 1
 dev_prog=$(basename "$0")
@@ -105,7 +106,7 @@ dev__check_env_file() {
 #   NAME       print the value of NAME; status 1 if it is missing or empty
 # A malformed line is reported by its number only: it may hold a password.
 dev__read() {
-    local want=$1 line name value isset found= n=0 seen=' '
+    local want=$1 line name value isset found='' n=0 seen=' '
     local re='^([A-Za-z_][A-Za-z0-9_]*)=(.*)$'
     while IFS= read -r line || [ -n "$line" ]; do
         n=$((n + 1))
@@ -264,9 +265,8 @@ rm -f "$1.owner"'
 # Release: end the session's standard input, so that the device side removes the owner file
 # and exits; give it a few seconds, then end the session (with SIGKILL: it ignores HUP and TERM).
 dev__unlock() {
-    local i
     exec 8>&-
-    for i in 1 2 3 4 5 6 7 8 9 10; do
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
         kill -0 "$1" 2>/dev/null || break
         sleep 0.5
     done

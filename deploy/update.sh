@@ -157,8 +157,10 @@ compose() {
     (
         cd "$UNOS_INSTALL_DIR/deploy" || exit 1
         if [ -f "$SECRETS_FILE" ]; then
-            # shellcheck source=/dev/null
-            set -a; . "$SECRETS_FILE" || exit 1; set +a
+            set -a
+            # shellcheck source=/dev/null # the host's file, written by install.sh
+            . "$SECRETS_FILE" || exit 1
+            set +a
         fi
         docker compose "$@"
     )
@@ -212,6 +214,7 @@ check_worktree() {
     changes=$(git status --porcelain)
     if [ -n "$changes" ]; then
         log_error "$UNOS_INSTALL_DIR has local changes. Nothing was changed:"
+        # shellcheck disable=SC2001 # sed indents every line of the list
         echo "$changes" | sed 's/^/    /'
         echo ""
         echo "  To keep them:      cd $UNOS_INSTALL_DIR && sudo git add -A && sudo git commit -m 'Local changes'"
@@ -533,6 +536,7 @@ rollback() {
 # this, a session closed during the build left the checkout at the new
 # version while the old one kept running (and the next run reported "already
 # up to date"), and one closed during the restart left UNOS stopped.
+# shellcheck disable=SC2329 # the traps of main run it
 on_interrupt() {
     trap '' INT TERM HUP
     set +e
@@ -627,7 +631,7 @@ main() {
         [ "$retry_timeout" -lt 1000000000 ] || retry_timeout=999999999
         rollback "UNOS did not answer within $HEALTH_TIMEOUT seconds after the update. If it only starts slowly, retry with: sudo UNOS_HEALTH_TIMEOUT=$retry_timeout $0"
     fi
-    UPDATE_STAGE=done
+    UPDATE_STAGE='done'
     cleanup_old_images
     print_completion
 }

@@ -67,6 +67,7 @@ detect_system() {
     
     # Detect OS
     if [ -f /etc/os-release ]; then
+        # shellcheck source=/dev/null # the host's file, read for ID and VERSION_ID
         . /etc/os-release
         OS=$ID
         OS_VERSION=$VERSION_ID
@@ -167,7 +168,7 @@ install_docker() {
 
     # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/$OS/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    curl -fsSL "https://download.docker.com/linux/$OS/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
     
     # Add Docker repository
@@ -545,7 +546,10 @@ start_unos() {
     
     # Source optional overrides (comments allowed)
     if [ -f /etc/unos/secrets.env ]; then
-        set -a; . /etc/unos/secrets.env; set +a
+        set -a
+        # shellcheck source=/dev/null # the host's file, written by this script
+        . /etc/unos/secrets.env
+        set +a
     fi
     
     # Build containers. The supervisor image carries the version of the

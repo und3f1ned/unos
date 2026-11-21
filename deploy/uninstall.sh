@@ -138,7 +138,7 @@ backup_before_uninstall() {
         docker run --rm \
             -v deploy_unos-data:/data \
             -v "$BACKUP_DIR":/backup \
-            alpine tar czf /backup/unos-final-backup-$(date +%Y%m%d-%H%M%S).tar.gz -C /data . 2>/dev/null || true
+            alpine tar czf "/backup/unos-final-backup-$(date +%Y%m%d-%H%M%S).tar.gz" -C /data . 2>/dev/null || true
         
         log_success "Backup created at $BACKUP_DIR"
     fi
@@ -410,11 +410,11 @@ remove_disk_idle_timeouts() {
     remove_disk_idle_leftovers
     [ -e "$DISK_IDLE_RULE" ] || return 0
     log_info "Removing the disk idle timeouts of UNOS..."
-    local content byte
+    local content
     # Bash drops NUL bytes from what it reads, which would join the parts of a
     # line around one: read_rule counts no such line, and udev ends a line at a
     # NUL. read returns 0 only when it found one.
-    if IFS= read -r -d '' byte 2>/dev/null <"$DISK_IDLE_RULE"; then
+    if IFS= read -r -d '' _ 2>/dev/null <"$DISK_IDLE_RULE"; then
         DISK_IDLE_RULE_LEFT=nul
         log_warn "$DISK_IDLE_RULE holds a NUL byte, which UNOS never writes: it stays, and nothing is run for it (see the end of the uninstallation)"
         return 0
@@ -436,8 +436,8 @@ remove_disk_idle_timeouts() {
     local line serial value
     local -a serials=() timed=() recorded=()
     while IFS= read -r line; do
-        line=${line#"${line%%[!$blanks]*}"}
-        line=${line%"${line##*[!$blanks]}"}
+        line=${line#"${line%%[!"$blanks"]*}"}
+        line=${line%"${line##*[!"$blanks"]}"}
         if [ -z "$line" ]; then
             continue
         elif [[ $line =~ $rule_pattern ]]; then

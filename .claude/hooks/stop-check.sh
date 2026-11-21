@@ -7,15 +7,15 @@
 # The session stops (exit 0) without a run when
 #   - the hook input says "stop_hook_active": true: the agent already went on because of this
 #     hook once, and a second failure must not hold it in a loop;
-#   - this is not a git work tree, or a tool of make check-fast is missing (make, ruff, mypy, a Python
-#     with pytest; make setup installs them): a warning, as the systemMessage of a JSON answer on
-#     stdout, which Claude Code shows to the user (the plain output of a Stop hook only appears in
-#     its transcript view);
+#   - this is not a git work tree, or a tool of make check-fast is missing (make, ruff, mypy,
+#     a Python with pytest, shellcheck; make setup installs them): a warning, as the systemMessage
+#     of a JSON answer on stdout, which Claude Code shows to the user (the plain output of a Stop
+#     hook only appears in its transcript view);
 #   - the working tree is the one of the last green run of make check or make check-fast: the
 #     SHA-256 of HEAD, git status, git diff (staged and not) and the untracked files that
 #     scripts/green-run.py records in tmp/stop-check/green (ADR-0383).
 # The output of the last run is in tmp/stop-check/check-fast.log (tmp/ is git-ignored). PYTHON,
-# RUFF and MYPY from the environment count as they do for make.
+# RUFF, MYPY and SHELLCHECK from the environment count as they do for make.
 set -u
 
 LINES_PER_PART=25
@@ -55,6 +55,11 @@ if [ -z "$mypy" ]; then
     if [ -x .venv-lint/bin/mypy ]; then mypy=.venv-lint/bin/mypy; else mypy=mypy; fi
 fi
 command -v "$mypy" > /dev/null 2>&1 || missing="$missing mypy"
+shellcheck=${SHELLCHECK:-}
+if [ -z "$shellcheck" ]; then
+    if [ -x .venv-lint/bin/shellcheck ]; then shellcheck=.venv-lint/bin/shellcheck; else shellcheck=shellcheck; fi
+fi
+command -v "$shellcheck" > /dev/null 2>&1 || missing="$missing shellcheck"
 "$python" -c 'import pytest' > /dev/null 2>&1 || missing="$missing pytest ($python)"
 [ -z "$missing" ] || skip "missing:$missing (make setup installs them)"
 

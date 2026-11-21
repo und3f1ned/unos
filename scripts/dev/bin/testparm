@@ -10,12 +10,15 @@
 #   PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py TEST_WORKERS=0
 #
 # Accepts only the call that test makes: testparm -s --suppress-prompt FILE.
+
+# shellcheck disable=SC2016 # the scripts for the device's shell are in single quotes: it expands them
 set -euo pipefail
 if [ $# -ne 3 ] || [ "$1" != -s ] || [ "$2" != --suppress-prompt ] || [ ! -f "$3" ]; then
     echo "testparm (scripts/dev/bin): only 'testparm -s --suppress-prompt FILE' is supported" >&2
     exit 2
 fi
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=../env.sh
 . "$here/env.sh" || exit 1
 
 # The configuration travels on standard input, after the script (read by its first command).

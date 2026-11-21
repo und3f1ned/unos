@@ -5051,13 +5051,18 @@ class TestContinuousIntegration:
         # make lint runs ruff from PATH there, where the hashed install put it, over the supervisor
         # and the repository's tooling, and mypy over the supervisor against its packages, which
         # are not hashed: a venv of their own after the audit, never the tools' Python, and the
-        # PYTHON of make lint there (ADR-0447).
+        # PYTHON of make lint there (ADR-0447). shellcheck is the one of the hashed install, in
+        # setup-python's folder, not the runner's own on PATH (ADR-0448).
+        lint_step = next(step for step in _workflow_jobs()["lint"]["steps"] if step.get("run") == "make lint")
+        assert lint_step["env"] == {"SHELLCHECK": "${{ env.pythonLocation }}/bin/shellcheck"}
         packages = ("python -m venv supervisor/.venv && supervisor/.venv/bin/pip install --only-binary=:all: "
                     "--no-binary=nut2 -r supervisor/requirements-dev.txt")
         assert commands.index("scripts/audit-python.sh") < commands.index(packages) < commands.index("make lint")
-        lint = _make_dry_run("lint", "RUFF=ruff", "MYPY=mypy", "PYTHON=supervisor/.venv/bin/python").splitlines()
+        lint = _make_dry_run("lint", "RUFF=ruff", "MYPY=mypy", "SHELLCHECK=/py/bin/shellcheck",
+                             "PYTHON=supervisor/.venv/bin/python").splitlines()
         assert "ruff check supervisor scripts .claude/hooks" in lint
         assert f"mypy --python-executable {REPO_ROOT}/supervisor/.venv/bin/python supervisor/src" in lint
+        assert [line for line in lint if "|| /py/bin/shellcheck --format=gcc $files ||" in line]
 
     def test_lint_requirements_pin_every_package_with_its_hashes(self):
         wanted = (REPO_ROOT / ".github" / "lint-requirements.in").read_text()
@@ -5065,7 +5070,7 @@ class TestContinuousIntegration:
         locked = (REPO_ROOT / ".github" / "lint-requirements.txt").read_text()
         requirements = _hashed_requirements(locked)
 
-        assert set(pins) == {"ruff", "pip-audit", "mypy"}
+        assert set(pins) == {"ruff", "pip-audit", "mypy", "shellcheck-py"}
         # How to regenerate it, from the root of the repository.
         assert LINT_COMPILE in locked
         assert [name for name, _, _, hashes in requirements if not hashes] == []
@@ -5115,8 +5120,9 @@ class TestContinuousIntegration:
         assert len(python) == 1
         assert tuple(int(part) for part in python[0].split(".")[:2]) >= tuple(int(part) for part in lowest.groups())
         # The tools without markers: everywhere.
-        tools = sorted((name, markers) for name, _, markers, _ in locked if name in ("ruff", "pip-audit", "mypy"))
-        assert tools == [("mypy", None), ("pip-audit", None), ("ruff", None)]
+        names = ("ruff", "pip-audit", "mypy", "shellcheck-py")
+        tools = sorted((name, markers) for name, _, markers, _ in locked if name in names)
+        assert tools == [("mypy", None), ("pip-audit", None), ("ruff", None), ("shellcheck-py", None)]
 
     def test_frontend_checks(self):
         commands = _commands("frontend")

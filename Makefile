@@ -8,6 +8,7 @@
 PYTHON ?= $(if $(wildcard supervisor/.venv/bin/python),supervisor/.venv/bin/python,python3)
 RUFF ?= $(if $(wildcard .venv-lint/bin/ruff),.venv-lint/bin/ruff,ruff)
 MYPY ?= $(if $(wildcard .venv-lint/bin/mypy),.venv-lint/bin/mypy,mypy)
+SHELLCHECK ?= $(if $(wildcard .venv-lint/bin/shellcheck),.venv-lint/bin/shellcheck,shellcheck)
 PIP_AUDIT ?= $(if $(wildcard .venv-lint/bin/pip-audit),.venv-lint/bin/pip-audit,pip-audit)
 NPM ?= npm
 
@@ -39,6 +40,11 @@ SMOKE = tests/test_lifespan.py tests/test_auth.py::TestFirstRunSetup \
 E2E_ARGS ?=
 
 SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks
+# The shell scripts of SHELL_SCRIPT_DIRS, which make lint checks with bash -n and shellcheck (ADR-0448): a
+# command that prints the files named *.sh and those whose first line runs sh, bash, dash or ksh, sorted.
+shell_scripts = find $(SHELL_SCRIPT_DIRS) -type f 2> /dev/null | sort | while read -r f; do \
+	case "$$f" in (*.sh) ;; (*) head -n 1 "$$f" | grep -Eq '^\#!.*[/ ](ba|da|k)?sh( |$$)' || continue ;; esac; \
+	echo "$$f"; done
 # The Python that make lint checks with ruff, with the rules of ruff.toml (ADR-0425): the supervisor
 # and the repository's own tooling (the guard, scripts/dev, the stand-in, the commit checker).
 PYTHON_DIRS = supervisor scripts .claude/hooks
@@ -74,15 +80,16 @@ coverage_kept = $(if $(every_test),; status=$$?; mv -f .coverage.run$$$$ .covera
 # records nothing: a dry run or one that ignores errors (make -n, -t, -q, -i, -e, also through
 # MAKEFLAGS), a variable on the command line other than TEST_WORKERS, a tool or TESTS or
 # PYTEST_ARGS from the environment, a makefile besides this one (-f, MAKEFILES, a GNUmakefile), a
-# MAKE from the environment, and the environment of Python, pytest and mypy that changes what runs
-# (PYTEST_ADDOPTS, PYTEST_PLUGINS, PYTHONPATH, PYTHONHOME, MYPYPATH). GNU make 3.81 writes the
-# single-letter options first in MAKEFLAGS ("n") or after its long ones ("--no-print-directory -n"),
-# and the variables of the command line after them.
+# MAKE from the environment, and the environment of Python, pytest, mypy and shellcheck that changes
+# what runs (PYTEST_ADDOPTS, PYTEST_PLUGINS, PYTHONPATH, PYTHONHOME, MYPYPATH, SHELLCHECK_OPTS). GNU
+# make 3.81 writes the single-letter options first in MAKEFLAGS ("n") or after its long ones
+# ("--no-print-directory -n"), and the variables of the command line after them.
 make_options = $(subst -,,$(foreach word,$(filter-out --%,$(MAKEFLAGS)),$(if $(findstring =,$(word)),,$(word))))
 command_line = $(foreach v,$(.VARIABLES),$(if $(filter command line,$(origin $(v))),$(v)))
 narrowed = $(filter-out TEST_WORKERS,$(command_line)) $(filter-out Makefile,$(MAKEFILE_LIST)) $(MAKEFILES) \
-	$(filter environment,$(foreach v,PYTHON RUFF MYPY NPM TESTS PYTEST_ARGS,$(origin $(v)))) \
+	$(filter environment,$(foreach v,PYTHON RUFF MYPY SHELLCHECK NPM TESTS PYTEST_ARGS,$(origin $(v)))) \
 	$(filter-out default,$(origin MAKE)) $(PYTEST_ADDOPTS) $(PYTEST_PLUGINS) $(PYTHONPATH) $(PYTHONHOME) $(MYPYPATH) \
+	$(SHELLCHECK_OPTS) \
 	$(foreach o,n t q i e,$(findstring $(o),$(make_options)))
 records_green = $(if $(strip $(narrowed)),,yes)
 green_begin = $(if $(records_green),state=$$($(PY) scripts/green-run.py state 2> /dev/null);)
@@ -98,7 +105,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 	done; if [ -n "$$failed" ]; then echo "make $@ failed:$$failed" >&2; exit 1; fi; echo "make $@ passed: $(1)"
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check check-fast lint lint-ruff lint-mypy lint-shell lint-json test test-fast smoke
+.PHONY: help setup check check-fast lint lint-ruff lint-mypy lint-shell lint-shellcheck lint-json test test-fast smoke
 .PHONY: frontend frontend-check frontend-runes frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
 .PHONY: secret-scan image-scan
 
@@ -107,7 +114,8 @@ help: ## List the targets and the variables
 	@echo
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z][a-z0-9-]*:.*## / { printf "  %-11s %s\n", $$1, $$2 }' $(firstword $(MAKEFILE_LIST))
 	@echo
-	@echo "Variables: PYTHON=$(PYTHON) RUFF=$(RUFF) MYPY=$(MYPY) PIP_AUDIT=$(PIP_AUDIT) NPM=$(NPM)"
+	@echo "Variables: PYTHON=$(PYTHON) RUFF=$(RUFF) MYPY=$(MYPY) SHELLCHECK=$(SHELLCHECK)"
+	@echo "           PIP_AUDIT=$(PIP_AUDIT) NPM=$(NPM)"
 	@echo "           TESTS=$(TESTS) PYTEST_ARGS=$(PYTEST_ARGS) TEST_WORKERS=$(TEST_WORKERS) E2E_ARGS=$(E2E_ARGS)"
 
 setup: ## Bootstrap this checkout: venvs, npm ci, Chromium, git hooks, dev.env (needs the network)
@@ -119,8 +127,8 @@ check: ## The quality gate: lint, test and frontend, as CI runs them, without th
 check-fast: ## lint and test-fast: what the pre-commit hook and the Stop hook run
 	+@$(call green_run,lint test-fast)
 
-lint: ## ruff (the rules of ruff.toml), mypy (mypy.ini), bash -n on the shell scripts, JSON syntax; all run
-	+@$(call run_all,lint-ruff lint-mypy lint-shell lint-json)
+lint: ## ruff (ruff.toml), mypy (mypy.ini), bash -n and shellcheck (.shellcheckrc) on the shell scripts, JSON syntax; all run
+	+@$(call run_all,lint-ruff lint-mypy lint-shell lint-shellcheck lint-json)
 
 lint-ruff:
 	$(RUFF) check $(PYTHON_DIRS)
@@ -129,11 +137,21 @@ lint-mypy:
 	$(MYPY) --python-executable $(PY) $(TYPED_DIRS)
 
 lint-shell:
-	@n=0; bad=; for f in $$(find $(SHELL_SCRIPT_DIRS) -type f 2> /dev/null | sort); do \
-		case "$$f" in *.sh) ;; *) head -n 1 "$$f" | grep -Eq '^#!.*[/ ](ba|da|k)?sh( |$$)' || continue ;; esac; \
+	@n=0; bad=; for f in $$($(shell_scripts)); do \
 		bash -n "$$f" || bad="$$bad $$f"; n=$$((n + 1)); \
 	done; if [ -n "$$bad" ]; then echo "bash -n failed:$$bad" >&2; exit 1; fi; \
 	echo "bash -n: $$n shell scripts in $(SHELL_SCRIPT_DIRS)"
+
+# shellcheck with the settings of .shellcheckrc, no check turned off, one line per finding
+# (file:line:column: level: text [SCnnnn]); a finding that stays has a directive with its reason in the
+# script (ADR-0448). The last line names the version that ran.
+lint-shellcheck:
+	@command -v $(SHELLCHECK) > /dev/null || \
+		{ echo "shellcheck not found: $(SHELLCHECK) (make setup installs it into .venv-lint)" >&2; exit 1; }; \
+	files=$$($(shell_scripts)); [ -z "$$files" ] || $(SHELLCHECK) --format=gcc $$files || \
+		{ echo "shellcheck failed: the findings above" >&2; exit 1; }; \
+	echo "shellcheck $$($(SHELLCHECK) --version | sed -n 's/^version: //p'):" \
+		"$$(printf '%s\n' $$files | grep -c .) shell scripts in $(SHELL_SCRIPT_DIRS)"
 
 lint-json:
 	@bad=; for f in $(JSON_FILES); do \

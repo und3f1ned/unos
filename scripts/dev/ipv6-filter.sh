@@ -18,6 +18,8 @@
 # (ADR-0024). They hold the device lock (ADR-0210) and report their SD writes (ADR-0214); status
 # does neither. check.sh reports a filter that is not loaded. The filter touches IPv6 only: the
 # workstation reaches the device over IPv4 throughout.
+
+# shellcheck disable=SC2016 # the scripts for the device's shell are in single quotes: it expands them
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
 case ${1:-} in

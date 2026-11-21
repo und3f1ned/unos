@@ -735,6 +735,29 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-21: shellcheck checks the shell scripts in make lint (ci.shellcheck, ADR-0448)
+
+- shellcheck 0.11.0 (the wheel `shellcheck-py` 0.11.0.1, hashed in `.github/lint-requirements.txt`
+  and in `.venv-lint`) runs in `make lint` as `lint-shellcheck` over the 23 scripts of `deploy/`,
+  `scripts/` and `.claude/hooks/` that `bash -n` checks, with its default checks and none turned
+  off; `.shellcheckrc` only lets it follow sourced files. The CI Lint job installs it with the
+  other hashed tools and names it in the step's `SHELLCHECK` (setup-python's folder): the runner
+  has its own. Its 45 findings: fixed without a change of behaviour (quoted expansions, the secrets
+  files sourced on lines of their own) or kept with a directive and its reason, SC2016 for the
+  whole of the six `scripts/dev` scripts that send single-quoted scripts to the device. `passes`
+  stays false: the Lint job's failure on a finding cannot be seen while CI is off on GitHub
+  (ADR-0230).
+- The wheel was fetched with curl, its sha256 checked against PyPI's and the pin, and installed
+  from the file with `--require-hashes`: pip of the venvs' Python got `Errno 9` connecting to
+  pypi.org. `make setup` installs it from the lock file; there is no wheel for Linux on ARM.
+- Review in a fresh context: no blocker; fixed: "every check on" was false (the optional checks
+  stay off; about 1,470 more findings with `enable=all`, mostly SC2250 and SC2292, also SC2310 and
+  SC2312 on `set -e`: a candidate entry), the directive test missed `#shellcheck` and a nested rc
+  file, the count of findings, a message for a missing shellcheck, a directive replaced by
+  `read ... _`, and the CI job now names its shellcheck. Left: SC2016 stays off for the whole of
+  `bin/testparm`, `check.sh` and `env.sh` (one or two strings each), one rule for the six
+  scripts that send scripts to the device.
+
 ### 2026-11-21: The in-app updater, built up to its release installer (ADR-0443)
 
 - `system.in-app-updater` (branch `system.in-app-updater`, from `mvp.batch-19`), `passes` false.
