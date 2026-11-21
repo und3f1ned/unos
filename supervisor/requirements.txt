@@ -1,12 +1,12 @@
 # Runtime dependencies of the supervisor (Python 3.11). Test tooling lives in
 # requirements-dev.txt. Pin exact versions; check with pip-audit when bumping.
-fastapi==0.162.0
+fastapi==0.162.7
 starlette==1.10.0
 uvicorn[standard]==0.54.0
 websockets==17.4
 python-multipart==0.0.33
 pydantic==2.14.3
-pydantic-settings==2.16.2
+pydantic-settings==2.16.3
 PyJWT==2.15.1
 bcrypt==5.0.0
 cryptography==50.0.2
@@ -18,7 +18,7 @@ requests==2.34.2
 # the TestClient transport.
 httpx==0.28.1
 psutil==7.2.2
-croniter==6.2.4
+croniter==7.0.0
 pyotp==2.10.0
 nut2==2.1.1
 slowapi==0.1.10
