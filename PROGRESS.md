@@ -732,6 +732,23 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-21: The whole history is scanned for secrets by gitleaks pinned by digest (ADR-0439)
+
+- `ci.secret-scan-of-history`: `make secret-scan` (`scripts/secret-scan.sh`) and the Secret Scan
+  job of the CI workflow run gitleaks v8.30.1 from its image pinned by digest, without the
+  network, over every commit that HEAD reaches, merges by their remerge-diff, with gitleaks' rules
+  and two of `.gitleaks.toml` (sshpass's password, a literal assigned to a secret's name), and
+  `scripts/published-passwords.py`, which finds the two passwords once published by their SHA-256.
+  Findings show rule, file and commit only. The first local run: gitleaks read 635 commits and
+  found 55 findings in 23 pairs of commit and file, allowed by commit and path with their reasons
+  (the rotated passwords only in `CLAUDE.md` of da193b8b); the digest check read 839 commits, its
+  16 pairs allowed. Step 3 of the entry names the allowlist instead of a rewritten history.
+- Reviewed in a fresh context: 9 findings, all fixed (gitleaks' commit count, which skips
+  deletions, renames, modes and binaries, replaced by its ERR lines; the guard's secret names in
+  the rule; merges scanned; tests with the real image; the digest check over the history; the
+  entry's ADRs; the template's exact text; no file-wide skip; a doc's wording).
+- `passes` stays false while the CI workflow is off (ADR-0230).
+
 ### 2026-11-21: Every page on the shared components; the design check keeps no baseline (ADR-0438)
 
 - At the owner's word (the design was left half done), two builders moved the data and sharing

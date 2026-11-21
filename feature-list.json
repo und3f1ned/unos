@@ -4359,15 +4359,21 @@
       "steps": [
         "A CI job checks out the full history and runs a secret scanner, pinned by its commit SHA or image digest, over every commit",
         "A commit that adds a credential fails the job",
-        "The job passes on main once the owner has cleaned the passwords once published in CLAUDE.md out of the history (ADR-0024)"
+        "The job passes on main with the passwords once published in CLAUDE.md, rotated (ADR-0226) and kept in the history (ADR-0208), allowed by commit and path with the reason (ADR-0439)"
       ],
       "passes": false,
       "adr": [
         "ADR-0024",
+        "ADR-0208",
         "ADR-0212",
-        "ADR-0230"
+        "ADR-0226",
+        "ADR-0230",
+        "ADR-0439"
       ],
-      "notes": "The history still holds the passwords that CLAUDE.md once published. Waits while the CI workflow is off on GitHub (ADR-0230)."
+      "notes": "make secret-scan (scripts/secret-scan.sh) and the Secret Scan job of the CI workflow run gitleaks v8.30.1, pinned by digest, with .gitleaks.toml, and scripts/published-passwords.py over every commit, merges by their remerge-diff (ADR-0439). On 2026-11-21 both passed locally: gitleaks read 635 commits, its 55 findings in 23 pairs of commit and file allowed by commit and path; the digest check read 839. Waits while the CI workflow is off on GitHub (ADR-0230): passes stays false until the job has run there.",
+      "verified_by": [
+        "supervisor/tests/test_secret_scan.py"
+      ]
     },
     {
       "id": "architecture.sqlite-write-cost",

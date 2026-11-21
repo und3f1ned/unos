@@ -90,6 +90,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make catalog-platforms` | `scripts/catalog-platforms.py check`: the platforms recorded for the catalog's images (`supervisor/src/apps/image_platforms.json`) are those the registries publish now; `record` rewrites the file (needs the network, ADR-0403) |
 | `make catalog-tags` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the catalog still names the index it is pinned to, asked with HEAD requests only (needs the network, ADR-0410) |
 | `make audit` | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt` as resolved in the audit environment, below) and `npm audit --omit=dev --audit-level=high` in `webui/` (needs the network) |
+| `make secret-scan` | `scripts/secret-scan.sh`: gitleaks, pinned by the digest of its image, over every commit of the history, with `.gitleaks.toml`, and `scripts/published-passwords.py` (needs Docker, and the network for the first pull; below, ADR-0439) |
 | `make setup` | `scripts/setup.sh` (needs the network) |
 
 `make check`, `make check-fast`, `make lint` and `make frontend` run every part, also after one
@@ -192,6 +193,42 @@ make smoke                                       # seconds: startup, health, set
 A finding names the file, the line and the shape, never the value. Test values of these shapes
 are in the scan's allowlist, each with the files that may hold it, and an entry that no file
 needs any more fails the scan; a real secret belongs in `dev.env` (ADR-0212).
+
+### The Secret Scan of the History
+
+The scan above sees the files of the working tree; a secret that was committed once stays in the
+history, which is never rewritten (ADR-0208). `make secret-scan` (`scripts/secret-scan.sh`) and the
+Secret Scan job of the CI workflow run two checks over every commit that HEAD reaches; both run,
+and either fails the scan (ADR-0439):
+
+- gitleaks, in the image `ghcr.io/gitleaks/gitleaks:v8.30.1` pinned by the digest of its index
+  (linux/amd64 and linux/arm64), without the network, capabilities or a writable root, with the
+  repository's git folder (a linked worktree's common one) and the two files it reads, all
+  read-only. It reads the commits only: files that are not committed are not scanned. A merge is
+  read as `git log --remerge-diff` shows it, what its resolution changed against the merge that git
+  would have made; git writes those merges' objects into a tmpfs, not into the repository.
+- Its rules are gitleaks' defaults and the two of `.gitleaks.toml` that they miss: a password on
+  sshpass's command line, as the old CLAUDE.md wrote the device's, and a literal assigned to a name
+  whose last part ends in one of the guard's secret words (`..._PASSWORD`, `SSHPASS`, `TOKEN`,
+  `..._API_KEY`, ...), as `dev.env` holds them. Inline `gitleaks:allow` comments do not count.
+- Secrets are redacted, and a finding is printed as its rule, file, commit and line only
+  (`scripts/secret-scan.tmpl`). gitleaks logs git's errors and still answers "no leaks", with no
+  commit scanned for a repository it cannot read: an `ERR` line in its log, or no commit scanned,
+  fails the scan, and so does a shallow clone.
+- The allowlist of `.gitleaks.toml` names a commit and the paths of its findings, never a value,
+  each block with its reason: the two passwords that CLAUDE.md published, rotated (ADR-0226),
+  where it published them, and in 16 other commits values that are no credential: test values,
+  placeholders and the alphabet of the CHAP secrets that UNOS generates. A finding of a merge
+  names a file with a conflict as gitleaks reads it, with git's `b/` before the path.
+- `scripts/published-passwords.py`: no commit adds a line that holds one of the two passwords that
+  CLAUDE.md once published, found by their SHA-256 as in the scan of the working tree, but in the
+  commits and paths of its `ALLOWED`, which added them before they were rotated. gitleaks' rules do
+  not find a bare password in code or prose, as the old E2E specs held the administrator's.
+
+A new finding is fixed in the next commit: a secret goes into `dev.env` and is rotated
+(ADR-0212); a test value or a placeholder gets another value, or a block by commit and path with
+its reason. The gitleaks pin moves by hand, in the monthly pass "The pinned check tools" of
+[maintenance.md](maintenance.md): Dependabot does not read the script.
 
 ### Test Configuration
 
@@ -527,6 +564,8 @@ request against `main`; a new push to a pull request cancels the run for the pre
    the base to the head of the pull request.
 5. **Build Check** (`build`): the Docker builds of both images (pushes to `main` only, after the
    unit tests).
+6. **Secret Scan** (`secrets`): a checkout with the whole history, then `make secret-scan`
+   (above, ADR-0439).
 
 Every check fails the run when it finds something (ADR-0190). In the lint and frontend jobs the
 audit runs even when the other step has failed, and inside `make lint` and `make frontend` every
@@ -575,6 +614,7 @@ that this page has the commands of the lint and frontend jobs).
 ```bash
 make check      # Unit Tests, Lint and Frontend Checks
 make audit      # the two audits (needs the network)
+make secret-scan        # gitleaks over the whole history (needs Docker)
 make catalog-platforms  # the catalog images' recorded platforms against the registries (needs the network)
 make catalog-tags       # the catalog images' pinned tags against the registries (needs the network)
 ```

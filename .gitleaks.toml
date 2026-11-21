@@ -1,0 +1,156 @@
+# The rules of the secret scan of the git history (ADR-0439): scripts/secret-scan.sh runs gitleaks
+# with this file over every commit that HEAD reaches. gitleaks' default rules, plus the two shapes
+# in which this repository has written secrets down and which they miss (ADR-0212).
+#
+# The allowlist names commits and paths, never values: each block below lets the findings of one
+# commit in the paths it lists pass, with the reason, and only those (condition AND). The
+# findings were judged by rule, file and commit; no value was shown. A new finding fails the scan:
+# move the secret into dev.env (ADR-0212) and rotate it, or, for a test value or a placeholder,
+# choose one that no rule takes for a secret. The history is never rewritten (ADR-0208).
+# Inline gitleaks:allow comments do not count (--ignore-gitleaks-allow).
+
+[extend]
+useDefault = true
+
+# The device's password on sshpass's command line, as the old CLAUDE.md wrote it.
+[[rules]]
+id = "sshpass-password"
+description = "A password on the command line of sshpass"
+regex = '''\bsshpass\b[^\n]*?\s-p\s*('[^'\n]{4,}'|"[^"\n]{4,}"|[^\s'"`]{4,})'''
+secretGroup = 1
+keywords = ["sshpass"]
+
+[[rules.allowlists]]
+description = "A variable or a placeholder, not a value"
+regexes = ['''^['"]?[$<{]''']
+
+# A literal assigned to a secret's name, as dev.env holds them: a name whose last part ends in one of
+# the guard's secret words (_is_secret_name of .claude/hooks/guard.py, ADR-0211), PASS but in
+# BYPASS, ASKPASS and the like.
+[[rules]]
+id = "secret-assignment"
+description = "A literal assigned to the name of a secret"
+regex = '''\b[A-Z0-9_]*(?:PASSWORD|PASSWD|PASSPHRASE|TOKEN|SECRET|AUTHKEY|APIKEY|PRIVATEKEY|ACCESSKEY|PASS|(?:API|PRIVATE|ACCESS|AUTH)_KEY)=('[^'\n]{4,}'|"[^"\n]{4,}"|[^\s'"`,;|&)\]}>$<{][^\s'"`,;|&)\]}>]{3,})'''
+secretGroup = 1
+keywords = ["pass", "token", "secret", "key"]
+
+[[rules.allowlists]]
+description = "A variable or a placeholder, not a value"
+regexes = ['''^['"]?[$<{]''']
+
+[[rules.allowlists]]
+description = "PASS in a word that names no secret"
+regexTarget = "match"
+regexes = ['''(?:BY|COM|ENCOM|ASK|SUR|OVER|UNDER|TRES|MULTI|SUB)PASS=''']
+
+# --- The allowlist: one commit each, the paths of its findings, and why they are no secret. ---
+
+[[allowlists]]
+description = "The dev device's root password and the UNOS administrator's password that CLAUDE.md published: both rotated on 2026-11-07, so they open nothing (ADR-0226), and kept in the history, which is not rewritten (ADR-0208)"
+condition = "AND"
+commits = ["da193b8b0c12fc431a2675234ede1c2ebf7611e3"]
+paths = ['''^CLAUDE\.md$''']
+
+[[allowlists]]
+description = "The tests of the guard, of the dev scripts and of the secret scan of the working tree hold the shapes of secrets they refuse, with made-up values (ADR-0211, ADR-0212)"
+condition = "AND"
+commits = ["2e4306d2565db4b6b500bd5ecc1fa61d67b69d2c"]
+paths = [
+  '''^supervisor/tests/test_agent_guard\.py$''',
+  '''^supervisor/tests/test_dev_scripts\.py$''',
+  '''^supervisor/tests/test_repo_tooling\.py$''',
+]
+
+[[allowlists]]
+description = "The test stack's own values for the deviceless test cycle, never a device's"
+condition = "AND"
+commits = ["3c83c784f1f19bf772f105d8a9975574e885d51b"]
+paths = ['''^deploy/docker-compose\.test\.yml$''']
+
+[[allowlists]]
+description = "The user guide's curl example with the placeholder YOUR_TOKEN"
+condition = "AND"
+commits = ["3579b141488d5fec91d4f8f35c5c8b6c1b3f6fa0"]
+paths = ['''^docs/USER_GUIDE\.md$''']
+
+[[allowlists]]
+description = "The user guide's curl examples with the placeholder YOUR_TOKEN, and test values of the backend tests"
+condition = "AND"
+commits = ["792d40e85ddea8404fc4d33b319a218b89c91dbf"]
+paths = [
+  '''^docs/USER_GUIDE\.md$''',
+  '''^supervisor/tests/test_apps\.py$''',
+  '''^supervisor/tests/test_secret_bootstrap\.py$''',
+]
+
+[[allowlists]]
+description = "The alphabet of the CHAP secrets that UNOS generates, and test values of the iSCSI spec"
+condition = "AND"
+commits = ["756317e4bf12cf59a8ffaa76162c848169512793"]
+paths = ['''^supervisor/src/shares/iscsi\.py$''', '''^webui/tests/iscsi\.spec\.ts$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["0cc0eb26ef0a222fa1f573d2dbbaa1b51cb18abf"]
+paths = ['''^supervisor/tests/test_data_dir\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["1b919e48cc08860bec9f1456c3b45341af70eca2"]
+paths = ['''^supervisor/tests/test_validators\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["448d067e3f2b13421b3d6f2158241396fcc66b7e"]
+paths = ['''^supervisor/tests/test_ups\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["4e21776127796518950895fed1515230b6fd936b"]
+paths = ['''^supervisor/tests/test_sessions\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["5308c1c922840961630f74e8e550094dd90c8340"]
+paths = ['''^supervisor/tests/test_login_bounds\.py$''', '''^supervisor/tests/test_smb_accounts\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["750ac3110fb4807f3529b3732dcb51cee804222e"]
+paths = ['''^supervisor/tests/test_logging\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["85dd2b42a0db3ffa84b3e19a9d01941690e37c9b"]
+paths = ['''^supervisor/tests/test_apps\.py$''']
+
+[[allowlists]]
+description = "Test values of the E2E specs' fakes"
+condition = "AND"
+commits = ["98ff7098e170ae632cead2e8fa65a1dac0041b54"]
+paths = ['''^webui/tests/remote-fakes\.ts$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["d57e17deb3826c4958ef1c0825a63ac2e874e8b2"]
+paths = ['''^supervisor/tests/test_auth\.py$''']
+
+[[allowlists]]
+description = "Test values of the E2E specs"
+condition = "AND"
+commits = ["e67669c8699fe97e11fcca2a420b0f5d7ddad6bd"]
+paths = ['''^webui/tests/mandatory-two-factor\.spec\.ts$''']
+
+[[allowlists]]
+description = "Test values of the backend tests"
+condition = "AND"
+commits = ["f342f4056ddab522cd2476ef2d77917a540b41d1"]
+paths = ['''^supervisor/tests/test_sign_in_full_disk\.py$''']

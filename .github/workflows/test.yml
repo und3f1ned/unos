@@ -162,6 +162,24 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
+  # Every commit of the history against gitleaks' rules and those of .gitleaks.toml, with its
+  # allowlist by commit and path (ADR-0439): make secret-scan runs gitleaks' image, pinned by
+  # digest, without the network, and prints a finding as its rule, file and commit, never its
+  # value. The whole history: the script refuses a shallow clone.
+  secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan every commit for secrets
+        run: make secret-scan
+
   # Build check - only on main branch to save costs
   build:
     name: Build Check
