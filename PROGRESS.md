@@ -55,8 +55,16 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  is switched off since 2026-11-15 (the owner), and nothing was deployed to it after the merge.
-  Before that it ran UNOS from the branch, with the pool `data` (btrfs RAID1 on two SATA SSDs),
+  runs 8297e142 of the branch `mvp.batch-18` since 2026-11-21, deployed at the owner's request
+  with `UNOS_DEV_HOST=10.1.1.56`, an empty `UNOS_DEV_SYSTEM_DISK` and its own
+  `UNOS_DEV_STATE_DIR=tmp/dev-f3`, after the owner allowed the pull of the pinned
+  `caddy:2-alpine` base (MiB written to its eMMC: sync 18.793, build-supervisor 2.051, pull
+  0.762, build-webui 0.149, up 0.344, check 0.000). Both containers healthy; The first check.sh
+  showed only the missing inbound IPv6 filter, and its install refused: the board had no `nft`.
+  At the owner's word ("install it yourself") nftables 1.1.3 was installed there
+  (50.523 MiB; `nftables.service` stays disabled) and `ipv6-filter.sh install` loaded the filter
+  (0.117 MiB); check.sh: OK (0.016). Its pool is now one M.2 NVMe drive (Log, 2026-11-20).
+  Before the merge it ran UNOS from the branch, with the pool `data` (btrfs RAID1 on two SATA SSDs),
   Docker's data root on the pool, and Home Assistant and Frigate beside UNOS, their data in
   `apps/` of the pool, and the supervisor at 3.5% of a core with no dashboard open (ADR-0374,
   ADR-0375). Its administrator account of UNOS, a dev.env for it and the scenario checks before
