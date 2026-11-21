@@ -26,7 +26,8 @@ COPY src/ ./src/
 # Create test directories
 # testpool: a pool directory for the file manager E2E tests (the API cannot
 # create one directly in /mnt/pools). Docker copies it into the new test-pools
-# volume; an existing volume needs `docker volume rm unos-test_test-pools`.
+# volume; an existing volume needs `docker volume rm <project>_test-pools`, with the
+# compose project of the stack (unos-test, or the one scripts/test-cycle.sh prints).
 RUN mkdir -p /data /mnt/pools/testpool /etc/samba
 
 # Initialize test data

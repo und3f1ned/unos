@@ -29,7 +29,6 @@ import docker
 import httpx
 import pytest
 import uvicorn
-import yaml
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
@@ -1048,7 +1047,10 @@ class TestLoginHistory:
 
 
 def _compose(name):
-    return yaml.safe_load((REPO_ROOT / "deploy" / name).read_text())
+    """A compose file of deploy/; the test stack with its own values (test_deploy_scripts._test_stack)."""
+    from .test_deploy_scripts import _compose_file
+
+    return _compose_file(name)
 
 
 def _environment(service):
