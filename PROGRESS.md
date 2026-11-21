@@ -55,9 +55,12 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs a64f891e of the branch `mvp.batch-18` since 2026-11-21 (SD MiB, its eMMC: sync 5.309,
-  build-supervisor 0.246, build-webui 0.156, up 0.344, check 0.000; check: OK). Before it, the
-  same day, 8297e142, deployed at the owner's request
+  runs 0c7b84b9 of the branch `mvp.batch-19` since 2026-11-21, deployed at the owner's word ("yes,
+  all"), after the pull of the pinned `caddy:2-alpine@sha256:003a9780…` (0.773; SD MiB, its eMMC:
+  sync 10.531, build-supervisor 0.445, build-webui 0.148, up 0.359, check 0.000; check: OK); its
+  unos.db was brought to the baseline 0001 with no warning. Before it a64f891e of `mvp.batch-18`
+  (sync 5.309, build-supervisor 0.246, build-webui 0.156, up 0.344, check 0.000), and the same
+  day 8297e142, deployed at the owner's request
   with `UNOS_DEV_HOST=10.1.1.56`, an empty `UNOS_DEV_SYSTEM_DISK` and its own
   `UNOS_DEV_STATE_DIR=tmp/dev-f3`, after the owner allowed the pull of the pinned
   `caddy:2-alpine` base (MiB written to its eMMC: sync 18.793, build-supervisor 2.051, pull
@@ -199,7 +202,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
   paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
 - On 2026-11-21 (Log): the nineteenth batch on the branch `mvp.batch-19`, from `mvp.batch-18`
-  (876968d6), not deployed and not pushed: what needs neither the device nor the owner. A compose
+  (876968d6), deployed on the dev device and the BPI-F3 and pushed at the owner's word: what
+  needs neither the device nor the owner. A compose
   test stack per worktree (ADR-0439) and the coverage floor of 91 percent (ADR-0442) pass; no
   plugins (ADR-0440) and no telemetry (ADR-0441); the in-app updater up to its release installer
   (ADR-0443, two choices of the owner's open); Alembic migrations (ADR-0444, passes after the
@@ -274,7 +278,19 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs a64f891e of the branch `mvp.batch-18`: every page on the shared components and the
+- Runs 0c7b84b9 of the branch `mvp.batch-19` since 2026-11-21, deployed at the owner's word ("yes,
+  all") after the owner's Open action 21, the pull of the pinned `caddy:2-alpine@sha256:003a9780…`
+  (91.039 MiB on the SD card). SD MiB: sync 11.707, build-supervisor 471.352 (the pip layer and
+  the new setuptools pin), build-webui 84.559 (the new Caddy base), up 6.500, check 0.133; total
+  574.266. check: OK. The supervisor's log: "unos.db was brought from the revision none (no
+  migrations yet) to 0001", and a WARNING that api_tokens, login_attempts, smb_state and users
+  differ from the baseline and stay as they are: in a RAM copy, alembic_version holds 0001;
+  `DEFAULT (CURRENT_TIMESTAMP)` where the baseline writes it without parentheses (create_all of
+  January), users' 2FA columns of an old ALTER TABLE (`totp_secret TEXT`, `totp_enabled INTEGER
+  DEFAULT 0`), and smb_state of ADR-0319's older layout. GET /api/v1/health 200, a sign-in and
+  GET /api/v1/auth/users (2 users) work. `architecture.database-migrations` stays false: its notes
+  expected a warning naming smb_state at most, and the restart's check is not done.
+- Before it, a64f891e of the branch `mvp.batch-18`: every page on the shared components and the
   design check without a baseline (ADR-0438), deployed on 2026-11-21 at the owner's request after
   `make check` and the full E2E (SD MiB sync 6.098, build-supervisor 4.766, build-webui 19.445,
   up 5.945, check 0.348; total 36.602). Both containers healthy, `post-up check: OK`, check: OK.
@@ -732,9 +748,9 @@ Open owner actions:
 20. A second network card on the dev device (a USB NIC), for a real bond of
     `system.network-bonding-and-vlans`'s step 1, and `make audit` in the owner's terminal for
     `ci.pinned-check-tools` (pip cannot reach the index from the agents' sessions).
-21. Before the next deploy of the web UI: `caddy:2-alpine@sha256:003a9780…` (Caddy 2.11.9) pulled
-    onto the dev device, which `scripts/dev/deploy.sh build-webui` asks for before it builds on a
-    new base (ADR-0446, ADR-0305).
+21. Done on 2026-11-21 at the owner's word: `caddy:2-alpine@sha256:003a9780…` (Caddy 2.11.9)
+    pulled onto the dev device and the BPI-F3, which `scripts/dev/deploy.sh build-webui` asks for
+    before it builds on a new base (ADR-0446, ADR-0305).
 19. Done on 2026-11-19: the pulls from lscr.io failed on the dev device's network, those from
     ghcr.io of the same images do not; the catalog takes LinuxServer's images from ghcr.io
     (ADR-0426). BookStack's login page after an install is still to read (one install, about 1
