@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 TARGETS = ("help", "setup", "check", "check-fast", "lint", "test", "test-fast", "smoke", "frontend", "e2e-local",
-           "audit")
+           "audit", "secret-scan")
 TEST_FAST = ("tests/test_adrs.py", "tests/test_feature_list.py", "tests/test_agent_guard.py",
              "tests/test_repo_tooling.py", "tests/test_dev_scripts.py", "tests/test_dev_scenarios.py",
              "tests/test_standin.py")
@@ -112,6 +112,8 @@ def test_help_is_the_default_target():
     # pip-audit of the supervisor's dependencies as resolved by pinned, hashed tools (ADR-0423).
     ("audit", ['PYTHON="/opt/py/bin/python" PIP_AUDIT="pip-audit" scripts/audit-python.sh',
                "cd webui && npm audit --omit=dev --audit-level=high"]),
+    # gitleaks over the whole history (ADR-0445).
+    ("secret-scan", ["scripts/secret-scan.sh"]),
 ])
 def test_targets_run_the_agreed_commands(target, commands):
     dry_run = make("-n", target, *TOOLS).stdout
@@ -1775,15 +1777,14 @@ ALLOWED_SECRET_VALUES = {
     "s3cr3t-api-key": {"supervisor/tests/test_notifications.py"},
 }
 # The passwords that CLAUDE.md once published, the dev device's SSH password and the UNOS
-# administrator's, by their SHA-256: they stay in git history until the owner rotates them
-# (ADR-0212, ADR-0024) and must never come back into a file. Every token of six or more
-# characters of a scanned file (a run of letters and digits, or a word between spaces, quotes and
-# delimiters) is hashed and compared. The values are kept nowhere.
-PUBLISHED_PASSWORD_DIGESTS = frozenset({
-    "9b91d0f8083826018d3e53df7f8151b2375b02e8d2eecf748182f53953594ca8",
-    "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
-})
-PASSWORD_TOKENS = (re.compile(r"[A-Za-z0-9]{6,}"), re.compile(r"[^\s'\"`=:,;()\[\]{}<>|&]{6,}"))
+# administrator's, by their SHA-256: rotated, they stay in git history (ADR-0226) and must never
+# come back into a file. Every token of six or more characters of a scanned file (a run of letters
+# and digits, or a word between spaces, quotes and delimiters) is hashed and compared. The values
+# are kept nowhere; scripts/published-passwords.py holds the digests and checks the history too
+# (ADR-0445).
+PUBLISHED = _module("published_passwords", REPO_ROOT / "scripts" / "published-passwords.py")
+PUBLISHED_PASSWORD_DIGESTS = PUBLISHED.DIGESTS
+PASSWORD_TOKENS = PUBLISHED.TOKENS
 
 
 def _literal(value: str):

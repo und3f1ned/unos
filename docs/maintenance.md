@@ -83,7 +83,8 @@ and proposes the changes, and the owner reviews them.
     packaging and to the newest setuptools and wheel that are a week old ("Updating the audit
     environment"); `make test` compares pip's and packaging's hashes with those of the first,
     `make setup` installs the first and `make audit` the second on the owner's machine, and pip
-    checks every hash there.
+    checks every hash there. The gitleaks image of `scripts/secret-scan.sh` moves to the digest
+    of a newer release's index, then `make secret-scan` runs (ADR-0445).
 
 ## After a session that went badly
 
