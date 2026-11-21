@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0444
 date: 2026-11-10
 area: shares
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0040, ADR-0077, ADR-0139, ADR-0142, ADR-0143]
 # ADR-0319: A restore refuses backups without SMB tables, and a backup's database alone holds its shares
 
 ## Context
+
+Superseded by ADR-0444: only in part, the tables: they come from Alembic migrations, a change to an existing table is a revision, and the start brings the database to the head; every other rule here stays in force.
 
 ADR-0077 and ADR-0139 created the SMB tables in the database of a backup that had none, of a
 release before shares were stored in the database, ADR-0142 and ADR-0040 imported its shares

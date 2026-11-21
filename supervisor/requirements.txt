@@ -12,6 +12,8 @@ bcrypt==5.0.0
 cryptography==50.0.2
 sqlalchemy[asyncio]==2.1.8
 aiosqlite==0.22.1
+# The migrations of unos.db (ADR-0444): src/migrations, applied at every start.
+alembic==1.20.1
 docker==7.2.0
 requests==2.34.2
 # Runtime dependency (updates/updater.py, notifications/router.py), not only

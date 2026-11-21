@@ -364,6 +364,47 @@ def test_a_backup_with_pages_of_another_size_is_refused_before_anything_changes(
         _assert_untouched(env)
 
 
+def test_a_backups_database_is_brought_to_the_head_before_the_swap(env):
+    """ADR-0444: the extracted copy is upgraded in the restore's temporary directory, so the live
+    database that it replaces is at the head before init_db (mocked here) runs, with the tables of
+    the baseline that the backup lacked."""
+    from alembic.script import ScriptDirectory
+
+    from src import database
+
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", _good_db(env))])
+
+    response = _restore(env, name)
+
+    assert response.status_code == 200, response.text
+    with closing(sqlite3.connect(env.db_path)) as conn:
+        assert database.stored_revisions(conn) == [
+            ScriptDirectory.from_config(database.migration_config()).get_current_head()]
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'user_sessions'").fetchone()
+    assert _usernames(env.db_path) == {"admin2", "bob"}
+
+
+def test_a_backup_whose_upgrade_fails_is_refused_before_anything_changes(env):
+    """A users table with a name twice, which the baseline's unique index refuses: 400 before the
+    swap, and the live database stays as it was (ADR-0444)."""
+    db = env.tmp / "twice.db"
+    _make_db(db, columns="id INTEGER PRIMARY KEY, username TEXT NOT NULL, hashed_password TEXT NOT NULL, "
+                         "is_admin BOOLEAN")
+    with closing(sqlite3.connect(db)) as conn:
+        conn.executemany("INSERT INTO users (username, hashed_password, is_admin) VALUES (?, 'hash', 1)",
+                         [("admin2",), ("admin2",)])
+        conn.commit()
+    name = _store(env, [_file("manifest.json", MANIFEST), _file("unos.db", db.read_bytes())])
+
+    response = _restore(env, name)
+
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"].startswith(
+        "unos.db in the backup could not be brought to this UNOS's database revision: ")
+    _assert_untouched(env)
+    env.init_db.assert_not_awaited()
+
+
 def test_a_copy_of_a_database_in_the_write_ahead_log_is_one_file_with_the_rollback_journal(tmp_path):
     """copy_database, of every backup, the scheduler's backup task and the copy kept before a
     restore: the commits still in unos.db-wal are in the copy, which stands alone (a file
@@ -913,9 +954,14 @@ def peak_of_tmp(env, monkeypatch):
 
 
 def _database_of(env, size: int) -> bytes:
-    """A good database (as _good_db) of about ``size`` bytes: a table of random data besides its users."""
+    """A good database (as _good_db) of about ``size`` bytes: a table of random data besides its users.
+    At the head of the migrations, as this release's backups are: the restore's upgrade adds no
+    tables to it in /tmp (ADR-0444)."""
+    from src import database
+
     path = env.tmp / "large.db"
     _make_db(path, users=[("admin2", 1), ("bob", 0)])
+    database.upgrade_copy(str(path), "the test's backup")
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("CREATE TABLE filler (data BLOB)")
         conn.executemany("INSERT INTO filler VALUES (?)", ((os.urandom(4000),) for _ in range(size // 4096)))

@@ -201,6 +201,21 @@ ADR-0442. Measure on macOS, where `make check` runs: the Linux-only tests skip t
 they run counts as not run, and Linux (CI's Unit Tests job) measures more.
 `scripts/dev/linux-tests.sh` runs pytest without pytest-cov, and the coverage tests skip there.
 
+### Database Migrations
+
+The schema of unos.db is the Alembic revisions of `supervisor/src/migrations/versions/` (ADR-0444),
+and `supervisor/AGENTS.md` says how to add one. `supervisor/tests/test_migrations.py` fails while
+the models differ from a database at the head (the autogenerate diff, with types and server
+defaults, and each table's clauses against create_all's, for the CHECK constraints and collations
+that autogenerate leaves out) or the baseline's file changed, and runs every revision on a database
+made by the one before it, from the baseline. It also starts the supervisor on a new database, on
+one at the baseline and on one that create_all made before the migrations (the dev device's, also
+with a table of an older layout), and checks that a failed upgrade changes nothing, that a start at
+the head writes nothing and that a database of an unknown revision stops the start;
+`test_backup_restore.py` checks that a restore upgrades the backup's database before the swap.
+Most other tests build their databases with `Base.metadata.create_all`, which gives the head's
+schema while the diff is empty.
+
 ### The Secret Scan
 
 `supervisor/tests/test_repo_tooling.py`, part of `make test-fast`, checks the files that

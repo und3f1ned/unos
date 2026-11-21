@@ -764,6 +764,31 @@ Open owner actions:
   on the base tree too (`/api/v1/health/raid-monitor/status` and a pool `tank`), an order
   dependence of those two files.
 
+### 2026-11-21: Changes to existing tables ship as Alembic migrations (ADR-0444)
+
+- `architecture.database-migrations`, at the lead's word on the owner's ("do it yourself", "decide
+  yourself", in translation): Alembic 1.20.1 pinned in `supervisor/requirements.txt` and installed
+  into the worktree's `supervisor/.venv` with the pip step of `make setup` (pip waited about a minute
+  per new connection: the workstation's IPv6 to PyPI's file host times out, IPv4 answers).
+  The baseline `0001` of today's schema (IF NOT EXISTS) in `supervisor/src/migrations/versions`;
+  `init_db` brings unos.db to the head first in the lifespan, in one SQLite transaction; no
+  create_all in `supervisor/src`; a restore upgrades the backup's copy before the swap and refuses
+  an unknown revision. ADR-0444 supersedes ADR-0022 and ADR-0319 in part. `passes` stays false
+  until the deploy (the entry's notes say what the device must show); the deploy rebuilds the
+  supervisor image from its pip layer on.
+- Review (ADR-0017, a fresh subagent), 9 findings, all fixed: a test of test_smb_models.py left
+  expecting no alembic_version; a hostname in this entry read as a feature id; CHECK constraints
+  and collations that autogenerate does not compare (now each table's clauses against
+  create_all's); the dev device's smb_state of ADR-0319's older layout taken as the baseline
+  silently (now a warning names it, and the baseline's SHA-256 is pinned); several rows of
+  alembic_version in a backup; the restore's upgrade after the swap (now of the copy, before it);
+  a deferred BEGIN (now none at the head, BEGIN IMMEDIATE otherwise); the deploy's pip layer
+  rebuild not stated; decided-by and ADR-0022's partial supersession.
+- Gates: `TEST_WORKERS=3 make check` passed: 10786 passed, 124 skipped, 1 xfailed, the lint and
+  the frontend. A run before it hung in `test_smb_startup.py` TestFirstRequest at the lifespan's
+  shutdown, under a load average of 85 from other worktrees' gates; that file passes alone and
+  after `test_migrations.py`, and the rerun passed.
+
 ### 2026-11-21: Every page on the shared components; the design check keeps no baseline (ADR-0438)
 
 - At the owner's word (the design was left half done), two builders moved the data and sharing

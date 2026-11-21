@@ -122,6 +122,10 @@ the pages of each commit; a checkpoint, when the log reaches 1000 pages and when
 stops, copies them into `unos.db` (ADR-0306). Avoid: journal (SQLite's rollback journal, which
 `unos.db` no longer uses).
 
+**Migration**: An Alembic revision of `supervisor/src/migrations/versions/`, one change of the
+database's schema, which the supervisor applies at its start (ADR-0444). The first, the baseline,
+is the schema that create_all made before the migrations. Avoid: import (the smb.conf's, ADR-0084).
+
 **State file**: One of the supervisor's JSON files of state in `/data` besides the database: the
 settings, rules, tasks and histories that `supervisor/src/state_files.py` replaces through a
 rename and keeps as `<name>.bad` when it cannot read one (ADR-0324). Avoid: config file (some hold

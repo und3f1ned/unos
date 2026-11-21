@@ -1,7 +1,7 @@
 """The table of the limits that an administrator set for the containers of apps (ADR-0390).
 
-A new table (ADR-0319): init_db's create_all makes it in a database that lacks it, also after a
-restore of a backup made before it existed. Docker keeps the limits in force in each container's
+A table of the baseline migration (ADR-0444), which also gives it to a database that create_all
+made before it existed, such as a restored older backup. Docker keeps the limits in force in each container's
 HostConfig; a row keeps them for the app's next install, which creates the container with them
 (an uninstall keeps the rows, as it keeps the data folders, ADR-0256). A row is written only when
 an administrator changes a limit, and goes when both of its limits are removed. Rows of a restored

@@ -138,7 +138,8 @@ def db(db_path):
 
 
 class TestTablesOnAnOldDatabase:
-    """init_db() runs create_all at startup and after a restore (ADR-0077)."""
+    """init_db() brings the database to the head of the migrations at startup (ADR-0444): the
+    baseline gives a database made before the migrations the tables it lacks."""
 
     async def test_init_db_adds_the_four_tables_and_leaves_the_user_alone(self, old_db, monkeypatch):
         users = _rows(old_db, "users")
@@ -160,7 +161,9 @@ class TestTablesOnAnOldDatabase:
                    "smb_bind_interfaces", "dashboard_layouts", "user_themes", "security_keys",
                    "iscsi_targets", "iscsi_initiators"}
         # sqlite_sequence is SQLite's own: it keeps the AUTOINCREMENT counter of user_groups.
-        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids", "sqlite_sequence"} | renames
+        # alembic_version records the revision (ADR-0444).
+        assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids", "sqlite_sequence",
+                                                             "alembic_version"} | renames
         assert _rows(old_db, "users") == users
         assert _schema(old_db, "users") == users_schema  # no column added to users
         # Nothing is written into the new tables: the SmbState row is made on first use.

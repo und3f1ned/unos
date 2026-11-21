@@ -97,7 +97,7 @@ class TwoFactorRequirement(Base):
 class DashboardLayout(Base):
     """The order of a user's dashboard widgets and which are hidden (ADR-0395).
 
-    A new table (ADR-0319): init_db's create_all makes it in a database that lacks it. One row per
+    A table of the baseline migration (ADR-0444), which gives it to a database that lacks it. One row per
     user who arranged the dashboard; none means the default layout. ``layout`` is the JSON list
     that src/auth/dashboard.py stores, read again as untrusted at every use (ADR-0144). SQLite
     enforces no foreign keys here, so deleting a user deletes the row in the same transaction.
@@ -113,7 +113,7 @@ class DashboardLayout(Base):
 class UserTheme(Base):
     """The theme of the web UI that a user chose: dark, light or system (ADR-0405).
 
-    A new table (ADR-0319): init_db's create_all makes it in a database that lacks it. One row per
+    A table of the baseline migration (ADR-0444), which gives it to a database that lacks it. One row per
     user who chose a theme; none means system. ``theme`` is read again as untrusted at every use
     (ADR-0144). SQLite enforces no foreign keys here, so deleting a user deletes the row in the same
     transaction.
@@ -130,7 +130,7 @@ class SecurityKey(Base):
     """A security key (WebAuthn credential) that a user with two-factor authentication registered: it
     signs in at the code step in place of the authenticator app's code (ADR-0409).
 
-    A new table (ADR-0319): init_db's create_all makes it in a database that lacks it. A backup holds
+    A table of the baseline migration (ADR-0444), which gives it to a database that lacks it. A backup holds
     it with the database, and a restore brings it back; its rows are read again as untrusted at every
     use (ADR-0144, src/auth/security_keys.py). SQLite enforces no foreign keys here, so deleting a
     user, and turning two-factor authentication off or on again, deletes the user's rows in the same

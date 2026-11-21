@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: superseded
+superseded-by: ADR-0444
 date: 2026-11-05
 area: architecture
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0022: Adopt Alembic for database migrations
 
 ## Context
+
+Superseded by ADR-0444: only in part, the migrations: Alembic is adopted, with a baseline that the dev device's database is taken as and the upgrade at every start; the JSON state files of this proposal are not decided there (ADR-0324 replaces them through a rename).
 
 The database schema comes from `init_db` in `supervisor/src/database.py`, which runs SQLAlchemy's `create_all`: it creates missing tables but never changes an existing one. Without migrations, an install made by an earlier version failed at login after an update, which the November 2026 audit reproduced. Alembic has been listed as remaining work since the roadmap of February 2026, and the audit put it into Phase 1 together with moving the JSON state files into SQLite, or at least writing them atomically.
 

@@ -396,6 +396,18 @@ def _verify_database(path: Path) -> None:
         # of the extracted file (ADR-0139), before anything was checked.
         if conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')").fetchone()[0]:
             raise BackupValidationError("unos.db in the backup contains triggers or views; UNOS databases have none")
+        # The restore brings the database to the head of the migrations (ADR-0444, _prepare_smb):
+        # one of a revision this UNOS lacks, a newer UNOS's, or of several, cannot be.
+        revisions = database.stored_revisions(conn)
+        if len(revisions) > 1:
+            raise BackupValidationError(
+                f"unos.db in the backup records several database revisions ({', '.join(revisions)}); UNOS records one"
+            )
+        if revisions and not database.known_revision(revisions[0]):
+            raise BackupValidationError(
+                f"unos.db in the backup is at the database revision {revisions[0]}, which this UNOS does not know: "
+                "it was made by a newer UNOS"
+            )
     except sqlite3.Error as e:
         raise BackupValidationError(f"unos.db in the backup cannot be read: {e}") from e
     finally:
@@ -872,7 +884,8 @@ class _BackupUpload(UploadSink):
 def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     """The SMB rules of a restore (ADR-0139) on the extracted database, before it replaces the live one.
 
-    The SMB tables are checked (BackupValidationError), the SMB
+    The database is brought to the head of the migrations (ADR-0444), the SMB tables are checked
+    (BackupValidationError), the SMB
     accounts of the live database and its record of handed-out uids are
     read (ADR-0353), and then one transaction on the
     extracted file applies the share rules (shares/service.py) and the
@@ -880,6 +893,18 @@ def _prepare_smb(db_file: Path, db_path: Path) -> list[str]:
     restore fails: the live database never holds an unproven SMB state.
     Returns the messages for the restore result.
     """
+    # The baseline would give a database made before the migrations the SMB tables it lacks: such a
+    # backup is checked before, and every backup at the head, after its upgrade (ADR-0444).
+    with contextlib.closing(sqlite3.connect(str(db_file))) as conn:
+        unversioned = not database.stored_revisions(conn)
+    if unversioned:
+        service.check_smb_tables(db_file)
+    try:
+        database.upgrade_copy(str(db_file), "unos.db of the backup")
+    except Exception as e:
+        raise BackupValidationError(
+            f"unos.db in the backup could not be brought to this UNOS's database revision: {sanitize_error_message(e)}"
+        ) from e
     service.check_smb_tables(db_file)
     snapshot = accounts.snapshot_for_restore(db_path)
     conn = sqlite3.connect(str(db_file), isolation_level=None)
@@ -1044,9 +1069,10 @@ async def _after_database_restore(result: dict) -> None:
     warnings: list[str] = []
     applied = False
     try:
-        await init_db()  # older backups may lack tables added since
+        # The restored database is at the head already (_prepare_smb): this only reads it (ADR-0444).
+        await init_db()
     except Exception:
-        logger.exception("Could not create missing tables after the database restore")
+        logger.exception("Could not bring the restored database to the head of the migrations")
         warnings.append(SMB_REPAIRED_AT_START)
     else:
         try:

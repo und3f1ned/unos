@@ -60,7 +60,7 @@ and this index, and `make check-fast` runs it.
 | [0006](0006-real-time-data-over-websocket.md) | Real-time data goes over WebSocket, never HTTP polling | superseded by [0363](0363-repair-permissions-runs-as-a-background-job-that-reports-over-the-events-socket.md) | 2026-01-25 |
 | [0020](0020-host-changes-through-host-py.md) | Host changes go through src/host.py, which runs argv lists in the host's namespaces | accepted | 2026-11-05 |
 | [0021](0021-blocking-work-off-the-event-loop.md) | Blocking work runs off the event loop, with timeouts | accepted | 2026-11-05 |
-| [0022](0022-database-migrations-with-alembic.md) | Adopt Alembic for database migrations | proposed | 2026-11-05 |
+| [0022](0022-database-migrations-with-alembic.md) | Adopt Alembic for database migrations | superseded by [0444](0444-changes-to-existing-tables-ship-as-alembic-migrations-which-the-supervisor-applies-at-its-start.md) | 2026-11-05 |
 | [0023](0023-audit-quality-debt.md) | Pay down the audit's P2 quality and technical debt | proposed | 2026-11-05 |
 | [0306](0306-the-database-writes-ahead-with-synchronous-normal.md) | The database uses SQLite's write-ahead log with synchronous NORMAL, and a power cut can roll back its last commits | accepted | 2026-11-08 |
 | [0308](0308-a-sign-in-writes-at-most-0-1-mib-to-the-sd-card.md) | A sign-in in the middle of the write-ahead log writes at most 0.1 MiB to the SD card | accepted | 2026-11-09 |
@@ -72,6 +72,7 @@ and this index, and `make check-fast` runs it.
 | [0417](0417-the-api-documentation-describes-every-route-field-example-and-error-status-and-a-test-derives-the-errors.md) | The API documentation describes every route, field, example and error status, and a test derives the errors from the code | accepted | 2026-11-19 |
 | [0419](0419-every-data-path-of-the-supervisor-follows-unos-data-dir-read-once-at-its-start.md) | Every data path of the supervisor follows UNOS_DATA_DIR, read once at its start, and the stand-in patches no constant | accepted | 2026-11-19 |
 | [0440](0440-unos-takes-no-plugins-and-backends-channels-and-sign-in-providers-are-added-in-its-own-code.md) | UNOS takes no plugins, and storage backends, notification channels and sign-in providers are added in its own code | accepted | 2026-11-21 |
+| [0444](0444-changes-to-existing-tables-ship-as-alembic-migrations-which-the-supervisor-applies-at-its-start.md) | Changes to existing tables ship as Alembic migrations, which the supervisor applies at its start | accepted | 2026-11-21 |
 
 ## Security
 
@@ -289,7 +290,7 @@ and this index, and `make check-fast` runs it.
 | [0293](0293-share-and-export-values-validated-and-web-exports-limited-to-local-networks.md) | Share and export values are validated before they reach smb.conf or an export file, and an NFS export from the web interface is an existing folder for one local network, read-only or read-write | accepted | 2026-11-08 |
 | [0294](0294-only-managed-pools-hold-shares-and-nfs-exports.md) | Only pools that UNOS manages can hold SMB shares and NFS exports, and the UI offers only those | accepted | 2026-11-08 |
 | [0310](0310-a-failed-smb-sign-in-writes-nothing-to-passdb.md) | A failed SMB sign-in writes nothing to passdb.tdb while no lockout counts failures, so passdb stays on the system disk | superseded by [0334](0334-samba-locks-an-smb-account-for-five-minutes-after-five-failed-sign-ins.md) | 2026-11-09 |
-| [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | A restore refuses backups without SMB tables, and a backup's database alone holds its shares | accepted | 2026-11-10 |
+| [0319](0319-a-restore-refuses-backups-without-smb-tables-and-a-backups-database-alone-holds-its-shares.md) | A restore refuses backups without SMB tables, and a backup's database alone holds its shares | superseded by [0444](0444-changes-to-existing-tables-ship-as-alembic-migrations-which-the-supervisor-applies-at-its-start.md) | 2026-11-10 |
 | [0320](0320-smb-changes-are-audited-with-actions-of-their-own-and-the-rollback-era-safeguards-stay-for-restores-and-hand-edits.md) | SMB changes are audited with actions of their own, and the safeguards of the rollback era stay for restores and hand edits | accepted | 2026-11-10 |
 | [0321](0321-nfs-exports-in-their-own-file-read-as-exportfs-reads-them-audited-with-actions-of-their-own.md) | UNOS keeps its NFS exports in its own export file on the host, reads every export file as exportfs reads it, applies them with the host's exportfs, and audits them with actions of their own | accepted | 2026-11-10 |
 | [0334](0334-samba-locks-an-smb-account-for-five-minutes-after-five-failed-sign-ins.md) | Samba locks an SMB account for 5 minutes after 5 failed sign-ins, and passdb.tdb stays on the system disk | accepted | 2026-11-10 |
