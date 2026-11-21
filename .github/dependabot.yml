@@ -9,8 +9,10 @@
 # .github/audit-env-requirements.txt (the hashed tools of scripts/audit-python.sh, ADR-0423), moved
 # by hand in the monthly maintenance pass; Playwright, that is
 # @playwright/test and the image of webui/Dockerfile.test, which carries its version, moved together
-# by hand in the monthly maintenance pass; and new major versions of npm packages, which change the
-# web UI's toolchain and come as features of feature-list.json (ADR-0427).
+# by hand in the monthly maintenance pass; ESLint, Prettier and their plugins, moved by hand in the
+# monthly maintenance pass with what a new version finds or formats otherwise in the same change
+# (ADR-0448); and new major versions of npm packages, which change the web UI's toolchain and come as
+# features of feature-list.json (ADR-0427).
 version: 2
 updates:
   - package-ecosystem: pip
@@ -41,6 +43,14 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
       - dependency-name: "@playwright/test"
+      # A new release can report what the old one did not, or format otherwise: the change that
+      # moves it fixes the code or writes the new format too (ADR-0448).
+      - dependency-name: "eslint"
+      - dependency-name: "@eslint/js"
+      - dependency-name: "typescript-eslint"
+      - dependency-name: "eslint-plugin-svelte"
+      - dependency-name: "prettier"
+      - dependency-name: "prettier-plugin-svelte"
     groups:
       npm:
         patterns: ["*"]

@@ -99,7 +99,7 @@ run_all = failed=; for target in $(1); do echo "== make $@: $$target"; \
 
 .DEFAULT_GOAL := help
 .PHONY: help setup check check-fast lint lint-ruff lint-mypy lint-shell lint-json test test-fast smoke
-.PHONY: frontend frontend-check frontend-runes frontend-i18n frontend-design frontend-build e2e-local audit catalog-platforms catalog-tags
+.PHONY: frontend frontend-check frontend-runes frontend-i18n frontend-design frontend-build frontend-lint frontend-format e2e-local audit catalog-platforms catalog-tags
 .PHONY: secret-scan image-scan
 
 help: ## List the targets and the variables
@@ -149,8 +149,8 @@ test-fast: ## The convention tests: ADRs, ledger, guard, repo tooling and secret
 smoke: ## A few seconds: the app starts and serves health, first-run setup and login (backend tests)
 	cd supervisor && $(PY) -m pytest $(SMOKE) -q --tb=short $(PYTEST_ARGS)
 
-frontend: ## svelte-check, the runes check (ADR-0427), the checks of the web UI's texts (ADR-0287) and design system (ADR-0400), the production build; all run
-	+@$(call run_all,frontend-check frontend-runes frontend-i18n frontend-design frontend-build)
+frontend: ## svelte-check, the runes check (ADR-0427), the checks of the web UI's texts (ADR-0287) and design system (ADR-0400), the production build, ESLint and Prettier's check (ADR-0448); all run
+	+@$(call run_all,frontend-check frontend-runes frontend-i18n frontend-design frontend-build frontend-lint frontend-format)
 
 frontend-check:
 	cd webui && $(NPM_BIN) run check
@@ -166,6 +166,14 @@ frontend-design:
 
 frontend-build:
 	cd webui && $(NPM_BIN) run build
+
+# ESLint with webui/eslint.config.js and Prettier's check with webui/prettier.config.js, over
+# webui/src (ADR-0448); `npm run format` in webui/ writes Prettier's format.
+frontend-lint:
+	cd webui && $(NPM_BIN) run lint
+
+frontend-format:
+	cd webui && $(NPM_BIN) run format-check
 
 e2e-local: ## Playwright E2E against the local stand-in, never the device (ADR-0215; E2E_ARGS=...)
 	PYTHON="$(PY)" NPM="$(NPM_BIN)" scripts/standin/e2e.sh $(E2E_ARGS)

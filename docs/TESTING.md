@@ -87,7 +87,7 @@ The make targets use these environments when they exist, and `python3`, `ruff`, 
 | `make lint` | `ruff check supervisor scripts .claude/hooks` with the rules of `ruff.toml` (pyflakes findings, syntax errors and the rules that find bugs, ADR-0425, in the supervisor and in the repository's own tooling), `mypy --python-executable <PYTHON> supervisor/src` with the settings of `mypy.ini`, against the packages of the supervisor's environment (ADR-0447), `bash -n` on every shell script of `deploy/`, `scripts/` and `.claude/hooks/`, and the JSON syntax of `feature-list.json` and `.claude/settings.json` |
 | `make test-fast` | the convention tests, in parallel worker processes: `test_adrs.py`, `test_feature_list.py`, `test_agent_guard.py`, `test_repo_tooling.py` (with the secret scan below), `test_dev_scripts.py`, `test_dev_scenarios.py`, `test_standin.py` |
 | `make smoke` | backend tests that start the app and serve requests, in a few seconds: the startup and `/api/v1/health` (`test_lifespan.py`), the first-run setup, a login through the proxy layer and the refusal of anonymous requests |
-| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run runes` (`scripts/runes-check.mjs`: every component in runes mode, without the syntax of Svelte 4, ADR-0427), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287) and `npm run build` in `webui/` |
+| `make frontend` | `npm run check` (svelte-kit sync, then svelte-check), `npm run runes` (`scripts/runes-check.mjs`: every component in runes mode, without the syntax of Svelte 4, ADR-0427), `npm run design` (`scripts/design-check.mjs`: no raw button, bare field or raw palette colour in a page, ADR-0400), `npm run i18n` (`scripts/i18n-check.mjs`: the texts of every `.svelte` file that `scripts/i18n-untranslated.txt` does not list come from the catalogs in English and Russian; texts put together at run time and `.ts` modules are for review, ADR-0287), `npm run build`, `npm run lint` (ESLint over `src/` with `eslint.config.js`: the recommended rules of ESLint, typescript-eslint and eslint-plugin-svelte, ADR-0448) and `npm run format-check` (Prettier's check of `src/` with `prettier.config.js`; `npm run format` writes it) in `webui/` |
 | `make e2e-local` | the Playwright specs against the local stand-in (`scripts/standin/e2e.sh`); `E2E_ARGS='tests/auth.spec.ts'` for a part |
 | `make catalog-platforms` | `scripts/catalog-platforms.py check`: the platforms recorded for the catalog's images (`supervisor/src/apps/image_platforms.json`) are those the registries publish now; `record` rewrites the file (needs the network, ADR-0403) |
 | `make catalog-tags` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the catalog still names the index it is pinned to, asked with HEAD requests only (needs the network, ADR-0410) |
@@ -605,7 +605,7 @@ request against `main`; a new push to a pull request cancels the run for the pre
 3. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
-     error`), `npm run runes` (every component in runes mode, ADR-0427), `npm run i18n` (the web UI's texts, ADR-0287) and `npm run build`, each also when
+     error`), `npm run runes` (every component in runes mode, ADR-0427), `npm run i18n` (the web UI's texts, ADR-0287), `npm run design` (the design system, ADR-0400), `npm run build`, `npm run lint` (ESLint) and `npm run format-check` (Prettier's check, ADR-0448), each also when
      another one failed
    - `npm audit --omit=dev --audit-level=high`: high and critical
      vulnerabilities in the `dependencies` of `webui/package.json`
@@ -658,7 +658,8 @@ that this page has the commands of the lint and frontend jobs).
 - `.github/dependabot.yml` proposes grouped updates every week for pip, npm, GitHub Actions (the
   commit of a newer release, ADR-0423) and the Docker base images (a newer digest of each pinned
   tag, ADR-0305), with a cooldown of a week and Conventional Commit prefixes. Nothing is merged
-  automatically. New major npm versions and Playwright are left out (ADR-0427).
+  automatically. New major npm versions and Playwright are left out (ADR-0427), and so are
+  ESLint, Prettier and their plugins (ADR-0448, "Updating the lint tools").
 - The `images` job of `audit.yml` (Image vulnerabilities) runs `make image-scan` every Monday
   (ADR-0446): `scripts/image-scan.sh` builds the supervisor's and the web UI's image with
   `docker compose` (project `unos-image-scan`) without the build cache, as `deploy/update.sh`
@@ -722,6 +723,12 @@ make frontend
 - `npm run check` first runs `svelte-kit sync`, which writes
   `.svelte-kit/tsconfig.json`: `tsconfig.json` extends it (`npm run build`
   writes it too).
+- `make frontend-lint` and `make frontend-format` run ESLint and Prettier's check alone, and
+  `npm run format` in `webui/` writes Prettier's format over `src/` (ADR-0448). A finding of
+  ESLint is fixed; a rule turned off in `webui/eslint.config.js`, or a line exempted with
+  `// eslint-disable-next-line <rule> -- <reason>`, gives its reason. Where Prettier's line break
+  would change a text of Svelte 5 (a space next to a block element), the element keeps its source
+  with `<!-- prettier-ignore -->` and a comment with the reason.
 
 ### Updating the lint tools
 
@@ -742,6 +749,15 @@ to update `.venv-lint`. `supervisor/tests/test_deploy_scripts.py` checks that ev
 hashes and that the tools have the versions of the `.in` file. Dependabot leaves these
 two files alone. A new mypy can find errors that the old one did not: fix them in the same
 change.
+
+ESLint, Prettier and their plugins (`eslint`, `@eslint/js`, `typescript-eslint`,
+`eslint-plugin-svelte`, `prettier`, `prettier-plugin-svelte`) are exact dev dependencies of the
+web UI, which Dependabot leaves alone too (ADR-0448). Move them in `webui/` with
+`npm install --save-dev --save-exact <package>@<version>`, to releases a week old, then run
+`npm run format` and `make frontend`: the same change fixes what the new ESLint finds and holds
+the format of the new Prettier. npm takes the newest release of each package they bring that its
+range allows: check the dates of the new entries of `webui/package-lock.json`
+(`npm view <package> time`) and hold one younger than a week at the release before it.
 
 The file pins pip too (pip-audit depends on it through pip-api), so the
 install replaces the pip of the environment with that version.

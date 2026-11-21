@@ -4329,7 +4329,16 @@
         "make frontend runs ESLint (with the Svelte plugin) and Prettier's check on webui/src",
         "CI fails on a finding"
       ],
-      "passes": false
+      "verified_by": [
+        "supervisor/tests/test_webui_lint.py",
+        "supervisor/tests/test_repo_tooling.py",
+        "supervisor/tests/test_deploy_scripts.py"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0448"
+      ],
+      "notes": "Built 2026-11-21 (ADR-0448): eslint 10.15.0, @eslint/js 10.0.1, typescript-eslint 8.72.2, eslint-plugin-svelte 3.24.1, prettier 3.10.1 and prettier-plugin-svelte 4.1.1, exact dev dependencies of webui/package.json. make frontend runs frontend-lint (npm run lint: eslint --max-warnings 0 src, with webui/eslint.config.js: the recommended rules of the three, five rules off with their reasons) and frontend-format (npm run format-check: prettier --check src, with webui/prettier.config.js: tabs, single quotes, no trailing commas, 120 columns), also when another part fails; the CI workflow's Frontend job runs make frontend. The base tree's 172 findings were resolved without a change of behaviour, and src/ was formatted once. Step 1: test_webui_lint.py (a finding of each set of rules, a warning and an unused exemption fail ESLint; a file that Prettier would change fails its check; Prettier's settings), test_targets_run_the_agreed_commands and test_lint_and_frontend_run_every_part_even_when_one_fails of test_repo_tooling.py, and make frontend itself. Step 2: test_frontend_checks of test_deploy_scripts.py shows that the Frontend job runs make frontend with lint and format-check; that the job fails on a finding is not seen: the workflow is off on GitHub (ADR-0230), so passes stays false until it runs there once with a finding. Review in a fresh context (ADR-0017): 2 should-fix and 7 nits, fixed but one nit and two parts, recorded in PROGRESS.md. Not a host-level change: no device check."
     },
     {
       "id": "ci.pinned-check-tools",
