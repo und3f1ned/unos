@@ -5,19 +5,19 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'iscsi.title': 'iSCSI targets',
-	'iscsi.intro': 'A target gives a computer a disk of its own: a file in a volume, which only the initiators you allow reach, with CHAP.',
+	'iscsi.intro':
+		'A target gives a computer a disk of its own: a file in a volume, which only the initiators you allow reach, with CHAP.',
 	'iscsi.add': 'Add target',
 	'iscsi.loadError': 'Could not load the iSCSI targets',
 	'iscsi.empty': 'No iSCSI targets yet',
 	'iscsi.emptyHint': 'Use Add target above to give a computer a disk in a volume of a pool.',
 	// Under the page header's Add target while none can be added.
 	'iscsi.noVolumesShort': 'Create a volume on the Storage page first',
-	'iscsi.noKernelShort': 'The host\'s kernel has no iSCSI target',
+	'iscsi.noKernelShort': "The host's kernel has no iSCSI target",
 	'iscsi.noKernel':
 		"The host's kernel has no iSCSI target (LIO): the modules target_core_mod, target_core_file and iscsi_target_mod are missing.",
 	'iscsi.portals': 'Initiators connect to: {portals}',
-	'iscsi.noPortals':
-		'The host has no address of the local network, so no initiator can reach the targets.',
+	'iscsi.noPortals': 'The host has no address of the local network, so no initiator can reach the targets.',
 	'iscsi.portalsProblem': "The host's addresses could not be read",
 	'iscsi.served': 'Served',
 	'iscsi.notServed': 'Not served',
@@ -49,8 +49,7 @@ export const en = {
 	'iscsi.form.sizeHint':
 		'The LUN is a sparse file: its space is taken as data is written, not reserved now. Keep that much free in the pool.',
 	'iscsi.form.initiators': 'Allowed initiators',
-	'iscsi.form.initiatorsHint':
-		"One iSCSI name per line, as each computer's initiator shows it (iqn., eui. or naa.).",
+	'iscsi.form.initiatorsHint': "One iSCSI name per line, as each computer's initiator shows it (iqn., eui. or naa.).",
 	'iscsi.form.initiatorsPlaceholder': 'iqn.1991-05.com.microsoft:desktop-pc',
 	'iscsi.form.chapUser': 'CHAP user name',
 	'iscsi.form.chapUserHint': "The target's name when left empty.",
@@ -97,7 +96,8 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'iscsi.title': 'Цели iSCSI',
-	'iscsi.intro': 'Цель даёт компьютеру собственный диск: файл в томе, к которому подключаются только разрешённые вами инициаторы, с CHAP.',
+	'iscsi.intro':
+		'Цель даёт компьютеру собственный диск: файл в томе, к которому подключаются только разрешённые вами инициаторы, с CHAP.',
 	'iscsi.add': 'Добавить цель',
 	'iscsi.loadError': 'Не удалось загрузить цели iSCSI',
 	'iscsi.empty': 'Целей iSCSI пока нет',
@@ -119,7 +119,11 @@ export const ru: Translation<typeof en> = {
 	'iscsi.chapUser': 'Имя пользователя CHAP',
 	'iscsi.sessions': 'Сейчас подключены',
 	'iscsi.noSessions': 'Ни один инициатор не подключён',
-	'iscsi.loggedIn': { one: 'Подключён {n} инициатор', few: 'Подключены {n} инициатора', many: 'Подключено {n} инициаторов' },
+	'iscsi.loggedIn': {
+		one: 'Подключён {n} инициатор',
+		few: 'Подключены {n} инициатора',
+		many: 'Подключено {n} инициаторов'
+	},
 	'iscsi.mutualOn': 'взаимный CHAP',
 	'iscsi.editButton': 'Изменить',
 	'iscsi.editOf': 'цель {name}',
@@ -138,7 +142,8 @@ export const ru: Translation<typeof en> = {
 	'iscsi.form.sizeHint':
 		'LUN — разреженный файл: место занимается по мере записи данных и сейчас не резервируется. Оставьте столько свободного места в пуле.',
 	'iscsi.form.initiators': 'Разрешённые инициаторы',
-	'iscsi.form.initiatorsHint': 'По одному имени iSCSI в строке, как его показывает инициатор компьютера (iqn., eui. или naa.).',
+	'iscsi.form.initiatorsHint':
+		'По одному имени iSCSI в строке, как его показывает инициатор компьютера (iqn., eui. или naa.).',
 	'iscsi.form.initiatorsPlaceholder': 'iqn.1991-05.com.microsoft:desktop-pc',
 	'iscsi.form.chapUser': 'Имя пользователя CHAP',
 	'iscsi.form.chapUserHint': 'Если оставить пустым — имя цели.',

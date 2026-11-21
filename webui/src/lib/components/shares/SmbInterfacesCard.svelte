@@ -80,73 +80,73 @@
 </script>
 
 <section data-testid="smb-interfaces" aria-labelledby="smb-interfaces-title">
-<Card>
-	<!-- Its actions open dialogs: secondary sm in the header, beside the title. -->
-	<div class="card-header flex-wrap gap-2">
-		<h2 class="section-title" id="smb-interfaces-title">
-			<Network class="w-5 h-5 text-content-secondary" aria-hidden="true" />
-			{$t('shares.interfaces.title')}
-		</h2>
-		{#if current && !loadError}
-			<div class="flex flex-wrap gap-2">
-				{#if current.restart_needed}
-					<Button variant="secondary" size="sm" icon={RotateCw} onclick={() => restartDialog?.open()}>
-						{$t('shares.interfaces.restart')}
+	<Card>
+		<!-- Its actions open dialogs: secondary sm in the header, beside the title. -->
+		<div class="card-header flex-wrap gap-2">
+			<h2 class="section-title" id="smb-interfaces-title">
+				<Network class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+				{$t('shares.interfaces.title')}
+			</h2>
+			{#if current && !loadError}
+				<div class="flex flex-wrap gap-2">
+					{#if current.restart_needed}
+						<Button variant="secondary" size="sm" icon={RotateCw} onclick={() => restartDialog?.open()}>
+							{$t('shares.interfaces.restart')}
+						</Button>
+					{/if}
+					<Button variant="secondary" size="sm" icon={Network} onclick={openEdit}>
+						{$t('shares.interfaces.choose')}
 					</Button>
-				{/if}
-				<Button variant="secondary" size="sm" icon={Network} onclick={openEdit}>
-					{$t('shares.interfaces.choose')}
-				</Button>
-			</div>
-		{:else if !loadError}
-			<!-- The button's place while loading (ADR-0430). -->
-			<Skeleton shape="block" class="h-8 w-44" />
-		{/if}
-	</div>
+				</div>
+			{:else if !loadError}
+				<!-- The button's place while loading (ADR-0430). -->
+				<Skeleton shape="block" class="h-8 w-44" />
+			{/if}
+		</div>
 
-	{#if loadError}
-		<ErrorState title={$t('shares.interfaces.loadError')} message={loadError} onretry={retry} {retrying} />
-	{:else if current}
-		<div class="space-y-3">
-			<p class="break-words">
-				{#if current.chosen.length > 0}
-					{$t('shares.interfaces.only', { names: current.chosen.join(', ') })}
-				{:else if current.bound}
-					{$t('shares.interfaces.onlyLoopback')}
-				{:else}
-					{$t('shares.interfaces.every')}
+		{#if loadError}
+			<ErrorState title={$t('shares.interfaces.loadError')} message={loadError} onretry={retry} {retrying} />
+		{:else if current}
+			<div class="space-y-3">
+				<p class="break-words">
+					{#if current.chosen.length > 0}
+						{$t('shares.interfaces.only', { names: current.chosen.join(', ') })}
+					{:else if current.bound}
+						{$t('shares.interfaces.onlyLoopback')}
+					{:else}
+						{$t('shares.interfaces.every')}
+					{/if}
+				</p>
+				<p class="text-sm text-secondary">
+					{$t('shares.interfaces.listening')}
+					<span class="mono break-all">{listeningText(current)}</span>
+				</p>
+				{#if current.host_error}
+					<Alert variant="error">{current.host_error}</Alert>
 				{/if}
-			</p>
-			<p class="text-sm text-secondary">
-				{$t('shares.interfaces.listening')}
-				<span class="mono break-all">{listeningText(current)}</span>
-			</p>
-			{#if current.host_error}
-				<Alert variant="error">{current.host_error}</Alert>
-			{/if}
-			{#if current.problems.length > 0}
-				<Alert variant="warning" size="sm">
-					{#each current.problems as problem}
-						<p class="break-words">{problem}</p>
-					{/each}
-				</Alert>
-			{/if}
-			{#if warnings.length > 0}
-				<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
-					{#each warnings as warning}
-						<p class="break-words">{warning}</p>
-					{/each}
-				</Alert>
-			{/if}
-		</div>
-	{:else}
-		<!-- Loading (ADR-0430): the two lines, as they will be. -->
-		<div class="space-y-3" aria-busy="true">
-			<Skeleton size="base" class="w-3/4" />
-			<Skeleton class="w-1/2" />
-		</div>
-	{/if}
-</Card>
+				{#if current.problems.length > 0}
+					<Alert variant="warning" size="sm">
+						{#each current.problems as problem}
+							<p class="break-words">{problem}</p>
+						{/each}
+					</Alert>
+				{/if}
+				{#if warnings.length > 0}
+					<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>
+						{#each warnings as warning}
+							<p class="break-words">{warning}</p>
+						{/each}
+					</Alert>
+				{/if}
+			</div>
+		{:else}
+			<!-- Loading (ADR-0430): the two lines, as they will be. -->
+			<div class="space-y-3" aria-busy="true">
+				<Skeleton size="base" class="w-3/4" />
+				<Skeleton class="w-1/2" />
+			</div>
+		{/if}
+	</Card>
 </section>
 
 {#if editing && current}

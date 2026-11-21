@@ -154,9 +154,7 @@
 				<div class="flex flex-wrap items-center gap-2">
 					<span class="font-medium">{$t('shares.repair.lastRun')}</span>
 					<Badge variant={badge?.variant ?? 'warning'}>{badge ? $t(badge.key) : result.state}</Badge>
-					<span class="text-xs text-muted"
-						>{formatTime(result.finished_at ?? result.started_at, $intlLocale)}</span
-					>
+					<span class="text-xs text-muted">{formatTime(result.finished_at ?? result.started_at, $intlLocale)}</span>
 				</div>
 				<p>
 					{$t('shares.repair.counts', {

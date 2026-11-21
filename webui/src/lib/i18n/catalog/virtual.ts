@@ -52,8 +52,10 @@ export const en = {
 	'virtual.mode': 'Mode',
 	'virtual.modeHint': 'LACP needs a switch with LACP on these ports; round robin needs none.',
 	'virtual.ports': 'Interfaces',
-	'virtual.bondPortsHint': 'Choose two or more wired network cards that are in no other bond or bridge. A card loses its own addresses: only the one that carries the connection to UNOS may have any, and the bond takes over its settings.',
-	'virtual.bridgePortsHint': 'None, or wired network cards, bonds or VLANs that are in no other bond or bridge. A port loses its own addresses: only the one that carries the connection to UNOS may have any, and the bridge takes over its settings.',
+	'virtual.bondPortsHint':
+		'Choose two or more wired network cards that are in no other bond or bridge. A card loses its own addresses: only the one that carries the connection to UNOS may have any, and the bond takes over its settings.',
+	'virtual.bridgePortsHint':
+		'None, or wired network cards, bonds or VLANs that are in no other bond or bridge. A port loses its own addresses: only the one that carries the connection to UNOS may have any, and the bridge takes over its settings.',
 	'virtual.noCandidates': 'The host has no interface that can be one.',
 	'virtual.parent': 'Interface',
 	'virtual.vlanId': 'VLAN id',
@@ -62,7 +64,8 @@ export const en = {
 	'virtual.mtuHint': '1280 to 9216; leave it empty for the default',
 	'virtual.addressing': 'Addresses',
 	'virtual.addresses': 'Static addresses',
-	'virtual.addressesHint': 'Up to 4, with their prefix lengths, separated by commas, such as 192.0.2.10/24. No gateway.',
+	'virtual.addressesHint':
+		'Up to 4, with their prefix lengths, separated by commas, such as 192.0.2.10/24. No gateway.',
 	'virtual.dhcpHint': 'DHCP gives this interface an IPv4 address, never the default route or DNS servers.',
 	'virtual.create': 'Create',
 	'virtual.takesOver':
@@ -80,7 +83,8 @@ export const en = {
 	'virtual.deleteFailed': 'The interface could not be deleted',
 
 	'virtual.deleteTitle': 'Delete {name}?',
-	'virtual.deleteText': 'UNOS removes {name} and its files. Its ports get the settings of the host\'s own configuration back.',
+	'virtual.deleteText':
+		"UNOS removes {name} and its files. Its ports get the settings of the host's own configuration back.",
 
 	'virtual.waiting':
 		'Unless you keep this change ({change}), the host undoes it by itself in {n} s. Check first that the web UI, SSH and the shares still answer.',
@@ -141,8 +145,10 @@ export const ru: Translation<typeof en> = {
 	'virtual.mode': 'Режим',
 	'virtual.modeHint': 'LACP требует коммутатора с включённым LACP на этих портах; поочерёдный режим — нет.',
 	'virtual.ports': 'Интерфейсы',
-	'virtual.bondPortsHint': 'Выберите две или более проводные сетевые карты, не входящие в другой агрегат или мост. Карта теряет собственные адреса: они могут быть только у той, через которую идёт соединение с UNOS, и агрегат получает её настройки.',
-	'virtual.bridgePortsHint': 'Ни одного или проводные сетевые карты, агрегаты или VLAN, не входящие в другой агрегат или мост. Порт теряет собственные адреса: они могут быть только у того, через который идёт соединение с UNOS, и мост получает его настройки.',
+	'virtual.bondPortsHint':
+		'Выберите две или более проводные сетевые карты, не входящие в другой агрегат или мост. Карта теряет собственные адреса: они могут быть только у той, через которую идёт соединение с UNOS, и агрегат получает её настройки.',
+	'virtual.bridgePortsHint':
+		'Ни одного или проводные сетевые карты, агрегаты или VLAN, не входящие в другой агрегат или мост. Порт теряет собственные адреса: они могут быть только у того, через который идёт соединение с UNOS, и мост получает его настройки.',
 	'virtual.noCandidates': 'На хосте нет подходящих интерфейсов.',
 	'virtual.parent': 'Интерфейс',
 	'virtual.vlanId': 'Идентификатор VLAN',

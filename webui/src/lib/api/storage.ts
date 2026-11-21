@@ -1,12 +1,12 @@
 import { api } from './client';
 
 export interface PartitionInfo {
-  name: string;
-  path: string;
-  size: number;
-  fstype: string | null;
-  label: string | null;
-  mountpoints: string[];
+	name: string;
+	path: string;
+	size: number;
+	fstype: string | null;
+	label: string | null;
+	mountpoints: string[];
 }
 
 /**
@@ -23,76 +23,76 @@ export type PowerState = 'active' | 'standby' | 'unknown';
 export const SPINDOWN_MINUTES = [0, 5, 10, 20, 30, 60, 120, 180, 240, 300] as const;
 
 export interface Disk {
-  name: string;
-  path: string;
-  model: string | null;
-  serial: string | null;
-  /** World Wide Name, if the disk reports one. */
-  wwn: string | null;
-  size: number;
-  rotational: boolean;
-  mountpoint: string | null;
-  type: string;
-  /** Filesystem signature on the whole disk, e.g. "btrfs". */
-  fstype: string | null;
-  label: string | null;
-  /** Partition table type ("gpt" / "dos"), if any. */
-  pttype: string | null;
-  partitions: PartitionInfo[];
-  /** Host mountpoints of the disk and all its partitions. */
-  mountpoints: string[];
-  /** Any filesystem, partition table, partition or other signature was found. */
-  has_data: boolean;
-  /** Backs the host's /, /boot, /boot/efi or active swap, or is the boot disk. */
-  is_system: boolean;
-  /** is_system, mounted on the host, or a member of a mounted pool. */
-  in_use: boolean;
-  in_use_reason: string | null;
-  /** Label of the btrfs filesystem the disk (or a partition) belongs to. */
-  pool: string | null;
-  /** Read first; a disk in standby is not probed for signatures, so has_data is true for it. */
-  power_state: PowerState;
-  /** The idle timeout in minutes that UNOS's udev rule sets for the disk, 0 for none. */
-  spindown: number;
-  /** Why the disk gets no idle timeout (the server's message), or null when it can have one. */
-  spindown_problem: string | null;
+	name: string;
+	path: string;
+	model: string | null;
+	serial: string | null;
+	/** World Wide Name, if the disk reports one. */
+	wwn: string | null;
+	size: number;
+	rotational: boolean;
+	mountpoint: string | null;
+	type: string;
+	/** Filesystem signature on the whole disk, e.g. "btrfs". */
+	fstype: string | null;
+	label: string | null;
+	/** Partition table type ("gpt" / "dos"), if any. */
+	pttype: string | null;
+	partitions: PartitionInfo[];
+	/** Host mountpoints of the disk and all its partitions. */
+	mountpoints: string[];
+	/** Any filesystem, partition table, partition or other signature was found. */
+	has_data: boolean;
+	/** Backs the host's /, /boot, /boot/efi or active swap, or is the boot disk. */
+	is_system: boolean;
+	/** is_system, mounted on the host, or a member of a mounted pool. */
+	in_use: boolean;
+	in_use_reason: string | null;
+	/** Label of the btrfs filesystem the disk (or a partition) belongs to. */
+	pool: string | null;
+	/** Read first; a disk in standby is not probed for signatures, so has_data is true for it. */
+	power_state: PowerState;
+	/** The idle timeout in minutes that UNOS's udev rule sets for the disk, 0 for none. */
+	spindown: number;
+	/** Why the disk gets no idle timeout (the server's message), or null when it can have one. */
+	spindown_problem: string | null;
 }
 
 export interface SmartData {
-  device: string;
-  /** null when the disk sleeps: smartctl left it alone (power_state standby). */
-  healthy: boolean | null;
-  power_state: PowerState;
-  temperature: number | null;
-  power_on_hours: number | null;
-  reallocated_sectors: number | null;
-  raw_data: Record<string, unknown> | null;
+	device: string;
+	/** null when the disk sleeps: smartctl left it alone (power_state standby). */
+	healthy: boolean | null;
+	power_state: PowerState;
+	temperature: number | null;
+	power_on_hours: number | null;
+	reallocated_sectors: number | null;
+	raw_data: Record<string, unknown> | null;
 }
 
 export type PoolHealth = 'healthy' | 'degraded' | 'unmounted' | 'error' | 'unknown';
 
 export interface Pool {
-  name: string;
-  uuid: string | null;
-  devices: string[];
-  total_size: number;
-  used_size: number;
-  mountpoint: string | null;
-  raid_level: string | null;
-  mounted: boolean;
-  /** A UNOS-managed /etc/fstab entry exists on the host. */
-  persistent: boolean;
-  health: PoolHealth;
-  missing_devices: number;
-  /** Sum of the btrfs device error counters (0 when unmounted or unknown). */
-  device_errors: number;
-  /** Mounted, but writes fail: mounted read-only on purpose, or forced_read_only. */
-  read_only: boolean;
-  /**
-   * Mounted read-write, but btrfs made the filesystem read-only after a
-   * serious error such as an aborted transaction (health "error").
-   */
-  forced_read_only: boolean;
+	name: string;
+	uuid: string | null;
+	devices: string[];
+	total_size: number;
+	used_size: number;
+	mountpoint: string | null;
+	raid_level: string | null;
+	mounted: boolean;
+	/** A UNOS-managed /etc/fstab entry exists on the host. */
+	persistent: boolean;
+	health: PoolHealth;
+	missing_devices: number;
+	/** Sum of the btrfs device error counters (0 when unmounted or unknown). */
+	device_errors: number;
+	/** Mounted, but writes fail: mounted read-only on purpose, or forced_read_only. */
+	read_only: boolean;
+	/**
+	 * Mounted read-write, but btrfs made the filesystem read-only after a
+	 * serious error such as an aborted transaction (health "error").
+	 */
+	forced_read_only: boolean;
 }
 
 /**
@@ -104,17 +104,17 @@ export type LabelProblem = 'missing' | 'invalid' | 'duplicate';
 
 /** A btrfs filesystem on the host's disks that can be imported as a pool (ADR-0283). */
 export interface ImportableFilesystem {
-  uuid: string;
-  /** As btrfs prints it; null without a label. */
-  label: string | null;
-  label_problem: LabelProblem;
-  /** The members that are present. */
-  devices: string[];
-  total_devices: number;
-  missing_devices: number;
-  /** Bytes, of the members that are present. */
-  size: number;
-  used: number;
+	uuid: string;
+	/** As btrfs prints it; null without a label. */
+	label: string | null;
+	label_problem: LabelProblem;
+	/** The members that are present. */
+	devices: string[];
+	total_devices: number;
+	missing_devices: number;
+	/** Bytes, of the members that are present. */
+	size: number;
+	used: number;
 }
 
 /** Pool names the API accepts (POOL_NAME_PATTERN in supervisor/src/security/validators.py). */
@@ -126,46 +126,46 @@ export const POOL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/;
  * "" without a label.
  */
 export function suggestedPoolName(label: string | null): string {
-  return (label ?? '')
-    .replace(/[^A-Za-z0-9_-]/g, '_')
-    .replace(/^[^A-Za-z0-9]+/, '')
-    .slice(0, 63);
+	return (label ?? '')
+		.replace(/[^A-Za-z0-9_-]/g, '_')
+		.replace(/^[^A-Za-z0-9]+/, '')
+		.slice(0, 63);
 }
 
 export type RaidLevel = 'single' | 'raid0' | 'raid1' | 'raid1c3' | 'raid1c4' | 'raid10';
 
 /** A selected disk as GET /storage/disks listed it. */
 export interface DeviceIdentity {
-  path: string;
-  serial: string | null;
-  wwn: string | null;
-  size: number;
+	path: string;
+	serial: string | null;
+	wwn: string | null;
+	size: number;
 }
 
 export interface PoolCreate {
-  name: string;
-  devices: string[];
-  raid_level: RaidLevel;
-  /** Must equal name (HTTP 400 otherwise). */
-  confirm_name: string;
-  /** Required when any selected disk has_data (HTTP 409 otherwise). */
-  force: boolean;
-  /**
-   * What the user saw for each selected disk. Disk names change when a disk
-   * is reconnected, so the pool is only created if every path still holds
-   * the disk with that serial, WWN and size (HTTP 409 otherwise). With force,
-   * every selected disk needs one (HTTP 400 otherwise).
-   */
-  device_identities?: DeviceIdentity[];
+	name: string;
+	devices: string[];
+	raid_level: RaidLevel;
+	/** Must equal name (HTTP 400 otherwise). */
+	confirm_name: string;
+	/** Required when any selected disk has_data (HTTP 409 otherwise). */
+	force: boolean;
+	/**
+	 * What the user saw for each selected disk. Disk names change when a disk
+	 * is reconnected, so the pool is only created if every path still holds
+	 * the disk with that serial, WWN and size (HTTP 409 otherwise). With force,
+	 * every selected disk needs one (HTTP 400 otherwise).
+	 */
+	device_identities?: DeviceIdentity[];
 }
 
 export function deviceIdentity(disk: Disk): DeviceIdentity {
-  return { path: disk.path, serial: disk.serial, wwn: disk.wwn, size: disk.size };
+	return { path: disk.path, serial: disk.serial, wwn: disk.wwn, size: disk.size };
 }
 
 /** The 409 detail of POST /storage/pools when a path now holds another disk. */
 export function isChangedDiskError(message: string): boolean {
-  return message.includes('is no longer the disk that was selected');
+	return message.includes('is no longer the disk that was selected');
 }
 
 /**
@@ -177,24 +177,24 @@ export type VolumeUsageState = 'counted' | 'inconsistent' | 'quotas_off' | 'unkn
 
 /** A btrfs subvolume in the top directory of a mounted pool. */
 export interface Volume {
-  name: string;
-  pool: string;
-  /** Host path: the pool's mountpoint and the volume name. */
-  path: string;
-  /** The bytes it references, which its quota limits; null unless counted. */
-  used: number | null;
-  /** The limit on them in bytes; null without a quota. */
-  quota: number | null;
-  /** How the list read them; null in the answer to a create. */
-  usage: VolumeUsageState | null;
+	name: string;
+	pool: string;
+	/** Host path: the pool's mountpoint and the volume name. */
+	path: string;
+	/** The bytes it references, which its quota limits; null unless counted. */
+	used: number | null;
+	/** The limit on them in bytes; null without a quota. */
+	quota: number | null;
+	/** How the list read them; null in the answer to a create. */
+	usage: VolumeUsageState | null;
 }
 
 /** A volume's use at one time. */
 export interface VolumeUsagePoint {
-  /** ISO 8601 with the UTC offset. */
-  time: string;
-  used: number;
-  quota: number | null;
+	/** ISO 8601 with the UTC offset. */
+	time: string;
+	used: number;
+	quota: number | null;
 }
 
 /**
@@ -202,24 +202,24 @@ export interface VolumeUsagePoint {
  * supervisor kept, oldest first, and the current reading last.
  */
 export interface VolumeUsageHistory {
-  name: string;
-  pool: string;
-  used: number | null;
-  quota: number | null;
-  usage: VolumeUsageState;
-  points: VolumeUsagePoint[];
+	name: string;
+	pool: string;
+	used: number | null;
+	quota: number | null;
+	usage: VolumeUsageState;
+	points: VolumeUsagePoint[];
 }
 
 /** Body of POST /storage/pools/{pool}/volumes; the pool is the one in the URL. */
 export interface VolumeCreate {
-  /** Must match VOLUME_NAME_PATTERN (HTTP 400 otherwise). */
-  name: string;
-  /**
-   * Bytes, at most 2^64 - 2 (HTTP 422 otherwise; btrfs reads 2^64 - 1 as no
-   * limit); omit or null for no limit. Needs quotas enabled on the pool
-   * (HTTP 409 otherwise, and nothing is created).
-   */
-  quota?: number | null;
+	/** Must match VOLUME_NAME_PATTERN (HTTP 400 otherwise). */
+	name: string;
+	/**
+	 * Bytes, at most 2^64 - 2 (HTTP 422 otherwise; btrfs reads 2^64 - 1 as no
+	 * limit); omit or null for no limit. Needs quotas enabled on the pool
+	 * (HTTP 409 otherwise, and nothing is created).
+	 */
+	quota?: number | null;
 }
 
 /** Volume names the API accepts (VOLUME_NAME_PATTERN in supervisor/src/security/validators.py). */
@@ -237,29 +237,29 @@ export const MAX_QUOTA_GIB = Math.floor(Number.MAX_SAFE_INTEGER / GIB);
  * "1,5" or "10 GB" are refused instead of being taken for another number.
  */
 export function quotaBytes(gib: string): number | null {
-  if (!/^\d+(\.\d+)?$/.test(gib)) return null;
-  const bytes = Math.round(Number(gib) * GIB);
-  return bytes >= 1 && bytes <= MAX_QUOTA_GIB * GIB ? bytes : null;
+	if (!/^\d+(\.\d+)?$/.test(gib)) return null;
+	const bytes = Math.round(Number(gib) * GIB);
+	return bytes >= 1 && bytes <= MAX_QUOTA_GIB * GIB ? bytes : null;
 }
 
 /** A pool's scrub as `btrfs scrub status` reports it (ADR-0313). */
 export interface ScrubStatus {
-  pool: string;
-  /**
-   * running also for a scrub that btrfs has not recorded yet (no start time or duration then);
-   * idle: no scrub recorded (a restart of the supervisor forgets the last one, ADR-0171);
-   * aborted: cancelled; interrupted: ended neither by finishing nor by a cancel, for example
-   * because the btrfs process that ran it was killed.
-   */
-  status: 'running' | 'finished' | 'aborted' | 'interrupted' | 'idle';
-  duration: number | null;
-  bytes_scrubbed: number | null;
-  total_bytes: number | null;
-  rate: number | null;
-  /** Every error of btrfs's error summary (read, super, verify and csum). */
-  errors: number;
-  /** When the scrub started, in UTC with its offset (ADR-0401); null when btrfs printed none. */
-  last_run: string | null;
+	pool: string;
+	/**
+	 * running also for a scrub that btrfs has not recorded yet (no start time or duration then);
+	 * idle: no scrub recorded (a restart of the supervisor forgets the last one, ADR-0171);
+	 * aborted: cancelled; interrupted: ended neither by finishing nor by a cancel, for example
+	 * because the btrfs process that ran it was killed.
+	 */
+	status: 'running' | 'finished' | 'aborted' | 'interrupted' | 'idle';
+	duration: number | null;
+	bytes_scrubbed: number | null;
+	total_bytes: number | null;
+	rate: number | null;
+	/** Every error of btrfs's error summary (read, super, verify and csum). */
+	errors: number;
+	/** When the scrub started, in UTC with its offset (ADR-0401); null when btrfs printed none. */
+	last_run: string | null;
 }
 
 /** The usage limit of a balance that the dialog offers first (BALANCE_DEFAULT_USAGE, ADR-0379). */
@@ -273,32 +273,32 @@ export type BalanceStart = { usage: number } | { full: true };
 
 /** A pool's balance as `btrfs balance status` reports it, and how the last one ended (ADR-0379). */
 export interface BalanceStatus {
-  pool: string;
-  /**
-   * pausing and cancelling: a pause or a cancel waits for the chunk being moved; idle: none runs
-   * and none is paused.
-   */
-  status: 'running' | 'pausing' | 'cancelling' | 'paused' | 'idle';
-  /** Chunks balanced since the start or resume, of about `expected`; of a finished one, relocated. */
-  completed: number | null;
-  expected: number | null;
-  /** Of a finished balance: the chunks it considered. */
-  considered: number | null;
-  /** The estimate of a balance that runs; null until it has balanced a chunk. */
-  seconds_left: number | null;
-  /** Of an idle pool: how its last balance ended, when known. */
-  result: 'finished' | 'cancelled' | 'failed' | null;
-  /** btrfs's error of a failed one, in English. */
-  error: string | null;
+	pool: string;
+	/**
+	 * pausing and cancelling: a pause or a cancel waits for the chunk being moved; idle: none runs
+	 * and none is paused.
+	 */
+	status: 'running' | 'pausing' | 'cancelling' | 'paused' | 'idle';
+	/** Chunks balanced since the start or resume, of about `expected`; of a finished one, relocated. */
+	completed: number | null;
+	expected: number | null;
+	/** Of a finished balance: the chunks it considered. */
+	considered: number | null;
+	/** The estimate of a balance that runs; null until it has balanced a chunk. */
+	seconds_left: number | null;
+	/** Of an idle pool: how its last balance ended, when known. */
+	result: 'finished' | 'cancelled' | 'failed' | null;
+	/** btrfs's error of a failed one, in English. */
+	error: string | null;
 }
 
 export async function getDisks(): Promise<Disk[]> {
-  return api.get<Disk[]>('/storage/disks');
+	return api.get<Disk[]>('/storage/disks');
 }
 
 /** SMART data of a disk as getDisks() lists it, by name (HTTP 400 for any other device). */
 export async function getDiskSmart(name: string): Promise<SmartData> {
-  return api.get<SmartData>(`/storage/disks/${name}/smart`);
+	return api.get<SmartData>(`/storage/disks/${name}/smart`);
 }
 
 /**
@@ -307,9 +307,9 @@ export async function getDiskSmart(name: string): Promise<SmartData> {
  * once it was removed; the timeout is set all the same (ADR-0378).
  */
 export interface DiskSpindown {
-  name: string;
-  minutes: number;
-  warning: string | null;
+	name: string;
+	minutes: number;
+	warning: string | null;
 }
 
 /**
@@ -320,30 +320,30 @@ export interface DiskSpindown {
  * and the other disks that spindown_problem names, 500 when hdparm fails.
  */
 export async function setDiskSpindown(name: string, minutes: number): Promise<DiskSpindown> {
-  return api.put<DiskSpindown>(`/storage/disks/${encodeURIComponent(name)}/spindown`, {
-    minutes
-  });
+	return api.put<DiskSpindown>(`/storage/disks/${encodeURIComponent(name)}/spindown`, {
+		minutes
+	});
 }
 
 export async function getPools(): Promise<Pool[]> {
-  return api.get<Pool[]>('/storage/pools');
+	return api.get<Pool[]>('/storage/pools');
 }
 
 export async function getPool(name: string): Promise<Pool> {
-  return api.get<Pool>(`/storage/pools/${name}`);
+	return api.get<Pool>(`/storage/pools/${name}`);
 }
 
 export async function createPool(pool: PoolCreate): Promise<Pool> {
-  return api.post<Pool>('/storage/pools', pool);
+	return api.post<Pool>('/storage/pools', pool);
 }
 
 export async function deletePool(name: string): Promise<void> {
-  return api.delete(`/storage/pools/${name}`);
+	return api.delete(`/storage/pools/${name}`);
 }
 
 /** Mount on the host at /mnt/pools/{name} and keep the managed fstab entry. */
 export async function mountPool(name: string): Promise<Pool> {
-  return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/mount`, {});
+	return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/mount`, {});
 }
 
 /**
@@ -351,12 +351,12 @@ export async function mountPool(name: string): Promise<Pool> {
  * cannot be asked which containers use the pool. Nothing is unmounted then.
  */
 export async function unmountPool(name: string): Promise<Pool> {
-  return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
+	return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/unmount`, {});
 }
 
 /** The btrfs filesystems on the host's disks that can be imported as pools (ADR-0283). */
 export async function getImportableFilesystems(): Promise<ImportableFilesystem[]> {
-  return api.get<ImportableFilesystem[]>('/storage/filesystems/importable');
+	return api.get<ImportableFilesystem[]>('/storage/filesystems/importable');
 }
 
 /**
@@ -367,7 +367,7 @@ export async function getImportableFilesystems(): Promise<ImportableFilesystem[]
  * it, or when it mounts another subvolume than its top level by default.
  */
 export async function importFilesystem(uuid: string, name: string): Promise<Pool> {
-  return api.post<Pool>(`/storage/filesystems/${encodeURIComponent(uuid)}/import`, { name });
+	return api.post<Pool>(`/storage/filesystems/${encodeURIComponent(uuid)}/import`, { name });
 }
 
 /**
@@ -375,7 +375,7 @@ export async function importFilesystem(uuid: string, name: string): Promise<Pool
  * mounted, or is mounted at a subvolume other than the top level).
  */
 export async function getVolumes(poolName: string): Promise<Volume[]> {
-  return api.get<Volume[]>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`);
+	return api.get<Volume[]>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`);
 }
 
 /**
@@ -383,9 +383,9 @@ export async function getVolumes(poolName: string): Promise<Volume[]> {
  * mounted at a subvolume other than the top level).
  */
 export async function getVolumeUsage(poolName: string, volumeName: string): Promise<VolumeUsageHistory> {
-  return api.get<VolumeUsageHistory>(
-    `/storage/pools/${encodeURIComponent(poolName)}/volumes/${encodeURIComponent(volumeName)}/usage`
-  );
+	return api.get<VolumeUsageHistory>(
+		`/storage/pools/${encodeURIComponent(poolName)}/volumes/${encodeURIComponent(volumeName)}/usage`
+	);
 }
 
 /**
@@ -393,7 +393,7 @@ export async function getVolumeUsage(poolName: string, volumeName: string): Prom
  * or not at its top level, or the name is taken).
  */
 export async function createVolume(poolName: string, volume: VolumeCreate): Promise<Volume> {
-  return api.post<Volume>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`, volume);
+	return api.post<Volume>(`/storage/pools/${encodeURIComponent(poolName)}/volumes`, volume);
 }
 
 /**
@@ -402,25 +402,23 @@ export async function createVolume(poolName: string, volume: VolumeCreate): Prom
  * 503 when Docker cannot be asked about the containers. Nothing is deleted then.
  */
 export async function deleteVolume(poolName: string, volumeName: string): Promise<void> {
-  return api.delete(
-    `/storage/pools/${encodeURIComponent(poolName)}/volumes/${encodeURIComponent(volumeName)}`
-  );
+	return api.delete(`/storage/pools/${encodeURIComponent(poolName)}/volumes/${encodeURIComponent(volumeName)}`);
 }
 
 export async function startScrub(poolName: string): Promise<ScrubStatus> {
-  return api.post<ScrubStatus>(`/storage/pools/${poolName}/scrub`, {});
+	return api.post<ScrubStatus>(`/storage/pools/${poolName}/scrub`, {});
 }
 
 export async function getScrubStatus(poolName: string): Promise<ScrubStatus> {
-  return api.get<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
+	return api.get<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
 }
 
 export async function cancelScrub(poolName: string): Promise<ScrubStatus> {
-  return api.delete<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
+	return api.delete<ScrubStatus>(`/storage/pools/${poolName}/scrub`);
 }
 
 function balancePath(poolName: string): string {
-  return `/storage/pools/${encodeURIComponent(poolName)}/balance`;
+	return `/storage/pools/${encodeURIComponent(poolName)}/balance`;
 }
 
 /**
@@ -428,81 +426,81 @@ function balancePath(poolName: string): string {
  * a balance of it runs or is paused.
  */
 export async function startBalance(poolName: string, what: BalanceStart): Promise<BalanceStatus> {
-  return api.post<BalanceStatus>(balancePath(poolName), what);
+	return api.post<BalanceStatus>(balancePath(poolName), what);
 }
 
 export async function getBalanceStatus(poolName: string): Promise<BalanceStatus> {
-  return api.get<BalanceStatus>(balancePath(poolName));
+	return api.get<BalanceStatus>(balancePath(poolName));
 }
 
 export async function pauseBalance(poolName: string): Promise<BalanceStatus> {
-  return api.post<BalanceStatus>(`${balancePath(poolName)}/pause`, {});
+	return api.post<BalanceStatus>(`${balancePath(poolName)}/pause`, {});
 }
 
 export async function resumeBalance(poolName: string): Promise<BalanceStatus> {
-  return api.post<BalanceStatus>(`${balancePath(poolName)}/resume`, {});
+	return api.post<BalanceStatus>(`${balancePath(poolName)}/resume`, {});
 }
 
 export async function cancelBalance(poolName: string): Promise<BalanceStatus> {
-  return api.delete<BalanceStatus>(balancePath(poolName));
+	return api.delete<BalanceStatus>(balancePath(poolName));
 }
 
 /** A disk of a mounted pool (supervisor/src/storage/devices.py, ADR-0411). */
 export interface PoolMember {
-  devid: number;
-  path: string;
-  /** The bytes btrfs may use on it: 0 while the kernel removes it. */
-  size: number;
-  /** The bytes of the chunks allocated on it. */
-  used: number;
-  model: string | null;
-  serial: string | null;
-  /** Why it cannot leave the pool (the only disk, the profile, the space), in English; null when it can. */
-  problem: string | null;
+	devid: number;
+	path: string;
+	/** The bytes btrfs may use on it: 0 while the kernel removes it. */
+	size: number;
+	/** The bytes of the chunks allocated on it. */
+	used: number;
+	model: string | null;
+	serial: string | null;
+	/** Why it cannot leave the pool (the only disk, the profile, the space), in English; null when it can. */
+	problem: string | null;
 }
 
 /** A whole disk that can join a pool: neither the system disk nor in use, and without btrfs. */
 export interface DiskCandidate {
-  name: string;
-  path: string;
-  model: string | null;
-  serial: string | null;
-  wwn: string | null;
-  size: number;
-  /** What an add erases (with force): a partition table, a filesystem, or unknown contents. */
-  has_data: boolean;
-  data_description: string | null;
+	name: string;
+	path: string;
+	model: string | null;
+	serial: string | null;
+	wwn: string | null;
+	size: number;
+	/** What an add erases (with force): a partition table, a filesystem, or unknown contents. */
+	has_data: boolean;
+	data_description: string | null;
 }
 
 /** A pool's disk removal: the one that runs, or how the last one ended (ADR-0411). */
 export interface DiskRemovalStatus {
-  pool: string;
-  status: 'running' | 'idle';
-  devid: number | null;
-  device: string | null;
-  /** Of a removal that runs: the bytes still on the disk, and those at its start when known. */
-  left: number | null;
-  total: number | null;
-  result: 'finished' | 'failed' | null;
-  /** btrfs's error of a failed one, in English. */
-  error: string | null;
+	pool: string;
+	status: 'running' | 'idle';
+	devid: number | null;
+	device: string | null;
+	/** Of a removal that runs: the bytes still on the disk, and those at its start when known. */
+	left: number | null;
+	total: number | null;
+	result: 'finished' | 'failed' | null;
+	/** btrfs's error of a failed one, in English. */
+	error: string | null;
 }
 
 /** GET /storage/pools/{name}/devices: the disks of a mounted pool and those that can join it. */
 export interface PoolDevices {
-  pool: string;
-  profiles: string[];
-  members: PoolMember[];
-  candidates: DiskCandidate[];
-  removal: DiskRemovalStatus;
+	pool: string;
+	profiles: string[];
+	members: PoolMember[];
+	candidates: DiskCandidate[];
+	removal: DiskRemovalStatus;
 }
 
 function poolPath(poolName: string, part: string): string {
-  return `/storage/pools/${encodeURIComponent(poolName)}/${part}`;
+	return `/storage/pools/${encodeURIComponent(poolName)}/${part}`;
 }
 
 export async function getPoolDevices(poolName: string): Promise<PoolDevices> {
-  return api.get<PoolDevices>(poolPath(poolName, 'devices'));
+	return api.get<PoolDevices>(poolPath(poolName, 'devices'));
 }
 
 /**
@@ -512,22 +510,22 @@ export async function getPoolDevices(poolName: string): Promise<PoolDevices> {
  * removal of the pool.
  */
 export async function addPoolDisk(
-  poolName: string,
-  disk: DiskCandidate,
-  confirm: string,
-  force: boolean
+	poolName: string,
+	disk: DiskCandidate,
+	confirm: string,
+	force: boolean
 ): Promise<Pool> {
-  return api.post<Pool>(poolPath(poolName, 'devices'), {
-    device: disk.path,
-    confirm_device: confirm,
-    identity: { path: disk.path, serial: disk.serial, wwn: disk.wwn, size: disk.size },
-    force,
-    contents: disk.data_description
-  });
+	return api.post<Pool>(poolPath(poolName, 'devices'), {
+		device: disk.path,
+		confirm_device: confirm,
+		identity: { path: disk.path, serial: disk.serial, wwn: disk.wwn, size: disk.size },
+		force,
+		contents: disk.data_description
+	});
 }
 
 export async function getDiskRemoval(poolName: string): Promise<DiskRemovalStatus> {
-  return api.get<DiskRemovalStatus>(poolPath(poolName, 'removal'));
+	return api.get<DiskRemovalStatus>(poolPath(poolName, 'removal'));
 }
 
 /**
@@ -535,13 +533,13 @@ export async function getDiskRemoval(poolName: string): Promise<DiskRemovalStatu
  * to the other disks first. HTTP 409 when the profile or the space cannot survive it.
  */
 export async function removePoolDisk(
-  poolName: string,
-  member: PoolMember,
-  confirm: string
+	poolName: string,
+	member: PoolMember,
+	confirm: string
 ): Promise<DiskRemovalStatus> {
-  return api.post<DiskRemovalStatus>(poolPath(poolName, 'removal'), {
-    devid: member.devid,
-    device: member.path,
-    confirm_device: confirm
-  });
+	return api.post<DiskRemovalStatus>(poolPath(poolName, 'removal'), {
+		devid: member.devid,
+		device: member.path,
+		confirm_device: confirm
+	});
 }

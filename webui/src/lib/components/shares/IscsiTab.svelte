@@ -189,7 +189,13 @@
 {/if}
 
 {#if editing}
-	<IscsiEditDialog bind:this={editDialog} target={editing} {saving} onclose={() => (editing = null)} onsave={saveEdit} />
+	<IscsiEditDialog
+		bind:this={editDialog}
+		target={editing}
+		{saving}
+		onclose={() => (editing = null)}
+		onsave={saveEdit}
+	/>
 {/if}
 
 {#if shown}
@@ -197,5 +203,11 @@
 {/if}
 
 {#if deleting}
-	<IscsiDeleteDialog bind:this={deleteDialog} target={deleting} {saving} onclose={() => (deleting = null)} onremove={remove} />
+	<IscsiDeleteDialog
+		bind:this={deleteDialog}
+		target={deleting}
+		{saving}
+		onclose={() => (deleting = null)}
+		onremove={remove}
+	/>
 {/if}

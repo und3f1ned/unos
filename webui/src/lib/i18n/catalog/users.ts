@@ -26,7 +26,6 @@ export const en = {
 	'users.endSessionsShort': 'End all sessions',
 	'users.deleteShort': 'Delete',
 
-
 	'users.username.hint': '1–32 lowercase letters, digits, _ or -, starting with a letter',
 	'users.username.invalid': 'Use 1–32 lowercase letters, digits, _ or -, starting with a letter',
 	'users.username.required': 'Enter a username',
@@ -127,10 +126,8 @@ export const ru: Translation<typeof en> = {
 	'users.endSessionsShort': 'Завершить все сеансы',
 	'users.deleteShort': 'Удалить',
 
-
 	'users.username.hint': '1–32 символа: строчные латинские буквы, цифры, _ или -; первый символ — буква',
-	'users.username.invalid':
-		'Используйте 1–32 символа: строчные латинские буквы, цифры, _ или -; первый символ — буква',
+	'users.username.invalid': 'Используйте 1–32 символа: строчные латинские буквы, цифры, _ или -; первый символ — буква',
 	'users.username.required': 'Введите имя пользователя',
 	'users.password.short': {
 		one: 'Используйте не менее {n} символа',
@@ -140,7 +137,11 @@ export const ru: Translation<typeof en> = {
 	'users.password.mismatch': 'Пароли не совпадают',
 	'users.password.required': 'Введите пароль',
 	'users.password.confirmRequired': 'Введите пароль ещё раз',
-	'users.password.rule': { one: 'Не короче {n} символа', few: 'Не короче {n} символов', many: 'Не короче {n} символов' },
+	'users.password.rule': {
+		one: 'Не короче {n} символа',
+		few: 'Не короче {n} символов',
+		many: 'Не короче {n} символов'
+	},
 	'users.smbPasswordNeeded':
 		'Пользователь включает SMB сам на странице «Учётная запись» своим паролем — или задайте ему новый пароль здесь',
 

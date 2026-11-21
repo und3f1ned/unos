@@ -33,11 +33,7 @@
 			{$t('storage.removal.running', { device: status.device ?? '' })}
 		</span>
 		{#if status.total}
-			<ProgressBar
-				value={removalProgress(status)}
-				variant="info"
-				label={$t('storage.removal.progress')}
-			/>
+			<ProgressBar value={removalProgress(status)} variant="info" label={$t('storage.removal.progress')} />
 			<div class="flex flex-wrap justify-between gap-x-2 text-xs text-secondary">
 				<span
 					>{$t('storage.removal.left', {
@@ -54,9 +50,7 @@
 		{/if}
 	</div>
 {:else if part === 'result' && mounted && !error && status?.status !== 'running' && status?.result === 'finished'}
-	<div
-		class="pt-3 border-t border-border flex items-center gap-2 text-sm text-success break-all"
-	>
+	<div class="pt-3 border-t border-border flex items-center gap-2 text-sm text-success break-all">
 		<CheckCircle class="w-4 h-4 shrink-0" />
 		{$t('storage.removal.finished', { device: status.device ?? '' })}
 	</div>

@@ -190,7 +190,7 @@
 								<span class="flex flex-wrap items-center gap-2">
 									<span class="break-all">{user.username}</span>
 									{#if user.smb && user.smb.state !== 'active'}
-										<SmbStateBadge state={user.smb.state} hint={usable ? '' : user.smb.reason ?? ''} />
+										<SmbStateBadge state={user.smb.state} hint={usable ? '' : (user.smb.reason ?? '')} />
 									{/if}
 								</span>
 							</Checkbox>

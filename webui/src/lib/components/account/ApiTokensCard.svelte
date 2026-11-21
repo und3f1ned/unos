@@ -39,7 +39,6 @@
 	let created = $state<CreatedApiToken | null>(null);
 	let copyFailed = $state(false);
 
-
 	onMount(() => {
 		void load();
 	});

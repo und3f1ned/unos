@@ -85,7 +85,11 @@
 			<div class="flex min-w-0 gap-1">
 				<dt class="text-content-muted">{$t('audit.field.browser')}</dt>
 				<dd class="break-all text-content-secondary" title={agent ? entry.user_agent : undefined}>
-					{agent ? (agent.os ? $t('audit.agent', { browser: agent.browser, os: agent.os }) : agent.browser) : entry.user_agent}
+					{agent
+						? agent.os
+							? $t('audit.agent', { browser: agent.browser, os: agent.os })
+							: agent.browser
+						: entry.user_agent}
 				</dd>
 			</div>
 		{/if}

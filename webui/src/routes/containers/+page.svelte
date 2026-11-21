@@ -18,12 +18,7 @@
 	import { containerAction } from '$lib/components/containers/actions';
 	import { BULK_DONE, BulkRun, Selection, type BulkAction } from '$lib/components/containers/bulk.svelte';
 	import { ContainerForm } from '$lib/components/containers/containerForm.svelte';
-	import {
-		countByGroup,
-		groupOf,
-		type QuickAction,
-		type StateFilter
-	} from '$lib/components/containers/labels';
+	import { countByGroup, groupOf, type QuickAction, type StateFilter } from '$lib/components/containers/labels';
 	import { t } from '$lib/i18n';
 	import { ApiError } from '$lib/api/client';
 
@@ -229,9 +224,7 @@
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			{#if activeTab === 'containers' && !loadError}
-				<Button variant="primary" icon={Plus} onclick={openCreateModal}
-					>{$t('containers.create.button')}</Button
-				>
+				<Button variant="primary" icon={Plus} onclick={openCreateModal}>{$t('containers.create.button')}</Button>
 			{/if}
 		</div>
 	</div>
@@ -320,12 +313,7 @@
 		</LoadState>
 	</div>
 
-	<div
-		role="tabpanel"
-		id="docker-panel-images"
-		aria-labelledby="docker-tab-images"
-		hidden={activeTab !== 'images'}
-	>
+	<div role="tabpanel" id="docker-panel-images" aria-labelledby="docker-tab-images" hidden={activeTab !== 'images'}>
 		{#if imagesShown}
 			<ImageList bind:this={imageList} />
 		{/if}
@@ -343,8 +331,4 @@
 />
 
 <!-- A container's details (a Sheet) -->
-<ContainerDetailDrawer
-	bind:open={showDrawer}
-	container={selectedContainer}
-	onclose={closeDrawer}
-/>
+<ContainerDetailDrawer bind:open={showDrawer} container={selectedContainer} onclose={closeDrawer} />

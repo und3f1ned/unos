@@ -6,20 +6,20 @@ import { writable } from 'svelte/store';
  * in the language of the page; title and detail are the server's English alert.
  */
 export interface Problem {
-  /** "<kind>:<subject or task id>": one problem of a kind per pool, disk or task. */
-  key: string;
-  severity: 'warning' | 'error';
-  /**
-   * pool_unmounted, pool_degraded, pool_read_only, pool_low_space, disk_failed, disk_test_failed,
-   * task_failed, task_missed, volume_quota_80, volume_quota_90, volume_quota_95
-   */
-  kind: string;
-  /** The pool's name, the disk's path, the task's name or <pool>/<volume>. */
-  subject: string;
-  title: string;
-  detail: string;
-  /** When it was found, ISO 8601 with the UTC offset. */
-  since: string;
+	/** "<kind>:<subject or task id>": one problem of a kind per pool, disk or task. */
+	key: string;
+	severity: 'warning' | 'error';
+	/**
+	 * pool_unmounted, pool_degraded, pool_read_only, pool_low_space, disk_failed, disk_test_failed,
+	 * task_failed, task_missed, volume_quota_80, volume_quota_90, volume_quota_95
+	 */
+	kind: string;
+	/** The pool's name, the disk's path, the task's name or <pool>/<volume>. */
+	subject: string;
+	title: string;
+	detail: string;
+	/** When it was found, ISO 8601 with the UTC offset. */
+	since: string;
 }
 
 /**

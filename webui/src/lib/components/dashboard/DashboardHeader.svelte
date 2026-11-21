@@ -114,7 +114,7 @@
 			variant="secondary"
 			size="icon-sm"
 			icon={RefreshCw}
-			loading={loading}
+			{loading}
 			disabled={saving}
 			onclick={onrefresh}
 			title={$t('common.refresh')}

@@ -49,11 +49,15 @@
 	// A port loses its own addresses: only the one that carries the connection, whose settings the
 	// bond or bridge takes over, may have any (the server refuses the others).
 	function free(iface: HostInterface): boolean {
-		return !iface.wireless && !iface.master && !carriesVlans(iface) && (iface.protected || iface.addresses.length === 0);
+		return (
+			!iface.wireless && !iface.master && !carriesVlans(iface) && (iface.protected || iface.addresses.length === 0)
+		);
 	}
 	let bondPorts = $derived(hosts.filter((iface) => iface.kind === 'physical' && free(iface)));
 	let bridgePorts = $derived(hosts.filter((iface) => ['physical', 'bond', 'vlan'].includes(iface.kind) && free(iface)));
-	let vlanParents = $derived(hosts.filter((iface) => ['physical', 'bond'].includes(iface.kind) && !iface.wireless && !iface.master));
+	let vlanParents = $derived(
+		hosts.filter((iface) => ['physical', 'bond'].includes(iface.kind) && !iface.wireless && !iface.master)
+	);
 	let candidates = $derived(form.creating === 'bond' ? bondPorts : bridgePorts);
 	let parentOptions = $derived(vlanParents.map((iface) => ({ value: iface.name, label: iface.name })));
 	// The interfaces of the change in the dialog that carry the connection to UNOS or the default route.
@@ -98,9 +102,20 @@
 					bind:value={form.name}
 				/>
 			{:else}
-				<Input label={$t('virtual.name')} hint={$t('virtual.nameHint')} maxlength={15} required bind:value={form.name} />
+				<Input
+					label={$t('virtual.name')}
+					hint={$t('virtual.nameHint')}
+					maxlength={15}
+					required
+					bind:value={form.name}
+				/>
 				{#if form.creating === 'bond'}
-					<Select label={$t('virtual.mode')} hint={$t('virtual.modeHint')} options={modeOptions} bind:value={form.mode} />
+					<Select
+						label={$t('virtual.mode')}
+						hint={$t('virtual.modeHint')}
+						options={modeOptions}
+						bind:value={form.mode}
+					/>
 				{/if}
 				<FieldGroup
 					legend={$t('virtual.ports')}
@@ -111,10 +126,7 @@
 						<p class="text-sm text-content-muted col-span-full">{$t('virtual.noCandidates')}</p>
 					{:else}
 						{#each candidates as iface (iface.name)}
-							<Checkbox
-								checked={form.ports.includes(iface.name)}
-								onchange={(on) => form.togglePort(iface.name, on)}
-							>
+							<Checkbox checked={form.ports.includes(iface.name)} onchange={(on) => form.togglePort(iface.name, on)}>
 								<span class="break-all">{iface.name}</span>
 							</Checkbox>
 						{/each}

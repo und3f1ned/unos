@@ -26,13 +26,13 @@ export const en = {
 		'UNOS answered after the time to keep the change had run out: {name} comes back on by itself.',
 	'network.pending.lost': {
 		one: 'The connection to UNOS was lost. If it went through {name}, {name} comes back on by itself within {n} second: reload the page then.',
-		other: 'The connection to UNOS was lost. If it went through {name}, {name} comes back on by itself within {n} seconds: reload the page then.'
+		other:
+			'The connection to UNOS was lost. If it went through {name}, {name} comes back on by itself within {n} seconds: reload the page then.'
 	},
 	'network.pending.keepLost':
 		'The connection to UNOS was lost before it answered: unless the change was kept, {name} comes back on by itself.',
 	// What the page finds when the time to keep a disable has run out (ADR-0246).
-	'network.revert.unchecked':
-		'Whether {name} came back on by itself could not be checked: refresh to check again.',
+	'network.revert.unchecked': 'Whether {name} came back on by itself could not be checked: refresh to check again.',
 	'network.revert.gone': '{name} did not come back on by itself: the host no longer lists it.',
 	'network.revert.back': '{name} came back on by itself.',
 	'network.revert.notYet': '{name} did not come back on by itself yet. Enable it, or refresh to check again.',
@@ -101,7 +101,8 @@ export const en = {
 	'network.disable.drop': 'Disabling {name} may drop your connection to UNOS, if you reach UNOS through it.',
 	'network.disable.revert': {
 		one: 'Unless you keep the change within {n} second, {name} comes back on by itself, with its addresses and routes.',
-		other: 'Unless you keep the change within {n} seconds, {name} comes back on by itself, with its addresses and routes.'
+		other:
+			'Unless you keep the change within {n} seconds, {name} comes back on by itself, with its addresses and routes.'
 	}
 };
 
@@ -121,8 +122,7 @@ export const ru: Translation<typeof en> = {
 	'network.pending.keep': 'Оставить {name} выключенным',
 	'network.pending.expired': 'Время на сохранение изменения истекло: {name} включается снова.',
 	'network.pending.kept': '{name} остаётся выключенным.',
-	'network.pending.late':
-		'UNOS ответил, когда время на сохранение изменения уже истекло: {name} сам включится снова.',
+	'network.pending.late': 'UNOS ответил, когда время на сохранение изменения уже истекло: {name} сам включится снова.',
 	'network.pending.lost': {
 		one: 'Связь с UNOS потеряна. Если она шла через {name}, {name} сам включится снова в течение {n} секунды: тогда перезагрузите страницу.',
 		few: 'Связь с UNOS потеряна. Если она шла через {name}, {name} сам включится снова в течение {n} секунд: тогда перезагрузите страницу.',
@@ -198,7 +198,8 @@ export const ru: Translation<typeof en> = {
 
 	'network.disable.title': 'Выключить {name}?',
 	'network.disable.confirm': 'Выключить {name}',
-	'network.disable.drop': 'Выключение {name} может прервать ваше подключение к UNOS, если вы подключаетесь к UNOS через него.',
+	'network.disable.drop':
+		'Выключение {name} может прервать ваше подключение к UNOS, если вы подключаетесь к UNOS через него.',
 	'network.disable.revert': {
 		one: 'Если вы не сохраните изменение в течение {n} секунды, {name} сам включится снова, со своими адресами и маршрутами.',
 		few: 'Если вы не сохраните изменение в течение {n} секунд, {name} сам включится снова, со своими адресами и маршрутами.',

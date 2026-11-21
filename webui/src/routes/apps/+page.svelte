@@ -71,7 +71,9 @@
 		const jobs = $appInstalls;
 		untrack(() => {
 			if (ends.note(jobs)) void data.loadInstalled();
-			cancelling = new Set([...cancelling].filter((id) => jobs.some((job) => job.id === id && job.state === 'running')));
+			cancelling = new Set(
+				[...cancelling].filter((id) => jobs.some((job) => job.id === id && job.state === 'running'))
+			);
 		});
 	});
 
@@ -218,7 +220,14 @@
 				{/if}
 			</p>
 		</div>
-		<Button variant="secondary" size="icon" icon={RefreshCw} onclick={refresh} loading={data.loading} title={$t('common.refresh')}>
+		<Button
+			variant="secondary"
+			size="icon"
+			icon={RefreshCw}
+			onclick={refresh}
+			loading={data.loading}
+			title={$t('common.refresh')}
+		>
 			<span class="sr-only">{$t('common.refresh')}</span>
 		</Button>
 	</div>
@@ -226,7 +235,6 @@
 	{#if error}
 		<Alert variant="error">{error}</Alert>
 	{/if}
-
 
 	<!-- The installs that run in the background and the last of each app, with their ends (ADR-0384). -->
 	<AppInstallJobs jobs={$appInstalls} catalog={data.catalog} {cancelling} ondismiss={dismiss} oncancel={cancel} />
@@ -289,10 +297,20 @@
 				     installed apps could not be loaded. Drawn with the list, inside its LoadState, so
 				     that it pushes nothing that was shown (ADR-0430). -->
 				{#if drawn && data.installedError}
-					<Alert variant="error" title={$t(data.installedDockerDown ? 'apps.installed.loadErrorTitle' : 'apps.installed.loadFailedTitle')}>
+					<Alert
+						variant="error"
+						title={$t(data.installedDockerDown ? 'apps.installed.loadErrorTitle' : 'apps.installed.loadFailedTitle')}
+					>
 						<p>{$t(data.installedDockerDown ? 'apps.installed.loadError' : 'apps.installed.loadFailed')}</p>
 						<p class="mt-1 mono-xs break-words text-content-secondary">{data.installedError}</p>
-						<Button variant="secondary" size="sm" icon={RotateCw} class="mt-3" loading={data.installedState === 'loading'} onclick={() => data.loadInstalled()}>
+						<Button
+							variant="secondary"
+							size="sm"
+							icon={RotateCw}
+							class="mt-3"
+							loading={data.installedState === 'loading'}
+							onclick={() => data.loadInstalled()}
+						>
 							{$t('common.retry')}
 						</Button>
 					</Alert>

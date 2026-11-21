@@ -27,8 +27,16 @@
 		class?: string;
 	};
 
-	let { count, label, summary = '', hint = '', onclear = null, leading, children, class: className = '' }: Props =
-		$props();
+	let {
+		count,
+		label,
+		summary = '',
+		hint = '',
+		onclear = null,
+		leading,
+		children,
+		class: className = ''
+	}: Props = $props();
 </script>
 
 <div class="bulk-bar {className}" role="toolbar" aria-label={label} data-active={count > 0 ? '' : undefined}>
@@ -39,7 +47,10 @@
 		     the bar is as tall either way, also where the actions wrap: actions that came on the first
 		     click of a double-click would otherwise move the list under the pointer. -->
 		<div class="grid flex-1 min-w-0">
-			<div class="col-start-1 row-start-1 flex flex-wrap items-center gap-2 {count > 0 ? '' : 'invisible'}" inert={count === 0}>
+			<div
+				class="col-start-1 row-start-1 flex flex-wrap items-center gap-2 {count > 0 ? '' : 'invisible'}"
+				inert={count === 0}
+			>
 				{@render children?.()}
 				{#if onclear}
 					<Button variant="ghost" size="sm" icon={X} onclick={onclear}>{$t('ui.bulk.clear')}</Button>

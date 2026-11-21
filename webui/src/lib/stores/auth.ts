@@ -1,11 +1,11 @@
 import { derived, writable } from 'svelte/store';
 import { getMe, logout, type User } from '$lib/api/auth';
 import {
-  announceSignedOut,
-  currentSession,
-  currentSessionKey,
-  onSessionChangedElsewhere,
-  sessionStopped
+	announceSignedOut,
+	currentSession,
+	currentSessionKey,
+	onSessionChangedElsewhere,
+	sessionStopped
 } from '$lib/api/client';
 
 export const user = writable<User | null>(null);
@@ -22,21 +22,19 @@ export const isAdmin = derived(user, ($user) => $user?.is_admin === true);
  * tabs' APIs administrator-only: a regular account's own settings are on /account (ADR-0431).
  */
 const ADMIN_ONLY_ROUTES = [
-  '/storage',
-  '/snapshots',
-  '/shares',
-  '/files',
-  '/containers',
-  '/apps',
-  '/users',
-  '/audit',
-  '/system'
+	'/storage',
+	'/snapshots',
+	'/shares',
+	'/files',
+	'/containers',
+	'/apps',
+	'/users',
+	'/audit',
+	'/system'
 ];
 
 export function isAdminOnlyRoute(pathname: string): boolean {
-  return ADMIN_ONLY_ROUTES.some(
-    (route) => pathname === route || pathname.startsWith(route + '/')
-  );
+	return ADMIN_ONLY_ROUTES.some((route) => pathname === route || pathname.startsWith(route + '/'));
 }
 
 /**
@@ -47,7 +45,7 @@ export const TWO_FACTOR_SETUP_PATH = '/two-factor-setup';
 
 /** The account can only set up two-factor authentication: the server refuses it everything else. */
 export function isSetupOnly(currentUser: User | null): boolean {
-  return currentUser?.two_factor_required?.setup_only === true;
+	return currentUser?.two_factor_required?.setup_only === true;
 }
 
 let pending: { session: number; request: Promise<User> } | null = null;
@@ -57,30 +55,30 @@ let pending: { session: number; request: Promise<User> } | null = null;
  * Concurrent callers share one request. Rejects with the ApiError on failure.
  */
 export function loadCurrentUser(): Promise<User> {
-  const session = currentSession();
-  if (pending && pending.session === session) return pending.request;
+	const session = currentSession();
+	if (pending && pending.session === session) return pending.request;
 
-  const request = getMe()
-    .then((me) => {
-      // A sign-out or another sign-in, here or in another tab, may have happened while this was in
-      // flight.
-      if (currentSession() === session) {
-        user.set(me);
-        isLoggedIn.set(true);
-      }
-      return me;
-    })
-    .finally(() => {
-      if (pending?.request === request) pending = null;
-    });
-  pending = { session, request };
-  return request;
+	const request = getMe()
+		.then((me) => {
+			// A sign-out or another sign-in, here or in another tab, may have happened while this was in
+			// flight.
+			if (currentSession() === session) {
+				user.set(me);
+				isLoggedIn.set(true);
+			}
+			return me;
+		})
+		.finally(() => {
+			if (pending?.request === request) pending = null;
+		});
+	pending = { session, request };
+	return request;
 }
 
 export function clearCurrentUser(): void {
-  pending = null;
-  user.set(null);
-  isLoggedIn.set(false);
+	pending = null;
+	user.set(null);
+	isLoggedIn.set(false);
 }
 
 /**
@@ -96,20 +94,20 @@ let unconfirmedKey: string | null = null;
 
 /** A sign-in, here or in another tab: an earlier sign-out that failed is no longer this tab's to retry. */
 export function forgetFailedSignOut(): void {
-  unconfirmedKey = null;
-  signOutFailed.set(false);
+	unconfirmedKey = null;
+	signOutFailed.set(false);
 }
 
 if (typeof window !== 'undefined') onSessionChangedElsewhere(forgetFailedSignOut);
 
 async function endOnServer(key: string | null): Promise<void> {
-  const session = currentSession();
-  const ended = await logout(key);
-  // A sign-in here or in another tab since then is a session of its own.
-  if (currentSession() !== session) return;
-  unconfirmedKey = ended ? null : key;
-  if (ended) announceSignedOut();
-  signOutFailed.set(!ended);
+	const session = currentSession();
+	const ended = await logout(key);
+	// A sign-in here or in another tab since then is a session of its own.
+	if (currentSession() !== session) return;
+	unconfirmedKey = ended ? null : key;
+	if (ended) announceSignedOut();
+	signOutFailed.set(!ended);
 }
 
 /**
@@ -119,18 +117,18 @@ async function endOnServer(key: string | null): Promise<void> {
  * signOutFailed.
  */
 export async function signOut(): Promise<void> {
-  const key = currentSessionKey();
-  // This tab has no session from now on; the other tabs learn of it once the server ended it.
-  sessionStopped();
-  clearCurrentUser();
-  await endOnServer(key);
+	const key = currentSessionKey();
+	// This tab has no session from now on; the other tabs learn of it once the server ended it.
+	sessionStopped();
+	clearCurrentUser();
+	await endOnServer(key);
 }
 
 /** Sign Out Again: end the session of the sign-out that the server did not confirm. */
 export async function signOutAgain(): Promise<void> {
-  if (unconfirmedKey === null) {
-    signOutFailed.set(false);
-    return;
-  }
-  await endOnServer(unconfirmedKey);
+	if (unconfirmedKey === null) {
+		signOutFailed.set(false);
+		return;
+	}
+	await endOnServer(unconfirmedKey);
 }

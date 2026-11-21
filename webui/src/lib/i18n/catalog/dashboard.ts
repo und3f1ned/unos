@@ -54,7 +54,8 @@ export const en = {
 	// Arranging the widgets (ADR-0395).
 	'dashboard.layout.customize': 'Customize',
 	'dashboard.layout.done': 'Done',
-	'dashboard.layout.hint': 'Drag a widget by its handle, or use the arrows, to move it. Hide the widgets you do not need: they stay here to show again.',
+	'dashboard.layout.hint':
+		'Drag a widget by its handle, or use the arrows, to move it. Hide the widgets you do not need: they stay here to show again.',
 	'dashboard.layout.drag': 'Drag to move',
 	'dashboard.layout.moveUp': 'Move {name} up',
 	'dashboard.layout.moveDown': 'Move {name} down',
@@ -165,7 +166,8 @@ export const ru: Translation<typeof en> = {
 	// Раскладка виджетов (ADR-0395).
 	'dashboard.layout.customize': 'Настроить',
 	'dashboard.layout.done': 'Готово',
-	'dashboard.layout.hint': 'Перетащите виджет за ручку или переместите стрелками. Ненужные виджеты можно скрыть: они останутся здесь, чтобы показать их снова.',
+	'dashboard.layout.hint':
+		'Перетащите виджет за ручку или переместите стрелками. Ненужные виджеты можно скрыть: они останутся здесь, чтобы показать их снова.',
 	'dashboard.layout.drag': 'Перетащить',
 	'dashboard.layout.moveUp': 'Переместить «{name}» выше',
 	'dashboard.layout.moveDown': 'Переместить «{name}» ниже',
@@ -193,7 +195,11 @@ export const ru: Translation<typeof en> = {
 		few: '{n} требуют внимания',
 		many: '{n} требуют внимания'
 	},
-	'dashboard.storage.missing': { one: 'Не хватает {n} диска', few: 'Не хватает {n} дисков', many: 'Не хватает {n} дисков' },
+	'dashboard.storage.missing': {
+		one: 'Не хватает {n} диска',
+		few: 'Не хватает {n} дисков',
+		many: 'Не хватает {n} дисков'
+	},
 	'dashboard.storage.errors': { one: '{n} ошибка дисков', few: '{n} ошибки дисков', many: '{n} ошибок дисков' },
 	'dashboard.storage.forcedReadOnly': 'Только для чтения после ошибки',
 	'dashboard.storage.readOnly': 'Только для чтения',

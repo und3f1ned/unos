@@ -62,7 +62,10 @@ export const en = {
 
 	// The hidden files that uploads left when UNOS restarted (ADR-0354): the notice and its dialog.
 	'files.leftovers.title': 'Leftovers of interrupted uploads',
-	'files.leftovers.found': { one: '{n} hidden file that an upload left when UNOS restarted in the middle of it takes {size}.', other: '{n} hidden files that uploads left when UNOS restarted in the middle of them take {size}.' },
+	'files.leftovers.found': {
+		one: '{n} hidden file that an upload left when UNOS restarted in the middle of it takes {size}.',
+		other: '{n} hidden files that uploads left when UNOS restarted in the middle of them take {size}.'
+	},
 	'files.leftovers.hint':
 		'They hold the part of a file that had arrived, and nothing uses them: upload those files again.',
 	'files.leftovers.remove': 'Remove…',
@@ -88,7 +91,10 @@ export const en = {
 	'files.trash.title': 'Trash',
 	'files.trash.empty': 'Empty trash',
 	'files.trash.emptyAction': 'Empty trash…',
-	'files.trash.kept': { one: 'Deleted items are kept here {n} day, then deleted for good.', other: 'Deleted items are kept here {n} days, then deleted for good.' },
+	'files.trash.kept': {
+		one: 'Deleted items are kept here {n} day, then deleted for good.',
+		other: 'Deleted items are kept here {n} days, then deleted for good.'
+	},
 	'files.trash.keptUnknown': 'Deleted items are kept here for some days, then deleted for good.',
 	'files.trash.selectHint': 'Select items to restore them or delete them for good.',
 	'files.trash.space': 'Their space in the pools is freed at once.',
@@ -134,10 +140,8 @@ export const ru: Translation<typeof en> = {
 	'files.move': 'Переместить',
 	'files.rename': 'Переименовать',
 	'files.delete': 'Удалить',
-	'files.pending.copy':
-		'Выбрано для копирования: {n}. Откройте папку назначения и нажмите «Копировать сюда».',
-	'files.pending.move':
-		'Выбрано для перемещения: {n}. Откройте папку назначения и нажмите «Переместить сюда».',
+	'files.pending.copy': 'Выбрано для копирования: {n}. Откройте папку назначения и нажмите «Копировать сюда».',
+	'files.pending.move': 'Выбрано для перемещения: {n}. Откройте папку назначения и нажмите «Переместить сюда».',
 	'files.copyHere': 'Копировать сюда',
 	'files.moveHere': 'Переместить сюда',
 	'files.folderName': 'Имя папки',
@@ -184,9 +188,12 @@ export const ru: Translation<typeof en> = {
 	'files.moveToTrash': 'Переместить в корзину',
 
 	'files.leftovers.title': 'Остатки прерванных загрузок',
-	'files.leftovers.found': { one: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файл, {size}.', few: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файла, {size}.', many: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файлов, {size}.' },
-	'files.leftovers.hint':
-		'В них часть файла, которая успела прийти, и они ничему не нужны: загрузите эти файлы снова.',
+	'files.leftovers.found': {
+		one: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файл, {size}.',
+		few: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файла, {size}.',
+		many: 'Скрытые файлы, которые оставили загрузки, прерванные перезапуском UNOS: {n} файлов, {size}.'
+	},
+	'files.leftovers.hint': 'В них часть файла, которая успела прийти, и они ничему не нужны: загрузите эти файлы снова.',
 	'files.leftovers.remove': 'Удалить…',
 	'files.leftovers.dialogTitle': {
 		one: 'Удалить {n} остаток загрузки',
@@ -211,7 +218,11 @@ export const ru: Translation<typeof en> = {
 	'files.trash.title': 'Корзина',
 	'files.trash.empty': 'Очистить корзину',
 	'files.trash.emptyAction': 'Очистить корзину…',
-	'files.trash.kept': { one: 'Удалённое хранится здесь {n} день, затем удаляется навсегда.', few: 'Удалённое хранится здесь {n} дня, затем удаляется навсегда.', many: 'Удалённое хранится здесь {n} дней, затем удаляется навсегда.' },
+	'files.trash.kept': {
+		one: 'Удалённое хранится здесь {n} день, затем удаляется навсегда.',
+		few: 'Удалённое хранится здесь {n} дня, затем удаляется навсегда.',
+		many: 'Удалённое хранится здесь {n} дней, затем удаляется навсегда.'
+	},
 	'files.trash.keptUnknown': 'Удалённое хранится здесь несколько дней, затем удаляется навсегда.',
 	'files.trash.selectHint': 'Выберите элементы, чтобы восстановить их или удалить навсегда.',
 	'files.trash.space': 'Их место в пулах освобождается сразу.',

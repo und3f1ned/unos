@@ -40,9 +40,7 @@
 			compact
 			icon={Database}
 			title={$t('storage.pools.none')}
-			description={freeDisks === null
-				? $t('storage.pools.noneHint')
-				: $t('storage.pools.freeDisks', { n: freeDisks })}
+			description={freeDisks === null ? $t('storage.pools.noneHint') : $t('storage.pools.freeDisks', { n: freeDisks })}
 		/>
 	{:else}
 		<div class="space-y-4">

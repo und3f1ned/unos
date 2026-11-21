@@ -78,10 +78,7 @@
 				<Button
 					variant="secondary"
 					size="sm"
-					disabled={busy ||
-						status.status === 'cancelling' ||
-						status.status === 'pausing' ||
-						(paused && pool.read_only)}
+					disabled={busy || status.status === 'cancelling' || status.status === 'pausing' || (paused && pool.read_only)}
 					onclick={() => onaction?.('cancel')}
 				>
 					{$t('storage.pool.cancelBalance')}

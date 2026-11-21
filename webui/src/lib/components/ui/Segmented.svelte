@@ -24,7 +24,9 @@
 	{#each options as option (option.value)}
 		<Button
 			variant="plain"
-			class="tab-pill {value === option.value ? 'tab-pill-active' : ''} {option.icon || option.count !== undefined ? 'inline-flex items-center gap-1.5' : ''} {itemClass}"
+			class="tab-pill {value === option.value ? 'tab-pill-active' : ''} {option.icon || option.count !== undefined
+				? 'inline-flex items-center gap-1.5'
+				: ''} {itemClass}"
 			pressed={value === option.value}
 			aria-label={option.iconOnly ? option.label : undefined}
 			title={option.iconOnly ? option.label : undefined}

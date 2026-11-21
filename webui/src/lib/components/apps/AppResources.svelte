@@ -81,9 +81,7 @@
 				? $t('apps.resources.cpuUse', { used: formatCpus(used), limit: formatCpus(limit) })
 				: $t('apps.resources.cpuUseNoLimit', { used: formatCpus(used) });
 		}
-		return limit !== null
-			? $t('apps.resources.cpuLimit', { limit: formatCpus(limit) })
-			: $t('apps.resources.noLimit');
+		return limit !== null ? $t('apps.resources.cpuLimit', { limit: formatCpus(limit) }) : $t('apps.resources.noLimit');
 	}
 </script>
 

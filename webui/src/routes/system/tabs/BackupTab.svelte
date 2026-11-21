@@ -1,236 +1,241 @@
 <script lang="ts">
-  import { isTechnical, messageOf } from "$lib/errors";
-  import { onMount, tick } from "svelte";
-  import { ApiError } from "$lib/api/client";
-  import { Alert, Button, confirm, toast } from "$lib/components/ui";
-  import { t } from "$lib/i18n";
-  import { listBackups, createBackup, deleteBackup, downloadBackup, uploadBackup, restoreBackup, type BackupInfo } from "$lib/api/backup";
-  import BackupList from "$lib/components/system/backup/BackupList.svelte";
-  import RestoreBackupDialog, { type RestoreOutcome } from "$lib/components/system/backup/RestoreBackupDialog.svelte";
-  import { Plus, Upload } from "lucide-svelte";
-  import OffsiteCopy from "./OffsiteCopy.svelte";
+	import { isTechnical, messageOf } from '$lib/errors';
+	import { onMount, tick } from 'svelte';
+	import { ApiError } from '$lib/api/client';
+	import { Alert, Button, confirm, toast } from '$lib/components/ui';
+	import { t } from '$lib/i18n';
+	import {
+		listBackups,
+		createBackup,
+		deleteBackup,
+		downloadBackup,
+		uploadBackup,
+		restoreBackup,
+		type BackupInfo
+	} from '$lib/api/backup';
+	import BackupList from '$lib/components/system/backup/BackupList.svelte';
+	import RestoreBackupDialog, { type RestoreOutcome } from '$lib/components/system/backup/RestoreBackupDialog.svelte';
+	import { Plus, Upload } from 'lucide-svelte';
+	import OffsiteCopy from './OffsiteCopy.svelte';
 
-  let backups = $state<BackupInfo[]>([]);
-  // The first load has answered: a reload keeps the list (ADR-0430).
-  let loaded = $state(false);
-  let creating = $state(false);
-  let uploading = $state(false);
-  let restoring = $state<string | null>(null);
+	let backups = $state<BackupInfo[]>([]);
+	// The first load has answered: a reload keeps the list (ADR-0430).
+	let loaded = $state(false);
+	let creating = $state(false);
+	let uploading = $state(false);
+	let restoring = $state<string | null>(null);
 
-  // Restore confirmation modal: its fields are its own.
-  let showRestoreModal = $state(false);
-  let restoreTarget = $state<BackupInfo | null>(null);
-  let restoreResult = $state<RestoreOutcome | null>(null);
-  // The last failed action, shown above the list until it is dismissed.
-  let error = $state<{ title: string; message: string } | null>(null);
-  let errorBox = $state<HTMLDivElement>();
+	// Restore confirmation modal: its fields are its own.
+	let showRestoreModal = $state(false);
+	let restoreTarget = $state<BackupInfo | null>(null);
+	let restoreResult = $state<RestoreOutcome | null>(null);
+	// The last failed action, shown above the list until it is dismissed.
+	let error = $state<{ title: string; message: string } | null>(null);
+	let errorBox = $state<HTMLDivElement>();
 
-  // The units of a backup's size in the language of the page, from bytes to gigabytes (formatBytes),
-  // for the list and the off-device copy.
-  let sizeUnits = $derived([
-    $t("backup.size.bytes"),
-    $t("backup.size.kilobytes"),
-    $t("backup.size.megabytes"),
-    $t("backup.size.gigabytes"),
-    $t("backup.size.terabytes")
-  ]);
+	// The units of a backup's size in the language of the page, from bytes to gigabytes (formatBytes),
+	// for the list and the off-device copy.
+	let sizeUnits = $derived([
+		$t('backup.size.bytes'),
+		$t('backup.size.kilobytes'),
+		$t('backup.size.megabytes'),
+		$t('backup.size.gigabytes'),
+		$t('backup.size.terabytes')
+	]);
 
-  // A 401 has already ended the session and the sign-in page is on its way.
-  function sessionEnded(e: unknown): boolean {
-    return e instanceof ApiError && e.status === 401;
-  }
+	// A 401 has already ended the session and the sign-in page is on its way.
+	function sessionEnded(e: unknown): boolean {
+		return e instanceof ApiError && e.status === 401;
+	}
 
-  function errorMessage(e: unknown): string {
-    return messageOf(e);
-  }
+	function errorMessage(e: unknown): string {
+		return messageOf(e);
+	}
 
-  async function showError(title: string, e: unknown) {
-    if (sessionEnded(e)) return;
-    error = { title, message: errorMessage(e) };
-    // The message is above the list: after a click far down a long list it
-    // would be out of sight.
-    await tick();
-    errorBox?.scrollIntoView({ block: "nearest" });
-  }
+	async function showError(title: string, e: unknown) {
+		if (sessionEnded(e)) return;
+		error = { title, message: errorMessage(e) };
+		// The message is above the list: after a click far down a long list it
+		// would be out of sight.
+		await tick();
+		errorBox?.scrollIntoView({ block: 'nearest' });
+	}
 
-  // Upload input ref
-  let fileInput: HTMLInputElement | undefined;
+	// Upload input ref
+	let fileInput: HTMLInputElement | undefined;
 
-  onMount(() => loadBackups());
+	onMount(() => loadBackups());
 
-  async function loadBackups() {
-    try {
-      const result = await listBackups();
-      backups = result.backups;
-    } catch (e) {
-      showError($t("backup.loadFailed"), e);
-    }
-    loaded = true;
-  }
+	async function loadBackups() {
+		try {
+			const result = await listBackups();
+			backups = result.backups;
+		} catch (e) {
+			showError($t('backup.loadFailed'), e);
+		}
+		loaded = true;
+	}
 
-  async function handleCreate() {
-    creating = true;
-    error = null;
-    try {
-      await createBackup();
-      await loadBackups();
-    } catch (e) {
-      showError($t("backup.createFailed"), e);
-    }
-    creating = false;
-  }
+	async function handleCreate() {
+		creating = true;
+		error = null;
+		try {
+			await createBackup();
+			await loadBackups();
+		} catch (e) {
+			showError($t('backup.createFailed'), e);
+		}
+		creating = false;
+	}
 
-  async function handleDelete(filename: string) {
-    const yes = await confirm({
-      title: $t("backup.confirmDelete", { name: filename }),
-      message: $t("backup.deleteMessage"),
-      confirmLabel: $t("backup.deleteAction"),
-    });
-    if (!yes) return;
-    error = null;
-    try {
-      await deleteBackup(filename);
-      toast.success($t("backup.deleted", { name: filename }));
-      await loadBackups();
-    } catch (e) {
-      showError($t("backup.deleteFailed", { name: filename }), e);
-    }
-  }
+	async function handleDelete(filename: string) {
+		const yes = await confirm({
+			title: $t('backup.confirmDelete', { name: filename }),
+			message: $t('backup.deleteMessage'),
+			confirmLabel: $t('backup.deleteAction')
+		});
+		if (!yes) return;
+		error = null;
+		try {
+			await deleteBackup(filename);
+			toast.success($t('backup.deleted', { name: filename }));
+			await loadBackups();
+		} catch (e) {
+			showError($t('backup.deleteFailed', { name: filename }), e);
+		}
+	}
 
-  async function handleDownload(filename: string) {
-    error = null;
-    try {
-      await downloadBackup(filename);
-    } catch (e) {
-      showError($t("backup.downloadFailed", { name: filename }), e);
-    }
-  }
+	async function handleDownload(filename: string) {
+		error = null;
+		try {
+			await downloadBackup(filename);
+		} catch (e) {
+			showError($t('backup.downloadFailed', { name: filename }), e);
+		}
+	}
 
-  function handleUploadClick() {
-    fileInput?.click();
-  }
+	function handleUploadClick() {
+		fileInput?.click();
+	}
 
-  async function handleFileSelected(event: Event) {
-    const target = event.target as HTMLInputElement;
-    const file = target.files?.[0];
-    if (!file) return;
+	async function handleFileSelected(event: Event) {
+		const target = event.target as HTMLInputElement;
+		const file = target.files?.[0];
+		if (!file) return;
 
-    uploading = true;
-    error = null;
-    try {
-      await uploadBackup(file);
-      await loadBackups();
-    } catch (e) {
-      showError($t("backup.uploadFailed", { name: file.name }), e);
-    }
-    uploading = false;
-    target.value = "";
-  }
+		uploading = true;
+		error = null;
+		try {
+			await uploadBackup(file);
+			await loadBackups();
+		} catch (e) {
+			showError($t('backup.uploadFailed', { name: file.name }), e);
+		}
+		uploading = false;
+		target.value = '';
+	}
 
-  function openRestoreModal(backup: BackupInfo) {
-    restoreTarget = backup;
-    restoreResult = null;
-    showRestoreModal = true;
-  }
+	function openRestoreModal(backup: BackupInfo) {
+		restoreTarget = backup;
+		restoreResult = null;
+		showRestoreModal = true;
+	}
 
-  function closeRestoreModal() {
-    showRestoreModal = false;
-    restoreTarget = null;
-    restoreResult = null;
-  }
+	function closeRestoreModal() {
+		showRestoreModal = false;
+		restoreTarget = null;
+		restoreResult = null;
+	}
 
-  async function handleRestore(passphrase: string) {
-    if (!restoreTarget) return;
+	async function handleRestore(passphrase: string) {
+		if (!restoreTarget) return;
 
-    restoring = restoreTarget.filename;
-    try {
-      const result = await restoreBackup(
-        restoreTarget.filename,
-        restoreTarget.encrypted ? passphrase : undefined
-      );
-      restoreResult = {
-        success: true,
-        message: result.message,
-        restored: result.restored
-      };
-    } catch (e) {
-      // Restore failures are shown in the dialog.
-      if (!sessionEnded(e)) {
-        restoreResult = { success: false, message: errorMessage(e) || $t("backup.dialog.failedFallback") };
-      }
-    }
-    restoring = null;
-  }
+		restoring = restoreTarget.filename;
+		try {
+			const result = await restoreBackup(restoreTarget.filename, restoreTarget.encrypted ? passphrase : undefined);
+			restoreResult = {
+				success: true,
+				message: result.message,
+				restored: result.restored
+			};
+		} catch (e) {
+			// Restore failures are shown in the dialog.
+			if (!sessionEnded(e)) {
+				restoreResult = { success: false, message: errorMessage(e) || $t('backup.dialog.failedFallback') };
+			}
+		}
+		restoring = null;
+	}
 </script>
 
 {#snippet reason()}
-  <pre class="whitespace-pre-wrap break-words font-mono text-xs text-content-soft">{error?.message}</pre>
+	<pre class="whitespace-pre-wrap break-words font-mono text-xs text-content-soft">{error?.message}</pre>
 {/snippet}
 
 <div class="space-y-4">
-  <div class="flex flex-wrap items-start justify-between gap-3">
-    <div class="min-w-0">
-      <h2 class="text-xl font-semibold">{$t("system.tabs.backup")}</h2>
-      <p class="page-subtitle">
-        {$t("backup.subtitle")}
-        <a href="#scheduler" class="link whitespace-nowrap">{$t("backup.schedule")}</a>
-      </p>
-    </div>
-    <div class="flex flex-wrap gap-2">
-      <!-- Encrypted backups (.tar.gz.enc) are checked with their passphrase when restored. -->
-      <input
-        type="file"
-        accept=".tar.gz,.tar.gz.enc"
-        class="hidden"
-        bind:this={fileInput}
-        onchange={handleFileSelected}
-      />
-      <Button variant="secondary" icon={Upload} loading={uploading} onclick={handleUploadClick}>
-        {$t("backup.upload")}
-      </Button>
-      <Button variant="primary" icon={Plus} loading={creating} onclick={handleCreate}>
-        {$t("backup.create")}
-      </Button>
-    </div>
-  </div>
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div class="min-w-0">
+			<h2 class="text-xl font-semibold">{$t('system.tabs.backup')}</h2>
+			<p class="page-subtitle">
+				{$t('backup.subtitle')}
+				<a href="#scheduler" class="link whitespace-nowrap">{$t('backup.schedule')}</a>
+			</p>
+		</div>
+		<div class="flex flex-wrap gap-2">
+			<!-- Encrypted backups (.tar.gz.enc) are checked with their passphrase when restored. -->
+			<input
+				type="file"
+				accept=".tar.gz,.tar.gz.enc"
+				class="hidden"
+				bind:this={fileInput}
+				onchange={handleFileSelected}
+			/>
+			<Button variant="secondary" icon={Upload} loading={uploading} onclick={handleUploadClick}>
+				{$t('backup.upload')}
+			</Button>
+			<Button variant="primary" icon={Plus} loading={creating} onclick={handleCreate}>
+				{$t('backup.create')}
+			</Button>
+		</div>
+	</div>
 
-  {#if error}
-    {@const technical = isTechnical(error.message)}
-    <!-- role="alert": screen readers announce the message when it appears. -->
-    <div bind:this={errorBox} role="alert">
-      <!-- A technical reason ([Errno 28] ...) folds under its details behind a plain sentence (ADR-0432). -->
-      <Alert
-        variant="error"
-        title={error.title}
-        dismissible
-        ondismiss={() => (error = null)}
-        details={technical ? reason : undefined}
-      >
-        {technical ? $t("backup.technical") : error.message}
-      </Alert>
-    </div>
-  {/if}
+	{#if error}
+		{@const technical = isTechnical(error.message)}
+		<!-- role="alert": screen readers announce the message when it appears. -->
+		<div bind:this={errorBox} role="alert">
+			<!-- A technical reason ([Errno 28] ...) folds under its details behind a plain sentence (ADR-0432). -->
+			<Alert
+				variant="error"
+				title={error.title}
+				dismissible
+				ondismiss={() => (error = null)}
+				details={technical ? reason : undefined}
+			>
+				{technical ? $t('backup.technical') : error.message}
+			</Alert>
+		</div>
+	{/if}
 
-  <BackupList
-    {backups}
-    loading={!loaded}
-    {sizeUnits}
-    onrestore={openRestoreModal}
-    ondownload={handleDownload}
-    ondelete={handleDelete}
-  />
+	<BackupList
+		{backups}
+		loading={!loaded}
+		{sizeUnits}
+		onrestore={openRestoreModal}
+		ondownload={handleDownload}
+		ondelete={handleDelete}
+	/>
 
-  <!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
-  <OffsiteCopy {sizeUnits} onrestored={loadBackups} />
+	<!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
+	<OffsiteCopy {sizeUnits} onrestored={loadBackups} />
 </div>
 
 <!-- Restore Confirmation Modal -->
 {#if showRestoreModal && restoreTarget}
-  <RestoreBackupDialog
-    target={restoreTarget}
-    result={restoreResult}
-    {restoring}
-    onclose={closeRestoreModal}
-    onrestore={handleRestore}
-  />
+	<RestoreBackupDialog
+		target={restoreTarget}
+		result={restoreResult}
+		{restoring}
+		onclose={closeRestoreModal}
+		onrestore={handleRestore}
+	/>
 {/if}

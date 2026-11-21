@@ -5,12 +5,7 @@
 	import { t } from '$lib/i18n';
 	import { Skeleton } from '$lib/components/ui';
 	import type { WebSocketStats } from '$lib/stores/stats';
-	import {
-		ContainersWidget,
-		RecentActivityWidget,
-		StorageWidget,
-		SystemStatsWidget
-	} from '$lib/components/widgets';
+	import { ContainersWidget, RecentActivityWidget, StorageWidget, SystemStatsWidget } from '$lib/components/widgets';
 
 	// One widget of the dashboard by its id (ADR-0395, $lib/dashboard-layout), with the data the
 	// page has read: the API's answers, which each widget takes in its own form, and the live stats.

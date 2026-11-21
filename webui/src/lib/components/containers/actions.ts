@@ -1,9 +1,4 @@
-import {
-	removeContainer,
-	restartContainer,
-	startContainer,
-	stopContainer
-} from '$lib/api/containers';
+import { removeContainer, restartContainer, startContainer, stopContainer } from '$lib/api/containers';
 import type { QuickAction } from './labels';
 
 /** A container's own action, on its row or card and in its drawer: a removal is forced. */

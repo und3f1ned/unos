@@ -30,10 +30,15 @@
 
 	let host = $derived(status?.host_name ?? '');
 	let appOptions = $derived(
-		(status?.apps ?? []).map((a, i) => ({ value: String(i), label: $t('remote.names.port', { app: a.name, port: a.port }) }))
+		(status?.apps ?? []).map((a, i) => ({
+			value: String(i),
+			label: $t('remote.names.port', { app: a.name, port: a.port })
+		}))
 	);
 	let chosen = $derived(status?.apps[Number(choice)] ?? null);
-	let moved = $derived(!!status && status.names.length > 0 && !!status.announced && status.address !== status.announced);
+	let moved = $derived(
+		!!status && status.names.length > 0 && !!status.announced && status.address !== status.announced
+	);
 
 	onMount(() => {
 		void load();
@@ -94,7 +99,9 @@
 			if (!chosen) return;
 			status = await addAppName(label.trim(), chosen.name, chosen.port);
 			showAdd = false;
-			toast.success($t('remote.names.added', { name: status.names.find((n) => n.label === label.trim())?.name ?? label.trim() }));
+			toast.success(
+				$t('remote.names.added', { name: status.names.find((n) => n.label === label.trim())?.name ?? label.trim() })
+			);
 		} catch (e) {
 			addError = messageOf(e);
 		} finally {
@@ -143,8 +150,14 @@
 			<p class="card-description break-words">{$t('remote.names.description', { host })}</p>
 		</div>
 		{#if status?.volume && status.announcer}
-			<Button variant="secondary" size="sm" icon={Plus} disabled={busy || status.apps.length === 0}
-				disabledReason={status.apps.length === 0 ? $t('remote.names.noApps') : ''} onclick={openAdd}>
+			<Button
+				variant="secondary"
+				size="sm"
+				icon={Plus}
+				disabled={busy || status.apps.length === 0}
+				disabledReason={status.apps.length === 0 ? $t('remote.names.noApps') : ''}
+				onclick={openAdd}
+			>
 				{$t('remote.names.add')}
 			</Button>
 		{/if}
@@ -167,19 +180,29 @@
 	{:else if status}
 		{#if moved}
 			<Alert variant="warning" class="mt-4">
-				<p class="break-words">{$t('remote.names.addressChanged', { announced: status.announced ?? '', address: status.address ?? '' })}</p>
-				<Button variant="secondary" size="sm" class="mt-3" disabled={busy} onclick={applyAgain}>{$t('remote.names.apply')}</Button>
+				<p class="break-words">
+					{$t('remote.names.addressChanged', { announced: status.announced ?? '', address: status.address ?? '' })}
+				</p>
+				<Button variant="secondary" size="sm" class="mt-3" disabled={busy} onclick={applyAgain}
+					>{$t('remote.names.apply')}</Button
+				>
 			</Alert>
 		{/if}
 		{#if status.names.length === 0}
-			<EmptyState compact icon={Globe} title={status.apps.length === 0 ? $t('remote.names.noApps') : $t('remote.names.none')} />
+			<EmptyState
+				compact
+				icon={Globe}
+				title={status.apps.length === 0 ? $t('remote.names.noApps') : $t('remote.names.none')}
+			/>
 		{:else}
 			<ul class="mt-4 space-y-2" aria-label={$t('remote.names.title')}>
 				{#each status.names as name (name.label)}
 					<li class="flex items-center justify-between gap-2 p-3 bg-surface-overlay rounded-lg">
 						<div class="min-w-0 break-all">
 							<p class="font-medium">{urlOf(name)}</p>
-							<p class="text-sm text-content-secondary">{$t('remote.names.port', { app: name.app, port: name.port })}</p>
+							<p class="text-sm text-content-secondary">
+								{$t('remote.names.port', { app: name.app, port: name.port })}
+							</p>
 							{#if !name.installed}
 								<p class="text-sm text-status-warning">{$t('remote.names.missingApp')}</p>
 							{/if}
@@ -223,4 +246,3 @@
 		required
 	/>
 </FormDialog>
-

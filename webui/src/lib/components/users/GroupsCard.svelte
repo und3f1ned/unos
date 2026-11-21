@@ -4,7 +4,17 @@
 	import type { User } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/client';
 	import { deleteGroup, type Group } from '$lib/api/groups';
-	import { Alert, Button, Card, CardAction, ConfirmDialog, EmptyState, HelpText, LoadState, Skeleton } from '$lib/components/ui';
+	import {
+		Alert,
+		Button,
+		Card,
+		CardAction,
+		ConfirmDialog,
+		EmptyState,
+		HelpText,
+		LoadState,
+		Skeleton
+	} from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
@@ -102,77 +112,82 @@
 
 <!-- id: the Shares page's access table links here to create a group. -->
 <div id="groups" class="scroll-mt-4">
-<Card>
-	<div class="card-header flex-wrap gap-3">
-		<h2 class="section-title">
-			<UsersRound class="w-5 h-5 text-content-secondary" aria-hidden="true" />
-			{$t('groups.title', { count: directory.groups.length })}
-		</h2>
-		<CardAction icon={Plus} onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</CardAction>
-	</div>
-	<HelpText text={$t('groups.about')} class="mb-4" />
+	<Card>
+		<div class="card-header flex-wrap gap-3">
+			<h2 class="section-title">
+				<UsersRound class="w-5 h-5 text-content-secondary" aria-hidden="true" />
+				{$t('groups.title', { count: directory.groups.length })}
+			</h2>
+			<CardAction icon={Plus} onclick={() => groupDialog?.openCreate()}>{$t('groups.add')}</CardAction>
+		</div>
+		<HelpText text={$t('groups.about')} class="mb-4" />
 
-	<OutcomeAlerts outcome={directory.outcome} failureTitle={$t('groups.actionFailed')} />
+		<OutcomeAlerts outcome={directory.outcome} failureTitle={$t('groups.actionFailed')} />
 
-	<LoadState
-		loading={directory.loading}
-		error={directory.loadError}
-		errorTitle={$t('groups.loadFailed')}
-		keepOnError={directory.groups.length > 0}
-		empty={directory.groups.length === 0}
-		onretry={retry}
-		{retrying}
-	>
-		{#snippet skeleton()}<Skeleton count={2} />{/snippet}
-		{#snippet emptyState()}
-			<EmptyState compact icon={UsersRound} title={$t('groups.empty')} />
-		{/snippet}
-		<ul class="space-y-3">
-			{#each directory.groups as group (group.id)}
-				<li class="card-nested">
-					<div class="flex flex-wrap items-start justify-between gap-3">
-						<div class="min-w-0 space-y-1 text-sm">
-							<h3 class="font-semibold text-base break-all">{group.name}</h3>
-							{#if group.members.length === 0}
-								<p class="text-muted">{$t('groups.noMembers')}</p>
-							{:else}
-								<p class="flex flex-wrap items-center gap-x-2 gap-y-1">
-									<span class="text-secondary">{$t('groups.members')}</span>
-									{#each group.members as member (member.user_id)}
-										<span class="inline-flex flex-wrap items-center gap-1 break-words"
-											>{member.username}{#if member.smb_state !== 'active'}<SmbStateBadge
-													state={member.smb_state}
-												/>{/if}</span
-										>
-									{/each}
-								</p>
-							{/if}
-							{#if group.shares.length === 0}
-								<p class="text-muted">{$t('groups.noShares')}</p>
-							{:else}
-								<p class="break-words">
-									<span class="text-secondary">{$t('groups.shares')}</span>
-									{group.shares
-										.map((entry) => $t('groups.shareLevel', { share: entry.share, level: levelText(entry.level) }))
-										.join(', ')}
-								</p>
-							{/if}
+		<LoadState
+			loading={directory.loading}
+			error={directory.loadError}
+			errorTitle={$t('groups.loadFailed')}
+			keepOnError={directory.groups.length > 0}
+			empty={directory.groups.length === 0}
+			onretry={retry}
+			{retrying}
+		>
+			{#snippet skeleton()}<Skeleton count={2} />{/snippet}
+			{#snippet emptyState()}
+				<EmptyState compact icon={UsersRound} title={$t('groups.empty')} />
+			{/snippet}
+			<ul class="space-y-3">
+				{#each directory.groups as group (group.id)}
+					<li class="card-nested">
+						<div class="flex flex-wrap items-start justify-between gap-3">
+							<div class="min-w-0 space-y-1 text-sm">
+								<h3 class="font-semibold text-base break-all">{group.name}</h3>
+								{#if group.members.length === 0}
+									<p class="text-muted">{$t('groups.noMembers')}</p>
+								{:else}
+									<p class="flex flex-wrap items-center gap-x-2 gap-y-1">
+										<span class="text-secondary">{$t('groups.members')}</span>
+										{#each group.members as member (member.user_id)}
+											<span class="inline-flex flex-wrap items-center gap-1 break-words"
+												>{member.username}{#if member.smb_state !== 'active'}<SmbStateBadge
+														state={member.smb_state}
+													/>{/if}</span
+											>
+										{/each}
+									</p>
+								{/if}
+								{#if group.shares.length === 0}
+									<p class="text-muted">{$t('groups.noShares')}</p>
+								{:else}
+									<p class="break-words">
+										<span class="text-secondary">{$t('groups.shares')}</span>
+										{group.shares
+											.map((entry) => $t('groups.shareLevel', { share: entry.share, level: levelText(entry.level) }))
+											.join(', ')}
+									</p>
+								{/if}
+							</div>
+							<div class="flex flex-wrap items-center gap-2">
+								<Button variant="secondary" size="sm" icon={Edit} onclick={() => groupDialog?.openEdit(group)}>
+									{$t('groups.edit')}<span class="sr-only">{` ${$t('groups.editOf', { name: group.name })}`}</span>
+								</Button>
+								<Button
+									variant="ghost-danger"
+									size="icon-sm"
+									title={$t('groups.deleteShort')}
+									onclick={() => openDelete(group)}
+								>
+									<Trash2 class="w-4 h-4" />
+									<span class="sr-only">{$t('groups.deleteGroup', { name: group.name })}</span>
+								</Button>
+							</div>
 						</div>
-						<div class="flex flex-wrap items-center gap-2">
-							<Button variant="secondary" size="sm" icon={Edit} onclick={() => groupDialog?.openEdit(group)}>
-								{$t('groups.edit')}<span class="sr-only">{` ${$t('groups.editOf', { name: group.name })}`}</span>
-							</Button>
-							<Button variant="ghost-danger" size="icon-sm" title={$t('groups.deleteShort')} onclick={() => openDelete(group)}>
-								<Trash2 class="w-4 h-4" />
-								<span class="sr-only">{$t('groups.deleteGroup', { name: group.name })}</span>
-							</Button>
-						</div>
-					</div>
-				</li>
-			{/each}
-		</ul>
-	</LoadState>
-</Card>
+					</li>
+				{/each}
+			</ul>
+		</LoadState>
+	</Card>
 </div>
 
 <GroupDialog bind:this={groupDialog} {directory} />

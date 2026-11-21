@@ -71,7 +71,12 @@
 							{/if}
 						</div>
 						{#if exp.managed}
-							<Button variant="ghost-danger" size="icon-sm" title={$t('shares.nfs.delete')} onclick={() => ondelete(exp)}>
+							<Button
+								variant="ghost-danger"
+								size="icon-sm"
+								title={$t('shares.nfs.delete')}
+								onclick={() => ondelete(exp)}
+							>
 								<Trash2 class="w-4 h-4" />
 								<span class="sr-only">{$t('shares.nfs.deleteOne', { path: exp.path })}</span>
 							</Button>

@@ -146,7 +146,13 @@
 		<Alert variant="warning">{$t('securitykeys.unsupported')}</Alert>
 	{/if}
 
-	<LoadState {loading} error={loadError} errorTitle={$t('securitykeys.loadError')} empty={keys.length === 0} onretry={load}>
+	<LoadState
+		{loading}
+		error={loadError}
+		errorTitle={$t('securitykeys.loadError')}
+		empty={keys.length === 0}
+		onretry={load}
+	>
 		{#snippet skeleton()}<Skeleton count={2} />{/snippet}
 		{#snippet emptyState()}<EmptyState compact icon={KeyRound} title={$t('securitykeys.none')} />{/snippet}
 		<ul aria-label={$t('securitykeys.list')} class="space-y-2">
@@ -155,7 +161,8 @@
 					<div class="min-w-0">
 						<p class="font-medium break-words">{key.name}</p>
 						<p class="text-xs text-content-secondary break-words">
-							{#if key.created_at}{$t('securitykeys.added', { date: when(key.created_at) })} · {/if}
+							{#if key.created_at}{$t('securitykeys.added', { date: when(key.created_at) })} ·
+							{/if}
 							{key.last_used_at
 								? $t('securitykeys.lastUsed', { date: when(key.last_used_at) })
 								: $t('securitykeys.neverUsed')}

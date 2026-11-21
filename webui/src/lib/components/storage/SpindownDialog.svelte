@@ -25,9 +25,7 @@
 	let busy = $state(false);
 	let error = $state('');
 
-	let options = $derived(
-		SPINDOWN_MINUTES.map((minutes) => ({ value: String(minutes), label: timeoutLabel(minutes) }))
-	);
+	let options = $derived(SPINDOWN_MINUTES.map((minutes) => ({ value: String(minutes), label: timeoutLabel(minutes) })));
 
 	function close() {
 		if (busy) return;
@@ -55,7 +53,13 @@
 
 <Modal open={disk !== null} title={$t('storage.spindown.title')} size="md" closable={!busy} onclose={close}>
 	{#if disk}
-		<form onsubmit={(e) => { e.preventDefault(); save(); }} class="space-y-4">
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				save();
+			}}
+			class="space-y-4"
+		>
 			<p>
 				{$t('storage.spindown.disk')}
 				<span class="mono break-all">{disk.path}</span>{disk.model ? ` (${disk.model})` : ''}
@@ -63,7 +67,7 @@
 			<Select
 				id="spindown-timeout"
 				label={$t('storage.spindown.label')}
-				options={options}
+				{options}
 				bind:value={choice}
 				hint={$t('storage.spindown.hint')}
 				disabled={busy}

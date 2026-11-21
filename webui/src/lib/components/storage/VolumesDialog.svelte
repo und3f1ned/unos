@@ -24,9 +24,7 @@
 	);
 
 	// The commands that the notes of the dialog name, run on the host: the same in every language.
-	let volumesMountpoint = $derived(
-		volumes.pool ? volumes.pool.mountpoint || poolMountpoint(volumes.pool.name) : ''
-	);
+	let volumesMountpoint = $derived(volumes.pool ? volumes.pool.mountpoint || poolMountpoint(volumes.pool.name) : '');
 	// i18n-ignore: a command
 	let quotaEnableCommand = $derived('btrfs quota enable ' + volumesMountpoint);
 	// i18n-ignore: a command
@@ -38,9 +36,7 @@
 <!-- A list of volumes and the form of a new one: a Sheet (ADR-0432). -->
 <Sheet
 	open={volumes.pool !== null}
-	title={volumes.pool
-		? $t('storage.volumes.title', { pool: volumes.pool.name })
-		: $t('storage.volumes.titleNone')}
+	title={volumes.pool ? $t('storage.volumes.title', { pool: volumes.pool.name }) : $t('storage.volumes.titleNone')}
 	size="lg"
 	closable={!volumes.busy}
 	onclose={() => volumes.close()}
@@ -94,7 +90,13 @@
 				</ul>
 			{/if}
 
-			<form onsubmit={(e) => { e.preventDefault(); volumes.create(); }} class="space-y-2">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					volumes.create();
+				}}
+				class="space-y-2"
+			>
 				<Input
 					label={$t('storage.volumes.name')}
 					bind:value={volumes.newName}
@@ -119,10 +121,7 @@
 					type="submit"
 					icon={Plus}
 					loading={volumes.creating}
-					disabled={!volumes.newNameValid ||
-						!!newQuotaError ||
-						volumes.busy ||
-						volumes.readOnly}
+					disabled={!volumes.newNameValid || !!newQuotaError || volumes.busy || volumes.readOnly}
 				>
 					{$t('storage.volumes.create')}
 				</Button>

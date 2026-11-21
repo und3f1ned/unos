@@ -18,11 +18,7 @@
 	const headingId = $derived(`app-${kind}-${name}`);
 </script>
 
-<div
-	class="space-y-3"
-	role={several ? 'group' : undefined}
-	aria-labelledby={several ? headingId : undefined}
->
+<div class="space-y-3" role={several ? 'group' : undefined} aria-labelledby={several ? headingId : undefined}>
 	{#if several}
 		<h4 id={headingId} class="text-sm font-medium mono break-all pt-2">
 			{name}

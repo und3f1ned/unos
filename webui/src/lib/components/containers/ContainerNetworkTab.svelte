@@ -34,5 +34,10 @@
 		</tbody>
 	</table>
 {:else}
-	<EmptyState compact icon={Network} title={$t('containers.drawer.noPorts')} description={$t('containers.drawer.noPortsHint')} />
+	<EmptyState
+		compact
+		icon={Network}
+		title={$t('containers.drawer.noPorts')}
+		description={$t('containers.drawer.noPortsHint')}
+	/>
 {/if}

@@ -110,7 +110,8 @@
 			<div>
 				<!-- The label names the text to type, so that a screen reader hears it with the field. -->
 				<label for={fieldId} class="form-label">
-					{#if typeLabel}{typeLabel}{:else}{$t('ui.confirm.typeLabel')} <code class="confirm-expected">{typeToConfirm}</code>{/if}
+					{#if typeLabel}{typeLabel}{:else}{$t('ui.confirm.typeLabel')}
+						<code class="confirm-expected">{typeToConfirm}</code>{/if}
 				</label>
 				<Input
 					id={fieldId}
@@ -127,7 +128,9 @@
 		{/if}
 	</form>
 	{#snippet footer()}
-		<Button variant="secondary" bind:el={cancelButton} disabled={busy} onclick={oncancel}>{cancelLabel || $t('common.cancel')}</Button>
+		<Button variant="secondary" bind:el={cancelButton} disabled={busy} onclick={oncancel}
+			>{cancelLabel || $t('common.cancel')}</Button
+		>
 		<Button
 			type="submit"
 			form={formId}

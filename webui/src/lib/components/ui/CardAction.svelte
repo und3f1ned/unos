@@ -18,8 +18,16 @@
 		[key: `aria-${string}`]: string | boolean | undefined;
 	};
 
-	let { href = null, icon = null, disabled = false, disabledReason = '', loading = false, onclick, children, ...rest }: Props =
-		$props();
+	let {
+		href = null,
+		icon = null,
+		disabled = false,
+		disabledReason = '',
+		loading = false,
+		onclick,
+		children,
+		...rest
+	}: Props = $props();
 </script>
 
 {#if href}

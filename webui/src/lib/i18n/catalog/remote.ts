@@ -23,7 +23,8 @@ export const en = {
 		'wireguard-tools is not installed on the host. Install the package wireguard-tools on the host (sudo apt install wireguard-tools), then open this page again.',
 	'remote.loadFailed': 'Remote access could not be read',
 	'remote.endpoint': 'Public address',
-	'remote.endpointHint': "Your router's public IP address or a dynamic DNS name, which your devices connect to from outside",
+	'remote.endpointHint':
+		"Your router's public IP address or a dynamic DNS name, which your devices connect to from outside",
 	'remote.endpointNeeded': 'Enter the public address that your devices connect to.',
 	'remote.endpointPlaceholder': 'nas.example.org',
 	'remote.port': 'UDP port',
@@ -37,8 +38,8 @@ export const en = {
 		"The devices that you add as peers reach the NAS alone through the tunnel: the web UI, the shares, SSH and the apps' ports. They reach no other computer of your LAN.",
 	'remote.enableRouter':
 		"To connect from outside, forward UDP port {port} on your router to the NAS's address in the LAN. Your devices connect to {endpoint}.",
-	'remote.enableFirewall': "When the host has ufw, UNOS lets UDP port {port} through it.",
-	'remote.enableLan': "Turning remote access on or off does not change how the LAN reaches the NAS.",
+	'remote.enableFirewall': 'When the host has ufw, UNOS lets UDP port {port} through it.',
+	'remote.enableLan': 'Turning remote access on or off does not change how the LAN reaches the NAS.',
 	'remote.turnedOn': 'Remote access is on',
 	'remote.disableTitle': 'Turn remote access off?',
 	'remote.disableText':
@@ -135,7 +136,8 @@ export const ru: Translation<typeof en> = {
 		'На хосте не установлен wireguard-tools. Установите на хосте пакет wireguard-tools (sudo apt install wireguard-tools) и снова откройте эту страницу.',
 	'remote.loadFailed': 'Не удалось прочитать настройки удалённого доступа',
 	'remote.endpoint': 'Внешний адрес',
-	'remote.endpointHint': 'Внешний IP-адрес вашего маршрутизатора или имя динамического DNS, к которому устройства подключаются извне',
+	'remote.endpointHint':
+		'Внешний IP-адрес вашего маршрутизатора или имя динамического DNS, к которому устройства подключаются извне',
 	'remote.endpointNeeded': 'Введите публичный адрес, к которому подключаются ваши устройства.',
 	'remote.endpointPlaceholder': 'nas.example.org',
 	'remote.port': 'UDP-порт',
@@ -158,8 +160,7 @@ export const ru: Translation<typeof en> = {
 	'remote.turnedOff': 'Удалённый доступ выключен',
 	'remote.downWarning':
 		'Удалённый доступ включён, но туннель на хосте не поднят. Выключите и снова включите его или посмотрите юнит wg-quick@unos-wg в разделе Система > Журналы.',
-	'remote.firewallMissing':
-		'Брандмауэр хоста не пропускает порт туннеля. Выключите и снова включите удалённый доступ.',
+	'remote.firewallMissing': 'Брандмауэр хоста не пропускает порт туннеля. Выключите и снова включите удалённый доступ.',
 	'remote.address': 'Адрес NAS в туннеле',
 	'remote.publicKey': 'Открытый ключ сервера',
 	'remote.changeEndpoint': 'Изменить внешний адрес',
@@ -214,7 +215,8 @@ export const ru: Translation<typeof en> = {
 	'remote.names.app': 'Приложение',
 	'remote.names.noApps': 'Ни одно установленное приложение не публикует TCP-порт.',
 	'remote.names.label': 'Имя',
-	'remote.names.labelHint': 'От 1 до 32 символов a-z, 0-9 и -. Приложение откроется по адресу https://{name}-{host}.local',
+	'remote.names.labelHint':
+		'От 1 до 32 символов a-z, 0-9 и -. Приложение откроется по адресу https://{name}-{host}.local',
 	'remote.names.added': '{name} теперь открывает приложение',
 	'remote.names.remove': 'Удалить',
 	'remote.names.removeLabel': 'Удалить имя {name}',
@@ -222,8 +224,7 @@ export const ru: Translation<typeof en> = {
 	'remote.names.removed': 'Имя {name} удалено',
 	'remote.names.port': '{app}, порт {port}',
 	'remote.names.missingApp': 'Приложение не установлено или теперь публикует другой порт',
-	'remote.names.addressChanged':
-		'avahi объявляет имена с адресом {announced}, но у хоста теперь адрес {address}.',
+	'remote.names.addressChanged': 'avahi объявляет имена с адресом {announced}, но у хоста теперь адрес {address}.',
 	'remote.names.apply': 'Объявить заново',
 	'remote.names.applied': 'Имена объявлены с текущим адресом',
 	'remote.names.trust':

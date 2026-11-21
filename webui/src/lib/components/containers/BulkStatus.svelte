@@ -19,12 +19,7 @@
 
 {#if result}
 	{@const title = $t(BULK_DONE[result.action], { ok, n: result.items.length })}
-	<Alert
-		variant={ok === 0 ? 'error' : 'warning'}
-		{title}
-		dismissible
-		{ondismiss}
-	>
+	<Alert variant={ok === 0 ? 'error' : 'warning'} {title} dismissible {ondismiss}>
 		<ul class="space-y-1 text-sm" aria-label={title}>
 			{#each result.items as item (item.id)}
 				<li class="break-words">

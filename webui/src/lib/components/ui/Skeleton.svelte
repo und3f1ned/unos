@@ -50,9 +50,11 @@
 	const LINE_WIDTHS = ['100%', '92%', '96%', '84%', '90%'];
 	const CELL_WIDTHS = ['72%', '48%', '60%', '36%', '54%', '40%'];
 
-	const lines = $derived(Array.from({ length: Math.max(1, count) }, (_, i) =>
-		count > 1 && i === count - 1 ? '62%' : LINE_WIDTHS[i % LINE_WIDTHS.length]
-	));
+	const lines = $derived(
+		Array.from({ length: Math.max(1, count) }, (_, i) =>
+			count > 1 && i === count - 1 ? '62%' : LINE_WIDTHS[i % LINE_WIDTHS.length]
+		)
+	);
 	const rows = $derived(Array.from({ length: Math.max(1, count) }, (_, i) => i));
 	const cells = $derived(Array.from({ length: Math.max(1, columns) }, (_, i) => CELL_WIDTHS[i % CELL_WIDTHS.length]));
 </script>
@@ -67,7 +69,10 @@
 {#snippet cellsOf(size: Size, head: boolean)}
 	{#each cells as width, i (i)}
 		<span class="flex-1 min-w-0">
-			{@render line(head ? 'xs' : size, head ? (i === 0 ? '40%' : '30%') : i === cells.length - 1 && cells.length > 2 ? '28%' : width)}
+			{@render line(
+				head ? 'xs' : size,
+				head ? (i === 0 ? '40%' : '30%') : i === cells.length - 1 && cells.length > 2 ? '28%' : width
+			)}
 		</span>
 	{/each}
 {/snippet}

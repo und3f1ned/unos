@@ -71,8 +71,7 @@ export const ru: Translation<typeof en> = {
 	'securitykeys.remove': 'Удалить',
 	'securitykeys.removeLabel': 'Удалить {name}',
 	'securitykeys.addTitle': 'Добавление ключа безопасности',
-	'securitykeys.addText':
-		'Дайте ключу понятное имя, введите свой пароль и коснитесь ключа, когда браузер попросит.',
+	'securitykeys.addText': 'Дайте ключу понятное имя, введите свой пароль и коснитесь ключа, когда браузер попросит.',
 	'securitykeys.nameLabel': 'Имя',
 	'securitykeys.namePlaceholder': 'YubiKey на связке ключей',
 	'securitykeys.passwordLabel': 'Текущий пароль',
@@ -95,5 +94,6 @@ export const ru: Translation<typeof en> = {
 	'securitykeys.login.use': 'Войти с ключом безопасности',
 	'securitykeys.login.touch': 'Коснитесь ключа безопасности…',
 	'securitykeys.login.or': 'или введите код из приложения-аутентификатора',
-	'securitykeys.login.elsewhere': 'Ваши ключи безопасности работают на {origins}. Откройте веб-интерфейс там, чтобы использовать ключ.'
+	'securitykeys.login.elsewhere':
+		'Ваши ключи безопасности работают на {origins}. Откройте веб-интерфейс там, чтобы использовать ключ.'
 };

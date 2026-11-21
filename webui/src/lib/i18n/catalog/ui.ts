@@ -33,7 +33,7 @@ export const en = {
 	'ui.input.value': 'value',
 	'ui.status.issues': { one: '{n} thing needs attention', other: '{n} things need attention' },
 	'ui.status.show': 'Show',
-	'ui.status.hide': 'Hide',
+	'ui.status.hide': 'Hide'
 };
 
 export const ru: Translation<typeof en> = {
@@ -71,5 +71,5 @@ export const ru: Translation<typeof en> = {
 		many: '{n} пунктов требуют внимания'
 	},
 	'ui.status.show': 'Показать',
-	'ui.status.hide': 'Скрыть',
+	'ui.status.hide': 'Скрыть'
 };

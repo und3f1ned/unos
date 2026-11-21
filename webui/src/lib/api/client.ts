@@ -1,10 +1,13 @@
 const API_BASE = '/api/v1';
 
 class ApiError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-    this.name = 'ApiError';
-  }
+	constructor(
+		public status: number,
+		message: string
+	) {
+		super(message);
+		this.name = 'ApiError';
+	}
 }
 
 // The session is in the HttpOnly session cookie (ADR-0397): no script of the page reads it, and the
@@ -17,38 +20,38 @@ export const SESSION_KEY_HEADER = 'X-UNOS-Session-Key';
 const SESSION_KEY_STORE = 'unos-session-key';
 
 function storedKey(): string | null {
-  try {
-    return typeof window !== 'undefined' ? window.sessionStorage.getItem(SESSION_KEY_STORE) : null;
-  } catch {
-    return null;
-  }
+	try {
+		return typeof window !== 'undefined' ? window.sessionStorage.getItem(SESSION_KEY_STORE) : null;
+	} catch {
+		return null;
+	}
 }
 
 let sessionKey: string | null = storedKey();
 
 function keepSessionKey(key: string | null): void {
-  sessionKey = key;
-  try {
-    if (key) window.sessionStorage.setItem(SESSION_KEY_STORE, key);
-    else window.sessionStorage.removeItem(SESSION_KEY_STORE);
-  } catch {
-    // No storage: the key lasts as long as the page.
-  }
+	sessionKey = key;
+	try {
+		if (key) window.sessionStorage.setItem(SESSION_KEY_STORE, key);
+		else window.sessionStorage.removeItem(SESSION_KEY_STORE);
+	} catch {
+		// No storage: the key lasts as long as the page.
+	}
 }
 
 /** The session key of this tab, which a WebSocket's first message carries; null without a session. */
 export function currentSessionKey(): string | null {
-  return sessionKey;
+	return sessionKey;
 }
 
 // Earlier versions kept the session token itself in localStorage (ADR-0009): a browser that used
 // them forgets it at its first visit.
 if (typeof window !== 'undefined') {
-  try {
-    window.localStorage.removeItem('token');
-  } catch {
-    // No storage, nothing kept in it.
-  }
+	try {
+		window.localStorage.removeItem('token');
+	} catch {
+		// No storage, nothing kept in it.
+	}
 }
 
 // The page keeps a count of the sign-ins and sign-outs it knows of, here and in the other tabs,
@@ -61,12 +64,12 @@ let ended = false;
 
 /** The count of sign-ins and sign-outs that this tab knows of; a request remembers it when sent. */
 export function currentSession(): number {
-  return sessionGeneration;
+	return sessionGeneration;
 }
 
 /** Whether this tab knows that it has no session: after a 401, a sign-out, here or in another tab. */
 export function knownSignedOut(): boolean {
-  return ended;
+	return ended;
 }
 
 // The tabs of this origin tell each other of a sign-in, with its session key, and of a sign-out, and
@@ -74,46 +77,43 @@ export function knownSignedOut(): boolean {
 const SESSION_CHANNEL = 'unos-session';
 export type SessionChange = 'signed-in' | 'signed-out';
 type SessionMessage =
-  | { type: 'signed-in'; key: string }
-  | { type: 'signed-out' }
-  | { type: 'key?' }
-  | { type: 'key'; key: string };
+	{ type: 'signed-in'; key: string } | { type: 'signed-out' } | { type: 'key?' } | { type: 'key'; key: string };
 let channel: BroadcastChannel | null = null;
 const sessionListeners = new Set<(change: SessionChange) => void>();
 let keyAnswered: ((key: string) => void) | null = null;
 
 function sessionChannel(): BroadcastChannel | null {
-  if (channel === null && typeof BroadcastChannel !== 'undefined') {
-    channel = new BroadcastChannel(SESSION_CHANNEL);
-    channel.onmessage = (event: MessageEvent) => {
-      const message = event.data as SessionMessage | null;
-      if (!message || typeof message !== 'object') return;
-      if (message.type === 'key?') {
-        if (sessionKey && !ended) channel?.postMessage({ type: 'key', key: sessionKey });
-      } else if (message.type === 'key' && typeof message.key === 'string') {
-        keyAnswered?.(message.key);
-      } else if (message.type === 'signed-in' && typeof message.key === 'string') {
-        sessionGeneration += 1;
-        ended = false;
-        keepSessionKey(message.key);
-        for (const listener of sessionListeners) listener('signed-in');
-      } else if (message.type === 'signed-out') {
-        sessionGeneration += 1;
-        ended = true;
-        keepSessionKey(null);
-        for (const listener of sessionListeners) listener('signed-out');
-      }
-    };
-  }
-  return channel;
+	if (channel === null && typeof BroadcastChannel !== 'undefined') {
+		channel = new BroadcastChannel(SESSION_CHANNEL);
+		channel.onmessage = (event: MessageEvent) => {
+			const message = event.data as SessionMessage | null;
+			if (!message || typeof message !== 'object') return;
+			if (message.type === 'key?') {
+				if (sessionKey && !ended) channel?.postMessage({ type: 'key', key: sessionKey });
+			} else if (message.type === 'key' && typeof message.key === 'string') {
+				keyAnswered?.(message.key);
+			} else if (message.type === 'signed-in' && typeof message.key === 'string') {
+				sessionGeneration += 1;
+				ended = false;
+				keepSessionKey(message.key);
+				for (const listener of sessionListeners) listener('signed-in');
+			} else if (message.type === 'signed-out') {
+				sessionGeneration += 1;
+				ended = true;
+				keepSessionKey(null);
+				for (const listener of sessionListeners) listener('signed-out');
+			}
+		};
+	}
+	return channel;
 }
 
 /** This tab signed in with the session whose key is `key`: the other tabs go on in it too. */
 export function sessionStarted(key: string): void {
-  sessionGeneration += 1;
-  ended = false;
-  keepSessionKey(key);
-  sessionChannel()?.postMessage({ type: 'signed-in', key });
+	sessionGeneration += 1;
+	ended = false;
+	keepSessionKey(key);
+	sessionChannel()?.postMessage({ type: 'signed-in', key });
 }
 
 /**
@@ -121,14 +121,14 @@ export function sessionStarted(key: string): void {
  * learn of it with announceSignedOut, once the server has ended the session.
  */
 export function sessionStopped(): void {
-  sessionGeneration += 1;
-  ended = true;
-  keepSessionKey(null);
+	sessionGeneration += 1;
+	ended = true;
+	keepSessionKey(null);
 }
 
 /** Tell the other tabs that the session has ended. A channel does not deliver to its own sender. */
 export function announceSignedOut(): void {
-  sessionChannel()?.postMessage({ type: 'signed-out' });
+	sessionChannel()?.postMessage({ type: 'signed-out' });
 }
 
 let keyRequest: Promise<boolean> | null = null;
@@ -138,22 +138,22 @@ let keyRequest: Promise<boolean> | null = null;
  * has none, as a new tab does. Without an answer within a moment there is none to go on with.
  */
 export function obtainSessionKey(): Promise<boolean> {
-  if (sessionKey) return Promise.resolve(true);
-  const asking = sessionChannel();
-  if (ended || asking === null) return Promise.resolve(false);
-  keyRequest ??= new Promise<boolean>((resolve) => {
-    const done = (key: string | null) => {
-      clearTimeout(timer);
-      keyAnswered = null;
-      keyRequest = null;
-      if (key && !sessionKey && !ended) keepSessionKey(key);
-      resolve(sessionKey !== null);
-    };
-    const timer = setTimeout(() => done(null), 500);
-    keyAnswered = (key) => done(key);
-    asking.postMessage({ type: 'key?' });
-  });
-  return keyRequest;
+	if (sessionKey) return Promise.resolve(true);
+	const asking = sessionChannel();
+	if (ended || asking === null) return Promise.resolve(false);
+	keyRequest ??= new Promise<boolean>((resolve) => {
+		const done = (key: string | null) => {
+			clearTimeout(timer);
+			keyAnswered = null;
+			keyRequest = null;
+			if (key && !sessionKey && !ended) keepSessionKey(key);
+			resolve(sessionKey !== null);
+		};
+		const timer = setTimeout(() => done(null), 500);
+		keyAnswered = (key) => done(key);
+		asking.postMessage({ type: 'key?' });
+	});
+	return keyRequest;
 }
 
 /**
@@ -161,15 +161,15 @@ export function obtainSessionKey(): Promise<boolean> {
  * function that stops listening.
  */
 export function onSessionChangedElsewhere(listener: (change: SessionChange) => void): () => void {
-  if (typeof window === 'undefined') return () => {};
-  sessionChannel();
-  sessionListeners.add(listener);
-  return () => sessionListeners.delete(listener);
+	if (typeof window === 'undefined') return () => {};
+	sessionChannel();
+	sessionListeners.add(listener);
+	return () => sessionListeners.delete(listener);
 }
 
 /** Pages that work without a session: sign-in and first-run setup. */
 export function isPublicRoute(pathname: string): boolean {
-  return pathname.startsWith('/login') || pathname.startsWith('/setup');
+	return pathname.startsWith('/login') || pathname.startsWith('/setup');
 }
 
 let unauthorizedHandler: (() => void) | null = null;
@@ -179,11 +179,11 @@ let unauthorizedHandler: (() => void) | null = null;
  * 4401). The root layout uses it to reset the session state and navigate to /login.
  */
 export function setUnauthorizedHandler(handler: (() => void) | null): void {
-  unauthorizedHandler = handler;
+	unauthorizedHandler = handler;
 }
 
 function onPublicRoute(): boolean {
-  return typeof window !== 'undefined' && isPublicRoute(window.location.pathname);
+	return typeof window !== 'undefined' && isPublicRoute(window.location.pathname);
 }
 
 /**
@@ -196,13 +196,13 @@ function onPublicRoute(): boolean {
  * down with it. The sign-in and first-run pages need no session: nothing happens there.
  */
 export function handleUnauthorized(sentIn: number): void {
-  if (sentIn !== sessionGeneration || typeof window === 'undefined' || onPublicRoute()) return;
-  sessionStopped();
-  if (unauthorizedHandler) {
-    unauthorizedHandler();
-  } else {
-    window.location.assign('/login');
-  }
+	if (sentIn !== sessionGeneration || typeof window === 'undefined' || onPublicRoute()) return;
+	sessionStopped();
+	if (unauthorizedHandler) {
+		unauthorizedHandler();
+	} else {
+		window.location.assign('/login');
+	}
 }
 
 // The server's answer (403) to every request of an account that can only set up two-factor
@@ -218,7 +218,7 @@ let setupRequiredHandler: (() => void) | null = null;
  * authentication: the root layout reloads the account and leads to the setup page.
  */
 export function setSetupRequiredHandler(handler: (() => void) | null): void {
-  setupRequiredHandler = handler;
+	setupRequiredHandler = handler;
 }
 
 /**
@@ -226,7 +226,7 @@ export function setSetupRequiredHandler(handler: (() => void) | null): void {
  * TWO_FACTOR_SETUP_REQUIRED, or the events socket closed with 4403, which it sends for nothing else.
  */
 export function handleSetupRequired(): void {
-  setupRequiredHandler?.();
+	setupRequiredHandler?.();
 }
 
 // These endpoints answer 401 for wrong credentials, not for an expired session.
@@ -236,20 +236,18 @@ const CREDENTIAL_ENDPOINTS = ['/auth/login'];
 const RATE_LIMITED_MESSAGE = 'Too many attempts. Wait a minute and try again.';
 
 function errorDetail(status: number, payload: unknown): string {
-  // slowapi answers 429 with {"error": "Rate limit exceeded: 5 per 1 minute"}.
-  if (status === 429) return RATE_LIMITED_MESSAGE;
-  const body = payload as { detail?: unknown; error?: unknown } | null;
-  const detail = body?.detail;
-  if (typeof detail === 'string' && detail) return detail;
-  // FastAPI validation errors (422): [{"loc": [...], "msg": "...", ...}, ...]
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((item) => (item && typeof item.msg === 'string' ? item.msg : ''))
-      .filter(Boolean);
-    if (messages.length > 0) return messages.join('; ');
-  }
-  if (typeof body?.error === 'string' && body.error) return body.error;
-  return 'Request failed';
+	// slowapi answers 429 with {"error": "Rate limit exceeded: 5 per 1 minute"}.
+	if (status === 429) return RATE_LIMITED_MESSAGE;
+	const body = payload as { detail?: unknown; error?: unknown } | null;
+	const detail = body?.detail;
+	if (typeof detail === 'string' && detail) return detail;
+	// FastAPI validation errors (422): [{"loc": [...], "msg": "...", ...}, ...]
+	if (Array.isArray(detail)) {
+		const messages = detail.map((item) => (item && typeof item.msg === 'string' ? item.msg : '')).filter(Boolean);
+		if (messages.length > 0) return messages.join('; ');
+	}
+	if (typeof body?.error === 'string' && body.error) return body.error;
+	return 'Request failed';
 }
 
 /**
@@ -263,26 +261,26 @@ function errorDetail(status: number, payload: unknown): string {
  * the server's message.
  */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const sentIn = sessionGeneration;
-  // Same origin: the browser sends the session cookie, and with every method but GET and HEAD the
-  // Origin, which the server requires with the cookie; the page adds the session key (ADR-0397).
-  const headers = new Headers(init.headers);
-  if (sessionKey) headers.set(SESSION_KEY_HEADER, sessionKey);
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'same-origin' });
+	const sentIn = sessionGeneration;
+	// Same origin: the browser sends the session cookie, and with every method but GET and HEAD the
+	// Origin, which the server requires with the cookie; the page adds the session key (ADR-0397).
+	const headers = new Headers(init.headers);
+	if (sessionKey) headers.set(SESSION_KEY_HEADER, sessionKey);
+	const response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'same-origin' });
 
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    if (response.status === 401 && !CREDENTIAL_ENDPOINTS.includes(path.split('?')[0])) {
-      handleUnauthorized(sentIn);
-    }
-    const detail = errorDetail(response.status, payload);
-    if (response.status === 403 && detail === TWO_FACTOR_SETUP_REQUIRED && sentIn === sessionGeneration) {
-      handleSetupRequired();
-    }
-    throw new ApiError(response.status, detail);
-  }
+	if (!response.ok) {
+		const payload = await response.json().catch(() => null);
+		if (response.status === 401 && !CREDENTIAL_ENDPOINTS.includes(path.split('?')[0])) {
+			handleUnauthorized(sentIn);
+		}
+		const detail = errorDetail(response.status, payload);
+		if (response.status === 403 && detail === TWO_FACTOR_SETUP_REQUIRED && sentIn === sessionGeneration) {
+			handleSetupRequired();
+		}
+		throw new ApiError(response.status, detail);
+	}
 
-  return response;
+	return response;
 }
 
 // How long a downloaded file stays reachable through its blob: URL. The
@@ -299,47 +297,43 @@ const DOWNLOAD_URL_LIFETIME_MS = 60_000;
  * so the browser shows the download only once the whole file has arrived.
  */
 export async function downloadAs(path: string, filename: string): Promise<void> {
-  const response = await apiFetch(path);
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.hidden = true;
-  document.body.appendChild(link);
-  try {
-    link.click();
-  } finally {
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_LIFETIME_MS);
-  }
+	const response = await apiFetch(path);
+	const url = URL.createObjectURL(await response.blob());
+	const link = document.createElement('a');
+	link.href = url;
+	link.download = filename;
+	link.hidden = true;
+	document.body.appendChild(link);
+	try {
+		link.click();
+	} finally {
+		link.remove();
+		setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_URL_LIFETIME_MS);
+	}
 }
 
-async function request<T>(
-  method: string,
-  path: string,
-  body?: unknown
-): Promise<T> {
-  const response = await apiFetch(path, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    // undefined and null send no body; anything else is sent as JSON, also
-    // arrays (the file manager endpoints take a JSON list of paths).
-    body: body === undefined || body === null ? undefined : JSON.stringify(body),
-  });
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const response = await apiFetch(path, {
+		method,
+		headers: { 'Content-Type': 'application/json' },
+		// undefined and null send no body; anything else is sent as JSON, also
+		// arrays (the file manager endpoints take a JSON list of paths).
+		body: body === undefined || body === null ? undefined : JSON.stringify(body)
+	});
 
-  if (response.status === 204) {
-    return {} as T;
-  }
+	if (response.status === 204) {
+		return {} as T;
+	}
 
-  return response.json();
+	return response.json();
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
+	get: <T>(path: string) => request<T>('GET', path),
+	post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+	put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
+	patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
+	delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body)
 };
 
 export { ApiError };

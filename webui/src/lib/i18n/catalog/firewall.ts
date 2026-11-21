@@ -71,7 +71,7 @@ export const en = {
 	'firewall.working': 'Turning the firewall on: on a small board this takes up to a minute.',
 	'firewall.reverting': 'The host is undoing the firewall change: the card looks again in a few seconds.',
 	'firewall.revertFailed':
-		'The host could not undo the last firewall change: check the rules below, or turn the firewall off. The host\'s journal says why (journalctl -u unos-firewall-revert).',
+		"The host could not undo the last firewall change: check the rules below, or turn the firewall off. The host's journal says why (journalctl -u unos-firewall-revert).",
 	'firewall.on': 'On: {interface}',
 
 	// A change that waits to be kept.
@@ -83,7 +83,8 @@ export const en = {
 	'firewall.keep': 'Keep the change',
 	'firewall.undone':
 		'The time to keep the firewall change has run out: unless it was kept elsewhere, the firewall is back as it was before it.',
-	'firewall.notYet': 'The firewall change should have been undone by now: open this page again to see the firewall as it is.',
+	'firewall.notYet':
+		'The firewall change should have been undone by now: open this page again to see the firewall as it is.',
 
 	// The dialog of a new rule.
 	'firewall.addTitle': 'Add Firewall Rule',

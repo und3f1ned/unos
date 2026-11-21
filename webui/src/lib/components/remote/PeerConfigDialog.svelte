@@ -38,7 +38,7 @@
 	open={created !== null}
 	title={created ? $t('remote.configTitle', { name: created.peer.name }) : ''}
 	size="lg"
-	onclose={onclose}
+	{onclose}
 >
 	{#if created}
 		<div class="space-y-4 text-sm">
@@ -51,7 +51,9 @@
 					<img src={qrDataUrl} alt={$t('remote.qrAlt', { name: created.peer.name })} class="w-64 h-64 max-w-full" />
 				</div>
 			{/if}
-			<pre class="p-3 bg-surface-overlay rounded-lg text-xs whitespace-pre-wrap break-all" aria-label={$t('remote.configTitle', { name: created.peer.name })}>{created.config}</pre>
+			<pre
+				class="p-3 bg-surface-overlay rounded-lg text-xs whitespace-pre-wrap break-all"
+				aria-label={$t('remote.configTitle', { name: created.peer.name })}>{created.config}</pre>
 		</div>
 	{/if}
 	{#snippet footer()}

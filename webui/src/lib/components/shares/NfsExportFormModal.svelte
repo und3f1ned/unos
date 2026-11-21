@@ -1,11 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import {
-		createNfsExport,
-		type NfsExport,
-		type SharePath,
-		type ShareAccessLevel
-	} from '$lib/api/shares';
+	import { createNfsExport, type NfsExport, type SharePath, type ShareAccessLevel } from '$lib/api/shares';
 	import { Alert, Button, HelpText, Input, Modal, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
@@ -114,12 +109,7 @@
 			hint={$t('shares.nfs.form.clientHint')}
 		/>
 
-		<Select
-			id="nfs-access"
-			label={$t('shares.access.title')}
-			bind:value={access}
-			options={accessOptions}
-		/>
+		<Select id="nfs-access" label={$t('shares.access.title')} bind:value={access} options={accessOptions} />
 
 		<HelpText text={$t('shares.nfs.note')} />
 	</form>

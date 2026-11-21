@@ -49,7 +49,12 @@
 			required
 			disabled={saving}
 		/>
-		<Select id="api-token-lifetime" label={$t('tokens.form.expiry')} bind:value={form.lifetime} options={lifetimeOptions} />
+		<Select
+			id="api-token-lifetime"
+			label={$t('tokens.form.expiry')}
+			bind:value={form.lifetime}
+			options={lifetimeOptions}
+		/>
 
 		<!-- The theme's radio buttons and checkboxes (ADR-0432); the form keeps booleans. -->
 		<RadioGroup

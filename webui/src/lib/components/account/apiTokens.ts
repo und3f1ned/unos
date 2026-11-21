@@ -4,7 +4,6 @@ import type { ApiToken, TokenArea } from '$lib/api/auth';
 import type { Translate } from '$lib/i18n';
 import { apiTime } from '$lib/time';
 
-
 export const AREA_LABELS: Record<TokenArea, string> = {
 	apps: 'tokens.area.apps',
 	audit: 'tokens.area.audit',

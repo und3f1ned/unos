@@ -57,15 +57,39 @@
 		const list: MoreAction[] = [];
 		if (pool.mounted) {
 			if (balanceShown) {
-				list.push({ id: 'balance', label: $t('storage.pool.balance'), icon: Scale, run: () => onbalance(pool), blocked: balanceBlocked });
+				list.push({
+					id: 'balance',
+					label: $t('storage.pool.balance'),
+					icon: Scale,
+					run: () => onbalance(pool),
+					blocked: balanceBlocked
+				});
 			}
 			list.push(
-				{ id: 'add-disk', label: $t('storage.pool.addDisk'), icon: Plus, run: () => onadddisk(pool), blocked: disksBlocked },
-				{ id: 'remove-disk', label: $t('storage.pool.removeDisk'), icon: MinusCircle, run: () => onremovedisk(pool), blocked: disksBlocked },
+				{
+					id: 'add-disk',
+					label: $t('storage.pool.addDisk'),
+					icon: Plus,
+					run: () => onadddisk(pool),
+					blocked: disksBlocked
+				},
+				{
+					id: 'remove-disk',
+					label: $t('storage.pool.removeDisk'),
+					icon: MinusCircle,
+					run: () => onremovedisk(pool),
+					blocked: disksBlocked
+				},
 				{ id: 'unmount', label: $t('storage.pool.unmount'), icon: Unplug, run: () => onunmount(pool) }
 			);
 		}
-		list.push({ id: 'remove', label: $t('storage.pool.removeShort'), icon: Trash2, run: () => ondelete(pool), danger: true });
+		list.push({
+			id: 'remove',
+			label: $t('storage.pool.removeShort'),
+			icon: Trash2,
+			run: () => ondelete(pool),
+			danger: true
+		});
 		return list;
 	}
 

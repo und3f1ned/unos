@@ -19,16 +19,7 @@
 		onclose: () => void;
 	};
 
-	let {
-		open,
-		name = $bindable(),
-		password = $bindable(),
-		busy,
-		touching,
-		error,
-		onadd,
-		onclose
-	}: Props = $props();
+	let { open, name = $bindable(), password = $bindable(), busy, touching, error, onadd, onclose }: Props = $props();
 </script>
 
 <Modal {open} title={$t('securitykeys.addTitle')} size="md" closable={!busy} {onclose}>
@@ -70,13 +61,7 @@
 
 	{#snippet footer()}
 		<Button variant="secondary" class="flex-1" disabled={busy} onclick={onclose}>{$t('common.cancel')}</Button>
-		<Button
-			type="submit"
-			form="security-key-add"
-			class="flex-1"
-			loading={busy}
-			disabled={!name.trim() || !password}
-		>
+		<Button type="submit" form="security-key-add" class="flex-1" loading={busy} disabled={!name.trim() || !password}>
 			{$t('securitykeys.addButton')}
 		</Button>
 	{/snippet}

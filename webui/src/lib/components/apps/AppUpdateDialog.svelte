@@ -180,7 +180,8 @@
 								</div>
 								{#if container.changed && container.image_to}
 									<p class="text-xs text-content-muted mono break-all mt-1">
-										{#if container.image_from}{shortName(container.image_from)} → {/if}{shortName(container.image_to)}
+										{#if container.image_from}{shortName(container.image_from)} →
+										{/if}{shortName(container.image_to)}
 									</p>
 								{/if}
 							</li>

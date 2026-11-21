@@ -283,7 +283,9 @@
 		@apply w-full min-h-9 px-3 py-1.5 bg-surface-overlay border border-border-strong rounded text-content
 		       text-left flex items-center justify-between gap-2
 		       hover:border-content-muted;
-		transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+		transition:
+			border-color var(--dur-fast),
+			box-shadow var(--dur-fast);
 	}
 
 	.select-trigger:focus,

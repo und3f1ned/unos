@@ -54,14 +54,10 @@
 	}
 </script>
 
-<ConfirmDialog
-	open={item !== null}
-	{title}
-	confirmLabel={submit}
-	{busy}
-	oncancel={close}
-	onconfirm={confirm}
->
+<ConfirmDialog open={item !== null} {title} confirmLabel={submit} {busy} oncancel={close} onconfirm={confirm}>
+	<!-- The note follows the paragraph with no line break, which would be a second space in the
+	     dialog's text: Prettier leaves the block as it is written. -->
+	<!-- prettier-ignore -->
 	{#if item}
 		<p class="text-sm">
 			{before}

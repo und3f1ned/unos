@@ -16,8 +16,7 @@ export const en = {
 	'power.details': 'Details',
 	'power.actions.unavailable': "Unavailable: the host's power state could not be read.",
 	'power.actions.title': 'Reboot, shutdown and suspend',
-	'power.actions.hint':
-		'Reboot and shutdown wait one minute, so that you can cancel them; suspend acts at once.',
+	'power.actions.hint': 'Reboot and shutdown wait one minute, so that you can cancel them; suspend acts at once.',
 
 	'power.reboot.button': 'Reboot',
 	'power.reboot.title': 'Reboot the host?',
@@ -68,16 +67,14 @@ export const en = {
 	'power.wol.turnedOn': 'Wake-on-LAN is on for {name}',
 	'power.wol.turnedOff': 'Wake-on-LAN is off for {name}',
 	// The hint around the example command, power.wol.command.
-	'power.wol.hintBefore':
-		'Send it from a computer on the same network, for example with',
+	'power.wol.hintBefore': 'Send it from a computer on the same network, for example with',
 	'power.wol.command': 'wakeonlan <MAC address>',
 	'power.wol.hintAfter':
 		"; it starts the NAS after a shutdown and wakes it from suspend. Many single-board computers cut the network card's power, and then it cannot. UNOS sets your choice again whenever it starts.",
 	// The card of the power settings' schedule (ADR-0407). {zone} is the host's time zone; {time},
 	// {since} and {at} are times in the browser's zone; {reason} and {detail} are the server's English.
 	'power.schedule.title': 'Shutdown and wake schedule',
-	'power.schedule.hint':
-		'UNOS announces each shutdown 10 minutes ahead, and a running job postpones it.',
+	'power.schedule.hint': 'UNOS announces each shutdown 10 minutes ahead, and a running job postpones it.',
 	'power.schedule.more': 'More about the schedule',
 	'power.schedule.moreJobs':
 		'The announcement shows in the health banner and goes to every notification channel. A backup, a restore, a scrub, a balance or an app install that runs postpones the daily shutdown until it ends; the idle shutdown waits until nothing uses the NAS.',
@@ -211,14 +208,12 @@ export const ru: Translation<typeof en> = {
 	'power.wol.forInterface': 'Wake-on-LAN для {name}',
 	'power.wol.turnedOn': 'Wake-on-LAN включён для {name}',
 	'power.wol.turnedOff': 'Wake-on-LAN выключен для {name}',
-	'power.wol.hintBefore':
-		'Отправьте его с компьютера в той же сети, например командой',
+	'power.wol.hintBefore': 'Отправьте его с компьютера в той же сети, например командой',
 	'power.wol.command': 'wakeonlan <MAC-адрес>',
 	'power.wol.hintAfter':
 		'; он включает NAS после выключения и будит его из спящего режима. Многие одноплатные компьютеры отключают питание сетевой карты, и тогда это невозможно. UNOS заново применяет ваш выбор при каждом запуске.',
 	'power.schedule.title': 'Расписание выключения и включения',
-	'power.schedule.hint':
-		'UNOS объявляет о каждом выключении за 10 минут, а выполняющееся задание его откладывает.',
+	'power.schedule.hint': 'UNOS объявляет о каждом выключении за 10 минут, а выполняющееся задание его откладывает.',
 	'power.schedule.more': 'Подробнее о расписании',
 	'power.schedule.moreJobs':
 		'Объявление появляется в баннере состояния и уходит во все каналы уведомлений. Выполняющиеся резервная копия, восстановление, проверка, балансировка или установка приложения откладывают ежедневное выключение до своего завершения; выключение при простое ждёт, пока NAS никто не использует.',

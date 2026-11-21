@@ -124,13 +124,7 @@
 				disabled={pulling !== ''}
 				class="flex-1"
 			/>
-			<Button
-				type="submit"
-				icon={Download}
-				loading={pulling !== ''}
-				disabled={!imageName.trim()}
-				class="sm:mb-6"
-			>
+			<Button type="submit" icon={Download} loading={pulling !== ''} disabled={!imageName.trim()} class="sm:mb-6">
 				{$t('containers.images.pull')}
 			</Button>
 		</form>
@@ -146,7 +140,12 @@
 
 	{#if removeError}
 		<div role="alert">
-			<Alert variant="error" title={$t('containers.images.notRemoved')} dismissible ondismiss={() => (removeError = '')}>
+			<Alert
+				variant="error"
+				title={$t('containers.images.notRemoved')}
+				dismissible
+				ondismiss={() => (removeError = '')}
+			>
 				<p class="break-words">{removeError}</p>
 			</Alert>
 		</div>

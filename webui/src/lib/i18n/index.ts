@@ -1,13 +1,5 @@
 import { derived, writable } from 'svelte/store';
-import {
-	dateLocale,
-	isLocale,
-	translate,
-	type Catalogs,
-	type Locale,
-	type Messages,
-	type Params
-} from './translate';
+import { dateLocale, isLocale, translate, type Catalogs, type Locale, type Messages, type Params } from './translate';
 
 // The web UI in English or Russian (ADR-0287). Texts come from the catalogs, one file per area
 // of the web UI: catalog/<area>.ts exports `en` and `ru` with keys that start with "<area>.".

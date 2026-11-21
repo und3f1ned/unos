@@ -272,7 +272,10 @@
 
 	function changeText(change: WaitingChange | null): string {
 		return change
-			? $t(CHANGES[change.action] ?? 'virtual.change.create', { kind: labelOf($t, KIND_WORDS, change.kind), name: change.name })
+			? $t(CHANGES[change.action] ?? 'virtual.change.create', {
+					kind: labelOf($t, KIND_WORDS, change.kind),
+					name: change.name
+				})
 			: $t('virtual.change.unknown');
 	}
 </script>

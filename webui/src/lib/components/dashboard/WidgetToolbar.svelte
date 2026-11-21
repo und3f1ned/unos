@@ -42,15 +42,33 @@
 	>
 		<GripVertical class="w-4 h-4" />
 	</span>
-	<Button variant="ghost" size="icon-sm" title={$t('dashboard.layout.moveUp', { name })} disabled={saving || first} onclick={() => onmove(-1)}>
+	<Button
+		variant="ghost"
+		size="icon-sm"
+		title={$t('dashboard.layout.moveUp', { name })}
+		disabled={saving || first}
+		onclick={() => onmove(-1)}
+	>
 		<ArrowUp class="w-4 h-4" />
 		<span class="sr-only">{$t('dashboard.layout.moveUp', { name })}</span>
 	</Button>
-	<Button variant="ghost" size="icon-sm" title={$t('dashboard.layout.moveDown', { name })} disabled={saving || last} onclick={() => onmove(1)}>
+	<Button
+		variant="ghost"
+		size="icon-sm"
+		title={$t('dashboard.layout.moveDown', { name })}
+		disabled={saving || last}
+		onclick={() => onmove(1)}
+	>
 		<ArrowDown class="w-4 h-4" />
 		<span class="sr-only">{$t('dashboard.layout.moveDown', { name })}</span>
 	</Button>
-	<Button variant="ghost" size="icon-sm" title={$t('dashboard.layout.hide', { name })} disabled={saving} onclick={onhide}>
+	<Button
+		variant="ghost"
+		size="icon-sm"
+		title={$t('dashboard.layout.hide', { name })}
+		disabled={saving}
+		onclick={onhide}
+	>
 		<EyeOff class="w-4 h-4" />
 		<span class="sr-only">{$t('dashboard.layout.hide', { name })}</span>
 	</Button>

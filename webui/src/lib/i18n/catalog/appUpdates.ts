@@ -27,7 +27,7 @@ export const en = {
 		'Kept: the data folders, the password files, the settings, the ports, the limits and the SMB group option. The earlier containers stay, stopped, until you roll back or remove them.',
 	'appUpdates.failureNote':
 		'If the new version does not start, UNOS returns the app to its earlier version and its database to the copy; if the copy cannot go back in place, the earlier version stays stopped, ready for a rollback.',
-	'appUpdates.details': 'What stays, and each container\'s image',
+	'appUpdates.details': "What stays, and each container's image",
 	'appUpdates.start': 'Update now',
 	'appUpdates.startFailed': 'The update could not be started: {error}',
 	'appUpdates.earlierTitle': 'Earlier version kept',
@@ -77,7 +77,11 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.versions': 'С {from} на {to}',
 	'appUpdates.versionUnknown': 'установленной версии',
 	'appUpdates.containers': 'Контейнеры',
-	'appUpdates.changedCount': { one: 'Новый образ у {n} из {total}', few: 'Новый образ у {n} из {total}', many: 'Новый образ у {n} из {total}' },
+	'appUpdates.changedCount': {
+		one: 'Новый образ у {n} из {total}',
+		few: 'Новый образ у {n} из {total}',
+		many: 'Новый образ у {n} из {total}'
+	},
 	'appUpdates.newImage': 'Новый образ',
 	'appUpdates.sameImage': 'Образ тот же',
 	'appUpdates.added': 'Добавляется',

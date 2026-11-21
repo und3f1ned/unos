@@ -69,13 +69,7 @@
 
 	{#if warning}
 		<div class="px-5 pb-4">
-			<Alert
-				variant="warning"
-				size="sm"
-				title={$t('storage.spindown.saved')}
-				dismissible
-				ondismiss={ondismisswarning}
-			>
+			<Alert variant="warning" size="sm" title={$t('storage.spindown.saved')} dismissible ondismiss={ondismisswarning}>
 				{warning}
 			</Alert>
 		</div>
@@ -120,11 +114,13 @@
 									{$t(disk.rotational ? 'storage.disks.hdd' : 'storage.disks.ssd')}
 								</Badge>
 							</td>
+							<!-- prettier-ignore -->
 							<td class="min-w-[12rem]">
 								<p>{describeContents(disk)}</p>
 								{#each disk.partitions ?? [] as part}
 									<!-- Svelte 5 trims the whitespace between the iterations of an each block: the
-									     cell's text keeps a space between the partitions, as Svelte 4 wrote it. -->
+									     cell's text keeps a space between the partitions, as Svelte 4 wrote it, and the
+									     cell keeps Prettier off: a line break after the space would be a second space. -->
 									{' '}<p class="mono-xs text-muted">
 										{part.name} · {formatBytes(part.size)}{part.fstype
 											? ` · ${part.fstype}`
@@ -151,12 +147,7 @@
 									<p class="flex flex-wrap items-center gap-x-1 mt-0.5 text-xs text-content-secondary">
 										<!-- The button's name says it to screen readers, with the disk. -->
 										<span aria-hidden="true">{$t('storage.disks.idleTimeout')}</span>
-										<Button
-											variant="ghost"
-											size="sm"
-											class="h-7 px-1.5 -my-1"
-											onclick={() => onspindown(disk)}
-										>
+										<Button variant="ghost" size="sm" class="h-7 px-1.5 -my-1" onclick={() => onspindown(disk)}>
 											<span class="sr-only">{$t('storage.spindown.of', { disk: disk.path })}</span>
 											{timeoutLabel(disk.spindown)}
 											<Pencil class="w-3.5 h-3.5 text-content-secondary" aria-hidden="true" />

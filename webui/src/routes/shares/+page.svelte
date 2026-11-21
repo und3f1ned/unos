@@ -103,9 +103,7 @@
 
 	function followRepair(job: RepairResult | null) {
 		const ended =
-			followedRepair?.state === 'running' &&
-			job?.state !== 'running' &&
-			isRepairOf(job, followedRepair.share);
+			followedRepair?.state === 'running' && job?.state !== 'running' && isRepairOf(job, followedRepair.share);
 		followedRepair = job;
 		if (ended) void smb.reload();
 	}
@@ -148,9 +146,7 @@
 	async function handleSaved({ share, created }: { share: SmbShare; created: boolean }) {
 		form = null;
 		outcome.show(
-			created
-				? $t('shares.smb.created', { name: share.name })
-				: $t('shares.smb.saved', { name: share.name }),
+			created ? $t('shares.smb.created', { name: share.name }) : $t('shares.smb.saved', { name: share.name }),
 			share.warnings
 		);
 		await smb.reload();
@@ -204,13 +200,7 @@
 	/>
 
 	<!-- What the selected tab shows. -->
-	<div
-		role="tabpanel"
-		id="shares-panel"
-		aria-labelledby="shares-tab-{activeTab}"
-		tabindex="0"
-		class="space-y-6"
-	>
+	<div role="tabpanel" id="shares-panel" aria-labelledby="shares-tab-{activeTab}" tabindex="0" class="space-y-6">
 		{#if !loading && pathsError}
 			<Alert variant="error" title={$t('shares.pathsError')}>{pathsError}</Alert>
 		{/if}

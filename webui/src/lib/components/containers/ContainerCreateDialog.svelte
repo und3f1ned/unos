@@ -161,9 +161,7 @@
 	</form>
 
 	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" onclick={onclose}
-			>{$t('common.cancel')}</Button
-		>
+		<Button variant="secondary" class="flex-1" onclick={onclose}>{$t('common.cancel')}</Button>
 		<Button
 			variant="primary"
 			class="flex-1"

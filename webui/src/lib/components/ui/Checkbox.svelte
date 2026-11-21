@@ -81,7 +81,9 @@
 	<label class="choice {disabled ? 'choice-disabled' : ''} {className}">
 		{@render box()}
 		<span class="min-w-0">
-			<span id="{uid}-label" class="block">{#if children}{@render children()}{:else}{label}{/if}</span>
+			<span id="{uid}-label" class="block"
+				>{#if children}{@render children()}{:else}{label}{/if}</span
+			>
 			{#if description}<span id="{uid}-description" class="choice-description">{description}</span>{/if}
 		</span>
 	</label>

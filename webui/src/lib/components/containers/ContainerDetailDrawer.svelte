@@ -56,7 +56,10 @@
 <!-- A Sheet (ADR-0432): its title the name, which wraps, the state once beside it (webui.ux-apps). -->
 <Sheet open={open && container !== null} title={container?.name ?? ''} onclose={close}>
 	{#snippet titleIcon()}
-		<span class="w-9 h-9 rounded-card bg-surface-overlay flex items-center justify-center flex-shrink-0" aria-hidden="true">
+		<span
+			class="w-9 h-9 rounded-card bg-surface-overlay flex items-center justify-center flex-shrink-0"
+			aria-hidden="true"
+		>
 			<Box class="w-5 h-5 text-content-secondary" />
 		</span>
 	{/snippet}

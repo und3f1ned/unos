@@ -18,10 +18,7 @@
 <!-- A 400 px card in the middle of the page, the mark and the product's name above it (ADR-0428). -->
 <div class="min-h-screen flex flex-col items-center justify-center gap-6 bg-surface px-4 py-8">
 	<div class="flex items-center justify-center gap-2.5">
-		<span
-			class="grid place-items-center w-9 h-9 rounded-[9px] bg-brand text-content-on-brand"
-			aria-hidden="true"
-		>
+		<span class="grid place-items-center w-9 h-9 rounded-[9px] bg-brand text-content-on-brand" aria-hidden="true">
 			<Server class="w-5 h-5" />
 		</span>
 		<span class="text-2xl font-bold tracking-[0.04em]">{$t('common.product')}</span>

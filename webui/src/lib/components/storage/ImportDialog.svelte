@@ -35,9 +35,7 @@
 	let importNameTaken = $derived(pools.some((p) => p.name === importName));
 	// The label of another filesystem found on the disks: the server refuses a name that another
 	// filesystem has as its label (409), and of two with one label, neither is a pool.
-	let importLabelTaken = $derived(
-		importable.some((fs) => fs.uuid !== target?.uuid && fs.label === importName)
-	);
+	let importLabelTaken = $derived(importable.some((fs) => fs.uuid !== target?.uuid && fs.label === importName));
 	let importNameError = $derived(
 		!importName
 			? ''
@@ -49,9 +47,7 @@
 						? $t('storage.import.labelTaken', { name: importName })
 						: ''
 	);
-	let canImport = $derived(
-		target !== null && importNameValid && !importNameTaken && !importLabelTaken && !importing
-	);
+	let canImport = $derived(target !== null && importNameValid && !importNameTaken && !importLabelTaken && !importing);
 
 	function closeImport() {
 		if (importing) return;
@@ -79,21 +75,19 @@
 	}
 </script>
 
-<Modal
-	open={target !== null}
-	title={$t('storage.import.title')}
-	size="md"
-	closable={!importing}
-	onclose={closeImport}
->
+<Modal open={target !== null} title={$t('storage.import.title')} size="md" closable={!importing} onclose={closeImport}>
 	{#if target}
-		<form onsubmit={(e) => { e.preventDefault(); handleImport(); }} class="space-y-4">
+		<form
+			onsubmit={(e) => {
+				e.preventDefault();
+				handleImport();
+			}}
+			class="space-y-4"
+		>
 			<p>
 				{$t('storage.import.filesystem')}
 				<span class="mono-xs break-all">{target.uuid}</span>
-				({target.label === null
-					? $t('storage.import.noLabel')
-					: $t('storage.import.label', { label: target.label })})
+				({target.label === null ? $t('storage.import.noLabel') : $t('storage.import.label', { label: target.label })})
 				{$t('storage.import.on')}
 				<span class="mono-xs">{target.devices.join(', ')}</span>
 				{$t('storage.import.asPool')}
@@ -120,13 +114,7 @@
 		<Button variant="secondary" class="flex-1" disabled={importing} onclick={closeImport}>
 			{$t('common.cancel')}
 		</Button>
-		<Button
-			class="flex-1"
-			icon={HardDriveDownload}
-			loading={importing}
-			disabled={!canImport}
-			onclick={handleImport}
-		>
+		<Button class="flex-1" icon={HardDriveDownload} loading={importing} disabled={!canImport} onclick={handleImport}>
 			{$t('storage.import.confirm')}
 		</Button>
 	{/snippet}

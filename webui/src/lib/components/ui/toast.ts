@@ -33,8 +33,14 @@ export const toasts = { subscribe: shown.subscribe };
 /** Show `message`; its id, for dismissToast. */
 export function showToast(tone: ToastTone, message: string, options: ToastOptions = {}): number {
 	const id = ++next;
-	const toast: Toast = { id, tone, message, title: options.title, action: options.action,
-		duration: options.duration ?? DURATION[tone] };
+	const toast: Toast = {
+		id,
+		tone,
+		message,
+		title: options.title,
+		action: options.action,
+		duration: options.duration ?? DURATION[tone]
+	};
 	shown.update((list) => [...list, toast].slice(-MAX_SHOWN));
 	return id;
 }

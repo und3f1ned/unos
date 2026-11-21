@@ -27,7 +27,8 @@ export const en = {
 	'containers.empty.none': 'Create one with Create container above, or install an app from the App Store.',
 	'containers.empty.clear': 'Clear filters',
 	'containers.loadError.title': 'Docker is not answering',
-	'containers.loadError.hint': 'The containers cannot be listed or changed until Docker runs on the NAS again. Retry once it does; its reason:',
+	'containers.loadError.hint':
+		'The containers cannot be listed or changed until Docker runs on the NAS again. Retry once it does; its reason:',
 	'containers.loadFailed.title': 'The containers could not be loaded',
 	'containers.loadFailed.hint': 'Retry in a moment; the reason:',
 
@@ -99,7 +100,8 @@ export const en = {
 	'containers.drawer.image': 'Image',
 	'containers.drawer.labels': { one: '{n} Docker label', other: '{n} Docker labels' },
 	'containers.drawer.app': 'App',
-	'containers.drawer.appHint': 'An app of the App Store made this container: stop, start, update and uninstall the app on the App Store\'s Installed tab, which keeps its containers together.',
+	'containers.drawer.appHint':
+		"An app of the App Store made this container: stop, start, update and uninstall the app on the App Store's Installed tab, which keeps its containers together.",
 	// When an action fails without a message from the server.
 	'containers.drawer.log.connecting': 'Connecting to the log...',
 	'containers.drawer.log.live': 'Live: new lines appear as the container writes them',
@@ -186,10 +188,12 @@ export const ru: Translation<typeof en> = {
 	'containers.empty.title': 'Контейнеров пока нет',
 	'containers.empty.filteredTitle': 'Подходящих контейнеров нет',
 	'containers.empty.filtered': 'Измените поиск или покажите все состояния.',
-	'containers.empty.none': 'Создайте контейнер кнопкой «Создать контейнер» выше или установите приложение из магазина приложений.',
+	'containers.empty.none':
+		'Создайте контейнер кнопкой «Создать контейнер» выше или установите приложение из магазина приложений.',
 	'containers.empty.clear': 'Сбросить фильтры',
 	'containers.loadError.title': 'Docker не отвечает',
-	'containers.loadError.hint': 'Пока Docker на NAS не заработает снова, контейнеры нельзя ни показать, ни изменить. Повторите, когда он заработает; его причина:',
+	'containers.loadError.hint':
+		'Пока Docker на NAS не заработает снова, контейнеры нельзя ни показать, ни изменить. Повторите, когда он заработает; его причина:',
 	'containers.loadFailed.title': 'Не удалось загрузить контейнеры',
 	'containers.loadFailed.hint': 'Повторите чуть позже; причина:',
 
@@ -258,7 +262,8 @@ export const ru: Translation<typeof en> = {
 	'containers.drawer.image': 'Образ',
 	'containers.drawer.labels': { one: '{n} метка Docker', few: '{n} метки Docker', many: '{n} меток Docker' },
 	'containers.drawer.app': 'Приложение',
-	'containers.drawer.appHint': 'Этот контейнер создало приложение из магазина приложений: останавливайте, запускайте, обновляйте и удаляйте приложение на вкладке «Установленные» магазина, где его контейнеры остаются вместе.',
+	'containers.drawer.appHint':
+		'Этот контейнер создало приложение из магазина приложений: останавливайте, запускайте, обновляйте и удаляйте приложение на вкладке «Установленные» магазина, где его контейнеры остаются вместе.',
 	'containers.drawer.log.connecting': 'Подключение к журналу...',
 	'containers.drawer.log.live': 'В реальном времени: новые строки появляются, как только контейнер их записывает',
 	'containers.drawer.log.ended': 'Поток журнала завершён',

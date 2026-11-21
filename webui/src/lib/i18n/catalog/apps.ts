@@ -92,7 +92,8 @@ export const en = {
 	},
 	'apps.installed.uninstallAction': 'Uninstall app',
 	'apps.installed.loadErrorTitle': 'Docker is not answering',
-	'apps.installed.loadError': 'The installed apps could not be loaded, and no app can be installed, started or stopped until Docker answers. Retry once it runs again; its reason:',
+	'apps.installed.loadError':
+		'The installed apps could not be loaded, and no app can be installed, started or stopped until Docker answers. Retry once it runs again; its reason:',
 	'apps.installed.loadFailedTitle': 'The installed apps could not be loaded',
 	'apps.installed.loadFailed': 'No app can be installed until they are. Retry; the reason:',
 	'apps.installed.startFailed': 'Start failed',
@@ -115,7 +116,10 @@ export const en = {
 	'apps.resources.noLimit': 'No limit',
 	'apps.resources.memoryBar': 'Memory of {name} against its limit',
 	'apps.resources.cpuBar': 'CPU of {name} against its limit',
-	'apps.resources.notRead': { one: 'The use of {n} running container has not been read yet.', other: 'The use of {n} running containers has not been read yet.' },
+	'apps.resources.notRead': {
+		one: 'The use of {n} running container has not been read yet.',
+		other: 'The use of {n} running containers has not been read yet.'
+	},
 	'apps.resources.limits': 'Limits',
 	// The dialog of a container's limits: {name} is the container's name; {min} and {max} numbers.
 	'apps.limits.title': 'Limits of {name}',
@@ -124,9 +128,11 @@ export const en = {
 	'apps.limits.memory': 'Memory limit (MB)',
 	'apps.limits.memoryHint':
 		'From {min} MB to below {max} MB, the memory of this NAS. At the limit the kernel takes memory from the container, and then ends its processes.',
-	'apps.limits.memoryNow': 'It uses {used} MB now: while it runs, a new limit must leave a margin above that of 10%, at least 32 MB.',
+	'apps.limits.memoryNow':
+		'It uses {used} MB now: while it runs, a new limit must leave a margin above that of 10%, at least 32 MB.',
 	'apps.limits.cpu': 'CPU limit (CPUs)',
-	'apps.limits.cpuHint': 'From {min} to {max} CPUs, the CPUs of this NAS, in hundredths. At its limit the container runs slower.',
+	'apps.limits.cpuHint':
+		'From {min} to {max} CPUs, the CPUs of this NAS, in hundredths. At its limit the container runs slower.',
 	'apps.limits.none': 'No limit',
 	'apps.limits.notANumber': 'Enter a number, or leave the field empty for no limit.',
 	'apps.limits.save': 'Save limits',
@@ -199,7 +205,8 @@ export const en = {
 	'apps.detail.mountedAtIn': 'mounted at {path} in {container}',
 	'apps.detail.mountedAtInReadOnly': 'mounted at {path} in {container} (read-only)',
 	// A password file that UNOS generates at the install (ADR-0381).
-	'apps.detail.generatedSecret': 'A password that UNOS generates at the install and keeps in this file; it is never shown.',
+	'apps.detail.generatedSecret':
+		'A password that UNOS generates at the install and keeps in this file; it is never shown.',
 	'apps.detail.minMemory': 'Minimum memory',
 	'apps.detail.recommendedMemory': 'Recommended memory',
 	'apps.detail.portsHint': 'The host ports where the app answers; change one that another service already uses.',
@@ -221,7 +228,7 @@ export const en = {
 	'apps.detail.insidePool': 'Must be inside a mounted storage pool',
 	'apps.detail.system': 'System',
 	'apps.detail.file': 'File',
-	'apps.detail.environmentHint': 'The app\'s settings. Set the required ones before you install it.',
+	'apps.detail.environmentHint': "The app's settings. Set the required ones before you install it.",
 	'apps.detail.secretPlaceholder': 'Choose a unique value',
 	'apps.detail.optional': 'Optional',
 	'apps.detail.enter': 'Enter {name}',
@@ -258,7 +265,8 @@ export const en = {
 	'apps.detail.notAvailable':
 		"{name} is not available for {platform}: an image of the app has no build for this host's platform, so it cannot be installed here.",
 	'apps.detail.installRunning': 'An install of {name} is under way: install this app once it has ended.',
-	'apps.detail.dockerDown': 'Docker is not answering, so no app can be installed now. Retry on the App Store once it runs again.',
+	'apps.detail.dockerDown':
+		'Docker is not answering, so no app can be installed now. Retry on the App Store once it runs again.',
 	'apps.detail.installedUnknown': 'The installed apps are not loaded yet, so no app can be installed now.',
 	'apps.job.label': 'Install of {name}',
 	'apps.job.state.running': 'Installing',
@@ -375,7 +383,8 @@ export const ru: Translation<typeof en> = {
 	},
 	'apps.installed.uninstallAction': 'Удалить приложение',
 	'apps.installed.loadErrorTitle': 'Docker не отвечает',
-	'apps.installed.loadError': 'Не удалось загрузить установленные приложения; пока Docker не ответит, приложения нельзя устанавливать, запускать и останавливать. Повторите, когда он снова заработает; его причина:',
+	'apps.installed.loadError':
+		'Не удалось загрузить установленные приложения; пока Docker не ответит, приложения нельзя устанавливать, запускать и останавливать. Повторите, когда он снова заработает; его причина:',
 	'apps.installed.loadFailedTitle': 'Не удалось загрузить установленные приложения',
 	'apps.installed.loadFailed': 'Пока они не загружены, приложения нельзя устанавливать. Повторите; причина:',
 	'apps.installed.startFailed': 'Не удалось запустить приложение',
@@ -386,7 +395,8 @@ export const ru: Translation<typeof en> = {
 	'apps.resources.container': 'Контейнер',
 	'apps.resources.memory': 'Память',
 	'apps.resources.cpu': 'ЦП',
-	'apps.resources.hint': 'По последнему замеру UNOS, примерно раз в 30 секунд; при превышении лимита приходит оповещение.',
+	'apps.resources.hint':
+		'По последнему замеру UNOS, примерно раз в 30 секунд; при превышении лимита приходит оповещение.',
 	'apps.resources.memoryUse': '{used} из {limit}',
 	'apps.resources.memoryUseNoLimit': '{used}, без лимита',
 	'apps.resources.memoryLimit': 'Лимит {limit}',
@@ -396,7 +406,11 @@ export const ru: Translation<typeof en> = {
 	'apps.resources.noLimit': 'Без лимита',
 	'apps.resources.memoryBar': 'Память {name} относительно ограничения',
 	'apps.resources.cpuBar': 'ЦП {name} относительно ограничения',
-	'apps.resources.notRead': { one: 'Использование {n} работающего контейнера ещё не замерено.', few: 'Использование {n} работающих контейнеров ещё не замерено.', many: 'Использование {n} работающих контейнеров ещё не замерено.' },
+	'apps.resources.notRead': {
+		one: 'Использование {n} работающего контейнера ещё не замерено.',
+		few: 'Использование {n} работающих контейнеров ещё не замерено.',
+		many: 'Использование {n} работающих контейнеров ещё не замерено.'
+	},
 	'apps.resources.limits': 'Ограничения',
 	'apps.limits.title': 'Ограничения {name}',
 	'apps.limits.intro':
@@ -404,9 +418,11 @@ export const ru: Translation<typeof en> = {
 	'apps.limits.memory': 'Ограничение памяти (МБ)',
 	'apps.limits.memoryHint':
 		'От {min} МБ до значения меньше {max} МБ — памяти этого NAS. На пределе ядро отбирает у контейнера память, а затем завершает его процессы.',
-	'apps.limits.memoryNow': 'Сейчас он использует {used} МБ: пока он работает, новое ограничение должно оставлять запас сверх этого — 10%, не меньше 32 МБ.',
+	'apps.limits.memoryNow':
+		'Сейчас он использует {used} МБ: пока он работает, новое ограничение должно оставлять запас сверх этого — 10%, не меньше 32 МБ.',
 	'apps.limits.cpu': 'Ограничение ЦП (процессоров)',
-	'apps.limits.cpuHint': 'От {min} до {max} ЦП — процессоров этого NAS, с точностью до сотых. На пределе контейнер работает медленнее.',
+	'apps.limits.cpuHint':
+		'От {min} до {max} ЦП — процессоров этого NAS, с точностью до сотых. На пределе контейнер работает медленнее.',
 	'apps.limits.none': 'Без ограничения',
 	'apps.limits.notANumber': 'Введите число или оставьте поле пустым, чтобы не ограничивать.',
 	'apps.limits.save': 'Сохранить ограничения',
@@ -455,7 +471,11 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.image': 'Образ',
 	'apps.detail.containers': 'Контейнеры',
 	'apps.detail.containersAndImages': 'Контейнеры и образы',
-	'apps.detail.containerCount': { one: '{n}, работают вместе', few: '{n}, работают вместе', many: '{n}, работают вместе' },
+	'apps.detail.containerCount': {
+		one: '{n}, работают вместе',
+		few: '{n}, работают вместе',
+		many: '{n}, работают вместе'
+	},
 	'apps.detail.containersHint':
 		'Приложение {name} работает в {count} контейнерах в собственной сети: UNOS устанавливает, запускает, останавливает и удаляет их вместе. Каждый образ закреплён по дайджесту.',
 	'apps.detail.diskAwake':
@@ -467,10 +487,12 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.mountedAtReadOnly': 'монтируется в {path} (только чтение)',
 	'apps.detail.mountedAtIn': 'монтируется в {path} в контейнере {container}',
 	'apps.detail.mountedAtInReadOnly': 'монтируется в {path} в контейнере {container} (только чтение)',
-	'apps.detail.generatedSecret': 'Пароль, который UNOS создаёт при установке и хранит в этом файле; он нигде не показывается.',
+	'apps.detail.generatedSecret':
+		'Пароль, который UNOS создаёт при установке и хранит в этом файле; он нигде не показывается.',
 	'apps.detail.minMemory': 'Минимум памяти',
 	'apps.detail.recommendedMemory': 'Рекомендуемая память',
-	'apps.detail.portsHint': 'Порты хоста, на которых отвечает приложение; измените порт, который уже занят другой службой.',
+	'apps.detail.portsHint':
+		'Порты хоста, на которых отвечает приложение; измените порт, который уже занят другой службой.',
 	'apps.detail.portsHostNetwork':
 		'Приложение {name} работает в сети хоста и слушает эти порты на самом хосте, поэтому их нельзя изменить.',
 	'apps.detail.hostPort': 'Порт хоста',
@@ -518,8 +540,10 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.notAvailable':
 		'{name} недоступно для {platform}: у образа приложения нет сборки для платформы этого сервера, поэтому установить его здесь нельзя.',
 	'apps.detail.installRunning': 'Идёт установка приложения {name}: установите это приложение, когда она закончится.',
-	'apps.detail.dockerDown': 'Docker не отвечает, поэтому сейчас нельзя установить ни одно приложение. Повторите в магазине приложений, когда он снова заработает.',
-	'apps.detail.installedUnknown': 'Установленные приложения ещё не загружены, поэтому сейчас нельзя установить ни одно приложение.',
+	'apps.detail.dockerDown':
+		'Docker не отвечает, поэтому сейчас нельзя установить ни одно приложение. Повторите в магазине приложений, когда он снова заработает.',
+	'apps.detail.installedUnknown':
+		'Установленные приложения ещё не загружены, поэтому сейчас нельзя установить ни одно приложение.',
 	'apps.job.label': 'Установка приложения {name}',
 	'apps.job.state.running': 'Устанавливается',
 	'apps.job.state.succeeded': 'Установлено',
@@ -537,7 +561,11 @@ export const ru: Translation<typeof en> = {
 	'apps.job.image.failed': 'Ошибка',
 	'apps.job.download': 'Загрузка образа {image}',
 	'apps.job.bytes': '{done} из {total}',
-	'apps.job.imagesReady': { one: 'На NAS {done} из {n} образа', few: 'На NAS {done} из {n} образов', many: 'На NAS {done} из {n} образов' },
+	'apps.job.imagesReady': {
+		one: 'На NAS {done} из {n} образа',
+		few: 'На NAS {done} из {n} образов',
+		many: 'На NAS {done} из {n} образов'
+	},
 	'apps.job.downloadAll': 'Загрузка образов {name}',
 	'apps.job.container.waiting': 'Ожидает',
 	'apps.job.container.created': 'Создан',
@@ -550,7 +578,8 @@ export const ru: Translation<typeof en> = {
 	'apps.job.step.cleaning': 'Удаление сделанного установкой',
 	'apps.job.cancel': 'Отменить установку',
 	'apps.job.cancelTitle': 'Отменить установку приложения {name}?',
-	'apps.job.confirmCancel': 'Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
+	'apps.job.confirmCancel':
+		'Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
 	'apps.job.cancelAction': 'Отменить установку',
 	'apps.job.keepGoing': 'Продолжить установку',
 	'apps.job.cancelledTitle': 'Установка отменена',

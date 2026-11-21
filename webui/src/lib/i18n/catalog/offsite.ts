@@ -5,8 +5,7 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'offsite.title': 'Off-device copy',
-	'offsite.intro':
-		'Encrypted copies of the configuration and of chosen folders, kept off this device.',
+	'offsite.intro': 'Encrypted copies of the configuration and of chosen folders, kept off this device.',
 	'offsite.notSetUp': 'No off-device copy is set up.',
 	'offsite.loadFailed': 'Could not load the off-device copy',
 	'offsite.refresh': 'Refresh',
@@ -23,7 +22,8 @@ export const en = {
 	'offsite.form.pathHint':
 		'A folder on a disk mounted below /mnt (such as a USB disk added as a pool), made when it is missing. Not the system disk.',
 	'offsite.form.endpoint': 'Endpoint',
-	'offsite.form.endpointHint': 'https:// or http:// with the host and port, such as https://s3.eu-central-1.amazonaws.com',
+	'offsite.form.endpointHint':
+		'https:// or http:// with the host and port, such as https://s3.eu-central-1.amazonaws.com',
 	'offsite.form.bucket': 'Bucket',
 	'offsite.form.prefix': 'Prefix (optional)',
 	'offsite.form.region': 'Region (optional)',
@@ -47,7 +47,8 @@ export const en = {
 	'offsite.rest.fingerprintHint':
 		'As openssl x509 -noout -fingerprint -sha256 prints it on the server. Saving reads the certificate from the server, compares it and trusts only it from then on: a new certificate needs its new fingerprint.',
 	'offsite.rest.certificate': 'CA certificate (PEM)',
-	'offsite.rest.certificateHint': 'From -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----. Only this authority is trusted.',
+	'offsite.rest.certificateHint':
+		'From -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----. Only this authority is trusted.',
 
 	// An SFTP server.
 	'offsite.sftp.keyTitle': 'Key pair of UNOS',
@@ -68,7 +69,8 @@ export const en = {
 	'offsite.sftp.port': 'SSH port',
 	'offsite.sftp.username': 'Login on the server',
 	'offsite.sftp.path': 'Folder on the server',
-	'offsite.sftp.pathHint': 'An absolute path such as /srv/copies/unos, or one below the login’s home folder. Made when it is missing.',
+	'offsite.sftp.pathHint':
+		'An absolute path such as /srv/copies/unos, or one below the login’s home folder. Made when it is missing.',
 	'offsite.sftp.pinned': 'Pinned host key: {fingerprint}',
 	'offsite.sftp.pinnedHint':
 		'The first test pinned the server’s host key. A copy to a server that shows another key fails until you trust the new one with its fingerprint.',
@@ -198,8 +200,7 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'offsite.title': 'Копия вне устройства',
-	'offsite.intro':
-		'Зашифрованные копии конфигурации и выбранных папок вне этого устройства.',
+	'offsite.intro': 'Зашифрованные копии конфигурации и выбранных папок вне этого устройства.',
 	'offsite.notSetUp': 'Копия вне устройства не настроена.',
 	'offsite.loadFailed': 'Не удалось загрузить копию вне устройства',
 	'offsite.refresh': 'Обновить',
@@ -238,7 +239,8 @@ export const ru: Translation<typeof en> = {
 	'offsite.rest.fingerprintHint':
 		'Так, как его выводит openssl x509 -noout -fingerprint -sha256 на сервере. При сохранении сертификат читается с сервера, сравнивается и дальше доверяют только ему: для нового сертификата нужен его новый отпечаток.',
 	'offsite.rest.certificate': 'Сертификат центра сертификации (PEM)',
-	'offsite.rest.certificateHint': 'От -----BEGIN CERTIFICATE----- до -----END CERTIFICATE-----. Доверяют только этому центру.',
+	'offsite.rest.certificateHint':
+		'От -----BEGIN CERTIFICATE----- до -----END CERTIFICATE-----. Доверяют только этому центру.',
 
 	'offsite.sftp.keyTitle': 'Пара ключей UNOS',
 	'offsite.sftp.keyIntro':
@@ -258,7 +260,8 @@ export const ru: Translation<typeof en> = {
 	'offsite.sftp.port': 'Порт SSH',
 	'offsite.sftp.username': 'Пользователь на сервере',
 	'offsite.sftp.path': 'Папка на сервере',
-	'offsite.sftp.pathHint': 'Абсолютный путь, например /srv/copies/unos, или путь внутри домашней папки пользователя. Создаётся, если её нет.',
+	'offsite.sftp.pathHint':
+		'Абсолютный путь, например /srv/copies/unos, или путь внутри домашней папки пользователя. Создаётся, если её нет.',
 	'offsite.sftp.pinned': 'Закреплённый ключ хоста: {fingerprint}',
 	'offsite.sftp.pinnedHint':
 		'Первая проверка закрепила ключ хоста сервера. Копия на сервер, который покажет другой ключ, не выполнится, пока вы не доверитесь новому, указав его отпечаток.',
@@ -369,9 +372,11 @@ export const ru: Translation<typeof en> = {
 	'offsite.snapshots.restoreFiles': 'Восстановить файлы',
 	'offsite.snapshots.pool': 'Пул',
 	'offsite.snapshots.folder': 'Папка в снимке',
-	'offsite.snapshots.folderHint': 'Необязательно: папка, как она записана в снимке, например {path}. Пусто — снимок целиком.',
+	'offsite.snapshots.folderHint':
+		'Необязательно: папка, как она записана в снимке, например {path}. Пусто — снимок целиком.',
 	'offsite.snapshots.into': 'В новую папку restored-<дата>-<время> в корне пула. Ничего не перезаписывается.',
 	'offsite.snapshots.restore': 'Восстановить',
 	'offsite.snapshots.restoreFilesFailed': 'Не удалось восстановить файлы',
-	'offsite.snapshots.restoring': 'Восстановление в {folder} идёт в фоне: кнопка «Обновить» покажет, когда оно закончится.'
+	'offsite.snapshots.restoring':
+		'Восстановление в {folder} идёт в фоне: кнопка «Обновить» покажет, когда оно закончится.'
 };

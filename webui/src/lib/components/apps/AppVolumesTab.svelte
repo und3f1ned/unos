@@ -135,9 +135,7 @@
 											oninput={(e) => onpath(volume, inputValue(e))}
 											disabled={isInstalled || selectedPool === null}
 											autocomplete="off"
-											error={invalidVolumes.includes(volume.container)
-												? $t('apps.detail.insidePool')
-												: ''}
+											error={invalidVolumes.includes(volume.container) ? $t('apps.detail.insidePool') : ''}
 										/>
 									{:else}
 										<p class="form-label">{$t('apps.detail.hostPath')}</p>

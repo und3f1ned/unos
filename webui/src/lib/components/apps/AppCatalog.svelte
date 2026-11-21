@@ -72,10 +72,7 @@
 	const categoriesWithCounts = $derived(
 		categories.map((cat) => ({
 			...cat,
-			count:
-				cat.value === ''
-					? catalog.length
-					: catalog.filter((app) => app.category === cat.value).length
+			count: cat.value === '' ? catalog.length : catalog.filter((app) => app.category === cat.value).length
 		}))
 	);
 
@@ -150,11 +147,7 @@
 		</div>
 
 		{#if filteredCatalog.length === 0}
-			<EmptyState
-				icon={Package}
-				title={$t('apps.noneFound')}
-				description={$t('apps.noneFoundHint')}
-			>
+			<EmptyState icon={Package} title={$t('apps.noneFound')} description={$t('apps.noneFoundHint')}>
 				<Button
 					variant="secondary"
 					onclick={() => {

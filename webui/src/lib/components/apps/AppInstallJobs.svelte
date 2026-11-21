@@ -140,9 +140,7 @@
 	<section aria-label={$t(LABEL[job.kind], { name: job.name })}>
 		<Card>
 			<div class="flex flex-wrap items-center gap-3">
-				<div
-					class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center text-2xl flex-shrink-0"
-				>
+				<div class="w-10 h-10 rounded-lg bg-surface-muted flex items-center justify-center text-2xl flex-shrink-0">
 					{template?.icon || '📦'}
 				</div>
 				<div class="flex-1 min-w-0">

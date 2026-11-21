@@ -145,14 +145,16 @@
 
 <!-- "alice, bob": the users who get access; one that does not count yet is muted with a short tag,
      the reason as hover text and as text for screen readers (not struck through). -->
-{#snippet names(entries: (ShareAccess | ShareGroupMember)[])}{#each entries as entry, i}{#if i > 0}{', '}{/if}{#if entry.effective}{entry.username}{:else}<span
+{#snippet names(
+	entries: (ShareAccess | ShareGroupMember)[]
+)}{#each entries as entry, i}{#if i > 0}{', '}{/if}{#if entry.effective}{entry.username}{:else}<span
 				class="share-user-inactive"
 				data-inactive
-				title={reason(entry)}>{entry.username}{#if tag(entry)}<span class="ml-1" aria-hidden="true"
+				title={reason(entry)}
+				>{entry.username}{#if tag(entry)}<span class="ml-1" aria-hidden="true"
 						><Badge variant="neutral">{tag(entry)}</Badge></span
 					>{/if}</span
-			><span class="sr-only">{` ${$t('shares.card.notActive', { reason: reason(entry) })}`}</span
-			>{/if}{/each}{/snippet}
+			><span class="sr-only">{` ${$t('shares.card.notActive', { reason: reason(entry) })}`}</span>{/if}{/each}{/snippet}
 
 <!-- An address to connect with, and its copy button. -->
 {#snippet address(text: string, label: string)}
@@ -203,14 +205,11 @@
 		</div>
 		<div class="share-actions">
 			<Button variant="secondary" size="sm" icon={Edit} onclick={() => onedit?.(share)}>
-				{$t('shares.card.edit')}<span class="sr-only"
-					>{` ${$t('shares.card.editOf', { name: share.name })}`}</span
-				>
+				{$t('shares.card.edit')}<span class="sr-only">{` ${$t('shares.card.editOf', { name: share.name })}`}</span>
 			</Button>
 			{#if share.served}
 				<Button variant="secondary" size="sm" icon={Wrench} onclick={() => onrepair?.(share)}>
-					{$t('shares.card.repair')}<span class="sr-only"
-						>{` ${$t('shares.card.repairOf', { name: share.name })}`}</span
+					{$t('shares.card.repair')}<span class="sr-only">{` ${$t('shares.card.repairOf', { name: share.name })}`}</span
 					>
 				</Button>
 			{/if}
@@ -246,10 +245,10 @@
 		{:else}
 			<!-- "Read & write: alice, bob · Read: carol", muted as in names. -->
 			{#if groups.length > 0}<p>
-				{#each groups as group, g}{#if g > 0}<span class="text-muted">{' · '}</span>{/if}<span
-						class="text-secondary">{group.label}:</span
-					>{' '}{@render names(group.entries)}{/each}
-			</p>{/if}
+					{#each groups as group, g}{#if g > 0}<span class="text-muted">{' · '}</span>{/if}<span class="text-secondary"
+							>{group.label}:</span
+						>{' '}{@render names(group.entries)}{/each}
+				</p>{/if}
 			<!-- "Group family (Read & write): bob, carol", muted as in names. -->
 			{#each groupAccess as entry (entry.group_id)}
 				<p>
@@ -258,8 +257,7 @@
 							group: entry.group,
 							level: entry.level === 'write' ? $t('shares.level.write') : $t('shares.card.read')
 						})}</span
-					>{' '}{#if entry.members.length === 0}<span class="text-muted"
-							>{$t('shares.card.groupEmpty')}</span
+					>{' '}{#if entry.members.length === 0}<span class="text-muted">{$t('shares.card.groupEmpty')}</span
 						>{:else}{@render names(entry.members)}{/if}
 				</p>
 			{/each}
@@ -285,12 +283,7 @@
 				{/each}
 			</ul>
 			<div class="mt-2">
-				<Button
-					variant="secondary"
-					size="sm"
-					loading={dismissing}
-					onclick={() => ondismissnotes?.(share)}
-				>
+				<Button variant="secondary" size="sm" loading={dismissing} onclick={() => ondismissnotes?.(share)}>
 					{$t('shares.card.dismiss')}<span class="sr-only"
 						>{` ${$t('shares.card.dismissOf', { name: share.name })}`}</span
 					>
