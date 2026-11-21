@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { HardDrive, Database } from 'lucide-svelte';
-	import { Card, Badge, ProgressBar } from '$lib/components/ui';
+	import { Badge, Card, EmptyState, ErrorState, ProgressBar } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { formatBytes } from './bytes';
 
@@ -108,10 +108,10 @@
 
 		{#if failed}
 			<!-- The banner above names the reason and links to Storage. -->
-			<p class="text-sm text-error">{$t('dashboard.issue.poolsFailed')}</p>
+			<ErrorState title={$t('dashboard.issue.poolsFailed')} />
 		{:else if pools.length === 0}
 			<!-- No pool yet: where one is made, which the header's Manage opens (ADR-0431). -->
-			<p class="text-sm text-secondary">{$t('dashboard.storage.none')}</p>
+			<EmptyState compact icon={HardDrive} title={$t('dashboard.storage.none')} />
 		{:else}
 			<div class="pb-3.5 mb-3.5 border-b border-border">
 				<p class="text-xs text-content-secondary">{$t('dashboard.storage.total')}</p>

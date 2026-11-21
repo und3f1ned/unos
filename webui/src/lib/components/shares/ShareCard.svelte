@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Check, Copy, Edit, Trash2, Wrench } from 'lucide-svelte';
 	import type { ShareAccess, ShareGroupMember, SmbShare } from '$lib/api/shares';
-	import { Alert, Badge, Button } from '$lib/components/ui';
+	import { Alert, Badge, Button, Checkbox, HelpText, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { effectiveLevel } from './access';
 	import { smbUrl, windowsAddress } from './texts';
@@ -74,7 +74,7 @@
 			reason: off[setting] ?? ''
 		}))
 	);
-	// The features of the share: facts, not states, so neutral.
+	// The features of the share: facts, not states, so outlined (ADR-0432).
 	const features = $derived(
 		[
 			share.guest_ok ? $t('shares.card.guest') : '',
@@ -120,7 +120,8 @@
 	let copied = $state('');
 	let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
-	// What the last copy did, said to screen readers too; a failure stays until the next copy.
+	// A failed copy, which stays until the next copy: the address is to be copied by hand. A copy
+	// that worked is a toast.
 	let copyMessage = $state('');
 
 	async function copy(text: string) {
@@ -134,10 +135,10 @@
 			return;
 		}
 		copied = text;
-		copyMessage = $t('shares.card.copied');
+		copyMessage = '';
+		toast.success($t('shares.card.copied'));
 		copiedTimer = setTimeout(() => {
 			copied = '';
-			copyMessage = '';
 		}, 1500);
 	}
 </script>
@@ -147,8 +148,8 @@
 {#snippet names(entries: (ShareAccess | ShareGroupMember)[])}{#each entries as entry, i}{#if i > 0}{', '}{/if}{#if entry.effective}{entry.username}{:else}<span
 				class="share-user-inactive"
 				data-inactive
-				title={reason(entry)}>{entry.username}{#if tag(entry)}<span class="share-user-tag" aria-hidden="true"
-						>{tag(entry)}</span
+				title={reason(entry)}>{entry.username}{#if tag(entry)}<span class="ml-1" aria-hidden="true"
+						><Badge variant="neutral">{tag(entry)}</Badge></span
 					>{/if}</span
 			><span class="sr-only">{` ${$t('shares.card.notActive', { reason: reason(entry) })}`}</span
 			>{/if}{/each}{/snippet}
@@ -167,14 +168,12 @@
 <article class="card space-y-3" data-share={share.name} aria-labelledby="share-{share.name}-title">
 	<div class="share-head">
 		<div class="min-w-0 space-y-1">
-			<div class="flex flex-wrap items-center gap-2">
-				<input
-					type="checkbox"
-					class="form-checkbox"
+			<div class="flex flex-wrap items-center gap-2" data-share-badges>
+				<Checkbox
 					checked={selected}
 					disabled={selectDisabled}
-					aria-label={$t('shares.card.select', { name: share.name })}
-					onchange={(event) => onselect?.({ share, selected: event.currentTarget.checked })}
+					ariaLabel={$t('shares.card.select', { name: share.name })}
+					onchange={(on) => onselect?.({ share, selected: on })}
 				/>
 				<h2 class="card-title break-all" id="share-{share.name}-title">{share.name}</h2>
 				<!-- States first, in their colours; then the features, neutral. -->
@@ -194,7 +193,7 @@
 					<Badge variant="info">{$t('shares.card.repairing')}</Badge>
 				{/if}
 				{#each features as feature (feature)}
-					<Badge variant="neutral">{feature}</Badge>
+					<Badge variant="outline">{feature}</Badge>
 				{/each}
 			</div>
 			<p class="mono-xs text-muted break-all">{share.path}</p>
@@ -231,10 +230,12 @@
 		<p class="text-sm text-error break-words">{share.path_problem}</p>
 	{/if}
 	{#each offSettings as item (item.setting)}
-		<details class="share-off">
-			<summary>{item.text}</summary>
-			<p class="mt-1 break-words text-content-secondary">{item.reason}</p>
-		</details>
+		<!-- One line, and the server's reason under Details. -->
+		<div data-share-off>
+			<HelpText text={item.text} class="text-status-warning">
+				{#snippet more()}<p class="break-words text-content-secondary">{item.reason}</p>{/snippet}
+			</HelpText>
+		</div>
 	{/each}
 
 	<div class="text-sm space-y-1">
@@ -271,7 +272,7 @@
 				<span>{$t('shares.card.connect')}</span>
 				{@render address(windowsAddress(host, share.name), $t('shares.card.copyWindows'))}
 				{@render address(smbUrl(host, share.name), $t('shares.card.copyUrl'))}
-				<span class="w-full text-xs" class:sr-only={copied !== ''} role="status">{copyMessage}</span>
+				{#if copyMessage}<span class="w-full text-xs" role="status">{copyMessage}</span>{/if}
 			</div>
 		{/if}
 	</div>
@@ -318,17 +319,5 @@
 
 	.share-user-inactive {
 		@apply text-content-muted;
-	}
-
-	.share-user-tag {
-		@apply ml-1 inline-flex items-center rounded border border-border px-1 align-[1px] text-2xs font-medium text-content-secondary;
-	}
-
-	.share-off {
-		@apply text-sm;
-	}
-
-	.share-off summary {
-		@apply cursor-pointer text-status-warning;
 	}
 </style>

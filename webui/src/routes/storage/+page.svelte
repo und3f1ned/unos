@@ -260,25 +260,21 @@
 			<Button
 				variant="secondary"
 				size="icon"
+				icon={RefreshCw}
 				title={$t('common.refresh')}
-				disabled={lists.loading || refreshing}
+				loading={refreshing}
+				disabled={lists.loading}
 				onclick={refresh}
 			>
-				<RefreshCw class="w-4 h-4 {refreshing ? 'animate-spin' : ''}" aria-hidden="true" />
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			<!-- A pool is made of the disks the page lists: without them, Create pool waits and says why. -->
-			<span class="flex" title={lists.disksError ? $t('storage.createBlocked') : undefined}>
-				<Button
-					icon={Plus}
-					disabled={!lists.loading && !!lists.disksError}
-					aria-describedby={lists.disksError ? 'create-pool-blocked' : undefined}
-					onclick={openCreateModal}>{$t('storage.createPool')}</Button
-				>
-			</span>
-			{#if lists.disksError}
-				<span id="create-pool-blocked" class="sr-only">{$t('storage.createBlocked')}</span>
-			{/if}
+			<Button
+				icon={Plus}
+				disabled={!lists.loading && !!lists.disksError}
+				disabledReason={lists.disksError ? $t('storage.createBlocked') : ''}
+				onclick={openCreateModal}>{$t('storage.createPool')}</Button
+			>
 		</div>
 	</div>
 

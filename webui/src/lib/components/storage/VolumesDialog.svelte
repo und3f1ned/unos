@@ -2,8 +2,8 @@
 	// The Volumes dialog (ADR-0243): the volumes (btrfs subvolumes) of a mounted pool, the notes on
 	// their quotas, and the forms that delete one and create one. Its state is the page's
 	// PoolVolumes, which opens it for a pool.
-	import { Plus } from 'lucide-svelte';
-	import { Alert, Button, Input, Modal, Skeleton } from '$lib/components/ui';
+	import { Layers, Plus } from 'lucide-svelte';
+	import { Alert, Button, ConfirmDialog, EmptyState, ErrorState, Input, Sheet, Skeleton } from '$lib/components/ui';
 	import { MAX_QUOTA_GIB } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { poolMountpoint } from './pools';
@@ -35,7 +35,8 @@
 	let needsRescan = $derived(volumes.list.some((volume) => volume.usage === 'inconsistent'));
 </script>
 
-<Modal
+<!-- A list of volumes and the form of a new one: a Sheet (ADR-0432). -->
+<Sheet
 	open={volumes.pool !== null}
 	title={volumes.pool
 		? $t('storage.volumes.title', { pool: volumes.pool.name })
@@ -69,9 +70,9 @@
 					<Skeleton shape="block" class="h-16 w-full rounded-lg" />
 				</div>
 			{:else if volumes.error}
-				<Alert variant="error" title={$t('storage.volumes.loadError')}>{volumes.error}</Alert>
+				<ErrorState title={$t('storage.volumes.loadError')} message={volumes.error} onretry={() => volumes.load()} />
 			{:else if volumes.list.length === 0}
-				<p class="text-muted text-sm">{$t('storage.volumes.none')}</p>
+				<EmptyState compact icon={Layers} title={$t('storage.volumes.none')} />
 			{:else}
 				<!-- The use of each volume's quota, as the kernel counts it. -->
 				{#if quotasOff}
@@ -93,75 +94,39 @@
 				</ul>
 			{/if}
 
-			{#if volumes.toDelete}
-				<Alert variant="error" title={$t('storage.volumes.deleteTitle', { name: volumes.toDelete.name })}>
-					{$t('storage.volumes.deleteBefore')}
-					<span class="mono-xs">{volumes.toDelete.path}</span>
-					{$t('storage.volumes.deleteAfter')}
-				</Alert>
+			<form onsubmit={(e) => { e.preventDefault(); volumes.create(); }} class="space-y-2">
 				<Input
-					label={$t('storage.volumes.confirm')}
-					bind:value={volumes.deleteConfirm}
-					placeholder={volumes.toDelete.name}
+					label={$t('storage.volumes.name')}
+					bind:value={volumes.newName}
+					placeholder={$t('storage.volumes.namePlaceholder')}
 					autocomplete="off"
+					disabled={volumes.readOnly}
+					error={newNameError}
 				/>
-				{#if volumes.deleteError}
-					<Alert variant="error" title={$t('storage.volumes.deleteFailed')}>{volumes.deleteError}</Alert>
+				<Input
+					label={$t('storage.volumes.quota')}
+					bind:value={volumes.newQuota}
+					placeholder={$t('storage.volumes.quotaPlaceholder')}
+					autocomplete="off"
+					disabled={volumes.readOnly}
+					error={newQuotaError}
+					hint={$t('storage.volumes.quotaHint')}
+				/>
+				{#if volumes.createError}
+					<Alert variant="error" title={$t('storage.volumes.createFailed')}>{volumes.createError}</Alert>
 				{/if}
-				<div class="flex gap-2">
-					<Button
-						variant="secondary"
-						class="flex-1"
-						disabled={volumes.deleting}
-						onclick={() => volumes.cancelDelete()}
-					>
-						{$t('common.cancel')}
-					</Button>
-					<Button
-						variant="danger"
-						class="flex-1"
-						loading={volumes.deleting}
-						disabled={volumes.deleteConfirm !== volumes.toDelete.name}
-						onclick={() => volumes.delete()}
-					>
-						{$t('storage.volumes.delete')}
-					</Button>
-				</div>
-			{:else}
-				<form onsubmit={(e) => { e.preventDefault(); volumes.create(); }} class="space-y-2">
-					<Input
-						label={$t('storage.volumes.name')}
-						bind:value={volumes.newName}
-						placeholder={$t('storage.volumes.namePlaceholder')}
-						autocomplete="off"
-						disabled={volumes.readOnly}
-						error={newNameError}
-					/>
-					<Input
-						label={$t('storage.volumes.quota')}
-						bind:value={volumes.newQuota}
-						placeholder={$t('storage.volumes.quotaPlaceholder')}
-						autocomplete="off"
-						disabled={volumes.readOnly}
-						error={newQuotaError}
-						hint={$t('storage.volumes.quotaHint')}
-					/>
-					{#if volumes.createError}
-						<Alert variant="error" title={$t('storage.volumes.createFailed')}>{volumes.createError}</Alert>
-					{/if}
-					<Button
-						type="submit"
-						icon={Plus}
-						loading={volumes.creating}
-						disabled={!volumes.newNameValid ||
-							!!newQuotaError ||
-							volumes.busy ||
-							volumes.readOnly}
-					>
-						{$t('storage.volumes.create')}
-					</Button>
-				</form>
-			{/if}
+				<Button
+					type="submit"
+					icon={Plus}
+					loading={volumes.creating}
+					disabled={!volumes.newNameValid ||
+						!!newQuotaError ||
+						volumes.busy ||
+						volumes.readOnly}
+				>
+					{$t('storage.volumes.create')}
+				</Button>
+			</form>
 		</div>
 	{/if}
 
@@ -170,4 +135,29 @@
 			{$t('storage.volumes.close')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>
+
+<!-- Deleting a volume asks over the dialog, which stays open under it, with the volume's name
+     typed exactly. -->
+<ConfirmDialog
+	open={volumes.toDelete !== null}
+	title={$t('storage.volumes.deleteTitle', { name: volumes.toDelete?.name ?? '' })}
+	confirmLabel={$t('storage.volumes.delete')}
+	typeToConfirm={volumes.toDelete?.name ?? ''}
+	typeLabel={$t('storage.volumes.confirm', { name: volumes.toDelete?.name ?? '' })}
+	typeExact
+	busy={volumes.deleting}
+	oncancel={() => volumes.cancelDelete()}
+	onconfirm={() => volumes.delete()}
+>
+	{#if volumes.toDelete}
+		<p>
+			{$t('storage.volumes.deleteBefore')}
+			<span class="mono-xs break-all">{volumes.toDelete.path}</span>
+			{$t('storage.volumes.deleteAfter')}
+		</p>
+		{#if volumes.deleteError}
+			<Alert variant="error" title={$t('storage.volumes.deleteFailed')}>{volumes.deleteError}</Alert>
+		{/if}
+	{/if}
+</ConfirmDialog>

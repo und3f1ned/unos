@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { IscsiTargetCreate } from '$lib/api/iscsi';
 	import type { SharePath } from '$lib/api/shares';
-	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, Input, Modal, Select } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import IscsiInitiatorsField from './IscsiInitiatorsField.svelte';
@@ -143,10 +143,7 @@
 			maxlength={16}
 			hint={$t('iscsi.form.chapSecretHint')}
 		/>
-		<label class="flex items-center gap-2 cursor-pointer">
-			<input type="checkbox" class="form-checkbox" bind:checked={mutual} />
-			{$t('iscsi.form.mutual')}
-		</label>
+		<Checkbox bind:checked={mutual} label={$t('iscsi.form.mutual')} />
 		{#if mutual}
 			<Input
 				id="iscsi-mutual-secret"

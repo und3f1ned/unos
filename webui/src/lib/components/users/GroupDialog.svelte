@@ -8,7 +8,7 @@
 		type GroupMemberEntry,
 		type GroupUpdate
 	} from '$lib/api/groups';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, HelpText, Input, Sheet } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { accessKey, canBeGivenAccess } from '$lib/components/shares/access';
 	import { t } from '$lib/i18n';
@@ -147,7 +147,8 @@
 	}
 </script>
 
-<Modal
+<!-- A list of members to choose: a Sheet (ADR-0432). -->
+<Sheet
 	open={dialogOpen}
 	title={editing ? $t('groups.form.editTitle', { name: editing.name }) : $t('groups.form.addTitle')}
 	size="lg"
@@ -181,30 +182,25 @@
 					{#each directory.listedUsers as user (user.id)}
 						{@const usable = canBeGivenAccess(user)}
 						<li>
-							<label class="flex flex-wrap items-center gap-2 {usable ? 'cursor-pointer' : 'opacity-60'}">
-								<input
-									type="checkbox"
-									class="form-checkbox"
-									checked={usable && chosen[accessKey(user.id, user.username)] === true}
-									disabled={!usable || saving}
-									onchange={(event) =>
-										(chosen = {
-											...chosen,
-											[accessKey(user.id, user.username)]: event.currentTarget.checked
-										})}
-								/>
-								<span class="break-all">{user.username}</span>
-								{#if user.smb && user.smb.state !== 'active'}
-									<SmbStateBadge state={user.smb.state} hint={usable ? '' : user.smb.reason ?? ''} />
-								{/if}
-							</label>
+							<Checkbox
+								checked={usable && chosen[accessKey(user.id, user.username)] === true}
+								disabled={!usable || saving}
+								onchange={(on) => (chosen = { ...chosen, [accessKey(user.id, user.username)]: on })}
+							>
+								<span class="flex flex-wrap items-center gap-2">
+									<span class="break-all">{user.username}</span>
+									{#if user.smb && user.smb.state !== 'active'}
+										<SmbStateBadge state={user.smb.state} hint={usable ? '' : user.smb.reason ?? ''} />
+									{/if}
+								</span>
+							</Checkbox>
 						</li>
 					{/each}
 				</ul>
 			{/if}
-			<p class="form-hint">{$t('groups.form.adminsNotListed')}</p>
+			<HelpText text={$t('groups.form.adminsNotListed')} />
 		</fieldset>
-		<p class="form-hint">{$t('groups.form.accessNote')}</p>
+		<HelpText text={$t('groups.form.accessNote')} />
 	</form>
 
 	{#if formError}
@@ -224,4 +220,4 @@
 			{editing ? $t('groups.form.save') : $t('groups.form.create')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>

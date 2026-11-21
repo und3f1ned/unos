@@ -143,10 +143,7 @@ export const en = {
 	// The confirmations of the Mount and Unmount dialogs: the action itself, without "…".
 	'storage.mount.confirm': 'Mount',
 	'storage.unmount.confirm': 'Unmount',
-	'storage.pool.remove': 'Remove pool {name}',
 	'storage.pool.removeShort': 'Remove pool…',
-	'storage.pool.more': 'More',
-	'storage.pool.moreOf': 'More actions for {name}',
 	'storage.pool.blocked.readOnly': 'Balance and disk changes need the pool mounted read-write.',
 	'storage.pool.blocked.missing': 'Disk changes wait until the missing disk is back.',
 	'storage.pool.blocked.scrub': 'Balance and disk changes wait for the scrub to end.',
@@ -232,7 +229,6 @@ export const en = {
 	'storage.addDisk.title': 'Add a disk to {name}',
 	'storage.addDisk.intro':
 		'The disk joins the pool, and the pool grows by its size at once. Everything on the disk is erased. The pool keeps its profile ({profiles}): new data is spread over the new disk too, and a full balance spreads the data that is there already.',
-	'storage.addDisk.loading': 'Checking the disks...',
 	'storage.addDisk.loadError': 'Could not list the disks',
 	'storage.addDisk.noneTitle': 'No disk can be added',
 	'storage.addDisk.none':
@@ -249,7 +245,6 @@ export const en = {
 	'storage.removeDisk.title': 'Remove a disk from {name}',
 	'storage.removeDisk.intro':
 		"The disk's data moves to the other disks of the pool first, which can take hours on a hard disk; the pool stays usable meanwhile, and the disk leaves it at the end. A removal that the pool's profile or the space of the other disks cannot survive is refused.",
-	'storage.removeDisk.loading': 'Reading the disks of the pool...',
 	'storage.removeDisk.loadError': 'Could not read the disks of the pool',
 	'storage.removeDisk.disk': 'Disk to remove',
 	'storage.removeDisk.used': '{used} of data on it',
@@ -274,7 +269,6 @@ export const en = {
 	'storage.create.namePlaceholder': 'data',
 	'storage.create.raidLevel': 'RAID level',
 	'storage.create.devices': 'Disks',
-	'storage.create.checkingDisks': 'Checking disks...',
 	// After what a disk holds.
 	'storage.create.memberOf': 'member of pool "{pool}"',
 	// {reason} is the server's (in_use_reason), or one of the two below.
@@ -387,7 +381,7 @@ export const en = {
 	'storage.volumes.deleteBefore': 'All files in',
 	'storage.volumes.deleteAfter':
 		'are deleted with it, including those of stopped apps. This cannot be undone. While a running app or container, an SMB share or an NFS export uses the volume, it is not deleted.',
-	'storage.volumes.confirm': 'Type the volume name to confirm',
+	'storage.volumes.confirm': 'Type {name} to confirm',
 	'storage.volumes.deleteFailed': 'Volume was not deleted',
 	'storage.volumes.delete': 'Delete volume',
 	'storage.volumes.name': 'New volume name',
@@ -539,10 +533,7 @@ export const ru: Translation<typeof en> = {
 	'storage.pool.unmount': 'Отмонтировать…',
 	'storage.mount.confirm': 'Смонтировать',
 	'storage.unmount.confirm': 'Отмонтировать',
-	'storage.pool.remove': 'Убрать пул {name}',
 	'storage.pool.removeShort': 'Убрать пул…',
-	'storage.pool.more': 'Ещё',
-	'storage.pool.moreOf': 'Ещё действия с {name}',
 	'storage.pool.blocked.readOnly': 'Балансировке и смене дисков нужен пул, смонтированный для записи.',
 	'storage.pool.blocked.missing': 'Смена дисков ждёт, пока недостающий диск не вернётся.',
 	'storage.pool.blocked.scrub': 'Балансировка и смена дисков ждут окончания проверки целостности.',
@@ -625,7 +616,6 @@ export const ru: Translation<typeof en> = {
 	'storage.addDisk.title': 'Добавить диск в {name}',
 	'storage.addDisk.intro':
 		'Диск войдёт в пул, и пул сразу вырастет на его размер. Всё, что есть на диске, будет стёрто. Профиль пула ({profiles}) сохранится: новые данные лягут и на новый диск, а полная балансировка распределит уже записанные.',
-	'storage.addDisk.loading': 'Проверяем диски...',
 	'storage.addDisk.loadError': 'Не удалось получить список дисков',
 	'storage.addDisk.noneTitle': 'Нет диска, который можно добавить',
 	'storage.addDisk.none':
@@ -642,7 +632,6 @@ export const ru: Translation<typeof en> = {
 	'storage.removeDisk.title': 'Удалить диск из {name}',
 	'storage.removeDisk.intro':
 		'Сначала данные диска переносятся на другие диски пула, на жёстком диске это может занять часы; пул всё это время работает, а диск покидает его в конце. Удаление, которого не выдержит профиль пула или место на других дисках, отклоняется.',
-	'storage.removeDisk.loading': 'Читаем диски пула...',
 	'storage.removeDisk.loadError': 'Не удалось прочитать диски пула',
 	'storage.removeDisk.disk': 'Удаляемый диск',
 	'storage.removeDisk.used': 'Данных на нём: {used}',
@@ -666,7 +655,6 @@ export const ru: Translation<typeof en> = {
 	'storage.create.namePlaceholder': 'data',
 	'storage.create.raidLevel': 'Уровень RAID',
 	'storage.create.devices': 'Диски',
-	'storage.create.checkingDisks': 'Проверка дисков...',
 	'storage.create.memberOf': 'входит в пул «{pool}»',
 	'storage.create.unavailable': 'Недоступен: {reason}',
 	'storage.create.systemDisk': 'Системный диск',
@@ -768,7 +756,7 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.deleteBefore': 'Все файлы в',
 	'storage.volumes.deleteAfter':
 		'будут удалены вместе с ним, включая файлы остановленных приложений. Это нельзя отменить. Пока том используется работающим приложением или контейнером, общей папкой SMB или экспортом NFS, он не удаляется.',
-	'storage.volumes.confirm': 'Введите имя тома для подтверждения',
+	'storage.volumes.confirm': 'Введите {name} для подтверждения',
 	'storage.volumes.deleteFailed': 'Не удалось удалить том',
 	'storage.volumes.delete': 'Удалить том',
 	'storage.volumes.name': 'Имя нового тома',

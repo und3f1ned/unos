@@ -1,5 +1,6 @@
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { E2E_ADMIN, test, expect } from './fixtures';
+import { actionsFor, chooseAction } from './ui';
 import {
   ADMIN_REASON,
   COMMON_PASSWORD_RULE,
@@ -116,7 +117,8 @@ test.describe('Users page SMB (fake data)', () => {
         : route.fallback(),
     );
     await page.goto('/users');
-    const alert = pageAlert(page, 'error');
+    // The page's ErrorState (ADR-0432), in place of the list.
+    const alert = page.locator('main [data-error-state]');
     await expect(alert).toContainText('The user database could not be read');
     await expect(page.getByText('No users found')).toHaveCount(0);
     await expect(page.getByRole('columnheader', { name: 'SMB' })).toHaveCount(0);
@@ -1104,16 +1106,15 @@ test.describe('Sessions', () => {
     for (const session of sessions) expect((await me(session)).status()).toBe(200);
 
     await page.goto('/users');
-    await userRow(page, username).getByRole('button', { name: `End the sessions of ${username}` }).click();
+    // End all sessions is in the row's ⋯ menu (ADR-0432).
+    await chooseAction(page, username, 'End all sessions');
 
     await expect(page.getByText(`Sessions of "${username}" ended: 2`)).toBeVisible();
     for (const session of sessions) expect((await me(session)).status()).toBe(401);
     await page.reload();
     await expect(userRow(page, username)).toBeVisible();
-    // An administrator's own row has no such button: signing out is the Logout button.
-    await expect(
-      userRow(page, E2E_ADMIN.username).getByRole('button', { name: `End the sessions of ${E2E_ADMIN.username}` }),
-    ).toHaveCount(0);
+    // An administrator's own row has no such action: signing out is the Logout button.
+    await expect(actionsFor(userRow(page, E2E_ADMIN.username), E2E_ADMIN.username)).toHaveCount(0);
   });
 });
 
@@ -1154,7 +1155,8 @@ test.describe('Groups (fake data)', () => {
       path: '/groups',
       body: { name: 'family', members: [{ user_id: 2, username: 'alice' }, { user_id: 3, username: 'bob' }] },
     });
-    await expect(groupsCard(page).getByText('Group "family" created')).toBeVisible();
+    // What the change did is a toast (ADR-0432).
+    await expect(page.getByText('Group "family" created', { exact: true })).toBeVisible();
     const item = groupItem(page, 'family');
     // A member whose SMB is not on yet is marked with the state.
     await expect(item.getByText(/^Members:/).locator('..')).toHaveText(/Members:\s*alice\s*bob\s*SMB: password needed/);

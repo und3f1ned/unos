@@ -4,9 +4,8 @@
 	import { deleteUser, endSessions, type User } from '$lib/api/auth';
 	import { user as currentUser } from '$lib/stores/auth';
 	import { UserPlus } from 'lucide-svelte';
-	import { Alert, Button, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, ConfirmDialog, LoadState, Skeleton } from '$lib/components/ui';
 	import {
-		ConfirmDialog,
 		CreateUserDialog,
 		EditUserDialog,
 		GroupsCard,
@@ -134,25 +133,25 @@
 
 		<OutcomeAlerts outcome={directory.outcome} />
 
-		{#if directory.error}
-			<!-- A failed load says so, with Retry: never an empty list. Once loaded, the
-			     list stays under it. -->
-			<Alert variant="error" title={$t('users.loadFailed')}>
-				<p class="break-words">{directory.error}</p>
-				<Button variant="secondary" size="sm" class="mt-3" loading={retrying} onclick={retry}>
-					{$t('common.retry')}
-				</Button>
-			</Alert>
-		{/if}
-
-		{#if (directory.loading || groups.loading) && !directory.loaded}
-			<!-- The first load (ADR-0430): the users' table, the groups and the card under them. -->
-			<div class="space-y-6" aria-busy="true">
-				<Skeleton shape="table" columns={6} count={3} />
-				<Skeleton shape="card" count={3} />
-				<Skeleton shape="card" count={3} />
-			</div>
-		{:else if directory.loaded}
+		<!-- A failed load says so, with Retry: never an empty list. Once loaded, the list stays under
+		     it. -->
+		<LoadState
+			loading={!directory.loaded && !directory.error}
+			error={directory.error}
+			errorTitle={$t('users.loadFailed')}
+			keepOnError={directory.loaded}
+			onretry={retry}
+			{retrying}
+			class="space-y-6"
+		>
+			{#snippet skeleton()}
+				<!-- The first load (ADR-0430): the users' table, the groups and the card under them. -->
+				<div class="space-y-6">
+					<Skeleton shape="table" columns={6} count={3} />
+					<Skeleton shape="card" count={3} />
+					<Skeleton shape="card" count={3} />
+				</div>
+			{/snippet}
 			<UsersCard
 				users={directory.users}
 				currentUserId={$currentUser?.id}
@@ -161,7 +160,7 @@
 				ondelete={openDelete}
 			/>
 			<GroupsCard users={directory.users} directory={groups} />
-		{/if}
+		</LoadState>
 	</div>
 
 	<CreateUserDialog bind:this={createDialog} {directory} />
@@ -169,16 +168,29 @@
 	<ConfirmDialog
 		open={userToDelete !== null}
 		title={$t('users.delete.title')}
-		danger
 		busy={deleting}
-		before={$t('users.delete.before')}
-		name={userToDelete?.username ?? null}
-		after={$t('users.delete.after')}
-		consequences={userToDelete ? deleteConsequences(userToDelete) : []}
-		submit={$t('users.delete.submit')}
-		error={deleteError}
-		errorTitle={$t('users.delete.failed')}
-		onclose={closeDelete}
+		confirmLabel={$t('users.delete.submit')}
+		oncancel={closeDelete}
 		onconfirm={confirmDelete}
-	/>
+	>
+		{#if userToDelete}
+			<!-- In parts around the name: ADR-0296. -->
+			<p>
+				{$t('users.delete.before')}
+				<strong class="text-content">{userToDelete.username}</strong>{$t('users.delete.after')}
+			</p>
+			<!-- What it does, after the question that names the user. -->
+			<div>
+				<p class="eyebrow mb-1.5">{$t('ui.confirm.consequences')}</p>
+				<ul class="confirm-consequences">
+					{#each deleteConsequences(userToDelete) as consequence (consequence)}
+						<li>{consequence}</li>
+					{/each}
+				</ul>
+			</div>
+			{#if deleteError}
+				<Alert variant="error" title={$t('users.delete.failed')}>{deleteError}</Alert>
+			{/if}
+		{/if}
+	</ConfirmDialog>
 {/if}

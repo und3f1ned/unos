@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The Balance dialog (ADR-0379): a balance of the chunks up to a usage limit, or of every chunk,
 	// which needs its confirmation.
-	import { Alert, Button, Input, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, Input, Modal, Select } from '$lib/components/ui';
 	import { BALANCE_DEFAULT_USAGE, startBalance, type BalanceStatus, type Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './pools';
@@ -84,10 +84,7 @@
 		{#if balanceFull}
 			<Alert variant="warning" title={$t('storage.balance.fullTitle')}>
 				{$t('storage.balance.fullWarning')}
-				<label class="flex items-center gap-2 mt-3 text-content cursor-pointer">
-					<input type="checkbox" bind:checked={balanceConfirmed} class="form-checkbox" />
-					{$t('storage.balance.fullConfirm', { name: pool.name })}
-				</label>
+				<Checkbox bind:checked={balanceConfirmed} label={$t('storage.balance.fullConfirm', { name: pool.name })} class="mt-3" />
 			</Alert>
 		{:else}
 			<Input

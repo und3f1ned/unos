@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import { t } from '$lib/i18n';
 	import Alert from './Alert.svelte';
 	import Button from './Button.svelte';
@@ -21,9 +21,16 @@
 		/** The action's button: a verb and its object. */
 		confirmLabel: string;
 		cancelLabel?: string;
-		tone?: 'danger' | 'warning';
+		/** `neutral`: a question before something that loses nothing, without the warning icon. */
+		tone?: 'danger' | 'warning' | 'neutral';
 		/** A text, such as the object's name, that must be typed before the action. */
 		typeToConfirm?: string;
+		/** The field's label in place of "To confirm, type <text>", when it names the text itself. */
+		typeLabel?: string;
+		/** The text must match as typed, spaces included: a name that a space would make another. */
+		typeExact?: boolean;
+		/** Cancel takes the keyboard focus when the dialog opens: what the action does cannot be undone. */
+		focusCancel?: boolean;
 		/** The action runs: the buttons wait, and the dialog stays open. */
 		busy?: boolean;
 		/** Why the action failed, shown in the dialog. */
@@ -42,6 +49,9 @@
 		cancelLabel = '',
 		tone = 'danger',
 		typeToConfirm = '',
+		typeLabel = '',
+		typeExact = false,
+		focusCancel = false,
 		busy = false,
 		error = '',
 		onconfirm,
@@ -50,13 +60,21 @@
 	}: Props = $props();
 
 	let typed = $state('');
-	const matches = $derived(!typeToConfirm || typed.trim() === typeToConfirm);
+	const matches = $derived(!typeToConfirm || (typeExact ? typed : typed.trim()) === typeToConfirm);
 	const fieldId = `confirm-type-${Math.random().toString(36).slice(2, 9)}`;
 	const formId = `${fieldId}-form`;
 
 	// A dialog asked again starts with an empty field.
 	$effect.pre(() => {
 		if (!open) typed = '';
+	});
+
+	// With `focusCancel`, Cancel takes the focus from the dialog once it is drawn: Enter then keeps
+	// what the action would change for good.
+	let cancelButton: HTMLButtonElement | null = $state(null);
+	$effect(() => {
+		if (!open || !focusCancel) return;
+		void tick().then(() => cancelButton?.focus({ preventScroll: true }));
 	});
 
 	function submit(event: SubmitEvent) {
@@ -66,7 +84,7 @@
 	}
 </script>
 
-<Modal {open} {title} size="sm" {tone} closable={!busy} onclose={oncancel}>
+<Modal {open} {title} size="sm" tone={tone === 'neutral' ? null : tone} closable={!busy} onclose={oncancel}>
 	<form id={formId} class="space-y-4" onsubmit={submit}>
 		{#if message}
 			<p class="text-content-soft">{message}</p>
@@ -86,7 +104,7 @@
 			<div>
 				<!-- The label names the text to type, so that a screen reader hears it with the field. -->
 				<label for={fieldId} class="form-label">
-					{$t('ui.confirm.typeLabel')} <code class="confirm-expected">{typeToConfirm}</code>
+					{#if typeLabel}{typeLabel}{:else}{$t('ui.confirm.typeLabel')} <code class="confirm-expected">{typeToConfirm}</code>{/if}
 				</label>
 				<Input
 					id={fieldId}
@@ -103,7 +121,7 @@
 		{/if}
 	</form>
 	{#snippet footer()}
-		<Button variant="secondary" disabled={busy} onclick={oncancel}>{cancelLabel || $t('common.cancel')}</Button>
+		<Button variant="secondary" bind:el={cancelButton} disabled={busy} onclick={oncancel}>{cancelLabel || $t('common.cancel')}</Button>
 		<Button
 			type="submit"
 			form={formId}

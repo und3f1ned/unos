@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { deleteNfsExport, type NfsExport } from '$lib/api/shares';
-	import { Alert } from '$lib/components/ui';
+	import { Alert, ConfirmDialog } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import DangerDialog from './DangerDialog.svelte';
 	import { messageOf } from './errors';
 	import type { NfsExports } from './nfs.svelte';
 	import type { ShareOutcome } from './outcome.svelte';
@@ -51,12 +50,12 @@
 	}
 </script>
 
-<DangerDialog
+<ConfirmDialog
 	open={exp !== null}
 	title={$t('shares.nfs.deleteTitle')}
 	busy={deleting}
 	confirmLabel={$t('shares.nfs.delete')}
-	onclose={close}
+	oncancel={close}
 	onconfirm={confirm}
 >
 	{#if exp}
@@ -69,4 +68,4 @@
 			<Alert variant="error" title={$t('shares.nfs.notDeleted')}>{error}</Alert>
 		{/if}
 	{/if}
-</DangerDialog>
+</ConfirmDialog>

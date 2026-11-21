@@ -523,7 +523,8 @@ test.describe('Audit log errors', () => {
     );
     await page.goto('/audit');
 
-    const alert = page.locator('.alert-error');
+    // The page's ErrorState (ADR-0432), in place of the timeline.
+    const alert = page.locator('main [data-error-state]');
     await expect(alert.getByText('Could not load the audit log', { exact: true })).toBeVisible();
     await expect(alert).toContainText(detail);
     failing = false;

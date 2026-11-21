@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The dialog that mounts or unmounts a pool; a Mount also imports a pool found on the disks
 	// (ADR-0283).
-	import { Alert, Button, Modal } from '$lib/components/ui';
+	import { Alert, ConfirmDialog } from '$lib/components/ui';
 	import { mountPool, unmountPool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { messageOf, poolMountpoint, type PoolAction } from './pools';
@@ -50,12 +50,14 @@
 	}
 </script>
 
-<Modal
+<ConfirmDialog
 	open={action !== null}
 	title={$t(action?.kind === 'mount' ? 'storage.mount.title' : 'storage.unmount.title')}
-	size="md"
-	closable={!busy}
-	onclose={close}
+	confirmLabel={$t(action?.kind === 'mount' ? 'storage.mount.confirm' : 'storage.unmount.confirm')}
+	tone={action?.kind === 'unmount' ? 'warning' : 'neutral'}
+	{busy}
+	oncancel={close}
+	onconfirm={confirm}
 >
 	{#if action}
 		{#if action.kind === 'mount'}
@@ -87,18 +89,4 @@
 			</Alert>
 		{/if}
 	{/if}
-
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={busy} onclick={close}>
-			{$t('common.cancel')}
-		</Button>
-		<Button
-			variant={action?.kind === 'unmount' ? 'warning' : 'primary'}
-			class="flex-1"
-			loading={busy}
-			onclick={confirm}
-		>
-			{$t(action?.kind === 'mount' ? 'storage.mount.confirm' : 'storage.unmount.confirm')}
-		</Button>
-	{/snippet}
-</Modal>
+</ConfirmDialog>

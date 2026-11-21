@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { deleteSmbShare, type SmbShare } from '$lib/api/shares';
-	import { Alert } from '$lib/components/ui';
+	import { Alert, ConfirmDialog } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import DangerDialog from './DangerDialog.svelte';
 	import { messageOf } from './errors';
 	import type { ShareOutcome } from './outcome.svelte';
 	import type { SmbShares } from './smb.svelte';
@@ -53,12 +52,12 @@
 	}
 </script>
 
-<DangerDialog
+<ConfirmDialog
 	open={share !== null}
 	title={$t('shares.smb.deleteTitle')}
 	busy={deleting}
 	confirmLabel={$t('shares.smb.delete')}
-	onclose={close}
+	oncancel={close}
 	onconfirm={confirm}
 >
 	{#if share}
@@ -71,4 +70,4 @@
 			<Alert variant="error" title={$t('shares.smb.notDeleted')}>{error}</Alert>
 		{/if}
 	{/if}
-</DangerDialog>
+</ConfirmDialog>

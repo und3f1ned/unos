@@ -68,7 +68,6 @@ export const en = {
 	'users.edit.smbOn': 'SMB is on: {name} signs in as {login} with their UNOS password.',
 	'users.edit.smbOff': 'SMB is off for {name}.',
 	'users.edit.allowSmb': 'Allow SMB access',
-	'users.edit.saving': 'Saving...',
 	'users.edit.failed': 'The change was not made',
 	'users.edit.close': 'Close',
 	'users.edit.save': 'Save',
@@ -103,7 +102,6 @@ export const en = {
 	'users.delete.done': 'User "{name}" deleted',
 
 	// End sessions (ADR-0329): signs the user out on every device; API tokens stay.
-	'users.endSessionsOf': 'End the sessions of {name}',
 	'users.endSessions.done': 'Sessions of "{name}" ended: {n}',
 	'users.endSessions.failed': 'Sessions were not ended'
 };
@@ -175,7 +173,6 @@ export const ru: Translation<typeof en> = {
 	'users.edit.smbOn': 'SMB включён: {name} входит как {login} со своим паролем UNOS.',
 	'users.edit.smbOff': 'SMB выключен для {name}.',
 	'users.edit.allowSmb': 'Разрешить доступ по SMB',
-	'users.edit.saving': 'Сохранение...',
 	'users.edit.failed': 'Изменение не внесено',
 	'users.edit.close': 'Закрыть',
 	'users.edit.save': 'Сохранить',
@@ -205,7 +202,6 @@ export const ru: Translation<typeof en> = {
 	'users.delete.submit': 'Удалить пользователя',
 	'users.delete.done': 'Пользователь «{name}» удалён',
 
-	'users.endSessionsOf': 'Завершить сессии пользователя {name}',
 	'users.endSessions.done': 'Сессии пользователя «{name}» завершены: {n}',
 	'users.endSessions.failed': 'Сессии не завершены'
 };

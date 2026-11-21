@@ -5,7 +5,7 @@
 	// and its Mount imports it. The card shows only when there is one, or the search failed. It comes
 	// after the pools and the disks, a compact list with a secondary Import… each.
 	import { HardDriveDownload } from 'lucide-svelte';
-	import { Alert, Button, Card } from '$lib/components/ui';
+	import { Button, Card, ErrorState } from '$lib/components/ui';
 	import type { ImportableFilesystem } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 
@@ -44,11 +44,8 @@
 				{$t('storage.found.title')}
 			</h2>
 			{#if error}
-				<Alert variant="error" size="sm" title={$t('storage.found.searchError')} class="mt-4">
-					{#if errorDetail}
-						<span class="text-xs text-content-secondary break-words">{error}</span>
-					{/if}
-				</Alert>
+				<!-- The header's Refresh tries again (ADR-0431). -->
+				<ErrorState title={$t('storage.found.searchError')} message={errorDetail ? error : ''} class="mt-4" />
 			{:else}
 				<p class="mt-1 text-sm text-secondary">{$t('storage.found.intro')}</p>
 				<ul class="mt-3 divide-y divide-border">

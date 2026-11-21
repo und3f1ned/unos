@@ -1,11 +1,11 @@
 <script lang="ts">
 	import type { IscsiTarget } from '$lib/api/iscsi';
-	import { Alert, Input } from '$lib/components/ui';
+	import { Alert, ConfirmDialog } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import DangerDialog from './DangerDialog.svelte';
 	import { messageOf } from './errors';
 
-	// The deletion of a target and its LUN file, confirmed with the target's name. Mounted while open.
+	// The deletion of a target and its LUN file, confirmed with the target's name typed into an
+	// empty field. Mounted while open.
 	type Props = {
 		target: IscsiTarget;
 		/** A request of the tab runs: the dialog waits for it. */
@@ -18,57 +18,43 @@
 
 	let { target, saving, onclose, onremove }: Props = $props();
 
-	let typed = $state('');
 	let deleteError = $state('');
 
-	/** Empties the name typed: Delete was pressed again behind the dialog. */
+	/** Forgets the last refusal: Delete was pressed again behind the dialog. */
 	export function reset() {
-		typed = '';
 		deleteError = '';
 	}
 
+	// The dialog confirms only once the name typed matches it.
 	async function remove() {
-		if (saving || typed !== target.name) return;
+		if (saving) return;
 		deleteError = '';
 		try {
-			await onremove(typed);
+			await onremove(target.name);
 		} catch (e) {
 			deleteError = messageOf(e);
 		}
 	}
 </script>
 
-<DangerDialog
+<ConfirmDialog
 	open
 	title={$t('iscsi.remove.title', { name: target.name })}
-	busy={saving}
 	confirmLabel={$t('iscsi.remove.confirm')}
-	confirmDisabled={typed !== target.name}
-	{onclose}
+	typeToConfirm={target.name}
+	typeLabel={$t('iscsi.remove.type', { name: target.name })}
+	typeExact
+	busy={saving}
+	oncancel={onclose}
 	onconfirm={remove}
 >
-	<form
-		onsubmit={(event) => {
-			event.preventDefault();
-			remove();
-		}}
-		class="space-y-4"
-	>
-		<p class="text-sm break-words">{$t('iscsi.remove.warning', { path: target.path })}</p>
-		{#if target.sessions.length > 0}
-			<Alert variant="warning">
-				{$t('iscsi.remove.sessions', { initiators: target.sessions.join(', ') })}
-			</Alert>
-		{/if}
-		<Input
-			id="iscsi-delete-confirm"
-			label={$t('iscsi.remove.type', { name: target.name })}
-			bind:value={typed}
-			autocomplete="off"
-			spellcheck={false}
-		/>
-	</form>
+	<p class="text-sm break-words">{$t('iscsi.remove.warning', { path: target.path })}</p>
+	{#if target.sessions.length > 0}
+		<Alert variant="warning">
+			{$t('iscsi.remove.sessions', { initiators: target.sessions.join(', ') })}
+		</Alert>
+	{/if}
 	{#if deleteError}
 		<Alert variant="error" title={$t('iscsi.remove.notDeleted')}>{deleteError}</Alert>
 	{/if}
-</DangerDialog>
+</ConfirmDialog>

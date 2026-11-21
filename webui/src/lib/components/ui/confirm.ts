@@ -17,9 +17,11 @@ export type ConfirmOptions = {
 	/** The action's button: a verb and its object ("Delete backup"). */
 	confirmLabel: string;
 	cancelLabel?: string;
-	tone?: 'danger' | 'warning';
+	tone?: 'danger' | 'warning' | 'neutral';
 	/** A text, such as the object's name, that must be typed first. */
 	typeToConfirm?: string;
+	/** Cancel takes the keyboard focus, not the dialog: what the action does cannot be undone. */
+	focusCancel?: boolean;
 };
 
 export type ConfirmRequest = ConfirmOptions & { id: number; answer: (yes: boolean) => void };

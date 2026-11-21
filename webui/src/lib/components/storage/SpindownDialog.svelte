@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The idle timeout of a disk (ADR-0378), after which the disk spins down.
-	import { Alert, Button, Modal, Select } from '$lib/components/ui';
+	import { Alert, Button, HelpText, Modal, Select } from '$lib/components/ui';
 	import { setDiskSpindown, SPINDOWN_MINUTES, type Disk } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './pools';
@@ -68,7 +68,7 @@
 				hint={$t('storage.spindown.hint')}
 				disabled={busy}
 			/>
-			<p class="form-hint">{$t('storage.spindown.scans')}</p>
+			<HelpText text={$t('storage.spindown.scans')} />
 			{#if error}
 				<Alert variant="error" title={$t('storage.spindown.failed')}>{error}</Alert>
 			{/if}

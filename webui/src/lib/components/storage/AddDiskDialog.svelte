@@ -3,7 +3,7 @@
 	// neither the system, nor a btrfs filesystem, nor a mount; the add erases the disk, once its path
 	// is typed again and, for a disk with data, the erase is confirmed.
 	import { untrack } from 'svelte';
-	import { Alert, Badge, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Badge, Button, Checkbox, ErrorState, Input, Modal, RadioGroup, Skeleton } from '$lib/components/ui';
 	import { addPoolDisk, getPoolDevices, type DiskCandidate, type Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './pools';
@@ -73,6 +73,8 @@
 		erase = false;
 	}
 
+	const options = $derived(candidates.map((disk) => ({ value: disk.path, label: disk.path })));
+
 	function close() {
 		if (!busy) onclose?.();
 	}
@@ -104,53 +106,51 @@
 			{$t('storage.addDisk.intro', { profiles: profiles.map(profileLabel).join(', ') || '-' })}
 		</p>
 		{#if loading}
-			<p class="text-muted text-sm">{$t('storage.addDisk.loading')}</p>
+			<!-- The disks' place while they are read (ADR-0430). -->
+			<div aria-busy="true"><Skeleton shape="block" class="h-16 w-full" /></div>
 		{:else if loadError}
-			<Alert variant="error" title={$t('storage.addDisk.loadError')}>{loadError}</Alert>
+			<ErrorState
+				title={$t('storage.addDisk.loadError')}
+				message={loadError}
+				onretry={() => load(pool)}
+			/>
 		{:else if candidates.length === 0}
 			<Alert variant="info" title={$t('storage.addDisk.noneTitle')}>{$t('storage.addDisk.none')}</Alert>
 		{:else}
-			<fieldset class="space-y-2 min-w-0">
-				<legend class="form-label">{$t('storage.addDisk.disk')}</legend>
-				{#each candidates as disk (disk.path)}
-					<label
-						class="flex items-start gap-3 p-2 bg-surface-muted rounded-lg cursor-pointer hover:bg-surface-overlay"
-					>
-						<input
-							type="radio"
-							name="add-disk"
-							class="mt-1 border-border bg-surface-overlay text-brand focus:ring-brand-ring"
-							value={disk.path}
-							bind:group={selectedPath}
-							onchange={forgetErase}
-							disabled={busy}
-						/>
-						<span class="flex-1 min-w-0">
-							<span class="flex flex-wrap items-center gap-x-2">
-								<span class="mono break-all">{disk.path}</span>
-								<span class="text-secondary text-sm">{formatBytes(disk.size)}</span>
-								{#if disk.model}<span class="text-muted text-xs">{disk.model}</span>{/if}
-								{#if disk.serial}<span class="mono-xs text-muted">{disk.serial}</span>{/if}
-							</span>
-							{#if disk.has_data}
-								<Badge variant="warning" class="mt-1">{$t('storage.addDisk.hasData')}</Badge>
-								{#if disk.data_description}
-									<span class="block text-xs text-secondary break-words">{disk.data_description}</span>
-								{/if}
-							{:else}
-								<span class="block text-xs text-secondary">{$t('storage.disks.empty')}</span>
-							{/if}
+			<RadioGroup
+				name="add-disk"
+				legend={$t('storage.addDisk.disk')}
+				{options}
+				bind:value={selectedPath}
+				disabled={busy}
+				onchange={forgetErase}
+			>
+				{#snippet item(option)}
+					{@const disk = candidates.find((candidate) => candidate.path === option.value)}
+					{#if disk}
+						<span class="flex flex-wrap items-center gap-x-2">
+							<span class="mono break-all">{disk.path}</span>
+							<span class="text-secondary text-sm">{formatBytes(disk.size)}</span>
+							{#if disk.model}<span class="text-muted text-xs">{disk.model}</span>{/if}
+							{#if disk.serial}<span class="mono-xs text-muted">{disk.serial}</span>{/if}
 						</span>
-					</label>
-				{/each}
-			</fieldset>
+						{#if disk.has_data}
+							<Badge variant="warning" class="mt-1">{$t('storage.addDisk.hasData')}</Badge>
+							{#if disk.data_description}
+								<span class="block text-xs text-secondary break-words">{disk.data_description}</span>
+							{/if}
+						{:else}
+							<span class="block text-xs text-secondary">{$t('storage.disks.empty')}</span>
+						{/if}
+					{/if}
+				{/snippet}
+			</RadioGroup>
 			{#if selected?.has_data}
 				<Alert variant="warning" title={$t('storage.addDisk.dataTitle')}>
 					{$t('storage.addDisk.data')}
-					<label class="flex items-center gap-2 mt-3 text-content cursor-pointer">
-						<input type="checkbox" bind:checked={erase} class="form-checkbox" disabled={busy} />
+					<Checkbox bind:checked={erase} disabled={busy} class="mt-3">
 						<span class="break-all">{$t('storage.addDisk.erase', { path: selected.path })}</span>
-					</label>
+					</Checkbox>
 				</Alert>
 			{/if}
 			{#if selected}

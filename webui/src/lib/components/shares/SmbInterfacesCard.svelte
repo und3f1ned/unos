@@ -6,7 +6,7 @@
 	import { onMount } from 'svelte';
 	import { Network, RotateCw } from 'lucide-svelte';
 	import { getSmbInterfaces, type SmbInterfaces } from '$lib/api/shares';
-	import { Alert, Button, Card, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Card, ErrorState, Skeleton, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 	import SmbInterfacesDialog from './SmbInterfacesDialog.svelte';
@@ -14,7 +14,7 @@
 
 	let current = $state<SmbInterfaces | null>(null);
 	let loadError = $state('');
-	let notice = $state('');
+	let retrying = $state(false);
 	let warnings: string[] = $state([]);
 
 	// The dialog of the choice: mounted while open. Choose pressed again behind it starts it over.
@@ -23,6 +23,15 @@
 	let restartDialog: ReturnType<typeof SmbRestartDialog> | undefined;
 
 	onMount(load);
+
+	async function retry() {
+		retrying = true;
+		try {
+			await load();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	async function load() {
 		try {
@@ -55,16 +64,17 @@
 	function saved(answer: SmbInterfaces) {
 		current = answer;
 		editing = false;
-		notice =
+		toast.success(
 			answer.chosen.length > 0
 				? $t('shares.interfaces.savedSome', { names: answer.chosen.join(', ') })
-				: $t('shares.interfaces.savedEvery');
+				: $t('shares.interfaces.savedEvery')
+		);
 		warnings = answer.warnings;
 	}
 
 	function restarted(answer: SmbInterfaces) {
 		current = answer;
-		notice = $t('shares.interfaces.restarted');
+		toast.success($t('shares.interfaces.restarted'));
 		warnings = [];
 	}
 </script>
@@ -95,7 +105,7 @@
 	</div>
 
 	{#if loadError}
-		<Alert variant="error" title={$t('shares.interfaces.loadError')}>{loadError}</Alert>
+		<ErrorState title={$t('shares.interfaces.loadError')} message={loadError} onretry={retry} {retrying} />
 	{:else if current}
 		<div class="space-y-3">
 			<p class="break-words">
@@ -120,9 +130,6 @@
 						<p class="break-words">{problem}</p>
 					{/each}
 				</Alert>
-			{/if}
-			{#if notice}
-				<Alert variant="success" dismissible ondismiss={() => (notice = '')}>{notice}</Alert>
 			{/if}
 			{#if warnings.length > 0}
 				<Alert variant="warning" dismissible ondismiss={() => (warnings = [])}>

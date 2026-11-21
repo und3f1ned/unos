@@ -1,5 +1,4 @@
 export { default as BulkDeleteDialog } from './BulkDeleteDialog.svelte';
-export { default as DangerDialog } from './DangerDialog.svelte';
 export { default as DeleteNfsExportDialog } from './DeleteNfsExportDialog.svelte';
 export { default as DeleteShareDialog } from './DeleteShareDialog.svelte';
 export { default as IscsiCreateDialog } from './IscsiCreateDialog.svelte';
@@ -20,7 +19,6 @@ export { default as ShareCard } from './ShareCard.svelte';
 export { default as ShareFormModal } from './ShareFormModal.svelte';
 export { default as ShareOutcomeAlerts } from './ShareOutcomeAlerts.svelte';
 export { default as ShareSettingsFields } from './ShareSettingsFields.svelte';
-export { default as ShareTabs } from './ShareTabs.svelte';
 export { default as SmbInterfacesCard } from './SmbInterfacesCard.svelte';
 export { default as SmbInterfacesDialog } from './SmbInterfacesDialog.svelte';
 export { default as SmbRestartDialog } from './SmbRestartDialog.svelte';

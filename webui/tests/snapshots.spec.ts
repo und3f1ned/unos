@@ -602,7 +602,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     });
     await page.goto('/snapshots');
 
-    const alert = page.locator('.alert').filter({ hasText: 'Could not load the restored copies' });
+    const alert = page.locator('[data-error-state]').filter({ hasText: 'Could not load the restored copies' });
     await expect(alert).toContainText(detail);
     await expect(row(page, 'nightly')).toBeVisible();
   });

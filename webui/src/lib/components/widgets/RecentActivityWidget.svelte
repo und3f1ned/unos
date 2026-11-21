@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Bell, AlertTriangle, Info, CheckCircle } from 'lucide-svelte';
-	import { Card } from '$lib/components/ui';
+	import { Card, EmptyState } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { apiTime } from '$lib/time';
 
@@ -74,8 +74,7 @@
 	</div>
 
 	{#if notifications.length === 0}
-		<!-- Nothing yet: one quiet line, not an empty state as tall as the card. -->
-		<p class="text-sm text-secondary">{$t('dashboard.activity.none')}</p>
+		<EmptyState compact icon={Bell} title={$t('dashboard.activity.none')} />
 	{:else}
 		<div class="flex flex-col">
 			{#each displayNotifications as notification}

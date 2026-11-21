@@ -98,13 +98,18 @@ const FIELD_IDS: Record<string, string> = { Mount: 'mount', RAID: 'raid', Used: 
 /** The value of a field of a pool card. */
 const field = (card: Locator, label: string) => card.locator(`[data-field="${FIELD_IDS[label]}"] .kv-value`);
 /**
- * A pool card with its other actions shown: Balance…, Add disk…, Remove disk…, Unmount… and
- * Remove pool… are behind More, which stays open once opened.
+ * A pool card's ⋯ menu, opened (ADR-0432): Balance…, Add disk…, Remove disk…, Unmount… and
+ * Remove pool… are in it.
  */
 async function more(card: Locator): Promise<Locator> {
-  const toggle = card.getByRole('button', { name: /^(More actions for|Ещё действия с) / });
+  const toggle = card.getByRole('button', { name: /^(Actions for|Действия:) / });
   if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
-  return card;
+  return card.getByRole('menu');
+}
+/** An item of a pool card's ⋯ menu by its label; a disabled one says why after it. */
+async function moreItem(card: Locator, label: string): Promise<Locator> {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return (await more(card)).getByRole('menuitem', { name: new RegExp(`^${escaped}`) });
 }
 const badge = (card: Locator, label: string | RegExp) =>
   card.locator('.badge', { hasText: typeof label === 'string' ? new RegExp(`^${label}$`) : label });
@@ -580,7 +585,7 @@ test.describe('Physical disks (fake data)', () => {
     await reads.loadHeld();
     reads.stop();
 
-    await (await more(card)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(card, 'Unmount…')).click();
     const dialog = page.getByRole('dialog', { name: 'Unmount pool' });
     await dialog.getByRole('button', { name: 'Unmount', exact: true }).click();
     await expect(dialog).toBeHidden();
@@ -592,7 +597,7 @@ test.describe('Physical disks (fake data)', () => {
     // The reload's late answer still has the pool mounted: the page keeps the newer lists.
     await reads.release(page);
     await expect(badge(card, 'Not mounted')).toBeVisible();
-    await expect((await more(card)).getByRole('button', { name: 'Unmount…', exact: true })).toHaveCount(0);
+    await expect((await moreItem(card, 'Unmount…'))).toHaveCount(0);
     await expect(card.getByText('Could not read the scrub status')).toHaveCount(0);
     // The load after the unmount had the devices of now: nothing to load again.
     await page.waitForTimeout(500);
@@ -631,7 +636,7 @@ test.describe('Physical disks (fake data)', () => {
     await expect(alert).toBeVisible();
 
     // The load after an unmount is the user's.
-    await (await more(card)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(card, 'Unmount…')).click();
     await page.getByRole('dialog', { name: 'Unmount pool' }).getByRole('button', { name: 'Unmount', exact: true }).click();
     await expect(badge(card, 'Not mounted')).toBeVisible();
     await expect(alert).toHaveCount(0);
@@ -676,7 +681,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(badge(card, 'Healthy')).toBeVisible();
     await expect(badge(card, 'Mounted at boot')).toBeVisible();
 
-    await (await more(card)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(card, 'Unmount…')).click();
     const dialog = page.getByRole('dialog', { name: 'Unmount pool' });
     await expect(dialog).toContainText('Unmount "e2e_data"?');
     await expect(dialog).toContainText(
@@ -688,7 +693,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(dialog).toBeHidden();
     expect(writes).toEqual([]);
 
-    await (await more(card)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(card, 'Unmount…')).click();
     await dialog.getByRole('button', { name: 'Unmount', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/unmount', body: {} }]);
@@ -699,7 +704,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(field(card, 'Mount')).toHaveText('Not mounted');
     await expect(field(card, 'Used')).toHaveText('unknown (not mounted)');
     for (const name of MOUNTED_ONLY) await expect(card.getByRole('button', { name, exact: true })).toHaveCount(0);
-    await expect((await more(card)).getByRole('button', { name: 'Unmount…', exact: true })).toHaveCount(0);
+    await expect((await moreItem(card, 'Unmount…'))).toHaveCount(0);
 
     await card.getByRole('button', { name: 'Mount…', exact: true }).click();
     const mount = page.getByRole('dialog', { name: 'Mount pool' });
@@ -716,7 +721,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(field(card, 'Mount')).toHaveText('/mnt/pools/e2e_data');
     await expect(field(card, 'RAID')).toHaveText('Single');
     for (const name of MOUNTED_ONLY) await expect(card.getByRole('button', { name, exact: true })).toBeVisible();
-    await expect((await more(card)).getByRole('button', { name: 'Unmount…', exact: true })).toBeVisible();
+    await expect((await moreItem(card, 'Unmount…'))).toBeVisible();
   });
 
   for (const [reason, detail] of [
@@ -733,7 +738,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
       await page.goto('/storage');
 
       const card = poolCard(page, 'e2e_data');
-      await (await more(card)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+      await (await moreItem(card, 'Unmount…')).click();
       const dialog = page.getByRole('dialog', { name: 'Unmount pool' });
       await dialog.getByRole('button', { name: 'Unmount', exact: true }).click();
 
@@ -744,7 +749,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
       await expect(dialog).toBeHidden();
       await expect(badge(card, 'Healthy')).toBeVisible();
       await expect(field(card, 'Mount')).toHaveText('/mnt/pools/e2e_data');
-      await expect((await more(card)).getByRole('button', { name: 'Unmount…', exact: true })).toBeVisible();
+      await expect((await moreItem(card, 'Unmount…'))).toBeVisible();
     });
   }
 
@@ -765,7 +770,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await page.goto('/storage');
     const pool = poolCard(page, 'e2e_data');
 
-    await (await more(pool)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(pool, 'Unmount…')).click();
     const dialog = page.getByRole('dialog', { name: 'Unmount pool' });
     const unmount = dialog.getByRole('button', { name: 'Unmount', exact: true });
     const failed = dialog.locator('.alert', { hasText: 'Unmount failed' });
@@ -782,7 +787,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(dialog).toBeHidden();
     await expect(pool.locator('.badge', { hasText: /^Healthy$/ })).toBeVisible();
     await expect(pool.locator('.badge', { hasText: /^Mounted at boot$/ })).toBeVisible();
-    await expect((await more(pool)).getByRole('button', { name: 'Unmount…', exact: true })).toBeVisible();
+    await expect((await moreItem(pool, 'Unmount…'))).toBeVisible();
     expect(writes).toEqual([
       { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
       { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
@@ -799,7 +804,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
-    await (await more(card)).getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    await (await moreItem(card, 'Remove pool…')).click();
     const dialog = page.getByRole('dialog', { name: 'Remove pool' });
     // One step: what it does, then the name typed into an empty field.
     await expect(dialog).toContainText('UNOS stops using the pool "e2e_data".');
@@ -848,7 +853,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
-    await (await more(card)).getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    await (await moreItem(card, 'Remove pool…')).click();
     const dialog = page.getByRole('dialog', { name: 'Remove pool' });
     await dialog.getByLabel('Type e2e_data to confirm').fill('e2e_data');
     await dialog.getByRole('button', { name: 'Remove pool', exact: true }).click();
@@ -875,7 +880,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await page.goto('/storage');
     const pool = poolCard(page, 'e2e_data');
 
-    await (await more(pool)).getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    await (await moreItem(pool, 'Remove pool…')).click();
     const dialog = page.getByRole('dialog', { name: 'Remove pool' });
     await dialog.getByLabel('Type e2e_data to confirm').fill('e2e_data');
     await dialog.getByRole('button', { name: 'Remove pool', exact: true }).click();
@@ -901,7 +906,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await page.goto('/storage');
     const pool = poolCard(page, 'e2e_data');
 
-    await (await more(pool)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(pool, 'Unmount…')).click();
     const unmount = page.getByRole('dialog', { name: 'Unmount pool' });
     await unmount.getByRole('button', { name: 'Unmount', exact: true }).click();
     await expect(unmount.locator('.alert', { hasText: 'Unmount failed' })).toContainText(unasked);
@@ -911,7 +916,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(badge(pool, 'Mounted at boot')).toBeVisible();
     await expect(field(pool, 'Mount')).toHaveText('/mnt/pools/e2e_data');
 
-    await (await more(pool)).getByRole('button', { name: 'Remove pool e2e_data', exact: true }).click();
+    await (await moreItem(pool, 'Remove pool…')).click();
     const remove = page.getByRole('dialog', { name: 'Remove pool' });
     await remove.getByLabel('Type e2e_data to confirm').fill('e2e_data');
     await remove.getByRole('button', { name: 'Remove pool', exact: true }).click();
@@ -925,7 +930,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     await expect(badge(pool, 'Healthy')).toBeVisible();
     await expect(badge(pool, 'Mounted at boot')).toBeVisible();
     await expect(field(pool, 'Mount')).toHaveText('/mnt/pools/e2e_data');
-    await expect((await more(pool)).getByRole('button', { name: 'Unmount…', exact: true })).toBeVisible();
+    await expect((await moreItem(pool, 'Unmount…'))).toBeVisible();
   });
 });
 
@@ -1190,7 +1195,7 @@ test.describe('Balance (fake data)', () => {
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
-    await (await more(card)).getByRole('button', { name: 'Balance…', exact: true }).click();
+    await (await moreItem(card, 'Balance…')).click();
     const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
     await expect(dialog.getByRole('combobox', { name: 'Chunks to rewrite' })).toContainText(
       'Only chunks less full than a limit (recommended)'
@@ -1203,7 +1208,7 @@ test.describe('Balance (fake data)', () => {
     await expect(card.getByText('Balance in progress')).toBeVisible();
     await expect(card.getByRole('button', { name: 'Pause' })).toBeVisible();
     await expect(card.getByRole('button', { name: 'Cancel balance' })).toBeVisible();
-    await expect((await more(card)).getByRole('button', { name: 'Balance…', exact: true })).toHaveCount(0);
+    await expect((await moreItem(card, 'Balance…'))).toHaveCount(0);
     // No scrub beside a balance that runs.
     await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeDisabled();
 
@@ -1228,7 +1233,7 @@ test.describe('Balance (fake data)', () => {
     await expect(card.getByText('Last balance: finished')).toBeVisible();
     await expect(card.getByText('Balance in progress')).toHaveCount(0);
     await expect(progress).toHaveCount(0);
-    await expect((await more(card)).getByRole('button', { name: 'Balance…', exact: true })).toBeEnabled();
+    await expect((await moreItem(card, 'Balance…'))).toBeEnabled();
     await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeEnabled();
     expect(writes).toHaveLength(1);
     expect(balanceReads()).toBe(1);
@@ -1273,7 +1278,7 @@ test.describe('Balance (fake data)', () => {
     await card.getByRole('button', { name: 'Cancel balance' }).click();
     await expect(card.getByText('Last balance: cancelled before it finished')).toBeVisible();
     await expect(card.getByText('Balance in progress')).toHaveCount(0);
-    await expect((await more(card)).getByRole('button', { name: 'Balance…', exact: true })).toBeVisible();
+    await expect((await moreItem(card, 'Balance…'))).toBeVisible();
     expect(writes).toEqual([
       { method: 'POST', path: '/pools/e2e_data/balance/pause', body: {} },
       { method: 'POST', path: '/pools/e2e_data/balance/resume', body: {} },
@@ -1339,7 +1344,7 @@ test.describe('Balance (fake data)', () => {
     await page.goto('/storage');
 
     const card = poolCard(page, 'e2e_data');
-    await (await more(card)).getByRole('button', { name: 'Balance…', exact: true }).click();
+    await (await moreItem(card, 'Balance…')).click();
     const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
     const start = dialog.getByRole('button', { name: 'Start balance' });
     for (const value of ['0', '100', '2.5', '']) {
@@ -1376,7 +1381,7 @@ test.describe('Balance (fake data)', () => {
     await fakeScrubEvents(page);
     await page.goto('/storage');
 
-    await (await more(poolCard(page, 'e2e_data'))).getByRole('button', { name: 'Balance…', exact: true }).click();
+    await (await moreItem(poolCard(page, 'e2e_data'), 'Balance…')).click();
     const dialog = page.getByRole('dialog', { name: 'Balance e2e_data' });
     await dialog.getByLabel('Usage limit (%)').fill('5');
     await dialog.getByRole('button', { name: 'Start balance' }).click();
@@ -1406,9 +1411,9 @@ test.describe('Balance (fake data)', () => {
     const card = poolCard(page, 'e2e_data');
     await expect(card.getByText('Last balance failed')).toBeVisible();
     await expect(card.getByText(error)).toBeVisible();
-    await expect((await more(card)).getByRole('button', { name: 'Balance…', exact: true })).toBeEnabled();
-    await expect((await more(poolCard(page, 'e2e_ro'))).getByRole('button', { name: 'Balance…', exact: true })).toBeDisabled();
-    await expect((await more(poolCard(page, 'e2e_busy'))).getByRole('button', { name: 'Balance…', exact: true })).toBeDisabled();
+    await expect((await moreItem(card, 'Balance…'))).toBeEnabled();
+    await expect((await moreItem(poolCard(page, 'e2e_ro'), 'Balance…'))).toBeDisabled();
+    await expect((await moreItem(poolCard(page, 'e2e_busy'), 'Balance…'))).toBeDisabled();
   });
 
   test('after the events socket connects again, the page reads each balance it shows running', async ({
@@ -1463,7 +1468,7 @@ test.describe('Pool disks (fake data)', () => {
     await page.goto('/storage');
     const card = poolCard(page, 'e2e_data');
 
-    await (await more(card)).getByRole('button', { name: 'Add disk…', exact: true }).click();
+    await (await moreItem(card, 'Add disk…')).click();
     const add = page.getByRole('dialog', { name: 'Add a disk to e2e_data' });
     await expect(add.getByText('No disk can be added')).toBeVisible();
     await expect(add.getByRole('radio')).toHaveCount(0);
@@ -1471,7 +1476,7 @@ test.describe('Pool disks (fake data)', () => {
     await add.getByRole('button', { name: 'Cancel' }).click();
     await expect(add).toHaveCount(0);
 
-    await (await more(card)).getByRole('button', { name: 'Remove disk…', exact: true }).click();
+    await (await moreItem(card, 'Remove disk…')).click();
     const remove = page.getByRole('dialog', { name: 'Remove a disk from e2e_data' });
     await expect(remove.getByRole('radio', { name: /\/dev\/e2e-hd9/ })).toBeDisabled();
     await expect(remove.getByText('Cannot be removed')).toBeVisible();
@@ -1490,7 +1495,7 @@ test.describe('Pool disks (fake data)', () => {
     });
     await page.goto('/storage');
     const card = poolCard(page, 'e2e_data');
-    await (await more(card)).getByRole('button', { name: 'Add disk…', exact: true }).click();
+    await (await moreItem(card, 'Add disk…')).click();
     const dialog = page.getByRole('dialog', { name: 'Add a disk to e2e_data' });
     const submit = dialog.getByRole('button', { name: 'Add disk' });
     await expect(dialog.getByText('The pool keeps its profile (single)', { exact: false })).toBeVisible();
@@ -1537,7 +1542,7 @@ test.describe('Pool disks (fake data)', () => {
       addDisk: () => (refuse ? { status: 409, json: { detail: refusal } } : undefined),
     });
     await page.goto('/storage');
-    await (await more(poolCard(page, 'e2e_data'))).getByRole('button', { name: 'Add disk…', exact: true }).click();
+    await (await moreItem(poolCard(page, 'e2e_data'), 'Add disk…')).click();
     const dialog = page.getByRole('dialog', { name: 'Add a disk to e2e_data' });
     await dialog.getByRole('radio', { name: /\/dev\/e2e-hd11/ }).check();
     await dialog.getByLabel('Erase everything on /dev/e2e-hd11').check();
@@ -1572,7 +1577,7 @@ test.describe('Pool disks (fake data)', () => {
     await page.goto('/storage');
     const card = poolCard(page, 'e2e_data');
 
-    await (await more(card)).getByRole('button', { name: 'Remove disk…', exact: true }).click();
+    await (await moreItem(card, 'Remove disk…')).click();
     const dialog = page.getByRole('dialog', { name: 'Remove a disk from e2e_data' });
     const submit = dialog.getByRole('button', { name: 'Remove disk' });
     await dialog.getByRole('radio', { name: /\/dev\/e2e-hd10/ }).check();
@@ -1592,7 +1597,7 @@ test.describe('Pool disks (fake data)', () => {
     // One job per pool.
     await expect(card.getByRole('button', { name: 'Scrub', exact: true })).toBeDisabled();
     for (const name of ['Add disk…', 'Remove disk…', 'Balance…']) {
-      await expect((await more(card)).getByRole('button', { name, exact: true })).toBeDisabled();
+      await expect((await moreItem(card, name))).toBeDisabled();
     }
     await events.diskRemovals([removing(GIB)]);
     await expect(card.getByRole('progressbar', { name: 'Removal progress' })).toHaveAttribute('aria-valuenow', '75');
@@ -1601,7 +1606,7 @@ test.describe('Pool disks (fake data)', () => {
     host = { ...noRemoval('e2e_data'), devid: 2, device: '/dev/e2e-hd10', result: 'finished' };
     await events.diskRemovals([host]);
     await expect(card.getByText('Last disk removal: /dev/e2e-hd10 left the pool')).toBeVisible();
-    await expect((await more(card)).getByRole('button', { name: 'Remove disk…', exact: true })).toBeEnabled();
+    await expect((await moreItem(card, 'Remove disk…'))).toBeEnabled();
   });
 
   test('a removal that runs shows again after a reload, and a failed one says why', async ({
@@ -1633,7 +1638,7 @@ test.describe('Pool disks (fake data)', () => {
       removalStatus: (pool, action) => (action === 'start' ? { status: 409, json: { detail: refusal } } : noRemoval(pool)),
     });
     await page.goto('/storage');
-    await (await more(poolCard(page, 'e2e_data'))).getByRole('button', { name: 'Remove disk…', exact: true }).click();
+    await (await moreItem(poolCard(page, 'e2e_data'), 'Remove disk…')).click();
     const dialog = page.getByRole('dialog', { name: 'Remove a disk from e2e_data' });
     await dialog.getByRole('radio', { name: /\/dev\/e2e-hd10/ }).check();
     await dialog.getByLabel("Type the disk's path to confirm").fill('/dev/e2e-hd10');
@@ -1660,13 +1665,13 @@ test.describe('Pool disks (fake data)', () => {
     });
     await page.goto('/storage');
     for (const name of ['Add disk…', 'Remove disk…']) {
-      await expect((await more(poolCard(page, 'e2e_data'))).getByRole('button', { name, exact: true })).toBeEnabled();
+      await expect((await moreItem(poolCard(page, 'e2e_data'), name))).toBeEnabled();
       for (const pool of ['e2e_ro', 'e2e_busy', 'e2e_bal']) {
-        await expect((await more(poolCard(page, pool))).getByRole('button', { name, exact: true })).toBeDisabled();
+        await expect((await moreItem(poolCard(page, pool), name))).toBeDisabled();
       }
     }
-    // Each says why: a paused balance is resumed or cancelled first.
-    await expect(poolCard(page, 'e2e_bal')).toContainText('Resume or cancel the paused balance first.');
+    // Each says why, under its item: a paused balance is resumed or cancelled first.
+    await expect(await more(poolCard(page, 'e2e_bal'))).toContainText('Resume or cancel the paused balance first.');
   });
 });
 
@@ -1695,7 +1700,7 @@ test.describe('Storage pools (fake data)', () => {
     await expect(media.getByText('1 disk is missing')).toBeVisible();
     await expect(media.getByText('2 disk errors')).toBeVisible();
     await expect(media.getByText(/btrfs counted read, write or checksum errors/)).toBeVisible();
-    await expect((await more(media)).getByRole('button', { name: 'Unmount…', exact: true })).toBeVisible();
+    await expect((await moreItem(media, 'Unmount…'))).toBeVisible();
     await expect(media.getByText('State unknown')).toHaveCount(0);
 
     // Forced read-only by btrfs: health "error" without any error counter.
@@ -1790,7 +1795,7 @@ test.describe('Storage pools (fake data)', () => {
 
     await page.goto('/storage');
     const pool = poolCard(page, 'e2e_data');
-    await (await more(pool)).getByRole('button', { name: 'Unmount…', exact: true }).click();
+    await (await moreItem(pool, 'Unmount…')).click();
     const unmount = page.getByRole('dialog', { name: 'Unmount pool' });
     await expect(unmount).toContainText('Shares, apps and scheduled tasks that use /mnt/pools/e2e_data lose access');
     await unmount.getByRole('button', { name: 'Unmount', exact: true }).click();
@@ -2316,20 +2321,20 @@ test.describe('Storage volumes (fake data)', () => {
     // The pool is in the URL only: the API used to answer this body with 422.
     expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_media/volumes', body: { name: 'photos' } }]);
 
-    // Deleting a volume needs its name typed.
+    // Deleting a volume needs its name typed, in a confirmation over the dialog (ADR-0432).
     await dialog.getByRole('button', { name: 'Delete volume documents' }).click();
-    await expect(dialog.getByText('Delete volume "documents"?')).toBeVisible();
+    const question = page.getByRole('dialog', { name: 'Delete volume "documents"?' });
+    await expect(question).toBeVisible();
     // Running containers, shares and exports keep a volume from being deleted (HTTP 409).
-    await expect(dialog.getByText(/including those of stopped apps\. This cannot be undone\./)).toBeVisible();
-    await expect(dialog.getByText(/stop working/)).toHaveCount(0);
-    await expect(name).toHaveCount(0);
-    const confirm = dialog.getByLabel('Type the volume name to confirm');
-    const remove = dialog.getByRole('button', { name: 'Delete volume', exact: true });
+    await expect(question.getByText(/including those of stopped apps\. This cannot be undone\./)).toBeVisible();
+    await expect(question.getByText(/stop working/)).toHaveCount(0);
+    const confirm = question.getByLabel('Type documents to confirm');
+    const remove = question.getByRole('button', { name: 'Delete volume', exact: true });
     await expect(remove).toBeDisabled();
     await confirm.fill('photos');
     await expect(remove).toBeDisabled();
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(confirm).toHaveCount(0);
+    await question.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(question).toHaveCount(0);
     expect(writes).toHaveLength(1);
 
     await dialog.getByRole('button', { name: 'Delete volume documents' }).click();
@@ -2462,13 +2467,14 @@ test.describe('Storage volumes (fake data)', () => {
     await poolCard(page, 'e2e_media').getByRole('button', { name: 'Volumes' }).click();
     const dialog = page.getByRole('dialog', { name: 'Volumes on e2e_media' });
     await dialog.getByRole('button', { name: 'Delete volume documents' }).click();
-    await dialog.getByLabel('Type the volume name to confirm').fill('documents');
-    await dialog.getByRole('button', { name: 'Delete volume', exact: true }).click();
+    const question = page.getByRole('dialog', { name: 'Delete volume "documents"?' });
+    await question.getByLabel('Type documents to confirm').fill('documents');
+    await question.getByRole('button', { name: 'Delete volume', exact: true }).click();
 
-    await expect(dialog.getByText('Volume was not deleted')).toBeVisible();
-    await expect(dialog.getByText(inUse)).toBeVisible();
+    await expect(question.getByText('Volume was not deleted')).toBeVisible();
+    await expect(question.getByText(inUse)).toBeVisible();
     await expect(dialog.getByRole('listitem')).toHaveCount(1);
-    await expect(dialog.getByLabel('Type the volume name to confirm')).toHaveValue('documents');
+    await expect(question.getByLabel('Type documents to confirm')).toHaveValue('documents');
     expect(writes).toEqual([{ method: 'DELETE', path: '/pools/e2e_media/volumes/documents', body: null }]);
   });
 
@@ -2633,9 +2639,11 @@ test.describe('The Storage page in Russian', () => {
     await expect(data.locator('[data-field="devices"] .kv-label')).toHaveText('Диски');
     await expect(field(data, 'Devices')).toHaveText('/dev/e2e-hd9');
     await expect(field(data, 'Mount')).toHaveText('/mnt/pools/e2e_data');
-    await more(data);
-    for (const name of ['Проверить целостность', 'Тома', 'Отмонтировать…', 'Убрать пул e2e_data']) {
+    for (const name of ['Проверить целостность', 'Тома']) {
       await expect(data.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    for (const name of ['Отмонтировать…', 'Убрать пул…']) {
+      await expect(await moreItem(data, name)).toBeVisible();
     }
     // The errors of the last scrub in the plural form of their count, and when it started in the
     // date format of the page and the browser's time zone, 5:45 ahead of UTC.
@@ -2751,7 +2759,7 @@ test.describe('The Storage page in Russian', () => {
     await mount.getByRole('button', { name: 'Отмена', exact: true }).click();
     await expect(mount).toBeHidden();
 
-    await (await more(data)).getByRole('button', { name: 'Отмонтировать…', exact: true }).click();
+    await (await moreItem(data, 'Отмонтировать…')).click();
     const unmount = page.getByRole('dialog', { name: 'Отмонтировать пул' });
     await expect(unmount).toContainText('Отмонтировать «e2e_data»?');
     await expect(unmount).toContainText(
@@ -2783,7 +2791,7 @@ test.describe('The Storage page in Russian', () => {
     await importing.getByRole('button', { name: 'Отмена', exact: true }).click();
     await expect(importing).toBeHidden();
 
-    await (await more(data)).getByRole('button', { name: 'Убрать пул e2e_data', exact: true }).click();
+    await (await moreItem(data, 'Убрать пул…')).click();
     const remove = page.getByRole('dialog', { name: 'Убрать пул' });
     await expect(remove).toContainText('UNOS перестаёт использовать пул «e2e_data».');
     await expect(remove.getByRole('listitem')).toHaveText([
@@ -2820,14 +2828,15 @@ test.describe('The Storage page in Russian', () => {
     ).toBeVisible();
     await expect(volumes.getByRole('button', { name: 'Создать том', exact: true })).toBeDisabled();
     await volumes.getByRole('button', { name: 'Удалить том documents', exact: true }).click();
-    await expect(volumes.locator('.alert', { hasText: 'Удалить том «documents»?' })).toContainText(
+    const question = page.getByRole('dialog', { name: 'Удалить том «documents»?' });
+    await expect(question).toContainText(
       'Все файлы в /mnt/pools/e2e_data/documents будут удалены вместе с ним, включая файлы остановленных ' +
         'приложений. Это нельзя отменить. Пока том используется работающим приложением или контейнером, общей ' +
         'папкой SMB или экспортом NFS, он не удаляется.',
     );
-    await expect(volumes.getByLabel('Введите имя тома для подтверждения')).toBeVisible();
-    await expect(volumes.getByRole('button', { name: 'Удалить том', exact: true })).toBeDisabled();
-    await volumes.getByRole('button', { name: 'Отмена', exact: true }).click();
+    await expect(question.getByLabel('Введите documents для подтверждения')).toBeVisible();
+    await expect(question.getByRole('button', { name: 'Удалить том', exact: true })).toBeDisabled();
+    await question.getByRole('button', { name: 'Отмена', exact: true }).click();
     await volumes.getByRole('button', { name: 'Закрыть', exact: true }).click();
     await expect(volumes).toBeHidden();
 

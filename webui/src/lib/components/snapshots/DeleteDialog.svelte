@@ -1,8 +1,6 @@
 <script lang="ts" generics="Item extends { name: string; path: string }">
 	// The dialog that deletes a snapshot or a copy that a restore made, with the texts of each.
-	import { Trash2 } from 'lucide-svelte';
-	import { Alert, Button, Modal } from '$lib/components/ui';
-	import { t } from '$lib/i18n';
+	import { Alert, ConfirmDialog } from '$lib/components/ui';
 	import { messageOf } from './names';
 
 	type Props = {
@@ -56,32 +54,22 @@
 	}
 </script>
 
-<Modal
+<ConfirmDialog
 	open={item !== null}
 	{title}
-	danger
-	closable={!busy}
-	onclose={close}
+	confirmLabel={submit}
+	{busy}
+	oncancel={close}
+	onconfirm={confirm}
 >
 	{#if item}
-		<div class="space-y-4">
-			<p class="text-sm">
-				{before}
-				<span class="font-semibold break-all">{item.name}</span>
-				(<span class="mono-xs break-all">{item.path}</span>){after}
-			</p>{#if note}{' '}<p class="text-sm text-secondary">{note}</p>{/if}
-			{#if error}
-				<Alert variant="error" title={failed}>{error}</Alert>
-			{/if}
-		</div>
+		<p class="text-sm">
+			{before}
+			<span class="font-semibold break-all">{item.name}</span>
+			(<span class="mono-xs break-all">{item.path}</span>){after}
+		</p>{#if note}{' '}<p class="text-sm text-secondary">{note}</p>{/if}
+		{#if error}
+			<Alert variant="error" title={failed}>{error}</Alert>
+		{/if}
 	{/if}
-
-	{#snippet footer()}
-		<Button variant="secondary" class="flex-1" disabled={busy} onclick={close}>
-			{$t('common.cancel')}
-		</Button>
-		<Button variant="danger" class="flex-1" icon={Trash2} loading={busy} onclick={confirm}>
-			{submit}
-		</Button>
-	{/snippet}
-</Modal>
+</ConfirmDialog>

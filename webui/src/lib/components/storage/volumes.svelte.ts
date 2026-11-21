@@ -28,7 +28,6 @@ export class PoolVolumes {
 	creating = $state(false);
 	createError = $state('');
 	toDelete: Volume | null = $state.raw(null);
-	deleteConfirm = $state('');
 	deleting = $state(false);
 	deleteError = $state('');
 
@@ -147,7 +146,6 @@ export class PoolVolumes {
 	askDelete(volume: Volume) {
 		if (this.readOnly) return;
 		this.toDelete = volume;
-		this.deleteConfirm = '';
 		this.deleteError = '';
 	}
 
@@ -156,8 +154,9 @@ export class PoolVolumes {
 		this.toDelete = null;
 	}
 
+	/** Deletes the volume asked about: its confirmation took its name, typed exactly. */
 	async delete() {
-		if (!this.pool || !this.toDelete || this.deleteConfirm !== this.toDelete.name) return;
+		if (!this.pool || !this.toDelete) return;
 		this.deleting = true;
 		this.deleteError = '';
 		try {

@@ -2,12 +2,12 @@
   // The trash of every pool and volume (ADR-0259): what Delete in Files moved
   // there, until it is restored, deleted for good, or deleted for good by the
   // daily expiry.
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { deleteFromTrash, emptyTrash, listTrash, restoreFromTrash, type TrashItem } from "$lib/api/files";
-  import { SelectionBar, TrashTable } from "$lib/components/files";
+  import { TrashTable } from "$lib/components/files";
   import { messageOf, signedOut } from "$lib/components/files/errors";
   import { toggled } from "$lib/components/files/selection";
-  import { Alert, Button, Card, EmptyState, Modal, Skeleton } from "$lib/components/ui";
+  import { Alert, BulkBar, Button, Card, ConfirmDialog, EmptyState, LoadState, Skeleton, toast } from "$lib/components/ui";
   import { t } from "$lib/i18n";
   import { RefreshCw, RotateCcw, Trash, Trash2 } from "lucide-svelte";
 
@@ -16,19 +16,20 @@
   // The trashes that could not be read, each with the reason.
   let problems = $state.raw<string[]>([]);
   let loading = $state(true);
+  // The first answer came: a refresh keeps what is shown (ADR-0430).
+  let loaded = $state(false);
   let loadError = $state("");
-  // The refusal of a restore, and what the last action did.
+  // The refusal of a restore, and where a restore put the items: both stay on the page, to be read.
   let error = $state("");
   let notice = $state("");
   let selected = $state.raw<Set<string>>(new Set());
   // A restore, a deletion for good or the emptying is on its way.
   let busy = $state(false);
   let restoring = $state(false);
-  // The confirmation of a deletion for good: of the selected items, or of everything.
+  // The confirmation of a deletion for good: of the selected items, or of everything; Cancel has the
+  // focus, as what it does cannot be undone (ADR-0259). A refusal stays in it.
   let confirming: "selected" | "everything" | null = $state(null);
   let dialogError = $state("");
-  // Each dialog's Cancel, which takes the keyboard focus: what the dialogs do cannot be undone.
-  let cancelSlot: HTMLSpanElement | null = null;
 
   onMount(load);
 
@@ -40,6 +41,7 @@
       items = listing.items;
       retentionDays = listing.retention_days;
       problems = listing.problems;
+      loaded = true;
       // What is no longer listed is no longer selected.
       const listed = new Set(items.map((item) => item.path));
       selected = new Set(Array.from(selected).filter((path) => listed.has(path)));
@@ -76,16 +78,13 @@
     await load();
   }
 
-  async function ask(what: "selected" | "everything") {
+  function ask(what: "selected" | "everything") {
     confirming = what;
     dialogError = "";
-    await tick();
-    cancelSlot?.querySelector("button")?.focus();
   }
 
   function closeDialog() {
-    if (busy) return;
-    confirming = null;
+    if (!busy) confirming = null;
   }
 
   async function handleDeleteForGood() {
@@ -101,7 +100,7 @@
           : (await deleteFromTrash(Array.from(selected))).deleted.length;
       confirming = null;
       selected = new Set();
-      notice = $t("files.trash.deleted", { n: count });
+      toast.success($t("files.trash.deleted", { n: count }));
     } catch (e) {
       if (!signedOut(e)) dialogError = messageOf(e);
     } finally {
@@ -124,20 +123,21 @@
       </p>
     </div>
     <div class="page-actions">
-      <Button variant="secondary" size="icon" disabled={loading} title={$t("common.refresh")} onclick={load}>
-        <RefreshCw class="w-4 h-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+      <Button variant="secondary" size="icon" icon={RefreshCw} loading={loading} title={$t("common.refresh")} onclick={load}>
         <span class="sr-only">{$t("common.refresh")}</span>
       </Button>
       <!-- Not a solid red button: the red one is the confirmation's. -->
-      <Button variant="ghost-danger" icon={Trash2} disabled={busy || items.length === 0} onclick={() => ask("everything")}>
+      <Button
+        variant="ghost-danger"
+        icon={Trash2}
+        disabled={busy || items.length === 0}
+        onclick={() => ask("everything")}
+      >
         {$t("files.trash.emptyAction")}
       </Button>
     </div>
   </div>
 
-  {#if loadError}
-    <Alert variant="error" title={$t("files.trash.loadError")}>{loadError}</Alert>
-  {/if}
   {#if problems.length > 0}
     <!-- The trashes that could not be read, in one alert. -->
     <Alert variant="warning" size="sm" title={$t("files.trash.problem")}>
@@ -155,13 +155,21 @@
     </div>
   {/if}
   {#if notice}
+    <!-- Not a toast: where the items went is to be read before going there. -->
     <div role="status">
       <Alert variant="success" dismissible ondismiss={() => (notice = "")}>{notice}</Alert>
     </div>
   {/if}
 
   <Card>
-    <SelectionBar count={selected.size} hint={$t("files.trash.selectHint")}>
+    <BulkBar
+      class="mb-4"
+      count={selected.size}
+      label={$t("files.selectedItems")}
+      summary={$t("files.selected", { n: selected.size })}
+      hint={$t("files.trash.selectHint")}
+      onclear={busy ? null : () => (selected = new Set())}
+    >
       <Button
         variant="secondary"
         size="sm"
@@ -181,49 +189,41 @@
       >
         {$t("files.deleteForGoodAction")}
       </Button>
-    </SelectionBar>
+    </BulkBar>
 
-    {#if loading && items.length === 0}
-      <div class="card" aria-busy="true">
+    <LoadState
+      loading={!loaded && !loadError}
+      error={loadError}
+      errorTitle={$t("files.trash.loadError")}
+      keepOnError={loaded}
+      empty={items.length === 0}
+    >
+      {#snippet skeleton()}
         <Skeleton shape="row" columns={5} count={4} />
-      </div>
-    {:else if items.length === 0}
-      <EmptyState icon={Trash} title={$t("files.trash.emptyTitle")} description={$t("files.trash.emptyHint")} />
-    {:else}
+      {/snippet}
+      {#snippet emptyState()}
+        <EmptyState icon={Trash} title={$t("files.trash.emptyTitle")} description={$t("files.trash.emptyHint")} />
+      {/snippet}
       <TrashTable {items} {selected} {units} ontoggle={toggle} />
-    {/if}
+    </LoadState>
   </Card>
 </div>
 
-<Modal
+<ConfirmDialog
   open={confirming !== null}
   title={confirming === "everything" ? $t("files.trash.empty") : $t("files.deleteForGood")}
-  danger
-  closable={!busy}
-  onclose={closeDialog}
+  message={confirming === "everything"
+    ? `${$t("files.trash.confirmEmpty")} ${$t("files.trash.space")}`
+    : $t("files.trash.confirmSelected", { n: selected.size })}
+  confirmLabel={confirming === "everything" ? $t("files.trash.empty") : $t("files.deleteForGood")}
+  {busy}
+  focusCancel
+  oncancel={closeDialog}
+  onconfirm={handleDeleteForGood}
 >
-  <div class="space-y-3">
-    <p class="text-sm">
-      {#if confirming === "everything"}
-        {$t("files.trash.confirmEmpty")}
-        {$t("files.trash.space")}
-      {:else}
-        {$t("files.trash.confirmSelected", { n: selected.size })}
-      {/if}
-    </p>
-    {#if dialogError}
-      <div role="alert">
-        <Alert variant="error" title={$t("files.trash.deleteFailed")}>{dialogError}</Alert>
-      </div>
-    {/if}
-  </div>
-
-  {#snippet footer()}
-    <span bind:this={cancelSlot} class="contents">
-      <Button variant="secondary" class="flex-1" disabled={busy} onclick={closeDialog}>{$t("common.cancel")}</Button>
-    </span>
-    <Button variant="danger" class="flex-1" icon={Trash2} loading={busy} onclick={handleDeleteForGood}>
-      {confirming === "everything" ? $t("files.trash.empty") : $t("files.deleteForGood")}
-    </Button>
-  {/snippet}
-</Modal>
+  {#if dialogError}
+    <div role="alert">
+      <Alert variant="error" title={$t("files.trash.deleteFailed")}>{dialogError}</Alert>
+    </div>
+  {/if}
+</ConfirmDialog>

@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { createUser, USERNAME_PATTERN } from '$lib/api/auth';
 	import { paletteRequest, type PaletteRequest } from '$lib/stores/palette';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, HelpText, Input, Modal } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { UserDirectory } from './directory.svelte';
 	import { messageOf } from './errors';
@@ -127,13 +127,12 @@
 			bind:confirmation={newConfirm}
 		/>
 		<div>
-			<label class="flex items-center gap-2 cursor-pointer">
-				<input type="checkbox" class="form-checkbox" bind:checked={newSmb} />
-				{$t('users.new.smb')}
-			</label>
-			<p class="form-hint">{$t('users.new.smbHint')}</p>
+			<Checkbox bind:checked={newSmb} label={$t('users.new.smb')} describedby="new-smb-hint" />
+			<div id="new-smb-hint" class="ml-7">
+				<HelpText text={$t('users.new.smbHint')} />
+			</div>
 		</div>
-		<p class="form-hint">{$t('users.new.roleHint')}</p>
+		<HelpText text={$t('users.new.roleHint')} />
 		{#if createError}
 			<Alert variant="error" title={$t('users.new.failed')}>{createError}</Alert>
 		{/if}

@@ -4,7 +4,7 @@
 	import { Download, ScrollText } from 'lucide-svelte';
 	import { exportAuditLog, type AuditExportFormat, type AuditFilters as Filters } from '$lib/api/audit';
 	import { getUsers } from '$lib/api/auth';
-	import { Alert, Button, Card, EmptyState, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Card, EmptyState, LoadState, Skeleton } from '$lib/components/ui';
 	import { AuditFilters, AuditLog, AuditTimeline } from '$lib/components/audit';
 	import { dayBound, textOf, today } from '$lib/components/audit/timeline';
 	import { intlLocale, t } from '$lib/i18n';
@@ -241,7 +241,7 @@
 				icon={Download}
 				loading={exporting === 'csv'}
 				disabled={exporting !== null || exportBlocked !== ''}
-				title={exportBlocked || undefined}
+				disabledReason={exportBlocked}
 				onclick={() => exportAs('csv')}>{$t('audit.exportCsv')}</Button
 			>
 			<Button
@@ -249,7 +249,7 @@
 				icon={Download}
 				loading={exporting === 'json'}
 				disabled={exporting !== null || exportBlocked !== ''}
-				title={exportBlocked || undefined}
+				disabledReason={exportBlocked}
 				onclick={() => exportAs('json')}>{$t('audit.exportJson')}</Button
 			>
 		</div>
@@ -279,39 +279,41 @@
 		onclear={clearFilters}
 	/>
 
-	{#if log.error}
-		<Alert variant="error" title={$t('audit.loadError')}>
-			<p>{log.error}</p>
-			<Button variant="secondary" size="sm" class="mt-3" loading={log.loading} onclick={() => log.retry(filters)}
-				>{$t('common.retry')}</Button
-			>
-		</Alert>
-	{:else if !log.loaded}
-		<!-- The first load (ADR-0430): a day of the timeline, its entries in their places. -->
-		<div class="card" aria-busy="true">
-			<Skeleton size="eyebrow" class="w-28 py-1.5 mb-2" />
-			<div class="ml-1.5 border-l border-border">
-				{#each [0, 1, 2, 3, 4] as entry (entry)}
-					<div class="pb-5 pl-6 last:pb-1">
-						<Skeleton class="w-1/2" />
-						<Skeleton class="mt-1 w-3/4" />
-					</div>
-				{/each}
+	<LoadState
+		loading={!log.loaded && !log.error}
+		error={log.error}
+		errorTitle={$t('audit.loadError')}
+		empty={log.entries.length === 0}
+		onretry={() => log.retry(filters)}
+		retrying={log.loading}
+	>
+		{#snippet skeleton()}
+			<!-- The first load (ADR-0430): a day of the timeline, its entries in their places. -->
+			<div class="card">
+				<Skeleton size="eyebrow" class="w-28 py-1.5 mb-2" />
+				<div class="ml-1.5 border-l border-border">
+					{#each [0, 1, 2, 3, 4] as entry (entry)}
+						<div class="pb-5 pl-6 last:pb-1">
+							<Skeleton class="w-1/2" />
+							<Skeleton class="mt-1 w-3/4" />
+						</div>
+					{/each}
+				</div>
 			</div>
-		</div>
-	{:else if log.entries.length === 0}
-		<Card>
-			{#if filtered}
-				<EmptyState
-					icon={ScrollText}
-					title={$t('audit.noMatches')}
-					description={filters.search ? $t('audit.noSearchMatchesHint') : $t('audit.noMatchesHint')}
-				/>
-			{:else}
-				<EmptyState icon={ScrollText} title={$t('audit.empty')} description={$t('audit.emptyHint')} />
-			{/if}
-		</Card>
-	{:else}
+		{/snippet}
+		{#snippet emptyState()}
+			<Card>
+				{#if filtered}
+					<EmptyState
+						icon={ScrollText}
+						title={$t('audit.noMatches')}
+						description={filters.search ? $t('audit.noSearchMatchesHint') : $t('audit.noMatchesHint')}
+					/>
+				{:else}
+					<EmptyState icon={ScrollText} title={$t('audit.empty')} description={$t('audit.emptyHint')} />
+				{/if}
+			</Card>
+		{/snippet}
 		<AuditTimeline
 			entries={log.entries}
 			loading={log.loading}
@@ -320,5 +322,5 @@
 			resourceTypes={RESOURCE_TYPES}
 			onshowmore={() => log.showMore(filters)}
 		/>
-	{/if}
+	</LoadState>
 </div>

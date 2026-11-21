@@ -9,10 +9,9 @@
 	} from '$lib/api/auth';
 	import { getGroups } from '$lib/api/groups';
 	import { getSmbShares } from '$lib/api/shares';
-	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { Alert, Button, Checkbox, ConfirmDialog, HelpText, Input, Sheet, SwitchRow } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { t } from '$lib/i18n';
-	import ConfirmDialog from './ConfirmDialog.svelte';
 	import type { UserDirectory } from './directory.svelte';
 	import { messageOf } from './errors';
 	import { MIN_PASSWORD_LENGTH, passwordComplete } from './password';
@@ -40,6 +39,8 @@
 	let editError = $state('');
 	let editWarnings = $state.raw<string[]>([]);
 	let confirmSmbOff = $state(false);
+	// The switch of SMB access: the user's as stored, until a change is confirmed and made.
+	let smbAllowed = $state(false);
 	// Whether the user has access to a share; null while unknown.
 	let editHasShareAccess: boolean | null = $state(null);
 	let shareAccessRequest = 0;
@@ -96,6 +97,7 @@
 		editError = '';
 		editWarnings = [];
 		confirmSmbOff = false;
+		smbAllowed = user.smb?.allowed ?? false;
 		editHasShareAccess = null;
 		void loadShareAccess(user);
 	}
@@ -135,7 +137,10 @@
 		}
 		// The same user: show their SMB state as stored now (e.g. SMB was not
 		// turned on). The rest of the dialog keeps what it was opened with.
-		if (editing?.id === now.id) editing = { ...editing, smb: now.smb };
+		if (editing?.id === now.id) {
+			editing = { ...editing, smb: now.smb };
+			smbAllowed = now.smb?.allowed ?? false;
+		}
 		editError = message;
 	}
 
@@ -193,12 +198,12 @@
 		}
 	}
 
-	async function onSmbToggle(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
+	// The switch acts at once: on turns SMB on, off asks first.
+	async function onSmbToggle(on: boolean) {
 		if (!editing) return;
-		if (!input.checked) {
+		if (!on) {
 			// SMB stays on until the confirmation.
-			input.checked = true;
+			smbAllowed = true;
 			editError = '';
 			confirmSmbOff = true;
 			return;
@@ -209,10 +214,11 @@
 		try {
 			const updated = await enableUserSmb(target.id, target.username);
 			editing = { ...target, smb: updated.smb ?? target.smb };
+			smbAllowed = editing.smb?.allowed ?? true;
 			editWarnings = updated.warnings ?? [];
 			void directory.load(false);
 		} catch (e) {
-			input.checked = false;
+			smbAllowed = false;
 			await handleEditError(e, target);
 		} finally {
 			smbBusy = false;
@@ -231,6 +237,7 @@
 		try {
 			const updated = await disableUserSmb(target.id, target.username);
 			editing = { ...target, smb: updated.smb ?? target.smb };
+			smbAllowed = editing.smb?.allowed ?? false;
 			editWarnings = updated.warnings ?? [];
 			void directory.load(false);
 		} catch (e) {
@@ -242,8 +249,8 @@
 	}
 </script>
 
-<!-- Edit user. -->
-<Modal
+<!-- Edit user: its sections in a Sheet, which scrolls them (ADR-0432). -->
+<Sheet
 	open={editing !== null}
 	title={editing
 		? $t('users.edit.title', { name: editing.username })
@@ -258,7 +265,7 @@
 				e.preventDefault();
 				saveEdit();
 			}}
-			class="space-y-5 max-h-[60vh] overflow-y-auto scrollbar-thin pr-1"
+			class="space-y-5"
 		>
 			<section class="space-y-2">
 				<h3 class="card-title">{$t('users.edit.nameTitle')}</h3>
@@ -279,15 +286,7 @@
 
 			<section class="space-y-2">
 				<h3 class="card-title">{$t('users.role')}</h3>
-				<label class="flex items-center gap-2 cursor-pointer">
-					<input
-						type="checkbox"
-						class="form-checkbox"
-						bind:checked={editIsAdmin}
-						disabled={saving || smbBusy}
-					/>
-					{$t('users.edit.admin')}
-				</label>
+				<Checkbox bind:checked={editIsAdmin} disabled={saving || smbBusy} label={$t('users.edit.admin')} />
 				{#if renameWithRole}
 					<Alert variant="warning">{$t('users.edit.renameAndRole')}</Alert>
 				{:else if adminWarning}
@@ -322,19 +321,11 @@
 					bind:confirmation={editConfirm}
 				/>
 				{#if renameNeedsPassword}
-					<p class="form-hint">{$t('users.edit.renameSmb', { name: editing.username })}</p>
+					<HelpText text={$t('users.edit.renameSmb', { name: editing.username })} />
 				{:else if editState === 'active'}
-					<p class="form-hint">{$t('users.edit.smbPassword')}</p>
+					<HelpText text={$t('users.edit.smbPassword')} />
 				{:else if editState === 'password_needed' && !editIsAdmin && !renaming}
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							class="form-checkbox"
-							bind:checked={alsoTurnOnSmb}
-							disabled={saving}
-						/>
-						{$t('users.edit.turnOnSmb')}
-					</label>
+					<Checkbox bind:checked={alsoTurnOnSmb} disabled={saving} label={$t('users.edit.turnOnSmb')} />
 				{/if}
 			</section>
 			{/if}
@@ -350,35 +341,32 @@
 						<SmbStateBadge state={editing.smb.state} />
 						<span class="text-secondary">{smbStateText(editing)}</span>
 					</div>
-					<label
-						class="flex items-center gap-2 {smbToggleDisabled ? 'opacity-60' : 'cursor-pointer'}"
-					>
-						<input
-							type="checkbox"
-							class="form-checkbox"
-							checked={editing.smb.allowed}
-							disabled={smbToggleDisabled}
-							onchange={onSmbToggle}
-						/>
-						{$t('users.edit.allowSmb')}
-					</label>
-					{#if smbBusy}
-						<p class="text-sm text-muted">{$t('users.edit.saving')}</p>
-					{/if}
+					<!-- A setting that acts at once, not with Save: a switch (ADR-0432). -->
+					<SwitchRow
+						id="edit-smb-allowed"
+						title={$t('users.edit.allowSmb')}
+						bind:checked={smbAllowed}
+						disabled={smbToggleDisabled}
+						onchange={onSmbToggle}
+					/>
 				{/if}
 			</section>
 		</form>
 
-		<!-- Below the scrolling form, so that they are seen. -->
+		<!-- After the form; each scrolls into view when it appears, as the Sheet scrolls as a whole. -->
 		{#if editWarnings.length > 0}
-			<Alert variant="warning">
-				{#each editWarnings as warning}
-					<p>{warning}</p>
-				{/each}
-			</Alert>
+			<div {@attach (node) => node.scrollIntoView({ block: 'nearest' })}>
+				<Alert variant="warning">
+					{#each editWarnings as warning}
+						<p>{warning}</p>
+					{/each}
+				</Alert>
+			</div>
 		{/if}
 		{#if editError}
-			<Alert variant="error" title={$t('users.edit.failed')}>{editError}</Alert>
+			<div {@attach (node) => node.scrollIntoView({ block: 'nearest' })}>
+				<Alert variant="error" title={$t('users.edit.failed')}>{editError}</Alert>
+			</div>
 		{/if}
 	{/if}
 
@@ -397,13 +385,13 @@
 			class="flex-1"
 			loading={saving}
 			disabled={!editChanged || saving || smbBusy}
-			title={editChanged ? undefined : $t('users.edit.noChanges')}
+			disabledReason={editChanged ? '' : $t('users.edit.noChanges')}
 			onclick={saveEdit}
 		>
 			{$t('users.edit.save')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>
 
 <!-- Turn off SMB, asked from the edit dialog, which stays open and inert under it: Escape
      closes only the top dialog (Modal, ADR-0361). -->
@@ -411,10 +399,13 @@
 	open={confirmSmbOff}
 	title={$t('users.smbOff.title')}
 	busy={smbBusy}
-	before={$t('users.smbOff.before')}
-	name={editing?.username ?? null}
-	after={$t('users.smbOff.after')}
-	submit={$t('users.smbOff.submit')}
-	onclose={cancelSmbOff}
+	confirmLabel={$t('users.smbOff.submit')}
+	oncancel={cancelSmbOff}
 	onconfirm={confirmTurnOffSmb}
-/>
+>
+	<!-- In parts around the name: ADR-0296. -->
+	<p>
+		{$t('users.smbOff.before')}
+		<strong class="text-content">{editing?.username ?? ''}</strong>{$t('users.smbOff.after')}
+	</p>
+</ConfirmDialog>

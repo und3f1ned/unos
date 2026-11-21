@@ -288,9 +288,9 @@ test.describe('SMB shares page (fake data)', () => {
     await expect(guest).not.toBeChecked();
     await expect(dialog.getByText(short)).toHaveCount(0);
     await guest.check();
-    // One line, and the server's whole warning under Details.
+    // One line, and the server's whole warning under the alert's details.
     await expect(dialog.getByText(short)).toBeVisible();
-    await dialog.locator('summary', { hasText: 'Details' }).first().click();
+    await dialog.getByRole('button', { name: 'Show details' }).click();
     await expect(dialog.getByText(GUEST_WARNING)).toBeVisible();
     await guest.uncheck();
     await expect(dialog.getByText(short)).toHaveCount(0);
@@ -390,17 +390,18 @@ test.describe('SMB shares page (fake data)', () => {
     });
     await page.goto('/shares');
     const card = shareCard(page, 'old_photos');
-    // The features are facts, so neutral; a stored setting that smb.conf leaves out is one line,
+    // The features are facts, no states, so outlined (ADR-0432); a stored setting that smb.conf leaves out is one line,
     // with the server's reason under it.
     for (const badge of [/^Encryption required$/, /^Time Machine$/, /^Previous Versions$/]) {
-      await expect(card.locator('.badge', { hasText: badge })).toHaveClass(/badge-neutral/);
+      await expect(card.locator('.badge', { hasText: badge })).toHaveClass(/badge-outline/);
     }
-    const timeMachine = card.locator('details', { hasText: 'Time Machine does not work here' });
+    // One line each, and the server's reason under its Details (HelpText, ADR-0432).
+    const timeMachine = card.locator('[data-share-off]', { hasText: 'Time Machine does not work here' });
     await expect(timeMachine.getByText(TIME_MACHINE_MODULES)).toBeHidden();
-    await timeMachine.locator('summary').click();
+    await timeMachine.getByRole('button', { name: 'Details' }).click();
     await expect(timeMachine.getByText(TIME_MACHINE_MODULES)).toBeVisible();
-    const previous = card.locator('details', { hasText: 'Previous Versions shows nothing here' });
-    await previous.locator('summary').click();
+    const previous = card.locator('[data-share-off]', { hasText: 'Previous Versions shows nothing here' });
+    await previous.getByRole('button', { name: 'Details' }).click();
     await expect(previous.getByText(NO_SNAPSHOTS)).toBeVisible();
   });
 
@@ -1568,7 +1569,8 @@ test.describe('In Russian', () => {
     // A card: its badges, its access with the reasons of the entries that do not count yet, and
     // the buttons, named for screen readers with the share's name.
     const docs = shareCard(page, 'docs');
-    await expect(docs.locator('.badge')).toHaveText(['Нужно исправить права', 'Скрыта']);
+    // The badges of its header; the tags of the names that do not count yet follow below.
+    await expect(docs.locator('[data-share-badges] .badge')).toHaveText(['Нужно исправить права', 'Скрыта']);
     const bobReason = 'SMB разрешён для bob, но ещё не включён';
     const carolReason = 'SMB для carol выключен: разрешите его на странице «Пользователи»';
     await expect(docs.locator('p', { hasText: 'Чтение и запись:' })).toHaveText(
@@ -1583,7 +1585,7 @@ test.describe('In Russian', () => {
     await expect(docs.getByRole('button', { name: 'Удалить общую папку docs' })).toBeVisible();
     // A share that is not served: the badge in Russian, the server's reason as the server words it.
     const legacy = shareCard(page, 'legacy');
-    await expect(legacy.locator('.badge')).toHaveText(['Не раздаётся']);
+    await expect(legacy.locator('[data-share-badges] .badge')).toHaveText(['Не раздаётся']);
     await expect(legacy.getByText(POOL_ROOT_MESSAGE)).toBeVisible();
     await expect(legacy).toContainText('Ни у одного пользователя нет доступа.');
 
@@ -2032,8 +2034,8 @@ test.describe('Deleting several shares (fake data)', () => {
   }) => {
     const fake = await fakeSmbApi(page, { users: fakeUsers(), shares: shares() });
     await page.goto('/shares');
-    // With nothing selected the bar offers Select all only: no count, no Delete.
-    await expect(toolbar(page)).not.toContainText('selected');
+    // With nothing selected the bar offers Select all and its count only: no Delete.
+    await expect(toolbar(page)).toContainText('0 shares selected');
     await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
 
     await checkbox(page, 'docs').check();
@@ -2078,7 +2080,7 @@ test.describe('Deleting several shares (fake data)', () => {
     await expect(shareCard(page, 'media')).toBeVisible();
     await expect(page.getByText('Deleted 2 shares: docs, photos')).toBeVisible();
     await expect(page.locator('main .alert-warning')).toHaveText(reloadWarning);
-    await expect(toolbar(page)).not.toContainText('selected');
+    await expect(toolbar(page)).toContainText('0 shares selected');
     await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
   });
 
@@ -2166,7 +2168,7 @@ test.describe('Deleting several shares (fake data)', () => {
     await expect(shareCard(page, 'docs')).toContainText(`${POOLS}/tank/other`);
     // The selection was of docs in its old folder: the share now under that name is not selected.
     await expect(checkbox(page, 'docs')).not.toBeChecked();
-    await expect(toolbar(page)).not.toContainText('selected');
+    await expect(toolbar(page)).toContainText('0 shares selected');
     await expect(toolbar(page).getByRole('button', { name: 'Delete selected' })).toHaveCount(0);
   });
 
@@ -2264,7 +2266,8 @@ test.describe('Deleting several shares (fake data)', () => {
     await page.goto('/shares');
 
     const bar = page.getByRole('toolbar', { name: 'Выбранные общие папки' });
-    await expect(bar).not.toContainText('Выбран');
+    await expect(bar).toContainText('Выбрано 0 общих папок');
+    await expect(bar.getByRole('button', { name: 'Удалить выбранные' })).toHaveCount(0);
     await page.getByRole('checkbox', { name: 'Выбрать общую папку docs', exact: true }).check();
     await expect(bar).toContainText('Выбрана 1 общая папка');
     await page.getByRole('checkbox', { name: 'Выбрать все', exact: true }).check();

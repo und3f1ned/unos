@@ -13,7 +13,7 @@
 		type SmbShare,
 		type SmbShareUpdate
 	} from '$lib/api/shares';
-	import { Alert, Button, Input, Modal, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, ConfirmDialog, ErrorState, HelpText, Input, Sheet, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import LocationFields from './LocationFields.svelte';
 	import ShareAccessTable from './ShareAccessTable.svelte';
@@ -329,10 +329,11 @@
 	}
 </script>
 
-<Modal
+<!-- A form of more than six fields and a list of who gets access: a Sheet (ADR-0432). -->
+<Sheet
 	open
 	title={editing ? $t('shares.form.editTitle', { name: share?.name ?? '' }) : $t('shares.form.addTitle')}
-	size="xl"
+	size="lg"
 	closable={!saving}
 	onclose={close}
 >
@@ -391,7 +392,7 @@
 					<p class="mono break-all">{loaded.path}</p>
 				</div>
 			{/if}
-			<p class="form-hint">{$t('shares.form.appsNote')}</p>
+			<HelpText text={$t('shares.form.appsNote')} />
 		</div>
 
 		<Input
@@ -411,7 +412,7 @@
 				<Skeleton shape="row" columns={2} count={4} />
 			</div>
 		{:else if usersError}
-			<Alert variant="error" title={$t('shares.form.usersError')}>{usersError}</Alert>
+			<ErrorState title={$t('shares.form.usersError')} message={usersError} onretry={loadUsers} />
 		{:else}
 			<ShareAccessTable
 				{users}
@@ -444,12 +445,19 @@
 			{editing ? $t('shares.form.save') : $t('shares.form.create')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>
 
 <!-- The question before a save that closes open connections, over the form. -->
 {#if confirming}
-	<Modal open title={$t('shares.form.lower.title')} size="md" onclose={() => (confirming = null)}>
-		<p>{$t('shares.form.lower.intro', { name: loaded?.name ?? '' })}</p>
+	<ConfirmDialog
+		open
+		title={$t('shares.form.lower.title')}
+		message={$t('shares.form.lower.intro', { name: loaded?.name ?? '' })}
+		confirmLabel={$t('shares.form.lower.confirm')}
+		tone="warning"
+		oncancel={() => (confirming = null)}
+		onconfirm={confirmSave}
+	>
 		<ul class="list-disc space-y-1 pl-5 text-sm" aria-label={$t('shares.form.lower.list')}>
 			{#each confirming.access as change (change.kind + change.name)}
 				<li class="break-words">
@@ -465,11 +473,5 @@
 			{/each}
 		</ul>
 		<p class="text-sm text-content-secondary">{$t('shares.form.lower.reconnect')}</p>
-		{#snippet footer()}
-			<Button variant="secondary" class="flex-1" onclick={() => (confirming = null)}>
-				{$t('common.cancel')}
-			</Button>
-			<Button class="flex-1" onclick={confirmSave}>{$t('shares.form.lower.confirm')}</Button>
-		{/snippet}
-	</Modal>
+	</ConfirmDialog>
 {/if}

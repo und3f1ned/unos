@@ -3,7 +3,7 @@
 	// it, or, without a pool, how many disks are free for one: the header's Create pool makes it,
 	// and the empty state repeats no button (ADR-0431).
 	import { Database } from 'lucide-svelte';
-	import { Alert, Card, EmptyState } from '$lib/components/ui';
+	import { Card, EmptyState, ErrorState } from '$lib/components/ui';
 	import type { Pool } from '$lib/api/storage';
 	import { t } from '$lib/i18n';
 	import type { PoolJobs } from './jobs.svelte';
@@ -33,10 +33,8 @@
 	</h2>
 
 	{#if error}
-		<!-- A plain title, the server's reason under it; the header's Refresh tries again. -->
-		<Alert variant="error" size="sm" title={$t('storage.pools.loadError')}>
-			<span class="text-xs text-content-secondary break-words">{error}</span>
-		</Alert>
+		<!-- The header's Refresh tries again: no Retry of its own here (ADR-0431). -->
+		<ErrorState title={$t('storage.pools.loadError')} message={error} />
 	{:else if pools.length === 0}
 		<EmptyState
 			compact

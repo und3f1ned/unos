@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { setSmbInterfaces, type SmbInterface, type SmbInterfaces } from '$lib/api/shares';
-	import { Alert, Badge, Button, Modal } from '$lib/components/ui';
+	import { Alert, Badge, Button, Checkbox, HelpText, RadioGroup, Sheet } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
 
@@ -18,7 +18,8 @@
 
 	let { current, onclose, onsaved }: Props = $props();
 
-	let mode = $state<'every' | 'chosen'>('every');
+	// 'every' or 'chosen': a RadioGroup's value.
+	let mode = $state<string>('every');
 	let picked: Record<string, boolean> = $state({});
 	let saving = $state(false);
 	let saveError = $state('');
@@ -73,19 +74,18 @@
 	}
 </script>
 
-<Modal open title={$t('shares.interfaces.dialogTitle')} size="lg" closable={!saving} onclose={close}>
+<!-- A list of interfaces to choose: a Sheet (ADR-0432). -->
+<Sheet open title={$t('shares.interfaces.dialogTitle')} size="lg" closable={!saving} onclose={close}>
 	<div class="space-y-4">
-		<fieldset class="space-y-2">
-			<legend class="form-label">{$t('shares.interfaces.listenOn')}</legend>
-			<label class="flex items-center gap-2 cursor-pointer">
-				<input type="radio" name="smb-interfaces-mode" value="every" bind:group={mode} />
-				{$t('shares.interfaces.modeEvery')}
-			</label>
-			<label class="flex items-center gap-2 cursor-pointer">
-				<input type="radio" name="smb-interfaces-mode" value="chosen" bind:group={mode} />
-				{$t('shares.interfaces.modeChosen')}
-			</label>
-		</fieldset>
+		<RadioGroup
+			bind:value={mode}
+			name="smb-interfaces-mode"
+			legend={$t('shares.interfaces.listenOn')}
+			options={[
+				{ value: 'every', label: $t('shares.interfaces.modeEvery') },
+				{ value: 'chosen', label: $t('shares.interfaces.modeChosen') }
+			]}
+		/>
 
 		<fieldset class="space-y-2">
 			<legend class="form-label">{$t('shares.interfaces.list')}</legend>
@@ -99,22 +99,15 @@
 					{#each current.interfaces as entry (entry.name)}
 						{@const locked = mode === 'every' || !choosable(entry)}
 						<li class="card-nested">
-							<label class="flex items-start gap-2 {locked ? 'opacity-60' : 'cursor-pointer'}">
-								<input
-									type="checkbox"
-									class="form-checkbox mt-1"
-									bind:checked={picked[entry.name]}
-									disabled={locked}
-									aria-describedby="smb-interface-{entry.name}"
-								/>
-								<span class="min-w-0 flex flex-wrap items-center gap-2">
+							<Checkbox bind:checked={picked[entry.name]} disabled={locked} describedby="smb-interface-{entry.name}">
+								<span class="flex flex-wrap items-center gap-2">
 									<span class="mono break-all">{entry.name}</span>
 									{#if entry.present}
 										<Badge variant={entry.state === 'UP' ? 'success' : 'neutral'}>{entry.state}</Badge>
 									{/if}
 								</span>
-							</label>
-							<div id="smb-interface-{entry.name}" class="ml-6 mt-1 space-y-1 text-sm">
+							</Checkbox>
+							<div id="smb-interface-{entry.name}" class="ml-7 mt-1 space-y-1 text-sm">
 								{#if entry.present}
 									<p class="mono-xs text-secondary break-all">
 										{entry.addresses.length > 0 ? entry.addresses.join(', ') : $t('shares.interfaces.noAddress')}
@@ -137,14 +130,15 @@
 		</fieldset>
 
 		<!-- What else to know, on demand: one line of help, not three paragraphs. -->
-		<details class="form-hint">
-			<summary class="cursor-pointer text-content-secondary">{$t('shares.interfaces.more')}</summary>
-			<div class="mt-1 space-y-1">
-				<p>{$t('shares.interfaces.loopbackNote')}</p>
-				<p>{$t('shares.interfaces.addressNote')}</p>
-				<p>{$t('shares.interfaces.discoveryNote')}</p>
-			</div>
-		</details>
+		<HelpText text={$t('shares.interfaces.more')}>
+			{#snippet more()}
+				<div class="space-y-1">
+					<p>{$t('shares.interfaces.loopbackNote')}</p>
+					<p>{$t('shares.interfaces.addressNote')}</p>
+					<p>{$t('shares.interfaces.discoveryNote')}</p>
+				</div>
+			{/snippet}
+		</HelpText>
 
 		{#if nothingPicked}
 			<p id="smb-interfaces-pick-one" class="text-sm text-warning">{$t('shares.interfaces.pickOne')}</p>
@@ -166,11 +160,11 @@
 			class="flex-1"
 			loading={saving}
 			disabled={nothingPicked || unchanged}
-			title={unchanged && !nothingPicked ? $t('shares.interfaces.noChanges') : undefined}
+			disabledReason={unchanged && !nothingPicked ? $t('shares.interfaces.noChanges') : ''}
 			aria-describedby={nothingPicked ? 'smb-interfaces-pick-one' : undefined}
 			onclick={save}
 		>
 			{$t('shares.interfaces.save')}
 		</Button>
 	{/snippet}
-</Modal>
+</Sheet>
