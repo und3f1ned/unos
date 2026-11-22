@@ -839,6 +839,7 @@ def test_the_web_ui_names_every_resource_type_as_the_server_records_it():
     types = key_map(AUDIT_PAGE, "RESOURCE_TYPES")
     recorded = _recorded_resource_types()
     assert {"user", "share", "audit_log"} <= recorded  # the scan finds the server's calls
+    assert {"release", "automatic_install"} <= recorded  # System > Updates
     assert sorted(recorded - set(types)) == []
 
     catalog = read_catalog("audit")  # skips without node
@@ -877,7 +878,10 @@ def test_the_action_filter_offers_only_actions_that_the_server_writes(world):
     written = _written_actions()
     # The scan finds the server's writers: calls, power's table and the emergency command line's.
     assert {"login_failed", "task_run", "system_reboot", "system_shutdown", "password_change", "other",
-            "firewall_enabled", "login_history_cleared", "pool_mounted", "image_pulled", "system_suspend"} <= written
+            "firewall_enabled", "login_history_cleared", "pool_mounted", "image_pulled", "system_suspend",
+            # UNOS's own update and rollback, started and ended
+            "system_update_started", "system_update_completed", "system_update_failed",
+            "system_rollback_started", "system_rollback_completed", "system_rollback_failed"} <= written
 
     offered = {action["value"] for action in get(world, "/actions")["actions"]}
 

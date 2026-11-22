@@ -153,8 +153,9 @@ async def lifespan(app: FastAPI):
     # The volumes that hold the LUNs of iSCSI targets, which the Storage page does not unmount or
     # delete (ADR-0418): read before the first request.
     await iscsi.load_index()
-    # An update or rollback of UNOS that a stop interrupted has ended, failed (ADR-0443).
-    get_updater().recover_after_start()
+    # An update or rollback of UNOS that a stop interrupted has ended, failed (ADR-0443), and is
+    # audited so.
+    await get_updater().recover_after_start()
     # UNOS_DISABLE_BACKGROUND_TASKS=1 (tests, development) also skips the pool
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"

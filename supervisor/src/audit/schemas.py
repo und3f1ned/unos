@@ -97,6 +97,14 @@ class AuditAction(str, Enum):
     SYSTEM_SHUTDOWN = "system_shutdown"
     SYSTEM_SUSPEND = "system_suspend"  # written before the host goes down (ADR-0402)
     SETTINGS_CHANGED = "settings_changed"
+    # UNOS's own update and rollback of System > Updates: started by an administrator or the
+    # automatic install, and how the unit on the host ended them (system.update-actions-audited)
+    SYSTEM_UPDATE_STARTED = "system_update_started"
+    SYSTEM_UPDATE_COMPLETED = "system_update_completed"
+    SYSTEM_UPDATE_FAILED = "system_update_failed"
+    SYSTEM_ROLLBACK_STARTED = "system_rollback_started"
+    SYSTEM_ROLLBACK_COMPLETED = "system_rollback_completed"
+    SYSTEM_ROLLBACK_FAILED = "system_rollback_failed"
 
     # Scheduler
     TASK_CREATED = "task_created"

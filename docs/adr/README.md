@@ -105,6 +105,7 @@ and this index, and `make check-fast` runs it.
 | [0359](0359-the-audit-logs-action-filter-offers-only-written-actions-and-an-older-entrys-action-is-listed-as-recorded.md) | The audit log's Action filter offers only actions that the supervisor writes, and an older entry's action that AuditAction no longer has is listed as recorded | superseded by [0402](0402-the-firewall-the-login-history-pools-images-power-settings-and-channels-are-audited-and-the-action-filter-offers-what-is-written.md) | 2026-11-12 |
 | [0402](0402-the-firewall-the-login-history-pools-images-power-settings-and-channels-are-audited-and-the-action-filter-offers-what-is-written.md) | The firewall, the login history, pool mounts, images, power and notification settings and the off-device copy are audited, and the Action filter offers what the supervisor writes | accepted | 2026-11-18 |
 | [0404](0404-caddy-serves-a-stored-certificate-an-administrator-chooses-from-one-shared-file-and-falls-back-to-its-local-ca.md) | Caddy serves a stored certificate that an administrator chooses, from one file shared only with the supervisor, and falls back to its local CA | accepted | 2026-11-18 |
+| [0457](0457-install-update-rollback-and-the-automatic-install-are-audited-when-they-start-and-when-they-end.md) | Install Update, Rollback and the automatic install are audited when they start and when they end, and their settings as a change of settings | accepted | 2026-11-22 |
 
 ## Auth
 

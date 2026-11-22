@@ -9,6 +9,9 @@ switch replaces this supervisor's container, so the job passes through the progr
 (``handover``): whichever supervisor runs follows the unit until its result file says how it ended,
 the one that started it until it is replaced, the next from its start (``recover_after_start``).
 A rollback does the same with the newest backup, towards the version before.
+
+Each job is audited when it starts, by who started it, and when it ends, by the system
+(system.update-actions-audited).
 """
 
 import asyncio
@@ -18,13 +21,17 @@ import os
 import re
 import shutil
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
 import httpx
+from fastapi import Request
 
 from .. import paths, state_files
+from ..audit.changes import audit_change, changed_fields
+from ..audit.schemas import AuditAction, AuditSeverity
 from ..backup.router import BackupValidationError, _verify_database, copy_database, restore_running
 from ..config import get_settings
 from ..times import utc_now
@@ -108,6 +115,23 @@ async def _within(step, seconds: float, what: str):
 
 class UpdateConflict(UpdateError):
     """No update or rollback can start now: one runs, a restore runs, or no installer can (409)."""
+
+
+# The user of the audit entries of what the supervisor does on its own: how a job ended, and the
+# start of one by the automatic install.
+SYSTEM = "system"
+
+
+@dataclass(frozen=True)
+class Starter:
+    """Who started a job, for the audit entry of its start: an administrator, whose
+    request gives the client's address and browser, or the automatic install (SYSTEM, no request)."""
+
+    username: str
+    request: Request | None = None
+
+
+BY_SYSTEM = Starter(SYSTEM)
 
 
 class Updater:
@@ -374,12 +398,12 @@ class Updater:
                 update["can_rollback"] = False
         return self._progress.model_copy(update=update)
 
-    def recover_after_start(self) -> None:
+    async def recover_after_start(self) -> None:
         """At the start: a job that handed its switch to a unit on the host is followed until the unit's
         result says how it ended (ADR-0443); this supervisor is the release, or the version that the
         unit went back to. Any other update or rollback that a stop of the supervisor interrupted has
         ended, failed (ADR-0173: it stayed "downloading" for good, and Install, Reset and Rollback
-        answered 409). Its backup and can_rollback stay."""
+        answered 409), and is audited so. Its backup and can_rollback stay."""
         self._load_progress_state()
         if self._progress.status not in RUNNING:
             return
@@ -393,13 +417,16 @@ class Updater:
             logger.info("Following the switch to %s in the unit %s on the host", target, handover.unit)
             self._job = asyncio.get_running_loop().create_task(self._run(self._resume_follow()))
             return
-        noun = "rollback" if self._progress.action == "rollback" else "update"
+        noun: Literal["update", "rollback"] = "rollback" if self._progress.action == "rollback" else "update"
+        error = f"The supervisor stopped while the {noun} ran"
         self._progress.status = UpdateStatus.FAILED
-        self._progress.error = f"The supervisor stopped while the {noun} ran"
+        self._progress.error = error
         self._progress.message = f"{noun.capitalize()} interrupted"
         self._progress.completed_at = utc_now()
         self._save_progress_state()
         logger.warning("The %s to %s was interrupted by a stop of the supervisor", noun, self._progress.version)
+        # The switch never started: the version that runs is the one the job came from.
+        await self._audit_failed(noun, installed_version(), error)
 
     def running(self) -> bool:
         return self._progress.status in RUNNING
@@ -488,7 +515,7 @@ class Updater:
         self._progress.completed_at = None
         self._update_progress(UpdateStatus.CHECKING, 0, f"Starting the {action}")
 
-    def start_install(self, release: ReleaseInfo) -> None:
+    def start_install(self, release: ReleaseInfo, by: Starter) -> None:
         """Start install_update as the job, or raise UpdateConflict. Nothing is awaited between the
         check and the start, so two requests cannot both start one."""
         self._load_progress_state()
@@ -501,9 +528,9 @@ class Updater:
         if self._compare_versions(running, release.tag_name) >= 0:
             raise UpdateError(f"Already running version {running}, which is not older than {release.tag_name}")
         self._begin("update", release.tag_name)
-        self._job = asyncio.create_task(self._run(self.install_update(release, begun=True)))
+        self._job = asyncio.create_task(self._run(self.install_update(release, by)))
 
-    def start_rollback(self) -> None:
+    def start_rollback(self, by: Starter) -> None:
         """Start rollback as the job, or raise UpdateConflict, or UpdateError without a backup."""
         self._load_progress_state()
         refusal = self._refusal()
@@ -513,7 +540,7 @@ class Updater:
             raise UpdateError("Rollback not available - no recent backup exists")
         _, version = self._rollback_backup()
         self._begin("rollback", version)
-        self._job = asyncio.create_task(self._run(self.rollback(begun=True)))
+        self._job = asyncio.create_task(self._run(self.rollback(by)))
 
     async def _run(self, job) -> None:
         try:
@@ -523,21 +550,20 @@ class Updater:
         except Exception:
             logger.exception("The update job failed")
 
-    async def install_update(self, release: ReleaseInfo, *, begun: bool = False) -> None:
-        """Get the release's images, back up, and hand the switch to the host's unit, which starts the
-        release, checks its health and rolls back when it does not answer; follow it to its end
-        (ADR-0049, ADR-0050)."""
+    async def install_update(self, release: ReleaseInfo, by: Starter) -> None:
+        """The job of start_install, which began it: get the release's images, back up, and hand the
+        switch to the host's unit, which starts the release, checks its health and rolls back when it
+        does not answer; follow it to its end (ADR-0049, ADR-0050). The start's audit entry comes
+        before any step that can fail."""
         async with self._lock:
-            if not begun:
-                refusal = self._refusal()
-                if refusal:
-                    raise UpdateConflict(refusal)
-                self._begin("update", release.tag_name)
             tag = release.tag_name
             current = installed_version()
             started_at = self._progress.started_at or utc_now()
+            started = "Started" if by.request is not None else "The automatic install started"
             try:
                 self._update_progress(UpdateStatus.DOWNLOADING, 10, f"Getting the images of {tag}")
+                await self._audit(AuditAction.SYSTEM_UPDATE_STARTED, f"{started} the update from {current} to {tag}",
+                                  by=by, severity=AuditSeverity.WARNING)
                 await _within(installer.current.fetch_release(tag), FETCH_TIMEOUT_SECONDS,
                               f"Getting the images of {tag}")
                 self._update_progress(UpdateStatus.BACKING_UP, 30, "Backing up the database")
@@ -551,22 +577,20 @@ class Updater:
                                       error=error)
                 logger.error("The update to %s failed: %s", tag, error)
                 await self._add_history_entry(current, tag, "failed", started_at, utc_now(), error=error)
+                await self._audit_failed("update", current, error)
                 raise UpdateError(error) from e
             await self._follow_switch()
 
-    async def rollback(self, *, begun: bool = False) -> None:
-        """Return to the version before the last update: its images, then the host's unit, which puts
-        the backup's database back while UNOS is stopped and starts that version, or goes back to the
-        version it came from when it does not answer; follow it to its end (ADR-0443)."""
+    async def rollback(self, by: Starter) -> None:
+        """The job of start_rollback, which began it: return to the version before the last update: its
+        images, then the host's unit, which puts the backup's database back while UNOS is stopped and
+        starts that version, or goes back to the version it came from when it does not answer; follow
+        it to its end (ADR-0443)."""
         async with self._lock:
-            if not begun:
-                refusal = self._refusal()
-                if refusal:
-                    raise UpdateConflict(refusal)
-                if not self._progress.can_rollback:
-                    raise UpdateError("No rollback available")
-                self._begin("rollback", "")
             current = installed_version()
+            await self._audit(AuditAction.SYSTEM_ROLLBACK_STARTED,
+                              f"Started the rollback from {current} to {self._progress.version}", by=by,
+                              severity=AuditSeverity.WARNING)
             try:
                 backup, version = self._rollback_backup()
                 self._progress.version = version
@@ -581,6 +605,7 @@ class Updater:
                 logger.error("The rollback failed: %s", error)
                 self._update_progress(UpdateStatus.FAILED, self._progress.progress_percent, "Rollback failed",
                                       error=error)
+                await self._audit_failed("rollback", current, error)
                 raise UpdateError(error) from e
             await self._follow_switch()
 
@@ -643,16 +668,20 @@ class Updater:
                 self._progress.can_rollback = False
                 self._update_progress(UpdateStatus.COMPLETED, 100, f"Rolled back to {version}")
                 logger.info("Rolled back to %s", version)
+                await self._audit(AuditAction.SYSTEM_ROLLBACK_COMPLETED,
+                                  f"Rolled back from {handover.from_version} to {version}")
                 return
             error = f"{message}; UNOS runs {handover.from_version} again" if outcome == "rolled-back" else message
             self._update_progress(UpdateStatus.FAILED, 100, "Rollback failed", error=error)
             logger.error("The rollback to %s failed: %s", version, error)
+            await self._audit_failed("rollback", handover.from_version, error)
             return
         if outcome == "success":
             self._update_progress(UpdateStatus.COMPLETED, 100, f"Updated to {version}")
             logger.info("Updated from %s to %s", handover.from_version, version)
             await self._add_history_entry(handover.from_version, version, "success", started_at, utc_now(),
                                           changelog=handover.changelog)
+            await self._audit(AuditAction.SYSTEM_UPDATE_COMPLETED, f"Updated from {handover.from_version} to {version}")
             return
         if outcome == "rolled-back":
             error = f"{message}; rolled back to {handover.from_version}"
@@ -664,6 +693,24 @@ class Updater:
             self._update_progress(UpdateStatus.FAILED, 100, "Update failed", error=error)
         logger.error("The update to %s failed: %s", version, error)
         await self._add_history_entry(handover.from_version, version, "failed", started_at, utc_now(), error=error)
+        await self._audit_failed("update", handover.from_version, error)
+
+    async def _audit(self, action: AuditAction, details: str, *, by: Starter = BY_SYSTEM,
+                     severity: AuditSeverity = AuditSeverity.INFO, success: bool = True) -> None:
+        """The audit entry of the job's start or end, about the version it goes to; by who
+        started it, or by the system. Never raises: a job goes on, and ends, without its entry
+        (an entry that cannot be appended is in the supervisor's log, ADR-0351)."""
+        try:
+            await audit_change(action, by.request, by.username, resource_type="release",
+                               resource_id=self._progress.version or None, details=details, severity=severity,
+                               success=success)
+        except Exception as e:
+            logger.warning("Could not write the audit entry %r: %s", details, e)
+
+    async def _audit_failed(self, action: Literal["update", "rollback"], from_version: str, error: str) -> None:
+        failed = AuditAction.SYSTEM_UPDATE_FAILED if action == "update" else AuditAction.SYSTEM_ROLLBACK_FAILED
+        await self._audit(failed, f"The {action} from {from_version} to {self._progress.version} failed: {error}",
+                          severity=AuditSeverity.WARNING, success=False)
 
     async def _add_history_entry(
         self,
@@ -722,18 +769,30 @@ class Updater:
             logger.warning(f"Failed to load update config: {e}")
         return UpdateConfig()
 
-    async def save_config(self, config: UpdateConfig) -> None:
+    async def save_config(self, config: UpdateConfig) -> str:
         """Store the settings; the next automatic look is one interval from now, none while it is
-        off. Turning it on is refused where no installer can install (UpdateConflict)."""
+        off. Turning it on is refused where no installer can install (UpdateConflict). Answers the
+        fields that changed, for the audit entry: settings as they are stored, the defaults while none
+        are, write nothing and answer "" (ADR-0214)."""
         reason = installer.current.unavailable_reason()
         if config.auto_install and reason:
             raise UpdateConflict(reason)
-        before = await self.get_config()
         try:
-            state_files.replace_file(UPDATE_CONFIG_FILE, config.model_dump_json(indent=2).encode(), sync=False)
-        except Exception as e:
-            logger.error(f"Failed to save update config: {e}")
-            raise UpdateError(f"Failed to save configuration: {e}")
+            before: UpdateConfig | None = state_files.load_json(
+                UPDATE_CONFIG_FILE, UpdateConfig.model_validate, UpdateConfig, what="the update settings"
+            )
+        except OSError as e:
+            # The stored settings are unknown: the new ones are written, every field named as changed.
+            logger.warning("Could not read the update settings: %s", e)
+            before = None
+        old = before.model_dump() if before is not None else dict.fromkeys(UpdateConfig.model_fields, "unknown")
+        changed = changed_fields(old, config.model_dump())
+        if changed:
+            try:
+                state_files.replace_file(UPDATE_CONFIG_FILE, config.model_dump_json(indent=2).encode(), sync=False)
+            except Exception as e:
+                logger.error(f"Failed to save update config: {e}")
+                raise UpdateError(f"Failed to save configuration: {e}")
         self._load_progress_state()
         due = self._progress.next_automatic_check
         if not config.auto_install:
@@ -744,6 +803,7 @@ class Updater:
             self._progress.next_automatic_check = due
             self._save_progress_state()
             self.version += 1  # the events socket sends the next look to every open tab
+        return changed
 
 
 async def automatic_install_pass(now: datetime) -> None:
@@ -766,7 +826,7 @@ async def automatic_install_pass(now: datetime) -> None:
         check = await updater.check_for_updates()
         if check.update_available and check.release_info is not None:
             logger.info("The automatic install installs %s", check.release_info.tag_name)
-            updater.start_install(check.release_info)
+            updater.start_install(check.release_info, BY_SYSTEM)
             # Shielded: a stop of the loop leaves the job to end as a job started by hand does.
             if updater._job is not None:
                 await asyncio.shield(updater._job)

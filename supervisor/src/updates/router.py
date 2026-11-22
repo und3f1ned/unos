@@ -5,6 +5,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ..audit.changes import audit_change
+from ..audit.schemas import AuditAction
+from ..auth.models import User
 from ..auth.utils import verify_token
 from ..openapi import BODY, RATE_LIMITED, answer, errors
 from ..rate_limits import client_limiter
@@ -16,7 +19,7 @@ from .schemas import (
     UpdateHistoryEntry,
     UpdateProgress,
 )
-from .updater import UpdateConflict, UpdateError, get_updater
+from .updater import Starter, UpdateConflict, UpdateError, get_updater
 
 logger = logging.getLogger(__name__)
 
@@ -116,15 +119,17 @@ async def get_latest_release(
     },
 )
 async def install_update(
+    request: Request,
     version: Annotated[str | None, Query(
         description="The tag of the latest stable release, such as v1.3.0; none for that release."
     )] = None,
-    _: dict = Depends(verify_token),
+    user: User = Depends(verify_token),
 ):
     """
     Install an update in the background: the release's images, a backup of the database, the switch
     to the release and its health check; a switch that fails or a release that does not answer in
-    time is rolled back (ADR-0443).
+    time is rolled back (ADR-0443). The audit log records its start, by the administrator, and how it
+    ended.
 
     If version is not specified, installs the latest stable release; a version that is not its tag
     answers 404.
@@ -142,7 +147,7 @@ async def install_update(
             raise HTTPException(status_code=404, detail=f"Version {version} not found")
         # 400 for a version that runs already or is newer (a build after the release's tag), and for
         # an unknown one, which an update could not roll back to.
-        updater.start_install(release)
+        updater.start_install(release, Starter(user.username, request))
     except HTTPException:
         raise
     except UpdateConflict as e:
@@ -178,17 +183,18 @@ async def get_update_progress(_: dict = Depends(verify_token)):
         }),
     },
 )
-async def rollback_update(_: dict = Depends(verify_token)):
+async def rollback_update(request: Request, user: User = Depends(verify_token)):
     """
     Roll back to the version before the last update, in the background: its database from the
-    backup the update made, then its containers, and its health check.
+    backup the update made, then its containers, and its health check. The audit log records its
+    start, by the administrator, and how it ended.
 
     Only available once an update has switched to a release after its backup (can_rollback), also
     when that update failed later and its own rollback failed too.
     """
     updater = get_updater()
     try:
-        updater.start_rollback()
+        updater.start_rollback(Starter(user.username, request))
     except UpdateConflict as e:
         raise HTTPException(status_code=409, detail=str(e))
     except UpdateError as e:
@@ -220,15 +226,20 @@ async def get_update_config(_: dict = Depends(verify_token)):
 )
 async def update_config(
     config: UpdateConfig,
-    _: dict = Depends(verify_token),
+    request: Request,
+    user: User = Depends(verify_token),
 ):
     """Store the automatic install's settings, and answer them. The next look is one interval after
-    the change (next_automatic_check of GET /updates/progress)."""
+    the change (next_automatic_check of GET /updates/progress). A change is in the audit log with the
+    fields that changed; settings saved as they are write nothing."""
     updater = get_updater()
     try:
-        await updater.save_config(config)
-        return config
+        changed = await updater.save_config(config)
     except UpdateConflict as e:
         raise HTTPException(status_code=409, detail=str(e))
     except UpdateError as e:
         raise HTTPException(status_code=500, detail=str(e))
+    if changed:
+        await audit_change(AuditAction.SETTINGS_CHANGED, request, user.username, resource_type="automatic_install",
+                           details=f"Automatic install settings changed: {changed}")
+    return config

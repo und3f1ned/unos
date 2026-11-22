@@ -31,11 +31,14 @@ import yaml
 from fastapi.testclient import TestClient
 
 from src import host
+from src.audit import router as audit_router
 from src.auth.utils import verify_token
 from src.main import app
 from src.updates import installer as installer_module
 from src.updates.schemas import ReleaseInfo, UpdateStatus
+from tests.audit_helpers import audit_entries
 from tests.test_backup_restore import _make_db, _usernames
+from tests.test_sign_in_full_disk import ENTRY_LOST, the_audit_log_is_full
 
 updater_module = importlib.import_module("src.updates.updater")
 backup_router = importlib.import_module("src.backup.router")
@@ -44,6 +47,9 @@ API = "/api/v1/updates"
 INSTALLED = "v1.2.0"
 RELEASE = "v1.3.0"
 UNIT = re.compile(r"unos-(update|rollback)-\d{8}-\d{6}")
+# The browser of the administrator's requests, and the address the test client connects from.
+BROWSER = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
+CLIENT = "127.0.0.1"
 
 
 def _release(tag: str = RELEASE) -> ReleaseInfo:
@@ -160,7 +166,8 @@ async def api(world):
     app.dependency_overrides[verify_token] = lambda: SimpleNamespace(
         id=1, username="admin", is_admin=True, is_active=True)
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
+                                     headers={"User-Agent": BROWSER}) as client:
             yield client
     finally:
         app.dependency_overrides.pop(verify_token, None)
@@ -200,7 +207,7 @@ async def _next_supervisor(monkeypatch, version: str):
     monkeypatch.setenv("UNOS_VERSION", version)
     updater = updater_module.Updater()
     monkeypatch.setattr(updater_module, "_updater", updater)
-    updater.recover_after_start()
+    await updater.recover_after_start()
     return updater
 
 
@@ -902,7 +909,7 @@ class TestWhereTheHostCannotInstall:
 class TestAStopInTheMiddle:
     """A job that a stop interrupted before it handed its switch over has ended, failed (ADR-0443)."""
 
-    def test_an_update_that_a_stop_interrupted_is_failed_at_the_next_start(self, world):
+    async def test_an_update_that_a_stop_interrupted_is_failed_at_the_next_start(self, world):
         updater_module.state_files.write_json(updater_module.UPDATE_STATE_FILE, {
             "status": "downloading", "progress_percent": 30, "message": "", "error": None,
             "started_at": "2026-12-01T10:00:00+00:00", "completed_at": None, "can_rollback": True,
@@ -910,7 +917,7 @@ class TestAStopInTheMiddle:
         }, sync=False)
         updater = updater_module.Updater()
 
-        updater.recover_after_start()
+        await updater.recover_after_start()
 
         progress = updater.get_progress()
         assert progress.status == UpdateStatus.FAILED
@@ -1022,3 +1029,334 @@ class TestAutomaticInstall:
 
         assert task.cancelled()
         assert updater_module._automatic_task is None
+
+
+# ---------------------------------------------------------------------------
+# The audit log (system.update-actions-audited)
+# ---------------------------------------------------------------------------
+
+AUDITED = ("action", "username", "ip_address", "user_agent", "resource_type", "resource_id", "details", "severity",
+           "success")
+
+
+def _picked(found: dict) -> dict:
+    return {field: found.get(field) for field in AUDITED}
+
+
+def _audited() -> list[dict]:
+    return [_picked(found) for found in audit_entries(Path(audit_router.AUDIT_FILE))]
+
+
+def _lost(caplog) -> list[dict]:
+    """The entries that the supervisor's log reports in place of the audit log."""
+    found = []
+    for record in caplog.records:
+        message = record.getMessage()
+        if message.startswith(ENTRY_LOST):
+            found.append(_picked(json.JSONDecoder().raw_decode(message, len(ENTRY_LOST))[0]))
+    return found
+
+
+def by_admin(action: str, version: str | None, details: str, *, resource_type: str = "release",
+             severity: str = "warning") -> dict:
+    """An entry of what the administrator started, from CLIENT with BROWSER."""
+    return {"action": action, "username": "admin", "ip_address": CLIENT, "user_agent": BROWSER,
+            "resource_type": resource_type, "resource_id": version, "details": details, "severity": severity,
+            "success": True}
+
+
+def by_system(action: str, version: str, details: str, *, severity: str = "info", success: bool = True) -> dict:
+    """An entry that the supervisor writes without a request: how a job ended, or the automatic install's start."""
+    return {"action": action, "username": "system", "ip_address": None, "user_agent": None,
+            "resource_type": "release", "resource_id": version, "details": details, "severity": severity,
+            "success": success}
+
+
+def update_started(by_whom: str = "admin") -> dict:
+    if by_whom == "system":
+        return by_system("system_update_started", RELEASE,
+                         f"The automatic install started the update from {INSTALLED} to {RELEASE}", severity="warning")
+    return by_admin("system_update_started", RELEASE, f"Started the update from {INSTALLED} to {RELEASE}")
+
+
+UPDATE_COMPLETED = by_system("system_update_completed", RELEASE, f"Updated from {INSTALLED} to {RELEASE}")
+ROLLBACK_STARTED = by_admin("system_rollback_started", INSTALLED, f"Started the rollback from {RELEASE} to {INSTALLED}")
+ROLLBACK_COMPLETED = by_system("system_rollback_completed", INSTALLED, f"Rolled back from {RELEASE} to {INSTALLED}")
+
+
+def update_failed(error: str) -> dict:
+    return by_system("system_update_failed", RELEASE, f"The update from {INSTALLED} to {RELEASE} failed: {error}",
+                     severity="warning", success=False)
+
+
+def rollback_failed(error: str) -> dict:
+    return by_system("system_rollback_failed", INSTALLED, f"The rollback from {RELEASE} to {INSTALLED} failed: {error}",
+                     severity="warning", success=False)
+
+
+async def _job_ended(updater) -> None:
+    """The job has ended, its entries written: the end's entry follows its progress."""
+    await _until(lambda: updater._job is not None and updater._job.done(), "the end of the job")
+
+
+class TestTheAuditLog:
+    """Install Update, Rollback and the automatic install's settings are audited as the other changes of
+    administrators are (ADR-0351, ADR-0402): one entry once the job started, by the administrator, and one
+    of how it ended, by the system, also when the next supervisor follows the unit; the automatic install
+    starts as the system. A request that is refused or changes nothing writes none, and one whose entry
+    cannot be written answers as it does otherwise."""
+
+    async def test_install_update_is_audited_when_it_starts_and_when_it_ends(self, world, api):
+        response = await api.post(f"{API}/install")
+
+        assert response.status_code == 200, response.text
+        await _job_ended(world.updater)
+        assert _audited() == [update_started(), UPDATE_COMPLETED]
+
+    async def test_an_update_the_host_rolled_back_is_audited_as_failed(self, world, api):
+        world.installer.outcome = ("rolled-back", "UNOS did not answer within 300 seconds after the update.")
+
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+
+        assert _audited() == [update_started(), update_failed(
+            f"UNOS did not answer within 300 seconds after the update.; rolled back to {INSTALLED}")]
+
+    async def test_a_switch_that_failed_on_the_host_is_audited_as_failed(self, world, api):
+        world.installer.outcome = ("failed", "Another update.sh is running. Nothing was changed.")
+
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+
+        assert _audited() == [update_started(), update_failed("Another update.sh is running. Nothing was changed.")]
+
+    async def test_an_update_that_fails_before_the_switch_is_audited_after_its_start(self, world, api):
+        """The images fail at once: the start's entry still comes first."""
+        world.installer.fetch = installer_module.InstallerError("Getting the images of v1.3.0 failed: manifest unknown")
+
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+
+        assert _audited() == [update_started(), update_failed("Getting the images of v1.3.0 failed: manifest unknown")]
+
+    async def test_the_release_audits_the_end_of_the_update_it_follows(self, world, api, monkeypatch):
+        await _handed_over(world, api)
+        assert _audited() == [update_started()]
+
+        updater = await _next_supervisor(monkeypatch, RELEASE)
+        world.installer.end("success")
+        await _job_ended(updater)
+
+        assert _audited() == [update_started(), UPDATE_COMPLETED]
+
+    async def test_the_version_before_audits_the_rollback_the_unit_made(self, world, api, monkeypatch):
+        await _handed_over(world, api)
+
+        updater = await _next_supervisor(monkeypatch, INSTALLED)
+        world.installer.end("rolled-back", "UNOS did not answer within 300 seconds after the update.")
+        await _job_ended(updater)
+
+        assert _audited() == [update_started(), update_failed(
+            f"UNOS did not answer within 300 seconds after the update.; rolled back to {INSTALLED}")]
+
+    async def test_a_unit_that_ended_without_a_result_is_audited_as_failed(self, world, api):
+        world.installer.outcome = None
+        await api.post(f"{API}/install")
+        await _until(lambda: world.installer.running, "the unit's start")
+
+        world.installer.running.clear()
+        await _job_ended(world.updater)
+
+        unit = world.installer.switches[-1].unit
+        assert _audited() == [update_started(), update_failed(
+            f"The unit {unit} on the host ended without a result: see journalctl -u {unit} on the host")]
+
+    async def test_an_update_that_a_stop_interrupted_is_audited_as_failed_at_the_next_start(self, world):
+        updater_module.state_files.write_json(updater_module.UPDATE_STATE_FILE, {
+            "status": "backing_up", "progress_percent": 30, "can_rollback": False, "action": "update",
+            "version": RELEASE, "started_at": "2026-12-01T10:00:00+00:00",
+        }, sync=False)
+
+        await updater_module.Updater().recover_after_start()
+
+        assert _audited() == [update_failed("The supervisor stopped while the update ran")]
+
+    async def test_a_rollback_that_a_stop_interrupted_is_audited_as_failed_at_the_next_start(self, world,
+                                                                                          monkeypatch):
+        monkeypatch.setenv("UNOS_VERSION", RELEASE)
+        updater_module.state_files.write_json(updater_module.UPDATE_STATE_FILE, {
+            "status": "downloading", "progress_percent": 10, "can_rollback": True, "action": "rollback",
+            "version": INSTALLED, "started_at": "2026-12-01T10:00:00+00:00",
+        }, sync=False)
+
+        await updater_module.Updater().recover_after_start()
+
+        assert _audited() == [rollback_failed("The supervisor stopped while the rollback ran")]
+
+    async def test_rollback_is_audited_when_it_starts_and_when_it_ends(self, world, api):
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+
+        response = await api.post(f"{API}/rollback")
+
+        assert response.status_code == 200, response.text
+        await _job_ended(world.updater)
+        assert _audited() == [update_started(), UPDATE_COMPLETED, ROLLBACK_STARTED, ROLLBACK_COMPLETED]
+
+    async def test_a_rollback_the_unit_undid_is_audited_as_failed(self, world, api):
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+        world.installer.outcome = ("rolled-back", "UNOS did not answer within 300 seconds after the update.")
+
+        await api.post(f"{API}/rollback")
+        await _job_ended(world.updater)
+
+        assert _audited()[2:] == [ROLLBACK_STARTED, rollback_failed(
+            f"UNOS did not answer within 300 seconds after the update.; UNOS runs {RELEASE} again")]
+
+    async def test_a_rollback_whose_backup_is_gone_is_audited_as_failed(self, world, api):
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+        [backup] = _backups(world)
+        (backup / "unos.db").unlink()
+
+        await api.post(f"{API}/rollback")
+        await _job_ended(world.updater)
+
+        assert _audited()[2:] == [ROLLBACK_STARTED, rollback_failed(f"The backup {backup.name} has no unos.db")]
+
+    async def test_a_rollback_the_next_supervisor_follows_is_audited_by_it(self, world, api, monkeypatch):
+        await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+        await _handed_over(world, api, "rollback")
+
+        updater = await _next_supervisor(monkeypatch, INSTALLED)
+        world.installer.end("success")
+        await _job_ended(updater)
+
+        assert _audited() == [update_started(), UPDATE_COMPLETED, ROLLBACK_STARTED, ROLLBACK_COMPLETED]
+
+    async def test_the_automatic_install_settings_are_audited_with_what_changed(self, world, api):
+        turned_on = await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+        changed = await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 12})
+        turned_off = await api.put(f"{API}/config", json={"auto_install": False, "check_interval_hours": 12})
+
+        assert [r.status_code for r in (turned_on, changed, turned_off)] == [200, 200, 200]
+        settings = "Automatic install settings changed: "
+        assert _audited() == [
+            by_admin("settings_changed", None, settings + "auto_install (off to on), check_interval_hours (24 to 6)",
+                     resource_type="automatic_install", severity="info"),
+            by_admin("settings_changed", None, settings + "check_interval_hours (6 to 12)",
+                     resource_type="automatic_install", severity="info"),
+            by_admin("settings_changed", None, settings + "auto_install (on to off)",
+                     resource_type="automatic_install", severity="info"),
+        ]
+
+    async def test_settings_saved_as_they_are_write_nothing(self, world, api, monkeypatch):
+        """No entry and no write of the settings' file (ADR-0214), also for the defaults while none
+        are stored."""
+        writes = []
+        real = updater_module.state_files.replace_file
+
+        def counted(path, data, **kwargs):
+            if Path(path) == updater_module.UPDATE_CONFIG_FILE:
+                writes.append(Path(path))
+            real(path, data, **kwargs)
+
+        monkeypatch.setattr(updater_module.state_files, "replace_file", counted)
+
+        defaults = await api.put(f"{API}/config", json={"auto_install": False, "check_interval_hours": 24})
+        assert defaults.status_code == 200, defaults.text
+        assert (writes, _audited()) == ([], [])
+        assert not updater_module.UPDATE_CONFIG_FILE.exists()
+
+        await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+        again = await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+
+        assert again.status_code == 200, again.text
+        assert writes == [updater_module.UPDATE_CONFIG_FILE]
+        assert [found["details"] for found in _audited()] == [
+            "Automatic install settings changed: auto_install (off to on), check_interval_hours (24 to 6)"]
+
+    async def test_settings_whose_file_cannot_be_read_are_written_and_audited_as_unknown(self, world, api,
+                                                                                         monkeypatch):
+        """A read of the stored settings that fails (an I/O error) does not pass for settings as they
+        are: the new ones are written, so that an automatic install turned off stays off."""
+        await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+        real = updater_module.state_files.load_json
+
+        def unreadable(path, *args, **kwargs):
+            if Path(path) == updater_module.UPDATE_CONFIG_FILE:
+                raise OSError(5, "Input/output error")
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(updater_module.state_files, "load_json", unreadable)
+
+        response = await api.put(f"{API}/config", json={"auto_install": False, "check_interval_hours": 24})
+
+        assert response.status_code == 200, response.text
+        monkeypatch.setattr(updater_module.state_files, "load_json", real)
+        assert (await world.updater.get_config()).auto_install is False
+        assert _audited()[1]["details"] == ("Automatic install settings changed: auto_install (unknown to off), "
+                                            "check_interval_hours (unknown to 24)")
+
+    async def test_the_automatic_install_starts_as_the_system(self, world, api, monkeypatch):
+        now = TestAutomaticInstall.NOW
+        monkeypatch.setattr(updater_module, "utc_now", lambda: now)
+        await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+
+        await updater_module.automatic_install_pass(now + timedelta(hours=6))
+
+        assert world.updater.get_progress().status == UpdateStatus.COMPLETED
+        assert _audited()[1:] == [update_started("system"), UPDATE_COMPLETED]
+
+    async def test_a_look_that_finds_no_newer_release_writes_no_entry(self, world, api, monkeypatch):
+        now = TestAutomaticInstall.NOW
+        monkeypatch.setattr(updater_module, "utc_now", lambda: now)
+        monkeypatch.setenv("UNOS_VERSION", RELEASE)
+        await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+
+        await updater_module.automatic_install_pass(now + timedelta(hours=6))
+
+        assert world.github.asked == [False]
+        assert [found["action"] for found in _audited()] == ["settings_changed"]
+
+    async def test_refused_requests_write_nothing(self, world, api, monkeypatch):
+        rollback = await api.post(f"{API}/rollback")  # no backup
+        assert rollback.status_code == 400
+        not_the_latest = await api.post(f"{API}/install", params={"version": "v9.9.9"})
+        assert not_the_latest.status_code == 404
+        world.installer.fetch = asyncio.Event()
+        assert (await api.post(f"{API}/install")).status_code == 200
+        second, rollback = await api.post(f"{API}/install"), await api.post(f"{API}/rollback")
+        assert (second.status_code, rollback.status_code) == (409, 409)
+        world.installer.fetch.set()
+        await _job_ended(world.updater)
+        not_newer = await api.post(f"{API}/install")
+        assert not_newer.status_code == 400
+        world.installer.unavailable_reason = lambda: "The supervisor runs outside its container"
+        refused = await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+        assert refused.status_code == 409
+
+        assert _audited() == [update_started(), UPDATE_COMPLETED]
+
+    async def test_an_entry_that_cannot_be_written_leaves_the_answers_as_they_are(self, world, api, monkeypatch,
+                                                                                   caplog):
+        the_audit_log_is_full(monkeypatch)
+
+        installed = await api.post(f"{API}/install")
+        await _job_ended(world.updater)
+        rolled_back = await api.post(f"{API}/rollback")
+        await _job_ended(world.updater)
+        saved = await api.put(f"{API}/config", json={"auto_install": True, "check_interval_hours": 6})
+
+        assert [r.status_code for r in (installed, rolled_back, saved)] == [200, 200, 200]
+        assert world.updater.get_progress().status == UpdateStatus.COMPLETED
+        assert updater_module.UPDATE_CONFIG_FILE.exists()
+        assert _lost(caplog) == [
+            update_started(), UPDATE_COMPLETED, ROLLBACK_STARTED, ROLLBACK_COMPLETED,
+            by_admin("settings_changed", None, "Automatic install settings changed: auto_install (off to on), "
+                                               "check_interval_hours (24 to 6)",
+                     resource_type="automatic_install", severity="info"),
+        ]
+        assert _audited() == []
