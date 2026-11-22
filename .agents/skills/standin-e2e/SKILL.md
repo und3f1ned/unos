@@ -29,7 +29,9 @@ here: `webui/package.json` has no test scripts, and a bare
    machine without it). Another Python with the
    supervisor's packages: set `PYTHON`. A machine that cannot download
    Chromium: set `E2E_CHROMIUM_PATH` to an installed Chromium headless shell
-   binary (for example under `~/Library/Caches/ms-playwright/`).
+   binary, best of the build that the lock's Playwright expects:
+   `webui/node_modules/.bin/playwright install --dry-run chromium` prints its
+   folder (`chromium_headless_shell-<build>` under `~/Library/Caches/ms-playwright/`).
    Result: `test -x webui/node_modules/.bin/playwright` exits 0.
 
 2. **Run the specs you changed.** `scripts/standin/e2e.sh tests/<name>.spec.ts`;

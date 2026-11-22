@@ -53,6 +53,9 @@ stops before changing anything when one is missing, then sets up what is missing
    as it is).
 4. Playwright's Chromium and WebKit, the versions that `webui/package-lock.json` pins: every E2E
    spec runs in Chromium, and `webui/tests/form-fields.spec.ts` in WebKit, Safari's engine, too.
+   Playwright downloads them only for the systems its release knows: `@playwright/test` is pinned
+   exactly, to a release that knows the Ubuntu of GitHub's ubuntu-latest (`UBUNTU_LATEST` of
+   `supervisor/tests/test_repo_tooling.py`; 1.57.0 did not know 26.04, ADR-0461).
 5. The git hooks: `git config core.hooksPath scripts/git-hooks`.
 6. `dev.env`: a copy of `dev.env.example` with mode 600 when it is missing, except in a linked
    worktree whose main checkout has one: the scripts in `scripts/dev` use that one (ADR-0210). An
@@ -437,7 +440,9 @@ is set, and throws for a `BASE_URL` or `HTTP_URL` whose host is not `localhost`,
 (`ignoreHTTPSErrors`), because the certificates are self-signed or come from Caddy's local CA.
 `HTTP_URL` is the plain-HTTP address of the same server, for the redirect and health checks in
 `tests/https.spec.ts`. `E2E_CHROMIUM_PATH` points Playwright at another Chromium binary on a
-machine that cannot download Playwright's own; such a machine lacks Playwright's WebKit too, and
+machine that cannot download Playwright's own, best the headless shell of the build that the
+lock's release expects (`./node_modules/.bin/playwright install --dry-run chromium` in `webui/`
+prints its folder); such a machine lacks Playwright's WebKit too, and
 `--project=chromium` among e2e.sh's arguments (or in `E2E_ARGS`) leaves the WebKit project out. The browser runs in en-US (`locale`): without a
 language chosen in it, the web UI starts in the browser's language, and the specs find its
 elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287), and so
@@ -700,7 +705,12 @@ that this page has the commands of the lint and frontend jobs).
   failed install or a red baseline exits 1 and fails the run; its last lines name the part. The
   runner image, the Python and Node.js releases, the indexes and Playwright's browser download
   change without a change here, which is why the job is weekly and not in the CI workflow, which
-  is off (ADR-0230). Chromium and WebKit are installed but not started there.
+  is off (ADR-0230). Chromium and WebKit are installed but not started there. When GitHub moves
+  ubuntu-latest to an Ubuntu that the pinned Playwright does not know, the browser install fails
+  ("Playwright does not support chromium on ubuntu<version>-x64"), and when it knows it,
+  `test_ubuntu_latest_is_the_ubuntu_of_githubs_runner` fails in the baseline: Playwright moves to a
+  release that knows the new Ubuntu, with `UBUNTU_LATEST` and `FIRST_PLAYWRIGHT_FOR_UBUNTU_LATEST`
+  of `supervisor/tests/test_repo_tooling.py`, whose tests check the pin against them (ADR-0461).
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally

@@ -1692,7 +1692,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   (`unos-test`), and `scripts/test-cycle.sh` creates its test account.
 - The `test` profile's Playwright runner (the `test-runner` service of
   `deploy/docker-compose.test.yml`) is built on the image of the pinned
-  Playwright version (1.57.0, `webui/Dockerfile.test`) and creates the test
+  Playwright version (1.65.1, `webui/Dockerfile.test`) and creates the test
   account itself.
 - `docker compose up`, which `install.sh`, `update.sh` and the `unos`
   systemd unit run, starts the web interface only once the supervisor
@@ -1845,6 +1845,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- `make setup` installs Playwright's Chromium and WebKit on Ubuntu 26.04, GitHub's ubuntu-latest,
+  where the weekly bootstrap job failed ("Playwright does not support chromium on
+  ubuntu26.04-x64"): `@playwright/test` is 1.65.1, pinned exactly, with the compose test stack's
+  image `mcr.microsoft.com/playwright:v1.65.1-noble` (ADR-0461); the browsers are Chromium 159
+  (build 1255) and WebKit 27.2 (build 2388). A test checks that the pinned release downloads its
+  browsers for the Ubuntu of ubuntu-latest, another that it is pinned exactly and no older than the
+  first release that knows that Ubuntu, and on a GitHub runner a third that ubuntu-latest is still
+  that Ubuntu; `setup.sh` names the pin when the browser install fails.
 - The web UI's image builds again from the whole Dockerfile (the release workflow, a riscv64
   host's web UI image built elsewhere, the compose test stack): its lock file is written by the
   npm of the builder's Alpine, which refused the workstation's.

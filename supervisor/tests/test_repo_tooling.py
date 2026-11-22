@@ -1486,13 +1486,16 @@ STUBS = {
             ci) [ "${STUB_FAILING_STEP:-}" = npm-ci ] && exit 1
                 mkdir -p node_modules/.bin && cp "$STUB_DIR/playwright" node_modules/.bin/playwright ;;
         esac""",
+    # The dry run prints as Playwright 1.65 does; setup.sh reads only the Install location lines.
     "playwright": r"""
         echo "playwright $*" >> "$STUB_LOG"
         if [ "$1 $2" = "install --dry-run" ]; then
             shift 2
             for browser; do
-                echo "browser: $browser version 1"
+                echo "Browser 1.0 (playwright $browser v1)"
                 echo "  Install location:    $STUB_DIR/browsers/$browser"
+                echo "  Download url:        https://cdn.example/$browser.zip"
+                echo
             done
         elif [ "$1" = install ]; then
             [ "${STUB_FAILING_STEP:-}" = browsers ] && exit 1
@@ -1645,7 +1648,10 @@ def test_a_red_baseline_is_named(sandbox, target, calls):
 @pytest.mark.parametrize("step, message", [
     ("pip", "pip install for supervisor/.venv failed"),
     ("npm-ci", "npm ci failed"),
-    ("browsers", "installing Chromium and WebKit failed"),
+    # As on the bootstrap job's Ubuntu 26.04 with Playwright 1.57.0: the message names the pin
+    # beside the network.
+    ("browsers", "installing Chromium and WebKit failed (it needs the network, and a Playwright that knows "
+                 "this system: webui/package-lock.json pins it)"),
 ])
 def test_a_failed_install_fails_the_setup_before_the_baseline(sandbox, step, message):
     """A network step that fails stops make setup with status 1, before the baseline: what fails the
@@ -1856,6 +1862,76 @@ def test_the_audit_workflow_runs_make_setup_on_a_fresh_runner():
     for step in job["steps"]:
         assert not {"if", "continue-on-error", "env", "shell", "working-directory"} & set(step), step
     assert make("-n", "setup").stdout.splitlines() == ["scripts/setup.sh"]
+
+
+# The Ubuntu of GitHub's ubuntu-latest, on which the bootstrap job runs make setup: 26.04 since
+# before the Audit run of 2026-11-22 (45038615417), whose make setup failed with "Playwright does
+# not support chromium on ubuntu26.04-x64" under @playwright/test 1.57.0. Playwright downloads its
+# browsers only for the systems that its release names: 1.61.0 is the first release that names
+# ubuntu26.04 (1.60.0 does not). Only a run on GitHub sees ubuntu-latest move: then the bootstrap
+# job fails, in the browser install or in the runner's test below, and Playwright and these two
+# move together.
+UBUNTU_LATEST = "26.04"
+FIRST_PLAYWRIGHT_FOR_UBUNTU_LATEST = (1, 61, 0)
+
+
+def test_ubuntu_latest_is_the_ubuntu_of_githubs_runner():
+    """On a GitHub runner, where every job of the workflows runs on ubuntu-latest and the bootstrap
+    job's make check-fast runs this file, the runner's Ubuntu is UBUNTU_LATEST: a move of
+    ubuntu-latest fails the job here even when the pinned Playwright already knows the new Ubuntu,
+    so the constant cannot go stale unnoticed. Elsewhere it skips."""
+    if os.environ.get("GITHUB_ACTIONS") != "true" or not sys.platform.startswith("linux"):
+        pytest.skip("only on a GitHub runner of ubuntu-latest")
+    release = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines() if "=" in line)
+    runs_on = {job.get("runs-on") for path in WORKFLOWS.glob("*.yml") for job in _workflow(path.name)["jobs"].values()}
+
+    assert runs_on == {"ubuntu-latest"}
+    assert (release["ID"], release["VERSION_ID"].strip('"')) == ("ubuntu", UBUNTU_LATEST)
+
+
+def _playwright_pin():
+    """The version of @playwright/test in webui/package.json, and those of the lock's three packages."""
+    package = json.loads((REPO_ROOT / "webui" / "package.json").read_text())
+    lock = json.loads((REPO_ROOT / "webui" / "package-lock.json").read_text())["packages"]
+    locked = {name: lock[f"node_modules/{name}"]["version"] for name in ("@playwright/test", "playwright",
+                                                                          "playwright-core")}
+    return package["devDependencies"]["@playwright/test"], locked
+
+
+def test_playwright_is_pinned_exactly_to_a_release_that_knows_ubuntu_latest():
+    """One exact version, as the rest of the toolchain (ADR-0456), in package.json and the lock, and
+    no older than the first release that downloads browsers for ubuntu-latest's Ubuntu."""
+    pinned, locked = _playwright_pin()
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), pinned
+    assert locked == dict.fromkeys(locked, pinned)
+    assert tuple(int(part) for part in pinned.split(".")) >= FIRST_PLAYWRIGHT_FOR_UBUNTU_LATEST, pinned
+
+
+def test_the_pinned_playwright_downloads_its_browsers_for_ubuntu_latest():
+    """What make setup's browser install does on the bootstrap job's runner, without the network:
+    Playwright's dry run for an x64 Ubuntu of ubuntu-latest's version lists a download of every
+    browser that setup.sh installs. With 1.57.0 it listed none, and the install failed there."""
+    playwright = REPO_ROOT / "webui" / "node_modules" / ".bin" / "playwright"
+    core = REPO_ROOT / "webui" / "node_modules" / "playwright-core" / "package.json"
+    locked = _playwright_pin()[1]["playwright-core"]
+    if not playwright.exists() or not core.exists():
+        pytest.skip("webui/node_modules has no Playwright: make setup installs it")
+    installed = json.loads(core.read_text())["version"]
+    if installed != locked:
+        pytest.skip(f"webui/node_modules has Playwright {installed}, the lock {locked}: make setup installs it")
+
+    result = subprocess.run([str(playwright), "install", "--dry-run", "chromium", "webkit"], cwd=REPO_ROOT / "webui",
+                            env=dict(os.environ, PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=f"ubuntu{UBUNTU_LATEST}-x64"),
+                            capture_output=True, text=True, timeout=120)
+    browsers = [block for block in result.stdout.split("\n\n") if "Install location:" in block]
+    downloads = re.findall(r"^ *Download url: *(\S+)$", result.stdout, re.M)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Chromium, its headless shell and WebKit (and ffmpeg, which Chromium brings along).
+    assert len(browsers) >= 3, result.stdout
+    assert [block for block in browsers if "Download url:" not in block] == []
+    assert [url for url in downloads if not re.search(r"linux|ubuntu", url)] == []
 
 
 def test_no_workflow_merges_anything():
