@@ -5,8 +5,8 @@
 #   scripts/dev/linux-tests.sh tests/test_smbconf.py tests/test_host_tools.py -q
 #
 # For the tests that only run on Linux (/proc, O_TMPFILE, O_PATH, POSIX ACLs; the testparm test
-# needs scripts/dev/bin/testparm on PATH instead): with CI off on GitHub (ADR-0230), this is
-# where they run before a merge (ADR-0187). The arguments are pytest's,
+# needs scripts/dev/bin/testparm on PATH instead): CI's Unit Tests job runs them on GitHub
+# (ADR-0462), and this runs them before a push (ADR-0187). The arguments are pytest's,
 # relative to supervisor/, as with python -m pytest there.
 #
 # How: the working tree (tracked and untracked files that git does not ignore) and the

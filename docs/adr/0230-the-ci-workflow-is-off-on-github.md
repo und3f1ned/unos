@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0462
 date: 2026-11-07
 area: ci
 decided-by: owner
@@ -8,6 +9,8 @@ decided-by: owner
 # ADR-0230: The CI workflow is off on GitHub, and make check on the workstation is the only gate
 
 ## Context
+
+Superseded by ADR-0462: the CI workflow runs on GitHub again, since 2026-11-22.
 
 On 2026-11-07 the owner asked to "turn off the CI checks on GitHub; right now they seem superfluous to me, and they fail anyway". Since the repository's conversion to the agentic patterns every run of the CI workflow (`.github/workflows/test.yml`, ADR-0190) had failed: a Linux-only upload test failed on the runner's ext4, which refuses an unnamed file in a removed folder with EPERM where tmpfs creates one (fixed in `supervisor/src/files/router.py`), and two of Dependabot's pull requests failed their own checks (ADR-0231).
 

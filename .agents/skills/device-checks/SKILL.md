@@ -1,6 +1,6 @@
 ---
 name: device-checks
-description: Check the UNOS dev device (health, API answers, Samba's real testparm, the backend tests on Linux in the device's RAM, read-only; and, when the owner asks, the scenario check of an area, which makes temporary things and removes them) and report the SD-card writes of each check. Use to verify a deployed change, behaviour the local stand-in cannot provide, Linux-only tests before a merge (ADR-0230), or the host-level steps of an entry before and after a reboot (ADR-0018).
+description: Check the UNOS dev device (health, API answers, Samba's real testparm, the backend tests on Linux in the device's RAM, read-only; and, when the owner asks, the scenario check of an area, which makes temporary things and removes them) and report the SD-card writes of each check. Use to verify a deployed change, behaviour the local stand-in cannot provide, Linux-only tests before a push (ADR-0462), or the host-level steps of an entry before and after a reboot (ADR-0018).
 ---
 
 # Checks on the dev device

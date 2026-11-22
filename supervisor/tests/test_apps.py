@@ -50,6 +50,7 @@ from src.apps.schemas import (
     VolumeMapping,
 )
 from src import host as host_module
+from src.apps import platforms as platforms_module
 from src.auth.utils import verify_token
 from src.config import get_settings
 from src.database import Base, get_db
@@ -379,6 +380,18 @@ def soc(monkeypatch):
         raise AssertionError(f"unexpected host command: {cmd}")
 
     monkeypatch.setattr(host_module, "run_on_host", run)
+
+    # An RK3588 or RK3568 is an arm64 host whatever machine runs the tests: the catalog's choice
+    # of an image by platform (an RK3588's NPU image is arm64 alone) follows the device tree.
+    # Without one, as on a PC, the platform stays this machine's.
+    machine_platform = platforms_module.host_platform
+
+    def host_platform() -> str | None:
+        if fake.compatible and "rockchip," in fake.compatible:
+            return "linux/arm64"
+        return machine_platform()
+
+    monkeypatch.setattr(platforms_module, "host_platform", host_platform)
     return fake
 
 
