@@ -849,6 +849,18 @@ Open owner actions:
   (fd2d03a2); Bootstrap failed in make setup: "Playwright does not support chromium on
   ubuntu26.04-x64", since ubuntu-latest is Ubuntu 26.04 and @playwright/test 1.57.0 knows it not
   (1.65.1 does), which also fails make setup on a fresh Ubuntu 26.04 machine.
+- After that run, at the owner's word ("update it so that those branches are not there"), the
+  lead took Dependabot's pull requests 107 (fastapi 0.163.1, pydantic-settings 2.16.3, croniter
+  7.0.0, pyotp 2.11.2, pytest-asyncio 1.5.0, coverage 7.17.3, types-psutil 7.2.2.20261111) and 84
+  (python:3.11-slim at sha256:07d48240..., whose linux/arm64 image is the one pinned before) into
+  the batch (5aa9ae3a): pip cannot reach its index from the workstation, so the backend tests ran
+  in a Linux container with the old and the new dependencies, 10849 passed in both and the same 8
+  failures and 11 errors of the container's own (no .git, root): nothing new fails. The next W3
+  deploy reruns pip in the supervisor's build (hundreds of MB on the SD card). `ci.bootstrap-in-ci`
+  got @playwright/test 1.65.1 (ADR-0461, on a branch of its own), which knows Ubuntu 26.04;
+  `ci.pinned-check-tools` passes on the Audit run; a backup spec that cleared the cookie while the
+  tab still loaded waits for its loads (5b00c01f). Gates on 5b00c01f: `make check` 11153 passed,
+  `make e2e-local` 1188 passed, 14 skipped, 0 failed (28.0 min). `main` takes the batch again.
 - Open for the owner: a tag and public GHCR packages for the first release, and the BPI-F3's warm
   reboot after fstrim's next run.
 
