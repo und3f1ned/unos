@@ -50,6 +50,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   the host's unit `unos-app-names` with avahi-publish (package avahi-utils) and forwarded by the web
   UI's Caddy over HTTPS from its local CA, through the new volume `app-names` (`remote_access_*` and
   `app_names_changed` in the audit log, ADR-0420).
+- The weekly Audit workflow runs `make setup` on a fresh ubuntu-latest runner, every Monday and on
+  demand, with Python 3.11 and Node.js 22 from setup-python and setup-node and no cache, and fails
+  when the setup or its baseline, `make check-fast` and then `make smoke`, fails (the job
+  `bootstrap`, ADR-0450): until now only stub tools tested the bootstrap of a new checkout.
 
 ### Changed
 - The database's schema comes from Alembic migrations (ADR-0444), which the supervisor applies at
