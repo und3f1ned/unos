@@ -280,8 +280,7 @@
 						<div class="flex-1 min-w-0">
 							<div class="mb-5 flex flex-col sm:flex-row gap-3">
 								<Skeleton shape="block" class="h-9 w-full sm:flex-1" />
-								<!-- Select's field is 38 px high, Input's 36. -->
-								<Skeleton shape="block" class="h-[38px] w-full sm:w-60 lg:hidden" />
+								<Skeleton shape="block" class="h-9 w-full sm:w-60 lg:hidden" />
 							</div>
 							<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 								{#each [0, 1, 2, 3, 4, 5] as tile (tile)}

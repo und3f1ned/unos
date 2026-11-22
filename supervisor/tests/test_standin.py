@@ -476,7 +476,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const STUB =
-  'data:text/javascript,export const devices = { "Desktop Chrome": {} }; ' +
+  'data:text/javascript,export const devices = { "Desktop Chrome": {}, "Desktop Safari": {} }; ' +
   'export const defineConfig = (config) => config;';
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -1215,7 +1215,18 @@ class TestSpecsAndRunner:
         # An installation is set up once: a retry would find the account and fail for that.
         assert first_run == (0, [{"name": "first-run", "retries": 0, "runs": ["tests/first-run.spec.ts"]}])
         # The specs, also on the compose test stack, which creates the account through the API.
-        assert specs == (0, [{"name": "chromium", "retries": None, "runs": ["tests/auth.spec.ts"]}])
+        assert specs == (0, [{"name": "chromium", "retries": None, "runs": ["tests/auth.spec.ts"]},
+                             {"name": "webkit", "retries": None, "runs": []}])
+
+    def test_webkit_runs_the_spec_of_the_form_fields_alone(self, load_config):
+        # webui.fields-in-safari: the form fields in Safari's engine, beside Chromium; every other
+        # spec in Chromium only, so that a run in WebKit stays small.
+        files = ("tests/form-fields.spec.ts", "tests/auth.spec.ts", "tests/scheduler.spec.ts")
+
+        assert load_config(None, None, args=("projects", *files)) == (0, [
+            {"name": "chromium", "retries": None, "runs": list(files)},
+            {"name": "webkit", "retries": None, "runs": ["tests/form-fields.spec.ts"]},
+        ])
 
     def test_no_spec_falls_back_to_the_device(self):
         offenders = [

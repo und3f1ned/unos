@@ -51,7 +51,8 @@ stops before changing anything when one is missing, then sets up what is missing
    (`pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`).
 3. `webui/node_modules`: `npm ci` from `webui/package-lock.json` (a symbolic link there is left
    as it is).
-4. Playwright's Chromium, the version that `webui/package-lock.json` pins.
+4. Playwright's Chromium and WebKit, the versions that `webui/package-lock.json` pins: every E2E
+   spec runs in Chromium, and `webui/tests/form-fields.spec.ts` in WebKit, Safari's engine, too.
 5. The git hooks: `git config core.hooksPath scripts/git-hooks`.
 6. `dev.env`: a copy of `dev.env.example` with mode 600 when it is missing, except in a linked
    worktree whose main checkout has one: the scripts in `scripts/dev` use that one (ADR-0210). An
@@ -420,6 +421,12 @@ compose test stack does not set them, and the spec skips there. The logs are in 
 46180 (the supervisor); `E2E_HTTPS_PORT`, `E2E_HTTP_PORT` and `E2E_BACKEND_PORT` change them. The
 standin-e2e skill explains how to find the cause of a failure.
 
+`webui/playwright.config.ts` has two projects: `chromium` runs every spec, and `webkit`
+(Playwright's Desktop Safari) runs `tests/form-fields.spec.ts` alone, which checks in both
+browsers that the fields of a few forms are one height, that a select is drawn by the design and
+that no number field shows the browser's spin buttons (ADR-0459). Both run in `make e2e-local` and
+whenever e2e.sh is given that spec; `--project=chromium` or `--project=webkit` picks one.
+
 ### The Target
 
 `webui/playwright.config.ts` targets the stand-in, `https://localhost:46443`, unless `BASE_URL`
@@ -430,7 +437,8 @@ is set, and throws for a `BASE_URL` or `HTTP_URL` whose host is not `localhost`,
 (`ignoreHTTPSErrors`), because the certificates are self-signed or come from Caddy's local CA.
 `HTTP_URL` is the plain-HTTP address of the same server, for the redirect and health checks in
 `tests/https.spec.ts`. `E2E_CHROMIUM_PATH` points Playwright at another Chromium binary on a
-machine that cannot download Playwright's own. The browser runs in en-US (`locale`): without a
+machine that cannot download Playwright's own; such a machine lacks Playwright's WebKit too, and
+`--project=chromium` among e2e.sh's arguments (or in `E2E_ARGS`) leaves the WebKit project out. The browser runs in en-US (`locale`): without a
 language chosen in it, the web UI starts in the browser's language, and the specs find its
 elements by their English texts; `tests/language.spec.ts` switches to Russian (ADR-0287), and so
 do the tests of a translated area that check its pages in Russian, such as those of
@@ -618,6 +626,9 @@ request against `main`; a new push to a pull request cancels the run for the pre
      (lucide-svelte with its peer svelte, and qrcode) and everything they
      depend on; the `devDependencies` are left out, `@sveltejs/kit` too,
      although its client code is bundled into the web UI
+   - no E2E spec: they need the stand-in or the compose test stack and Playwright's Chromium
+     and WebKit (WebKit for `tests/form-fields.spec.ts`), which `make e2e-local` and
+     `scripts/test-cycle.sh` bring (above and below)
 4. **Commit Messages** (`commits`), on pull requests: `scripts/check-commit-msg.py --range` from
    the base to the head of the pull request.
 5. **Build Check** (`build`): the Docker builds of both images (pushes to `main` only, after the
@@ -689,7 +700,7 @@ that this page has the commands of the lint and frontend jobs).
   failed install or a red baseline exits 1 and fails the run; its last lines name the part. The
   runner image, the Python and Node.js releases, the indexes and Playwright's browser download
   change without a change here, which is why the job is weekly and not in the CI workflow, which
-  is off (ADR-0230). Chromium is installed but not started there.
+  is off (ADR-0230). Chromium and WebKit are installed but not started there.
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally

@@ -120,7 +120,10 @@ jobs:
   # texts and design system, the production build, ESLint and Prettier's
   # check of webui/src, ADR-0449, each also when another one failed), and the
   # known vulnerabilities of its runtime dependencies. Node.js as in the
-  # builder stage of webui/Dockerfile.
+  # builder stage of webui/Dockerfile. No E2E spec runs here: they need the
+  # stand-in and Playwright's Chromium and WebKit (WebKit for
+  # webui/tests/form-fields.spec.ts), which make setup installs and make
+  # e2e-local runs on a workstation (docs/TESTING.md).
   frontend:
     name: Frontend Checks
     runs-on: ubuntu-latest

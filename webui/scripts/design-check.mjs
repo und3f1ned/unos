@@ -12,6 +12,10 @@
 // - a raw <input> (not a checkbox, a radio, a file or a hidden one), <select> or <textarea>
 //   without a `form-*` class of src/app.css (form-input, form-select): use Input or Select, or
 //   give the field the class when it needs an attribute the component lacks (pattern, minlength);
+//   since webui.fields-in-safari the class of its kind, form-select for a <select> and form-input for the
+//   others, and no class or style of its own that sets `appearance` (appearance-auto,
+//   [appearance:menulist], style:appearance): Safari draws a select or a number field in the
+//   browser's own look, of another height, unless the class of its kind draws it;
 // - a raw Tailwind colour: a utility of the palette (bg-slate-700, text-red-400, hover:bg-blue-600,
 //   border-green-500/50, ring-white) in a class attribute, a `class:` directive or any string
 //   literal of the markup or a <script>. Use the token of the same role (the message names it);
@@ -53,6 +57,8 @@ const COLOR = new RegExp(
 );
 const FIELD_TYPES_EXEMPT = new Set(['checkbox', 'radio', 'file', 'hidden', 'range', 'color', 'submit', 'button', 'reset', 'image']);
 const UPPERCASE = /^(?:[a-z0-9-]+:)*!?uppercase$/;
+// A utility that sets a field's `appearance` (appearance-auto, [-webkit-appearance:none]).
+const APPEARANCE = /^(?:(?:[a-z0-9-]+|\[[^\]]+\]):)*!?(?:appearance-[a-z-]+|\[(?:-(?:webkit|moz)-)?appearance:[^\]]*\])!?$/;
 const NATIVE_DIALOGS = new Set(['confirm', 'alert', 'prompt']);
 const GLOBALS = new Set(['window', 'globalThis', 'self']);
 const CHOICE_TYPES = new Set(['checkbox', 'radio']);
@@ -221,9 +227,9 @@ function staticAttribute(node, name) {
 	return attribute.value.every((part) => part.type === 'Text') ? attribute.value.map((part) => part.data).join('') : null;
 }
 
-/** Every class word of the attribute `class` of an element node: static texts and literals of its expressions. */
-function classText(node) {
-	const attribute = node.attributes.find((a) => a.type === 'Attribute' && a.name === 'class');
+/** Every class word of the attribute `class` (or `name`) of an element node: static texts and literals of its expressions. */
+function classText(node, name = 'class') {
+	const attribute = node.attributes.find((a) => a.type === 'Attribute' && a.name === name);
 	if (!attribute || attribute.value === true) return '';
 	const parts = [];
 	for (const part of attribute.value) {
@@ -349,8 +355,20 @@ function checkFile(file) {
 						tag(`raw <input type="${type}">: use ${type === 'radio' ? 'RadioGroup' : 'Checkbox or Switch'} of $lib/components/ui (ADR-0432)`);
 					} else if (type === null || FIELD_TYPES_EXEMPT.has(type)) {
 						// A type that is not static, or one that no component covers.
-					} else if (!/(^|\s)form-(?:input|select|textarea)(\s|$)/.test(classText(node))) {
-						tag(`raw <${node.name}> without a form-* class: use ${node.name === 'select' ? 'Select' : 'Input'} of $lib/components/ui, or the class form-${node.name === 'select' ? 'select' : 'input'}`);
+					} else {
+						const classes = classText(node).split(/\s+/);
+						const own = node.name === 'select' ? 'form-select' : 'form-input';
+						const other = node.name === 'select' ? 'form-input' : 'form-select';
+						const appearance = classes.find((word) => APPEARANCE.test(word)) ??
+							(node.attributes.some((a) => a.type === 'StyleDirective' && /appearance$/.test(a.name)) ||
+							/appearance\s*:/.test(classText(node, 'style')) ? 'a style that sets appearance' : null);
+						if (classes.includes(other) && !classes.includes(own)) {
+							tag(`raw <${node.name}> with the class ${other}: ${node.name === 'input' ? 'an' : 'a'} <${node.name}> takes ${own}, which draws it in every browser`);
+						} else if (!classes.includes(own)) {
+							tag(`raw <${node.name}> without the class ${own}: use ${node.name === 'select' ? 'Select' : 'Input'} of $lib/components/ui, or the class ${own}`);
+						} else if (appearance) {
+							tag(`raw <${node.name}> with ${appearance.startsWith('a style') ? appearance : `the class '${appearance}'`}: ${own} sets its appearance, so that Safari draws it as Chromium does`);
+						}
 					}
 				}
 			} else if (node.type === 'InlineComponent' && node.name === 'Button' && primaryButton(node)) {
@@ -457,5 +475,5 @@ if (errors.length > 0) {
 	process.exit(1);
 }
 console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, choice, ` +
-	'<details> or bare field, no raw colour class, no browser dialog, no uppercase, no primary button in a card\'s header ' +
+	'<details> or bare field, no field off the class of its kind, no raw colour class, no browser dialog, no uppercase, no primary button in a card\'s header ' +
 	`or a row, no success Alert and no hand-made spinner; ${exempt} use(s) exempted with design-ignore`);

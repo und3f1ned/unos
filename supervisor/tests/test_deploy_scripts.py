@@ -4507,7 +4507,7 @@ class TestTestCycle:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert (tmp_path / "calls").read_text().splitlines() == [
-            "webui: playwright install chromium --with-deps",
+            "webui: playwright install chromium webkit --with-deps",
             "webui: playwright test --reporter=list",
             "webui: playwright test auth.spec.ts api.spec.ts --reporter=list",
         ]

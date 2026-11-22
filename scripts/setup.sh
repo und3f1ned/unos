@@ -13,7 +13,8 @@
 #   3. .venv-lint: ruff, mypy, shellcheck and pip-audit from .github/lint-requirements.txt, with their
 #      hashes (make lint, make audit).
 #   4. webui/node_modules: npm ci from webui/package-lock.json. A symbolic link is left as it is.
-#   5. Chromium for Playwright, the version that webui/package-lock.json pins (make e2e-local).
+#   5. Chromium and WebKit for Playwright, the versions that webui/package-lock.json pins (make
+#      e2e-local: every spec in Chromium, tests/form-fields.spec.ts in WebKit, Safari's engine, too).
 #   6. git hooks: git config core.hooksPath scripts/git-hooks (pre-commit runs make check-fast,
 #      commit-msg runs scripts/check-commit-msg.py).
 #   7. dev.env: a copy of dev.env.example with mode 600 when it is missing, except in a linked git
@@ -145,7 +146,7 @@ python_env supervisor/.venv "Python 3.11 with supervisor/requirements-dev.txt" \
 python_env .venv-lint "ruff, mypy, shellcheck and pip-audit with their hashes" \
     ".github/lint-requirements.txt" --require-hashes -r .github/lint-requirements.txt
 
-# --- 4. and 5. the web UI's packages and Chromium ------------------------------------------
+# --- 4. and 5. the web UI's packages, Chromium and WebKit -----------------------------------
 
 modules=webui/node_modules
 if [ -L "$modules" ]; then
@@ -165,9 +166,9 @@ else
 fi
 
 playwright=webui/node_modules/.bin/playwright
-chromium_installed() {
+browsers_installed() {
     local locations
-    locations=$(cd webui && node_modules/.bin/playwright install --dry-run chromium 2> /dev/null \
+    locations=$(cd webui && node_modules/.bin/playwright install --dry-run chromium webkit 2> /dev/null \
         | sed -n 's/^ *Install location: *//p')
     [ -n "$locations" ] || return 1
     while IFS= read -r location; do
@@ -175,18 +176,19 @@ chromium_installed() {
     done <<< "$locations"
 }
 if [ ! -x "$playwright" ]; then
-    missing "Chromium for Playwright: install the web UI's packages first (make setup)"
-elif chromium_installed; then
-    ok "Chromium for Playwright (webui/package-lock.json's version)"
+    missing "Chromium and WebKit for Playwright: install the web UI's packages first (make setup)"
+elif browsers_installed; then
+    ok "Chromium and WebKit for Playwright (webui/package-lock.json's versions)"
 elif [ "$mode" = check ]; then
-    missing "Chromium for Playwright: make setup installs it (playwright install chromium)"
+    missing "Chromium and WebKit for Playwright: make setup installs them (playwright install chromium webkit)"
 else
-    doing "installing Chromium for Playwright"
-    (cd webui && node_modules/.bin/playwright install chromium) || failed "installing Chromium failed (it needs the network)"
-    ok "Chromium for Playwright"
+    doing "installing Chromium and WebKit for Playwright"
+    (cd webui && node_modules/.bin/playwright install chromium webkit) \
+        || failed "installing Chromium and WebKit failed (it needs the network)"
+    ok "Chromium and WebKit for Playwright"
     if [ "$(uname -s)" = Linux ]; then
-        echo "  note     if Chromium does not start, install its system libraries once:"
-        echo "           sudo webui/node_modules/.bin/playwright install-deps chromium"
+        echo "  note     if Chromium or WebKit does not start, install their system libraries once:"
+        echo "           sudo webui/node_modules/.bin/playwright install-deps chromium webkit"
     fi
 fi
 

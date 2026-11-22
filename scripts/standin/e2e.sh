@@ -41,7 +41,9 @@
 #   E2E_HTTPS_PORT=46443  E2E_HTTP_PORT=46080  E2E_BACKEND_PORT=46180
 #   E2E_SKIP_BUILD=1    serve the existing webui/build
 #   E2E_CHROMIUM_PATH   a Chromium binary for Playwright instead of the one that
-#                       `npx playwright install chromium` downloads (make setup)
+#                       `npx playwright install chromium` downloads (make setup); such a machine
+#                       lacks WebKit too: --project=chromium leaves out the
+#                       project webkit (tests/form-fields.spec.ts)
 # A BASE_URL or HTTP_URL that is not on this machine is refused (exit 2).
 set -uo pipefail
 

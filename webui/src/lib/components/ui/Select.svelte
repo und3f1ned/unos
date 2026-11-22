@@ -315,13 +315,15 @@
 		@apply text-content-muted;
 	}
 
-	.select-icon {
+	/* The chevron is lucide's svg, whose class this component's scope does not reach: :global, so
+	   that it is 16 px and the trigger the 36 px of a field, not 24 px and 38. */
+	.select-trigger :global(.select-icon) {
 		@apply w-4 h-4 text-content-secondary flex-shrink-0;
 		/* rotate-180 sets rotate, not transform, in Tailwind CSS 4 (ADR-0456). */
 		transition: rotate var(--dur-base) var(--ease);
 	}
 
-	.select-icon-open {
+	.select-trigger :global(.select-icon-open) {
 		@apply rotate-180;
 	}
 

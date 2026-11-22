@@ -306,7 +306,7 @@
 	/* And what it left to the browser, where 4's resets it: a table cell's and an option's padding,
 	   a field's background and corners, a field's or a button's figures and style of font (not the
 	   text's around it: 4 makes them inherit), a search field drawn as a text field, and the parts
-	   of a date or time field. */
+	   of a date or time field but for their padding above and below (below). */
 	td,
 	th {
 		padding: 1px;
@@ -358,6 +358,10 @@
 		padding: revert;
 	}
 
+	/* A date or time field is one line of text high, as a text field is: WebKit pads the
+	   parts of its value above and below, which made such a field 2 px higher in Safari than the
+	   fields beside it. */
+	::-webkit-datetime-edit-fields-wrapper,
 	::-webkit-datetime-edit,
 	::-webkit-datetime-edit-year-field,
 	::-webkit-datetime-edit-month-field,
@@ -367,11 +371,25 @@
 	::-webkit-datetime-edit-second-field,
 	::-webkit-datetime-edit-millisecond-field,
 	::-webkit-datetime-edit-meridiem-field {
-		padding-block: revert;
+		padding-block: 0;
 	}
 
 	::-webkit-calendar-picker-indicator {
 		line-height: revert;
+	}
+
+	/* No number field shows the browser's spin buttons, in any browser: Chromium draws
+	   them under the pointer, Safari always, each in its own look. A field that steps has Input's
+	   own steppers (ADR-0432); the arrow keys step every number field. */
+	input[type='number'] {
+		-moz-appearance: textfield;
+		appearance: textfield;
+	}
+
+	input[type='number']::-webkit-inner-spin-button,
+	input[type='number']::-webkit-outer-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
 	}
 
 	/* 14 px body text, the system's own fonts (the @theme above). */
@@ -654,6 +672,33 @@
 			box-shadow var(--dur-fast);
 	}
 
+	/* A select is drawn by the design, not by the browser: Safari's own pop-up button
+	   ignored the padding and the height, and showed its double arrow. It ends in the chevron of
+	   Select's trigger: 8 by 4 px, 16 px from the field's end, in content-secondary; two strokes of
+	   1.5 px that gradients draw, so that its colour is the theme's token. */
+	.form-select {
+		@apply pr-9;
+		appearance: none;
+		background-image:
+			linear-gradient(
+				45deg,
+				transparent calc(50% - 0.75px),
+				rgb(var(--color-content-secondary)) calc(50% - 0.75px) calc(50% + 0.75px),
+				transparent calc(50% + 0.75px)
+			),
+			linear-gradient(
+				135deg,
+				transparent calc(50% - 0.75px),
+				rgb(var(--color-content-secondary)) calc(50% - 0.75px) calc(50% + 0.75px),
+				transparent calc(50% + 0.75px)
+			);
+		background-position:
+			right 20px center,
+			right 16px center;
+		background-size: 4px 4px;
+		background-repeat: no-repeat;
+	}
+
 	/* A focused field: its border, a ring of brand-ring and a halo. */
 	.form-input:focus,
 	.form-select:focus {
@@ -695,8 +740,9 @@
 		@apply border-status-error;
 	}
 
+	/* The frame is the field's 36 px; the input inside it takes the frame's height, not its own. */
 	.form-affix > .form-input {
-		@apply min-w-0 flex-1 border-0 bg-transparent;
+		@apply min-w-0 min-h-0 flex-1 border-0 bg-transparent;
 		box-shadow: none;
 	}
 
@@ -733,18 +779,6 @@
 
 	.form-stepper button:last-child {
 		@apply rounded-br;
-	}
-
-	/* The browser's own spin buttons give way to the steppers. */
-	.form-affix input[type='number'] {
-		-moz-appearance: textfield;
-		appearance: textfield;
-	}
-
-	.form-affix input[type='number']::-webkit-inner-spin-button,
-	.form-affix input[type='number']::-webkit-outer-spin-button {
-		-webkit-appearance: none;
-		margin: 0;
 	}
 
 	/* Widths of a field (Input's width): a number of a few digits, a short code, a name. */

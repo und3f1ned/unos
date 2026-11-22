@@ -8,7 +8,10 @@ ADR-0432 for the browser's own dialogs (window.confirm, alert, prompt, also in a
 class `uppercase`, a raw checkbox or radio button and a filled primary Button in a card's header or a
 table's row; and since ADR-0438, which removed the baseline of file counts, for a success Alert (a
 success after an action is a toast), a hand-made spinner (animate-spin, loading-spinner) and a raw
-<details>. A comment `design-ignore: <reason>` exempts one use. Each test builds a small web UI in
+<details>; and since webui.fields-in-safari for a field off the class of its kind (a select without
+form-select, another field without form-input) or with a class or style that sets its appearance,
+which Safari would draw in the browser's own look. A comment `design-ignore: <reason>` exempts one
+use. Each test builds a small web UI in
 tmp_path and checks it, and the real one passes.
 
 Without node, or without webui/node_modules (make setup), the tests skip.
@@ -115,6 +118,35 @@ class TestRawControls:
             """,
         )
         assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(("markup", "found"), [
+        ('<select class="form-input"></select>', "raw <select> with the class form-input: a <select> takes form-select"),
+        ('<input type="number" class="form-select" />', "raw <input> with the class form-select: an <input> takes form-input"),
+        ('<textarea class="form-textarea"></textarea>', "raw <textarea> without the class form-input"),
+        ('<select class="form-select appearance-auto"></select>', "raw <select> with the class 'appearance-auto'"),
+        ('<input type="number" class="form-input md:[-webkit-appearance:auto]" />',
+         "raw <input> with the class 'md:[-webkit-appearance:auto]'"),
+        ('<input type="number" class="form-input appearance-auto!" />', "raw <input> with the class 'appearance-auto!'"),
+        ('<input type="number" class="form-input [&::-webkit-inner-spin-button]:appearance-auto" />',
+         "raw <input> with the class '[&::-webkit-inner-spin-button]:appearance-auto'"),
+        ('<select class="form-select" style="appearance: menulist"></select>', "raw <select> with a style that sets appearance"),
+        ('<select class="form-select" style:appearance="auto"></select>', "raw <select> with a style that sets appearance"),
+    ])
+    def test_a_field_off_the_class_of_its_kind_fails(self, node, tmp_path, markup, found):
+        """Safari draws a select or a number field in its own look, of another height, unless the class
+        of its kind draws it (webui.fields-in-safari)."""
+        result = check(node, tmp_path, markup + "\n")
+        assert result.returncode == 1, result.stdout
+        assert f"src/routes/a/+page.svelte:1:1: {found}" in result.stderr
+
+    def test_a_field_off_its_class_passes_with_a_reason(self, node, tmp_path):
+        result = check(node, tmp_path, """\
+            <!-- design-ignore: a demonstration of the browser's own select -->
+            <select class="form-input"></select>
+            <input type="number" class="form-input w-24 tabular" />
+            """)
+        assert result.returncode == 0, result.stderr
+        assert "1 use(s) exempted" in result.stdout
 
 
 class TestRawColors:

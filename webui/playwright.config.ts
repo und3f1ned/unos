@@ -34,6 +34,11 @@ import { checkedLocalUrl, targetUrl } from './tests/target';
  * `npx playwright install chromium` downloads (make setup), on a machine that
  * cannot download it.
  *
+ * The project webkit runs tests/form-fields.spec.ts alone in Playwright's WebKit, Safari's engine
+ * (webui.fields-in-safari): the form fields keep the design's look and height there too, where the browser's own
+ * look of a select or a number field would otherwise show. Every other spec runs in Chromium only.
+ * make setup installs both browsers.
+ *
  * E2E_FIRST_RUN=1: the run is the first-run setup of a new installation, the
  * one project first-run (tests/first-run.spec.ts), which creates the
  * administrator that the specs sign in as, E2E_ADMIN of tests/fixtures.ts,
@@ -50,6 +55,7 @@ const isCI = !!process.env.CI;
 const chromium = process.env.E2E_CHROMIUM_PATH;
 const firstRun = process.env.E2E_FIRST_RUN === '1';
 const FIRST_RUN_SPEC = /[\\/]first-run\.spec\.ts$/;
+const FIELDS_SPEC = /[\\/]form-fields\.spec\.ts$/;
 const browser = {
   ...devices['Desktop Chrome'],
   ...(chromium ? { launchOptions: { executablePath: chromium } } : {}),
@@ -85,7 +91,10 @@ export default defineConfig({
 
   projects: firstRun
     ? [{ name: 'first-run', testMatch: FIRST_RUN_SPEC, retries: 0, use: browser }]
-    : [{ name: 'chromium', testIgnore: FIRST_RUN_SPEC, use: browser }],
+    : [
+        { name: 'chromium', testIgnore: FIRST_RUN_SPEC, use: browser },
+        { name: 'webkit', testMatch: FIELDS_SPEC, use: devices['Desktop Safari'] },
+      ],
 
   timeout: 90000,
   expect: {

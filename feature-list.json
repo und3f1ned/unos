@@ -5277,6 +5277,30 @@
         "webui/tests/firewall.spec.ts"
       ],
       "notes": "Built 2026-11-20 on mvp.batch-18 (69dfae5), chunk 1 of the UX work after the owner's \"the design is slapdash, the UX limps\". Not host-level: only the web UI's image rebuilds on the dev device; no new dependency. Decisions in ADR-0432, which supersedes ADR-0266 and ADR-0401 in part (the Scheduler's times on the NAS's clock). Chunks 2 to 5 adopt the components on their pages and empty scripts/design-baseline.json (41 uses in 26 files when the rules came); once they had, ADR-0438 removed the baseline and added the rules on success alerts, spinners and raw details elements. Before and after screenshots on the stand-in, both themes, 1440 and 375 px: a destructive confirmation, a toast after a deletion, the backup table with row actions, the off-device copy's retention row, the Security cards' headers, the Scheduler. Review in a fresh context (ADR-0017, the code-review skill at high on the diff from 69dfae5): BLOCKING, the scratch screenshot spec was staged: removed from the index. RISK, a pending confirmation and a toast's action outlived their page: a navigation answers every question no and drops the toasts with an action (design-foundations.spec.ts). RISK, the NAS's zone was read once per session: read again whenever a page starts to show it. RISK, step 1 claimed a toast after every destructive action: worded to what is built (Backup's deletion, the Scheduler); the other pages' success alerts move with their chunk. RISK, the Scheduler rows' Edit and Delete were named without their task: now 'Edit <name>', 'Delete <name>'. RISK, isTechnical folded any message over 200 characters or with a line break: only an errno, a traceback or an exception's name now. RISK, a menu closed on any scroll and its first item's focus could scroll it shut: a scroll or a resize now moves it with its button and closes it only once the button has left the window (which also kept the menus of the phone held sideways, where the button was scrolled into view just before, from closing at once: mobile-layout.spec.ts), and items take the focus without scrolling. NITs fixed: a disabled reason adds to a button's own description, Save's reason names the password typed twice, the off-device fields take the server's bounds (MAX_KEEP, MAX_LIMIT_KIB), the focus returns where it was when a toast that held it closes. Left: StatusSummary, BulkBar, Tabs, Segmented, CardAction with href and EmptyState's action have no page yet; chunks 2 to 5 wire them, and their specs cover them there."
+    },
+    {
+      "id": "webui.fields-in-safari",
+      "category": "webui",
+      "description": "In Safari (WebKit), every form field of the web UI has the design's look and height, as in Chromium",
+      "steps": [
+        "In Safari, the Scheduler's Create task dialog shows Task name, Task type, Copies to keep, the passphrases, Frequency, the hour and minute and the day as fields of one height, 36 px, the selects with the design's chevron in the theme's colour and no pop-up button of macOS, at 1440 and 375 px, in the light and the dark theme",
+        "No number field shows the browser's spin buttons, in Safari or Chromium; Copies to keep steps by one with its own up and down buttons, as the off-device copy's counts do",
+        "The fields of the certificate dialog, of the off-device copy's settings, of the audit log's filters (with its dates) and of the power schedule (with its times) are one height in a row and in the form, in Safari as in Chromium",
+        "make e2e-local runs the spec of the form fields in WebKit as well as in Chromium, make setup installs WebKit beside Chromium, and the design check fails for a select without form-select, another field without form-input, or a class or style that sets a field's appearance"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0459"
+      ],
+      "verified_by": [
+        "webui/tests/form-fields.spec.ts",
+        "supervisor/tests/test_webui_design_system.py",
+        "supervisor/tests/test_standin.py",
+        "supervisor/tests/test_repo_tooling.py",
+        "webui/tests/scheduler.spec.ts",
+        "webui/tests/mobile-layout.spec.ts"
+      ],
+      "notes": "Built 2026-11-22 on mvp.batch-21 (c9d1ca27) after the owner's screenshot of the Create task dialog in Safari. Not host-level: only the web UI's image rebuilds on the dev device; no new dependency (WebKit is Playwright's, of the pinned version, for the specs only). The cause, measured in Playwright's WebKit 26: WebKit's native select (appearance auto) ignored padding and min-height (22 px), the number field kept WebKit's spin buttons, and a date or time field was 38 px; in both browsers Select's trigger (its chevron, a lucide svg, was 24 px because the component's scoped style missed it) and a field framed with a unit or steppers were 38 px. form-fields.spec.ts failed before the fix in both projects (selects 22 px with appearance auto in WebKit, a number field stepped by its spin button in Chromium and WebKit, the framed fields and Select 38 px). The design check's new rule found the off-device restore's pool select with form-input. Review (fresh context): BLOCKING fixed, the App Store's skeleton kept Select's old 38 px (loading.spec.ts), now h-9; RISKs fixed, the spec checks the Create task dialog in the light and the dark theme (the chevron in each theme's content-secondary) and requires each form's count of selects and number fields; NITs fixed: the design check also reads a trailing ! and a bracketed variant of appearance-*, its messages name the class of the field's kind, the Makefile's help, TESTING.md, e2e.sh's help (--project=chromium on a machine without WebKit) and the ADR (why ADR-0456 is not marked superseded: it names ADR-0458 already). Left: an input whose type is not static is still exempt from the class rule (the check cannot know its kind), and appearance-none on a field fails too, though harmless (the class of its kind sets it). ADR numbered 0459: 0457 and 0458 exist on mvp.batch-21."
     }
   ]
 }
