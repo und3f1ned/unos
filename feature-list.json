@@ -10,11 +10,14 @@
         "An issue opened from the bug or the enhancement template gets needs-triage",
         "An accepted issue gets ready-for-agent or ready-for-human and a feature-list.json entry; a rejected one gets wontfix with the reason in the issue"
       ],
-      "passes": false,
+      "passes": true,
+      "verified_by": [
+        "supervisor/tests/test_repo_tooling.py"
+      ],
       "adr": [
         "ADR-0206"
       ],
-      "notes": "Owner action: the labels are made in the owner's GitHub account. 2026-11-19, by the lead at the owner's word: the labels needs-triage, needs-info, ready-for-agent and ready-for-human made through GitHub's API (bug, enhancement and wontfix were there); the bug and enhancement templates name needs-triage. Open: an issue opened from a template on github.com showing the label (step 2), and the first triage (step 3)."
+      "notes": "Owner action: the labels are made in the owner's GitHub account. 2026-11-19, by the lead at the owner's word: the labels needs-triage, needs-info, ready-for-agent and ready-for-human made through GitHub's API (bug, enhancement and wontfix were there); the bug and enhancement templates name needs-triage. Open: an issue opened from a template on github.com showing the label (step 2), and the first triage (step 3). 2026-11-22, the lead at the owner's word: issue 108 opened from the template Bug report (through GitHub's createIssue with issueTemplate, which applies the template's labels as the form on github.com does) got bug and needs-triage (step 2); its triage accepted it: needs-triage removed, ready-for-agent added, the entry deploy.armv7-supervisor-build added to the ledger, a comment naming it and the issue closed (step 3). The entry passes."
     },
     {
       "id": "process.prune-merged-branches",
@@ -29,7 +32,7 @@
       "adr": [
         "ADR-0210"
       ],
-      "notes": "Owner action on GitHub: 20 merged remote branches remain (19 claude/* and phase0-hardening). On 2026-11-07 the 21 branches merged into main were deleted on GitHub by hand; nothing deletes them automatically yet. 2026-11-19, by the lead at the owner's word: the 86 remote branches merged into main deleted on GitHub through its API (their SHAs kept in the session's notes), so that git branch -r --merged origin/main lists only origin/main; the repository's setting delete_branch_on_merge turned on; 170 clean local worktrees and 12 local branches of merged work removed (a worktree with changes or of an unmerged branch is kept: one, of an unmerged branch). Left on GitHub: main, three branches of Dependabot's open pull requests, claude/implement-btrfs-snapshots-Uvpvd and smtp-verify-tls, which are not merged. Open: step 2 seen once, at the next merged pull request."
+      "notes": "Owner action on GitHub: 20 merged remote branches remain (19 claude/* and phase0-hardening). On 2026-11-07 the 21 branches merged into main were deleted on GitHub by hand; nothing deletes them automatically yet. 2026-11-19, by the lead at the owner's word: the 86 remote branches merged into main deleted on GitHub through its API (their SHAs kept in the session's notes), so that git branch -r --merged origin/main lists only origin/main; the repository's setting delete_branch_on_merge turned on; 170 clean local worktrees and 12 local branches of merged work removed (a worktree with changes or of an unmerged branch is kept: one, of an unmerged branch). Left on GitHub: main, three branches of Dependabot's open pull requests, claude/implement-btrfs-snapshots-Uvpvd and smtp-verify-tls, which are not merged. Open: step 2 seen once, at the next merged pull request. 2026-11-22, the lead at the owner's word: mvp.batch-18, mvp.batch-19 and mvp.batch-20, merged into main, deleted on GitHub (876968d6, 2a42a82b, 275016dd), and 33 clean local worktrees of merged branches removed with their local branches; Dependabot removed its two branches when main took their updates. Left: mvp.batch-21 (the lead's working branch, deleted at the end of the batch), claude/implement-btrfs-snapshots-Uvpvd and smtp-verify-tls (not merged); delete_branch_on_merge is on. Open: step 2, a pull request merged on GitHub."
     },
     {
       "id": "process.background-commands-have-deadlines",
@@ -5355,6 +5358,18 @@
         "webui/tests/mobile-layout.spec.ts"
       ],
       "notes": "Built 2026-11-22 on mvp.batch-21 (c9d1ca27) after the owner's screenshot of the Create task dialog in Safari. Not host-level: only the web UI's image rebuilds on the dev device; no new dependency (WebKit is Playwright's, of the pinned version, for the specs only). The cause, measured in Playwright's WebKit 26: WebKit's native select (appearance auto) ignored padding and min-height (22 px), the number field kept WebKit's spin buttons, and a date or time field was 38 px; in both browsers Select's trigger (its chevron, a lucide svg, was 24 px because the component's scoped style missed it) and a field framed with a unit or steppers were 38 px. form-fields.spec.ts failed before the fix in both projects (selects 22 px with appearance auto in WebKit, a number field stepped by its spin button in Chromium and WebKit, the framed fields and Select 38 px). The design check's new rule found the off-device restore's pool select with form-input. Review (fresh context): BLOCKING fixed, the App Store's skeleton kept Select's old 38 px (loading.spec.ts), now h-9; RISKs fixed, the spec checks the Create task dialog in the light and the dark theme (the chevron in each theme's content-secondary) and requires each form's count of selects and number fields; NITs fixed: the design check also reads a trailing ! and a bracketed variant of appearance-*, its messages name the class of the field's kind, the Makefile's help, TESTING.md, e2e.sh's help (--project=chromium on a machine without WebKit) and the ADR (why ADR-0456 is not marked superseded: it names ADR-0458 already). Left: an input whose type is not static is still exempt from the class rule (the check cannot know its kind), and appearance-none on a field fails too, though harmless (the class of its kind sets it). Its ADR is 0460: 0459 on its branch, renumbered at the merge into mvp.batch-21. 2026-11-22, the lead on mvp.batch-21 (782181bb): make check (11151 passed) and the full make e2e-local, with form-fields.spec.ts in WebKit and Chromium, passed (1188 passed, 14 skipped); not host-level. The entry passes; the owner's Safari shows it after the next deploy."
+    },
+    {
+      "id": "deploy.armv7-supervisor-build",
+      "category": "deploy",
+      "description": "install.sh and update.sh build the supervisor's image on an ARMv7 host, or the docs and install.sh say that UNOS does not run there",
+      "steps": [
+        "docker buildx build --platform linux/arm/v7 supervisor builds the supervisor's image, with the build tools that the packages without an armv7l wheel need",
+        "install.sh on an ARMv7 host builds the supervisor and takes the web UI's image from another machine, or refuses the host with the reason, and docs/INSTALL.md says the same",
+        "The supervisor built for linux/arm/v7 starts and answers its health check"
+      ],
+      "passes": false,
+      "notes": "Opened as issue 108 on 2026-11-22, from the review of deploy.riscv64-release-images: six packages of supervisor/requirements.txt publish no armv7l wheel, so pip builds them from source on the host, and cffi needs the libffi headers and greenlet a C++ compiler, which supervisor/Dockerfile does not install. Accepted in the first triage of the labels of process.triage-labels (ready-for-agent). Not run on a real ARMv7 board; a build under QEMU shows step 1."
     }
   ]
 }
