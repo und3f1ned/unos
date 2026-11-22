@@ -106,9 +106,12 @@ def installed_version() -> str:
 
 
 async def _within(step, seconds: float, what: str):
-    """Await a step of the installer, as an UpdateError when it takes longer than ``seconds``."""
+    """Await a step of the installer, as an UpdateError when it takes longer than ``seconds``. In the
+    job's own task, under asyncio.timeout: asyncio.wait_for of Python 3.11 runs the step in a task of
+    its own and swallows a cancel that comes as that task ends, and a job stopped then went on."""
     try:
-        return await asyncio.wait_for(step, seconds)
+        async with asyncio.timeout(seconds):
+            return await step
     except TimeoutError:
         raise UpdateError(f"{what} took longer than {seconds:g} seconds") from None
 
