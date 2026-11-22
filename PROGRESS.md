@@ -204,6 +204,14 @@ significant step. Features and their state live in `feature-list.json`, decision
   word (`webui.redesign`, ADR-0428), and TRIM for every pool, NVMe drives of a K1 included
   (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
   paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
+- On 2026-11-22 (Log): the twenty-first batch on the branch `mvp.batch-21`, from `mvp.batch-20`
+  (275016dd), at the owner's word ("do as much as possible without me"), not deployed: release
+  images for riscv64 (ADR-0458), Install Update, Rollback and the automatic install audited
+  (ADR-0457), every number and date in the language's format (ADR-0459), the web UI's fields by
+  the design in Safari with a WebKit check (ADR-0460, after the owner's screenshot), the Trash
+  page's stale list after Empty trash, and fixes found on the way: the web UI image's lock file
+  that Alpine's npm refused, and an updater job that a stop did not end. The compose stack's
+  sign-in limit, the Trash fix, the formats and the Safari fields pass.
 - On 2026-11-22 (Log): the twentieth batch on the branch `mvp.batch-20`, from `mvp.batch-19`
   (2a42a82b), pushed and deployed on the dev device and the BPI-F3 at the owner's word: what can
   be decided and done without the owner. Releases publish
@@ -776,6 +784,59 @@ Open owner actions:
     GB on the SD card).
 
 ## Log
+
+### 2026-11-22: The twenty-first batch, merged on `mvp.batch-21` (ADR-0457 to ADR-0460)
+
+- The owner: "do as much as possible without me" (in translation). Five branches from
+  `mvp.batch-20` (275016dd) and one from the batch (c9d1ca27), each built by its own agent with
+  one fresh-context review and merged here by the lead; every builder wrote ADR-0457, renumbered
+  at the merge: 0457 the updater's audit, 0458 riscv64 releases, 0459 the formats, 0460 Safari.
+- The lead found, running the compose stack's full E2E for `testing.compose-stack-sign-in-rate-limit`:
+  the web UI's image no longer built from its whole Dockerfile. Alpine's npm 11.6.4 in the builder
+  refused the lock that the workstation's npm 11.6.2 wrote after webui.toolchain-major-versions (a
+  missing peer of a wasm32-only bundle), which would have failed the release workflow and a riscv64
+  host's web UI image; scripts/dev/deploy.sh builds only the final stage on the devices and was not
+  affected. The lock is written again by Alpine's npm (38d745b7). The stack's next full run had 1150
+  passed and no 429, and 3 failures that were a real bug: at 375 px in Russian, System > Network's
+  interface card cut off 43 px with the stack's real traffic rates; fixed by webui.locale-formats.
+- `system.update-actions-audited` (ADR-0457): six audit actions for an update's and a rollback's
+  start and end, by the administrator or `system`, also when the next supervisor follows the job,
+  and `settings_changed` for the automatic install, written only on a real change. The batch's
+  make check hung 45 minutes in its test: `asyncio.wait_for` of Python 3.11 lost a cancel that
+  came as an installer step finished, so a supervisor stopped as `systemd-run` answered kept its job
+  following the unit for 2700 s. The step now runs in the job's own task under `asyncio.timeout`;
+  a test makes the race happen on every run and failed before the fix. Passes after the device
+  check of two releases.
+- `deploy.riscv64-release-images` (ADR-0458): release.yml builds linux/riscv64 under QEMU (the
+  pinned tonistiigi/binfmt); its job `wheels` compiles the supervisor's wheels once per key of
+  requirements.txt and the wheels' Dockerfile and keeps them on GHCR; riscv64 hosts pull both images
+  and build nothing, and System > Updates installs there. ARMv7 gets none. Needs a pushed tag and
+  the BPI-F3's device check.
+- `webui.locale-formats` (ADR-0459): `lib/format.ts` and `lib/time.ts` write every number, size,
+  percentage, duration, date and time in the interface's language; the design check fails for one
+  written by hand. Passes.
+- `webui.fields-in-safari` (ADR-0460): the owner's screenshot of Create task in Safari showed short
+  native selects and WebKit's spin buttons. Measured: WebKit's menulist appearance sets a select's
+  padding to 0 and its height to 22 px, where Chromium honours the 36 px of `.form-select`; the E2E
+  ran only in Chromium. Selects drop the native appearance, number fields lose spin buttons (counts to
+  keep step with Input's steppers), date and time fields lose WebKit's padding, Select's chevron and
+  framed fields are 36 px in every browser; `form-fields.spec.ts` runs in WebKit and Chromium, and
+  `make setup` installs WebKit. Passes.
+- `testing.empty-trash-shows-the-empty-state`: the rare failure of 2026-11-22 was not reproduced
+  in about 400 runs under load; the probes found a real stale-list bug, a list asked for before
+  Empty trash that answered after it brought the deleted items back, fixed by keeping only the
+  latest load. Passes.
+- `storage.nvme-trim-on-k1`, read on the BPI-F3 with mvp.batch-20: the NVMe pool's fstab entry has
+  neither nodiscard nor X-fstrim.notrim, its mount shows discard=async, and the boot mounted it
+  from the entry with no NVMe error; fstrim.timer's run of 2026-11-23 01:34 MSK and a warm reboot
+  by the owner remain.
+- Gates on the merged batch (782181bb): `make check` 11151 passed, 124 skipped, 1 xfailed;
+  `make e2e-local` 1188 passed, 14 skipped, 0 failed (29.8 min), form-fields.spec.ts in WebKit
+  among them; the compose stack's full `scripts/test-cycle.sh --e2e` 1171 passed, 31 skipped, 0
+  failed, no 429 in the supervisor's log (29.1 min), so `testing.compose-stack-sign-in-rate-limit`
+  passes.
+- Open for the owner: the push's merge into `main`, the deploy, a tag and public GHCR packages for
+  the first release, and the BPI-F3's warm reboot after fstrim's next run.
 
 ### 2026-11-22: The twentieth batch, merged on `mvp.batch-20` (ADR-0450 to ADR-0456)
 
