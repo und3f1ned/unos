@@ -192,6 +192,10 @@ test.describe('Backup files', () => {
   test('a download with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {
     const name = await createBackupViaApi(page);
     await openBackupTab(page);
+    // The tab draws its heading before its loads end: a load still on its way when the cookie goes
+    // would answer 401 and end the session before the download, which is what this test is about.
+    await expect(actionsFor(page, name)).toBeVisible();
+    await page.waitForLoadState('networkidle');
     // As if the session had ended: the browser's next request carries no session cookie, and the
     // page learns of it only from the answer.
     await page.context().clearCookies();
@@ -202,6 +206,8 @@ test.describe('Backup files', () => {
 
   test('an upload with an expired session leads to the sign-in page', async ({ authenticatedPage: page }) => {
     await openBackupTab(page);
+    // Every load of the tab answered first, as in the download's test above.
+    await page.waitForLoadState('networkidle');
     await page.context().clearCookies();
     await uploadInput(page).setInputFiles({
       name: 'late.tar.gz',
