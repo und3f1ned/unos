@@ -540,7 +540,7 @@ and this index, and `make check-fast` runs it.
 | [0217](0217-make-setup-bootstraps-a-checkout.md) | One command, make setup, bootstraps a checkout idempotently | accepted | 2026-11-07 |
 | [0218](0218-scheduled-dependency-audits-and-maintenance.md) | Dependencies are audited weekly, and maintenance passes run monthly | superseded by [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | 2026-11-07 |
 | [0229](0229-main-stays-without-branch-protection-on-the-free-plan.md) | The main branch stays without branch protection on GitHub's Free plan | accepted | 2026-11-07 |
-| [0230](0230-the-ci-workflow-is-off-on-github.md) | The CI workflow is off on GitHub, and make check on the workstation is the only gate | accepted | 2026-11-07 |
+| [0230](0230-the-ci-workflow-is-off-on-github.md) | The CI workflow is off on GitHub, and make check on the workstation is the only gate | superseded by [0462](0462-the-ci-workflow-runs-on-github-again.md) | 2026-11-07 |
 | [0231](0231-dependabot-proposes-no-major-npm-versions-and-leaves-playwright-alone.md) | Dependabot proposes no major npm versions and leaves Playwright alone | superseded by [0427](0427-the-web-ui-runs-on-svelte-5-in-runes-mode-only-and-its-pages-are-composed-of-area-components.md) | 2026-11-07 |
 | [0423](0423-actions-are-pinned-by-commit-the-audits-tools-by-hash-and-pip-takes-wheels.md) | Actions are pinned by commit, the audit's tools by hash, and pip takes wheels only | accepted | 2026-11-19 |
 | [0425](0425-ruff-checks-the-rules-that-find-bugs-set-in-ruff-toml-and-a-finding-kept-in-the-code-says-why.md) | Ruff checks the rules that find bugs, set in ruff.toml, and a finding kept in the code says why | accepted | 2026-11-19 |
@@ -551,3 +551,4 @@ and this index, and `make check-fast` runs it.
 | [0449](0449-eslint-and-prettier-check-webui-src-in-make-frontend-with-the-recommended-rules-and-the-codes-own-style.md) | ESLint and Prettier check webui/src in make frontend, with the recommended rules and the code's own style | accepted | 2026-11-21 |
 | [0451](0451-the-audit-workflow-runs-make-setup-weekly-on-a-fresh-runner.md) | The Audit workflow runs make setup weekly on a fresh runner, and its baseline fails the run | accepted | 2026-11-22 |
 | [0461](0461-playwright-is-pinned-exactly-to-a-release-that-downloads-its-browsers-for-the-ubuntu-of-ubuntu-latest.md) | Playwright is pinned exactly, to a release that downloads its browsers for the Ubuntu of ubuntu-latest | accepted | 2026-11-22 |
+| [0462](0462-the-ci-workflow-runs-on-github-again.md) | The CI workflow runs on GitHub again | accepted | 2026-11-22 |

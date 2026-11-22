@@ -1,7 +1,7 @@
 # UNOS Testing Guide
 
 How a change to UNOS is verified, from the repository root. `make help` lists the targets; the
-`Makefile` runs the same commands as the CI workflow (ADR-0216), which is off on GitHub (ADR-0230).
+`Makefile` runs the same commands as the CI workflow (ADR-0216), which runs on GitHub (ADR-0462).
 
 ## The Three Verification Levels
 
@@ -10,7 +10,7 @@ template point here.
 
 | Level | Command | Where it runs | What it proves |
 |-------|---------|---------------|----------------|
-| 1. The gate | `make check` | this machine (CI is off, ADR-0230) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere) with the line coverage of `supervisor/src` at or above its floor, svelte-check, the check of the web UI's texts and the production build |
+| 1. The gate | `make check` | this machine, then CI on GitHub (ADR-0462) | lint, every backend test against fake hosts (the Linux-only ones skip elsewhere) with the line coverage of `supervisor/src` at or above its floor, svelte-check, the check of the web UI's texts and the production build |
 | 2. E2E against the local stand-in | `make e2e-local` | this machine | the user flows of the web UI against the real supervisor and the built web UI |
 | 3. The dev device | `scripts/dev/` with the deploy-device and device-checks skills | the dev device | what only a real NAS host has: disks, btrfs, Samba, Docker, a reboot |
 
@@ -139,8 +139,8 @@ commit:
   Write and Edit tools that folder.
 - `commit-msg` runs `scripts/check-commit-msg.py` on the message.
 
-CI's Commit Messages job runs the same script over the commits of a pull request (CI is off,
-ADR-0230). To check a branch before pushing it:
+CI's Commit Messages job runs the same script over the commits of a pull request (ADR-0462).
+To check a branch before pushing it:
 
 ```bash
 python3 scripts/check-commit-msg.py --range origin/main..HEAD
@@ -354,7 +354,7 @@ in every test; the tests of the check call the real function.
 
 From a Mac, `scripts/dev/linux-tests.sh [pytest arguments]` runs the backend tests on Linux in
 the dev device's RAM, without a container, and reports the SD writes of the run (ADR-0187).
-With CI off (ADR-0230), it is the only place where they run, on tmpfs: a test fakes what
+CI's Unit Tests job runs them on GitHub's runner too (ADR-0462); here they run on tmpfs: a test fakes what
 another filesystem answers differently, as ext4's EPERM in `tests/test_upload_streaming.py`.
 
 ### Samba's testparm
@@ -595,9 +595,8 @@ Neither runs E2E specs on the device.
 
 ## CI
 
-The workflow CI is off on GitHub since 2026-11-07 (ADR-0230): its file stays as described here,
-kept in step by the tests, and "Enable workflow" in the Actions tab turns it on again. When on,
-GitHub Actions (`.github/workflows/test.yml`) runs on every push to `main` and on every pull
+The workflow CI was off on GitHub from 2026-11-07 (ADR-0230) and runs again since 2026-11-22
+(ADR-0462). GitHub Actions (`.github/workflows/test.yml`) runs on every push to `main` and on every pull
 request against `main`; a new push to a pull request cancels the run for the previous one.
 
 ### Workflow Jobs
@@ -705,7 +704,7 @@ that this page has the commands of the lint and frontend jobs).
   failed install or a red baseline exits 1 and fails the run; its last lines name the part. The
   runner image, the Python and Node.js releases, the indexes and Playwright's browser download
   change without a change here, which is why the job is weekly and not in the CI workflow, which
-  is off (ADR-0230). Chromium and WebKit are installed but not started there. When GitHub moves
+  runs only on a push or a pull request (ADR-0462). Chromium and WebKit are installed but not started there. When GitHub moves
   ubuntu-latest to an Ubuntu that the pinned Playwright does not know, the browser install fails
   ("Playwright does not support chromium on ubuntu<version>-x64"), and when it knows it,
   `test_ubuntu_latest_is_the_ubuntu_of_githubs_runner` fails in the baseline: Playwright moves to a
