@@ -14,7 +14,7 @@ nothing is not a result.
 | Image vulnerabilities | GitHub Actions: the `images` job of `audit.yml` | `make image-scan`: both images built as a release builds them, then trivy, pinned by digest, without the network: fixable HIGH and CRITICAL vulnerabilities of their OS packages and libraries, minus `.trivyignore.yaml` (ADR-0446) | A failed run names the package and its fixed version: the owner moves the base image's digest or the package, or adds an entry with its reason and expiry to `.trivyignore.yaml`; an expired entry fails the run again |
 | Catalog image platforms | GitHub Actions: the `platforms` job of `audit.yml` | `scripts/catalog-platforms.py check`: the platforms recorded for every pinned image of the app catalog against the registries' manifests of its index (ADR-0403, ADR-0410) | A failed run: a pin whose record was not rewritten, or an index that its registry no longer serves; the owner runs `make catalog-platforms`, then `scripts/catalog-platforms.py record` and reviews the diff |
 | Catalog image tags | GitHub Actions: the `tags` job of `audit.yml` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the app catalog against the index its registry names now (ADR-0410) | A failed run: a publisher pushed a pinned version again or a line tag (Traefik's `v3.7`) moved on (`MOVED`, with the templates and both digests), or a pinned index is gone; the owner reviews the new index and pins it in `supervisor/src/apps/catalog.py` with its `VOLUME`s and size, then runs `scripts/catalog-platforms.py record`, or keeps the pin. Immich's five pins move only together with an Immich release: a re-pin offers the dev device's Immich an update |
-| Bootstrap | GitHub Actions: the `bootstrap` job of `audit.yml` | `make setup` on a fresh ubuntu-latest runner with Python 3.11 and Node.js 22 and no cache, as a new checkout is set up, and its baseline, `make check-fast` and then `make smoke` (ADR-0451) | A failed run: its last lines name the prerequisite, the install or the target that failed; the owner fixes `scripts/setup.sh`, the pin or the test, or a feature-list entry when it needs work |
+| Bootstrap | GitHub Actions: the `bootstrap` job of `audit.yml` | `make setup` on a fresh ubuntu-latest runner with Python 3.11 and Node.js 22 and no cache, as a new checkout is set up, and its baseline, `make check-fast` and then `make smoke` (ADR-0451) | A failed run: its last lines name the prerequisite, the install or the target that failed; the owner fixes `scripts/setup.sh`, the pin or the test, or a feature-list entry when it needs work. "Playwright does not support chromium on ubuntu<version>-x64": ubuntu-latest moved to an Ubuntu that the pinned Playwright does not know, and Playwright moves (the monthly pass "Playwright", ADR-0461) |
 
 `make audit` runs the same audit locally; it needs the network. The hashed lint tools of
 `.github/lint-requirements.txt` are regenerated as `docs/TESTING.md` describes; the monthly pass
@@ -67,7 +67,12 @@ and proposes the changes, and the owner reviews them.
    `webui/package.json` and `webui/package-lock.json` to its newest release, together with the
    tag of the image in `webui/Dockerfile.test` and the digest that tag names (ADR-0305;
    `test_image_has_the_playwright_version_of_package_lock` checks that they match), then
-   `make setup` for the browsers (the network: the owner's machine) and `make e2e-local`.
+   `make setup` for the browsers (the network: the owner's machine) and `make e2e-local`. The
+   version is exact, and the lock is written by the npm of `webui/Dockerfile`'s builder:
+   `npm install --package-lock-only --save-exact @playwright/test@<version>` in `webui/`, inside
+   that `FROM` line's Alpine image after `apk add nodejs~22 npm`; `docker build --target builder
+   webui` checks it. The release must know the Ubuntu of ubuntu-latest (`UBUNTU_LATEST` of
+   `supervisor/tests/test_repo_tooling.py`, ADR-0461).
 10. **Outdated majors and the dev dependencies.** `npm outdated` in `webui/` names the new major
     versions that Dependabot leaves out (ADR-0427), and `npm audit --audit-level=high` there
     covers the dev dependencies that the weekly audit skips. Each finding becomes, or updates, an

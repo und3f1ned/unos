@@ -294,6 +294,10 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `playwright.config.ts`, and checks that the fields of a form are one height, a select is the
   design's and no number field shows spin buttons (ADR-0460). A form with a select, a number, date
   or time field that the other forms do not show joins it.
+- `@playwright/test` is one exact version in `package.json` and the lock, the version of
+  `Dockerfile.test`'s image too, and a release that downloads its browsers for the Ubuntu of
+  GitHub's ubuntu-latest, where the bootstrap job runs `make setup` (ADR-0461). Move it with the
+  monthly pass of `docs/maintenance.md`, which says how, and run the full `make e2e-local`.
 - Every feature's user flow has a spec (ADR-0186).
 - A change runs the specs of its area: those of the pages and APIs it changes, plus every spec
   citing a test id, label or catalog key it changed (`git grep` in `tests/`). A change to

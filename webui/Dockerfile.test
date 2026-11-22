@@ -3,7 +3,7 @@
 # carries the browsers, and their system libraries, of exactly that version.
 # supervisor/tests/test_deploy_scripts.py checks it. The digest is the one that
 # tag named; both move together, by hand (ADR-0427, ADR-0305).
-FROM mcr.microsoft.com/playwright:v1.57.0-noble@sha256:3bed4b1a12f2338642f3d8cba28e291deef3c66bd4a964bbeb3e57bbff511dbd
+FROM mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
 
 WORKDIR /app
 

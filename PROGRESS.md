@@ -252,9 +252,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   old (its check.sh, for one, wants nmbd), so device work runs from a worktree of `origin/main`.
 - The main checkout is set up: `supervisor/.venv`, `.venv-lint` and `webui/node_modules` were
   copied from environments verified against the pins (with `setup.sh`'s stamps), and the git
-  hooks are on. Only Playwright's Chromium 1200 is missing: the workstation's network filter
-  blocks the download for agents, so `make e2e-local` needs `E2E_CHROMIUM_PATH` (the cached
-  `chromium_headless_shell-1234`).
+  hooks are on. Playwright 1.65.1's browsers, Chromium build 1255 and WebKit build 2388, are in
+  this workstation's default cache since 2026-11-22 (ADR-0461), so `make e2e-local` needs no
+  `E2E_CHROMIUM_PATH`; a checkout's `webui/node_modules` must hold that version (`make setup`).
 - Feature work happens in worktrees (ADR-0210) from `origin/main`:
   `git worktree add --no-track -b <id> ../unos-<id> origin/main`. A worktree without
   `AGENTS.md` or `.claude/settings.json` is a stop.

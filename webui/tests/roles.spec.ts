@@ -206,6 +206,9 @@ test.describe('Regular user account', () => {
     await openAs(page, adminToken, '/storage');
     await expect(page.locator('h1:has-text("Storage")')).toBeVisible();
     await expect(page.locator('aside nav a[href="/storage"]')).toHaveCount(1);
+    // The heading and the menu show before the page's last requests of its load go out: wait for
+    // them, so that what follows counts only requests sent after them.
+    await page.waitForLoadState('networkidle');
     // From now on a storage request would go out with the regular account's session cookie.
     storageRequests.length = 0;
 

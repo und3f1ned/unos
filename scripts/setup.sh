@@ -15,6 +15,8 @@
 #   4. webui/node_modules: npm ci from webui/package-lock.json. A symbolic link is left as it is.
 #   5. Chromium and WebKit for Playwright, the versions that webui/package-lock.json pins (make
 #      e2e-local: every spec in Chromium, tests/form-fields.spec.ts in WebKit, Safari's engine, too).
+#      Playwright downloads them only for the systems its release knows: a new Ubuntu needs a newer
+#      @playwright/test.
 #   6. git hooks: git config core.hooksPath scripts/git-hooks (pre-commit runs make check-fast,
 #      commit-msg runs scripts/check-commit-msg.py).
 #   7. dev.env: a copy of dev.env.example with mode 600 when it is missing, except in a linked git
@@ -184,7 +186,7 @@ elif [ "$mode" = check ]; then
 else
     doing "installing Chromium and WebKit for Playwright"
     (cd webui && node_modules/.bin/playwright install chromium webkit) \
-        || failed "installing Chromium and WebKit failed (it needs the network)"
+        || failed "installing Chromium and WebKit failed (it needs the network, and a Playwright that knows this system: webui/package-lock.json pins it); see the output above"
     ok "Chromium and WebKit for Playwright"
     if [ "$(uname -s)" = Linux ]; then
         echo "  note     if Chromium or WebKit does not start, install their system libraries once:"

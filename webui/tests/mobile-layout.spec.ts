@@ -394,8 +394,8 @@ const PHOTOS = Array.from({ length: 40 }, (_, i) =>
 const LONG_FOLDER: Folders = { '': FILES[''], [DATA]: listing(DATA, POOLS, PHOTOS) };
 
 /** Answer the Files page's listings from `folders`, by the path asked for ('' for the pools folder). */
-function fakeFiles(page: Page, folders: Folders): Promise<void> {
-  return page.route(
+async function fakeFiles(page: Page, folders: Folders): Promise<void> {
+  await page.route(
     (url) => url.pathname === '/api/v1/files/list',
     (route) => {
       const request = route.request();
