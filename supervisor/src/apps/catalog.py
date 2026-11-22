@@ -226,7 +226,7 @@ BOOKSTACK = PinnedImage(
 )
 BOOKSTACK_MARIADB = PinnedImage(
     "mariadb", "11.8.9",
-    "sha256:d36f18d65a0459510b8b0f643b226a6d299e3206486e2b64ff20754a6d291707", 504_000_000, ("/var/lib/mysql",),
+    "sha256:e1d5495f445654134f226f55a41ce0da227116f6f27f283101f405c794d841fc", 504_000_000, ("/var/lib/mysql",),
 )
 PAPERLESS = PinnedImage(
     "ghcr.io/paperless-ngx/paperless-ngx", "3.5.1",
@@ -250,7 +250,7 @@ LINKWARDEN = PinnedImage(
 )
 LINKWARDEN_POSTGRES = PinnedImage(
     "postgres", "16.16-alpine",
-    "sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e", 465_000_000,
+    "sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d", 465_000_000,
     ("/var/lib/postgresql/data",),
 )
 # The image of each app of one container, by template id (ADR-0410): the publisher's most specific tag
@@ -466,7 +466,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
     ),
     "traefik": PinnedImage(
         "traefik", "v3.7",
-        "sha256:b7b1b31e6440de0b1f7c4e0f6cf0a0f3f004866761d30c025fe00c80daaf7d9c", 222_000_000, (),
+        "sha256:a6c0194dda77bcb804824580f36fa7edc56e315b1acfe933366c8b52844a78a4", 222_000_000, (),
     ),
     "ollama": PinnedImage(
         "ollama/ollama", "0.40.16",
