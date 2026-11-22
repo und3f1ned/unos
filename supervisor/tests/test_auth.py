@@ -507,7 +507,8 @@ class TestFirstRunSetup:
         from .test_authz import _compose, _environment, _uvicorn_args
 
         args = _uvicorn_args(dockerfile)
-        assert args[:2] == ["uvicorn", "src.main:app"]
+        # The test image's stack_app:app is src.main:app with the sign-in limit off (ADR-0450).
+        assert args[:2] == ["uvicorn", "src.main:app" if dockerfile == "Dockerfile" else "stack_app:app"]
         assert not [arg for arg in args if arg.split("=")[0] in ("--workers", "--reload")]
         assert "WEB_CONCURRENCY" not in _environment(_compose(compose_file)["services"]["supervisor"])
 

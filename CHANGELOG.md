@@ -1768,6 +1768,12 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The compose test stack no longer refuses the sign-ins of its own E2E run with 429: every spec
+  reaches the supervisor from the stack network's gateway, one client of the sign-in limit, so its
+  image runs the supervisor's app with that limit off, as the stand-in does, from a module that
+  only `supervisor/Dockerfile.test` copies (ADR-0450). On a NAS, slowapi's `RATELIMIT_ENABLED` and
+  `RATELIMIT_STORAGE_URL` in the supervisor's environment or a `.env` file no longer turn a rate
+  limit off or move its counters out of the supervisor's memory.
 - Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
   removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
   estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.

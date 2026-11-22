@@ -12,8 +12,6 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from typing import Annotated, Literal, Optional
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from .. import host, paths, state_files
 from . import schedule
@@ -21,13 +19,14 @@ from ..audit.changes import audit_change, changed_fields
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
 from ..openapi import BODY, RATE_LIMITED, answer, errors
+from ..rate_limits import client_limiter
 from ..security.validators import INTERFACE_NAME_PATTERN, validate_interface_name
 from ..times import UtcDatetime, utc_now
 
 logger = logging.getLogger(__name__)
 
 # Rate limiter for power endpoints
-limiter = Limiter(key_func=get_remote_address)
+limiter = client_limiter()
 
 router = APIRouter(prefix="/power", tags=["power"])
 

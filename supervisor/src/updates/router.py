@@ -4,11 +4,10 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from ..auth.utils import verify_token
 from ..openapi import BODY, RATE_LIMITED, answer, errors
+from ..rate_limits import client_limiter
 from .schemas import (
     CurrentVersion,
     ReleaseInfo,
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/updates", tags=["updates"])
 
 # Rate limiter for update checks (prevent abuse)
-limiter = Limiter(key_func=get_remote_address)
+limiter = client_limiter()
 
 # The API documentation (ADR-0417).
 _Prereleases = Annotated[bool, Query(

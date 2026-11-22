@@ -2,7 +2,6 @@
 that check a password, in src/auth/router.py and src/auth/security_keys.py. One object, so that
 the stand-in turns it off and the tests reset it in one place (``router.limiter``)."""
 
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from ..rate_limits import client_limiter
 
-limiter = Limiter(key_func=get_remote_address)
+limiter = client_limiter()

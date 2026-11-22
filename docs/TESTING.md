@@ -836,6 +836,14 @@ ps` (or `logs`), with the project that it prints, reaches it meanwhile. It:
 
 - Runs the supervisor unprivileged, with `UNOS_HOST_EXEC=local`: host commands run inside the
   container
+- Runs it with the sign-in limit off, as the stand-in does: the limiter of the sign-in, the
+  first-run setup, one's own SMB access and the security keys. Playwright reaches the stack through
+  the published port, so Caddy forwards every spec from the network's gateway (the `test-runner`
+  is one address of the network too), and the limit of 5 sign-ins a minute would count the whole
+  run as one client. Its image runs `uvicorn stack_app:app`, the app of `src.main` with that
+  limiter off (`supervisor/tests/fixtures/stack_app.py`), which only `supervisor/Dockerfile.test`
+  copies; no setting turns a limit off on a NAS, `RATELIMIT_*` variables of slowapi included
+  (ADR-0450). The client address is the gateway's, by the trust rule of production
 - Keeps the SQLite database and the generated JWT secret in the `test-data`
   volume
 - Serves the web UI and API over HTTPS on `https://localhost:3443` (`UNOS_TEST_HTTPS_PORT`), with
