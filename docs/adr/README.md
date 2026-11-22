@@ -522,6 +522,7 @@ and this index, and `make check-fast` runs it.
 | [0439](0439-each-worktree-runs-a-compose-test-stack-of-its-own-with-a-project-ports-and-a-subnet-derived-from-its-path.md) | Each worktree runs a compose test stack of its own, with a project, ports and a subnet derived from its path | accepted | 2026-11-21 |
 | [0442](0442-the-backend-tests-measure-their-line-coverage-and-fail-below-a-floor-that-only-rises.md) | The backend tests measure their line coverage and fail below a floor that only rises | accepted | 2026-11-21 |
 | [0452](0452-the-compose-test-stacks-supervisor-runs-with-the-sign-in-limit-off-from-an-app-module-only-its-test-image-has.md) | The compose test stack's supervisor runs with the sign-in limit off, from an app module only its test image has | accepted | 2026-11-22 |
+| [0454](0454-a-spec-listens-for-the-file-chooser-before-the-page-can-open-it.md) | A spec listens for the file chooser before the page can open it, not just before the key press | accepted | 2026-11-22 |
 
 ## CI
 
