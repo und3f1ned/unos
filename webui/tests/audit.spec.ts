@@ -418,6 +418,140 @@ test.describe('Audit log, the other changes of the administrators', () => {
   });
 });
 
+// system.update-actions-audited: Install Update, Rollback and the automatic install are
+// audited when they start and when they end, and the automatic install's settings as a change of
+// settings. The stand-in cannot install, so the jobs' entries are faked in the server's form; the
+// settings are changed on the real server, whose entry the page then finds.
+test.describe('Audit log, the updates of UNOS', () => {
+  const entry = (n: number, action: string, changes: Record<string, unknown>) => ({
+    id: `audit_update_${n}`, timestamp: `2026-12-01T10:0${n}:00Z`, action, severity: 'info', username: 'system',
+    ip_address: null, user_agent: null, resource_type: 'release', resource_id: 'v1.3.0', details: null,
+    success: true, prev_hash: null, hash: null, chain: null, ...changes,
+  });
+  const ENTRIES = [
+    entry(5, 'settings_changed', {
+      username: 'admin', ip_address: '192.0.2.10', resource_type: 'automatic_install', resource_id: null,
+      details: 'Automatic install settings changed: auto_install (off to on)',
+    }),
+    entry(4, 'system_rollback_failed', {
+      resource_id: 'v1.2.0', severity: 'warning', success: false,
+      details: 'The rollback from v1.3.0 to v1.2.0 failed: UNOS did not answer; UNOS runs v1.3.0 again',
+    }),
+    entry(3, 'system_rollback_started', {
+      username: 'admin', ip_address: '192.0.2.10', resource_id: 'v1.2.0', severity: 'warning',
+      details: 'Started the rollback from v1.3.0 to v1.2.0',
+    }),
+    entry(2, 'system_update_completed', { details: 'Updated from v1.2.0 to v1.3.0' }),
+    entry(1, 'system_update_started', {
+      username: 'admin', ip_address: '192.0.2.10', severity: 'warning',
+      details: 'Started the update from v1.2.0 to v1.3.0',
+    }),
+  ];
+  const fakeLog = (page: Page) =>
+    page.route(
+      (url) => url.pathname.startsWith('/api/v1/audit/'),
+      (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/v1/audit/logs') return route.fulfill({ json: ENTRIES });
+        if (url.pathname === '/api/v1/audit/logs/count') return route.fulfill({ json: { count: ENTRIES.length } });
+        // The server's own list: the filter offers what the supervisor writes.
+        if (url.pathname === '/api/v1/audit/actions') return route.continue();
+        return route.abort();
+      },
+    );
+
+  test('names the jobs and the settings in the entries and offers them in the filter', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeLog(page);
+    await page.goto('/audit');
+
+    await expect(timelineEntries(page)).toHaveCount(5);
+    const [settings, failed, rollback, completed, started] = [0, 1, 2, 3, 4].map((n) => timelineEntries(page).nth(n));
+    await expect(settings).toContainText('Settings changed');
+    await expect(settings.locator('dd')).toHaveText(['admin', '192.0.2.10', 'automatic install']);
+    await expect(failed).toContainText('System rollback failed');
+    await expect(failed.locator('.badge')).toHaveText(['Failed']);
+    await expect(failed.locator('dd')).toHaveText(['system', 'release v1.2.0']);
+    await expect(rollback).toContainText('System rollback started');
+    await expect(completed).toContainText('System update completed');
+    await expect(started).toContainText('System update started');
+    await expect(started).toContainText('Started the update from v1.2.0 to v1.3.0');
+    await expect(started.locator('dd')).toHaveText(['admin', '192.0.2.10', 'release v1.3.0']);
+
+    await page.getByRole('combobox', { name: 'Action' }).click();
+    for (const name of ['System update started', 'System update completed', 'System update failed',
+      'System rollback started', 'System rollback completed', 'System rollback failed']) {
+      await expect(page.getByRole('option', { name, exact: true })).toBeVisible();
+    }
+  });
+
+  test('names them in Russian', async ({ authenticatedPage: page }) => {
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await fakeLog(page);
+    await page.goto('/audit');
+
+    const entries = page.getByRole('region', { name: 'Хронология' }).getByRole('listitem');
+    await expect(entries).toHaveCount(5);
+    await expect(entries.nth(0)).toContainText('Настройки изменены');
+    await expect(entries.nth(0).locator('dd')).toHaveText(['admin', '192.0.2.10', 'автоматическая установка']);
+    await expect(entries.nth(1)).toContainText('Откат системы не удался');
+    await expect(entries.nth(1).locator('dd')).toHaveText(['system', 'выпуск v1.2.0']);
+    await expect(entries.nth(2)).toContainText('Откат системы запущен');
+    await expect(entries.nth(3)).toContainText('Обновление системы завершено');
+    await expect(entries.nth(4)).toContainText('Обновление системы запущено');
+
+    await page.getByRole('combobox', { name: 'Действие' }).click();
+    for (const name of ['Обновление системы запущено', 'Обновление системы завершено', 'Обновление системы не удалось',
+      'Откат системы запущен', 'Откат системы завершён', 'Откат системы не удался']) {
+      await expect(page.getByRole('option', { name, exact: true })).toBeVisible();
+    }
+  });
+
+  test('a change of the automatic install is in the log once, and settings saved as they are write nothing', async ({
+    authenticatedPage: page,
+    request,
+  }) => {
+    const headers = { Authorization: `Bearer ${await apiLogin(request)}` };
+    const stored = await request.get('/api/v1/updates/config', { headers });
+    expect(stored.ok(), `GET /updates/config: HTTP ${stored.status()}`).toBeTruthy();
+    const before = (await stored.json()) as { auto_install: boolean; check_interval_hours: number };
+    const hours = before.check_interval_hours === 7 ? 8 : 7;
+    // Off: the stand-in cannot install, and refuses only turning the automatic install on.
+    const changed = { auto_install: false, check_interval_hours: hours };
+    const details = `Automatic install settings changed: check_interval_hours (${before.check_interval_hours} to ${hours})`;
+    // Every entry of the automatic install's settings, whatever its details.
+    const settingsEntries = async () => {
+      const counted = await request.get('/api/v1/audit/logs/count', {
+        headers,
+        params: { action: 'settings_changed', search: 'automatic install' },
+      });
+      expect(counted.ok(), `GET /audit/logs/count: HTTP ${counted.status()}`).toBeTruthy();
+      return ((await counted.json()) as { count: number }).count;
+    };
+    const entriesBefore = await settingsEntries();
+    try {
+      // Saved twice: the second request changes nothing and writes no entry.
+      const saved = [
+        await request.put('/api/v1/updates/config', { headers, data: changed }),
+        await request.put('/api/v1/updates/config', { headers, data: changed }),
+      ];
+      expect(saved.map((response) => response.status())).toEqual([200, 200]);
+      expect(await settingsEntries()).toBe(entriesBefore + 1);
+
+      await page.goto('/audit');
+      await applyFilters(page, { search: details }, () => filter(page, 'Search').fill(details));
+      const found = timelineEntries(page).first();
+      await expect(found).toContainText('Settings changed');
+      await expect(found).toContainText(details);
+      await expect(found.locator('dd').first()).toHaveText(E2E_ADMIN.username);
+      await expect(found.getByText('automatic install', { exact: true })).toBeVisible();
+    } finally {
+      await request.put('/api/v1/updates/config', { headers, data: before });
+    }
+  });
+});
+
 test.describe('Audit log, the words of an entry', () => {
   const UA = 'Mozilla/5.0 (Android 14; Mobile; rv:144.0) Gecko/144.0 Firefox/144.0';
   const base = {

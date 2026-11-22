@@ -115,6 +115,12 @@
 		system_shutdown: 'audit.action.systemShutdown',
 		system_suspend: 'audit.action.systemSuspend',
 		settings_changed: 'audit.action.settingsChanged',
+		system_update_started: 'audit.action.systemUpdateStarted',
+		system_update_completed: 'audit.action.systemUpdateCompleted',
+		system_update_failed: 'audit.action.systemUpdateFailed',
+		system_rollback_started: 'audit.action.systemRollbackStarted',
+		system_rollback_completed: 'audit.action.systemRollbackCompleted',
+		system_rollback_failed: 'audit.action.systemRollbackFailed',
 		task_created: 'audit.action.taskCreated',
 		task_updated: 'audit.action.taskUpdated',
 		task_deleted: 'audit.action.taskDeleted',
@@ -182,7 +188,9 @@
 		certificate: 'audit.resource.certificate',
 		remote_access: 'audit.resource.remoteAccess',
 		remote_peer: 'audit.resource.remotePeer',
-		app_name: 'audit.resource.appName'
+		app_name: 'audit.resource.appName',
+		release: 'audit.resource.release',
+		automatic_install: 'audit.resource.automaticInstall'
 	};
 
 	const actionOptions = $derived([

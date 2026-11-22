@@ -12,6 +12,14 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- The audit log records UNOS's own updates (ADR-0457): Install Update and Rollback write
+  **System update started** or **System rollback started** (by the administrator, or by `system`
+  when the automatic install starts one), and how the job ended writes **System update completed**
+  or **failed**, **System rollback completed** or **failed** (by `system`, also when the next
+  supervisor follows the job or a stop interrupted it), resource `release` with the versions. A
+  change of the automatic install is **Settings changed** (resource `automatic_install`) with the
+  fields that changed; settings saved as they are write no entry and no longer rewrite
+  `update_config.json`. The Audit Log page names the new actions in English and Russian.
 - Releases (ADR-0455, accepting ADR-0050): pushing a tag `v<x.y.z>` runs `.github/workflows/release.yml`,
   which builds the supervisor and web UI images for linux/amd64 and linux/arm64 with buildx and
   QEMU and pushes them to `ghcr.io/<owner>/unos-supervisor:<x.y.z>` and `unos-webui:<x.y.z>`, then

@@ -2666,6 +2666,16 @@ regular users have no access to it.
   firewall turned on that already is and settings saved as they were write no entry. The
   snapshots that scheduled tasks take and clean up, the apps started when a pool is mounted,
   and the notification tests and the restores of the off-device copy write no entries.
+  An update and a rollback of UNOS on **System > Updates** write two entries, resource
+  `release` with the version they go to: **System update started** or **System rollback
+  started** (a **Warning**, by the administrator, or by the user `system` when the automatic
+  install starts the update), then, by the user `system`, **System update completed** or
+  **System rollback completed**, or **System update failed** or **System rollback failed**
+  (**Failed**, a **Warning**, with the reason, also when the host went back to the version
+  before or a stop of UNOS interrupted it), from versions such as "from v1.2.0 to v1.3.0". A
+  change of the automatic install is **Settings changed**, resource `automatic_install`, with
+  the fields that changed. A refused install or rollback, a look of the automatic install that
+  finds no newer release and its settings saved as they were write none.
 - **Action** offers only the actions that the NAS records. An older entry
   whose action UNOS no longer has is listed
   with its action as recorded.
@@ -2740,7 +2750,9 @@ fact has one place: the dashboard summarizes some of them and links there.
   again), **Update history** lists the updates, and **Automatic install**
   installs a newer stable release at the interval you set (1 to 168 hours),
   the first time one interval after you turn it on. When the unit's output is
-  needed, `journalctl -u unos-update-<time>` on the host shows it.
+  needed, `journalctl -u unos-update-<time>` on the host shows it. The
+  [Audit Log](#audit-log) records who started each update and rollback and how it ended, and
+  each change of the automatic install.
 - **How to update** elsewhere: the tab names `sudo /opt/unos/deploy/update.sh`
   (see [Upgrading](INSTALL.md#upgrading)), and **Why not from here** gives the
   server's reason: the supervisor runs outside its container (the local

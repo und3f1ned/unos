@@ -121,6 +121,12 @@ export const en = {
 	'audit.action.systemShutdown': 'System shutdown',
 	'audit.action.systemSuspend': 'System suspend',
 	'audit.action.settingsChanged': 'Settings changed',
+	'audit.action.systemUpdateStarted': 'System update started',
+	'audit.action.systemUpdateCompleted': 'System update completed',
+	'audit.action.systemUpdateFailed': 'System update failed',
+	'audit.action.systemRollbackStarted': 'System rollback started',
+	'audit.action.systemRollbackCompleted': 'System rollback completed',
+	'audit.action.systemRollbackFailed': 'System rollback failed',
 	'audit.action.taskCreated': 'Task created',
 	'audit.action.taskUpdated': 'Task updated',
 	'audit.action.taskDeleted': 'Task deleted',
@@ -187,7 +193,9 @@ export const en = {
 	'audit.resource.certificate': 'certificate',
 	'audit.resource.remoteAccess': 'remote access',
 	'audit.resource.remotePeer': 'remote peer',
-	'audit.resource.appName': 'app name'
+	'audit.resource.appName': 'app name',
+	'audit.resource.release': 'release',
+	'audit.resource.automaticInstall': 'automatic install'
 };
 
 export const ru: Translation<typeof en> = {
@@ -301,6 +309,12 @@ export const ru: Translation<typeof en> = {
 	'audit.action.systemShutdown': 'Выключение системы',
 	'audit.action.systemSuspend': 'Система переведена в ждущий режим',
 	'audit.action.settingsChanged': 'Настройки изменены',
+	'audit.action.systemUpdateStarted': 'Обновление системы запущено',
+	'audit.action.systemUpdateCompleted': 'Обновление системы завершено',
+	'audit.action.systemUpdateFailed': 'Обновление системы не удалось',
+	'audit.action.systemRollbackStarted': 'Откат системы запущен',
+	'audit.action.systemRollbackCompleted': 'Откат системы завершён',
+	'audit.action.systemRollbackFailed': 'Откат системы не удался',
 	'audit.action.taskCreated': 'Задача создана',
 	'audit.action.taskUpdated': 'Задача изменена',
 	'audit.action.taskDeleted': 'Задача удалена',
@@ -366,5 +380,7 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.certificate': 'сертификат',
 	'audit.resource.remoteAccess': 'удалённый доступ',
 	'audit.resource.remotePeer': 'узел удалённого доступа',
-	'audit.resource.appName': 'имя приложения'
+	'audit.resource.appName': 'имя приложения',
+	'audit.resource.release': 'выпуск',
+	'audit.resource.automaticInstall': 'автоматическая установка'
 };

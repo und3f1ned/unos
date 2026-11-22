@@ -1,10 +1,11 @@
 """The audit entry of an administrator's change: of pools, volumes, snapshots, containers and apps
 (ADR-0350), and of backups, power, scheduled tasks or the host's network and system settings
 (ADR-0351), and of the firewall, the login history, pool mounts, images, suspend and the power,
-notification and off-device settings (ADR-0402).
+notification and off-device settings (ADR-0402), and of UNOS's own updates (system.update-actions-audited).
 
 Written once the change is made, and only for a change that was made (ADR-0320): by the
-administrator, with the client address and browser of the request. A request that made part of
+administrator, with the client address and browser of the request, or by the user system without
+a request for what the supervisor does on its own. A request that made part of
 its change and then failed writes its action with ``success=False`` and details that say what it
 did. An entry that cannot be written, such as on a full /data, is in the supervisor's log
 (log_action), and the request still answers what it did: the change is made, and an error would
@@ -19,7 +20,7 @@ from .schemas import AuditAction, AuditSeverity
 
 async def audit_change(
     action: AuditAction,
-    request: Request,
+    request: Request | None,
     username: str,
     *,
     resource_type: str,
