@@ -813,8 +813,9 @@ class TestWhereTheHostCannotInstall:
     def test_a_nas_of_a_release_can_install(self, nas):
         assert nas.installer.unavailable_reason() is None
 
-    @pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
-    def test_amd64_and_arm64_have_release_images(self, nas, monkeypatch, machine):
+    @pytest.mark.parametrize("machine", ["x86_64", "aarch64", "riscv64"])
+    def test_amd64_arm64_and_riscv64_have_release_images(self, nas, monkeypatch, machine):
+        # A release publishes linux/riscv64 images too (deploy.riscv64-release-images).
         monkeypatch.setattr(installer_module.platform, "machine", lambda: machine)
 
         assert nas.installer.unavailable_reason() is None
@@ -827,18 +828,21 @@ class TestWhereTheHostCannotInstall:
     def test_a_32_bit_userland_on_a_64_bit_kernel_has_no_release_images(self, nas, monkeypatch):
         monkeypatch.setattr(installer_module, "USERLAND_64_BIT", False)
 
-        assert "not for this host's aarch64" in nas.installer.unavailable_reason()
+        reason = nas.installer.unavailable_reason()
+        assert "Releases publish images for amd64, arm64 and riscv64 only, not for this host's aarch64" in reason
 
     def test_the_update_command_names_the_install_folder(self, nas, monkeypatch):
-        monkeypatch.setattr(installer_module.platform, "machine", lambda: "riscv64")
+        monkeypatch.setattr(installer_module.platform, "machine", lambda: "armv7l")
 
         assert "sudo /srv/unos/deploy/update.sh" in installer_module.HostUpdate("/srv/unos").unavailable_reason()
 
-    def test_a_riscv64_host_has_no_release_images(self, nas, monkeypatch):
-        monkeypatch.setattr(installer_module.platform, "machine", lambda: "riscv64")
+    @pytest.mark.parametrize("machine", ["armv7l", "armv8l"])
+    def test_a_32_bit_arm_host_has_no_release_images(self, nas, monkeypatch, machine):
+        monkeypatch.setattr(installer_module.platform, "machine", lambda: machine)
 
         reason = nas.installer.unavailable_reason()
-        assert "not for this host's riscv64" in reason and "sudo /opt/unos/deploy/update.sh" in reason
+        assert f"not for this host's {machine}" in reason and "sudo /opt/unos/deploy/update.sh" in reason
+        assert "waits for its own" not in reason
 
     @pytest.mark.parametrize("version", ["v1.3.0-3-g712fc3a", "712fc3a-dirty", "unknown", ""])
     def test_a_version_that_is_not_a_release_tag_says_so(self, nas, monkeypatch, version):

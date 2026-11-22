@@ -445,7 +445,7 @@ and this index, and `make check-fast` runs it.
 | [0437](0437-containers-and-the-app-store-get-one-filter-quiet-actions-and-plain-states-and-an-apps-container-is-removed-only-with-its-app.md) | Containers and the App Store get one filter, quiet actions and plain states, and an app's container is removed only with its app | accepted | 2026-11-20 |
 | [0438](0438-the-design-check-keeps-no-baseline-and-fails-for-success-alerts-spinners-and-raw-details.md) | The design check keeps no baseline and fails for a success alert, a hand-made spinner and a raw details element, and no line shows the live connection | accepted | 2026-11-21 |
 | [0453](0453-the-russian-web-ui-names-each-thing-once-and-the-images-tab-writes-sizes-as-the-app-store-does.md) | The Russian web UI names each thing once, and the Images tab writes sizes as the App Store does | accepted | 2026-11-22 |
-| [0456](0456-the-web-ui-builds-with-sveltekit-3-vite-8-tailwind-css-4-and-typescript-6-and-a-riscv64-host-takes-its-web-ui-image-from-another-machine.md) | The web UI builds with SvelteKit 3, Vite 8, Tailwind CSS 4 and TypeScript 6, keeps its look, and a riscv64 or ARMv7 host takes its web UI image from another machine | accepted | 2026-11-22 |
+| [0456](0456-the-web-ui-builds-with-sveltekit-3-vite-8-tailwind-css-4-and-typescript-6-and-a-riscv64-host-takes-its-web-ui-image-from-another-machine.md) | The web UI builds with SvelteKit 3, Vite 8, Tailwind CSS 4 and TypeScript 6, keeps its look, and a riscv64 or ARMv7 host takes its web UI image from another machine | superseded by [0458](0458-releases-also-publish-riscv64-images-whose-supervisor-installs-wheels-built-once-per-requirements-and-kept-on-ghcr.md) | 2026-11-22 |
 
 ## Deploy
 
@@ -473,7 +473,8 @@ and this index, and `make check-fast` runs it.
 | [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
 | [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | The supervisor's /tmp tmpfs is 192 MiB and a backup may hold a database of 48 MiB | accepted | 2026-11-18 |
 | [0413](0413-install-sh-installs-only-the-packages-unos-runs-so-no-mdadm-assembles-an-old-nas.md) | The package list of install.sh holds only what UNOS runs, so no mdadm assembles the arrays of an old NAS | accepted | 2026-11-18 |
-| [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | Releases publish their images to GHCR, and update.sh switches to a release on the host, also for the in-app updater | accepted | 2026-11-22 |
+| [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | Releases publish their images to GHCR, and update.sh switches to a release on the host, also for the in-app updater | superseded by [0458](0458-releases-also-publish-riscv64-images-whose-supervisor-installs-wheels-built-once-per-requirements-and-kept-on-ghcr.md) | 2026-11-22 |
+| [0458](0458-releases-also-publish-riscv64-images-whose-supervisor-installs-wheels-built-once-per-requirements-and-kept-on-ghcr.md) | Releases also publish linux/riscv64 images, whose supervisor installs wheels built once per requirements.txt and kept on GHCR, and ARMv7 keeps building on the host | accepted | 2026-11-22 |
 
 ## Device
 

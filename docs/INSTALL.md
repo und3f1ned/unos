@@ -45,52 +45,62 @@ is not enough; the script then stops before it changes anything.
 - **AMD64** (x86_64) - Intel/AMD processors
 - **ARM64** (AArch64) - Raspberry Pi 4/5, ARM SBCs; see
   [Banana Pi BPI-W3](#banana-pi-bpi-w3-rockchip-rk3588-arm64)
-- **RISCV64** - Debian 13 or Ubuntu 24.04 only; the web UI's image comes from
-  another machine; see [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
+- **RISCV64** - Debian 13 or Ubuntu 24.04 only; see
+  [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
 - **ARMv7** - Limited support, may have performance issues; the web UI's image
-  comes from another machine, as on RISCV64 (`--platform linux/arm/v7`)
+  comes from another machine: see [ARMv7](#armv7)
 
-Each release of UNOS, a git tag `v<x.y.z>`, publishes its images for AMD64 and
-ARM64 on GHCR (`ghcr.io/und3f1ned/unos-supervisor` and `unos-webui`, built by
-`.github/workflows/release.yml`, ADR-0455): `install.sh` and `update.sh` pull
-them, and nothing is built on the host. RISCV64 and ARMv7 have no release
-images yet (ADR-0373): there the scripts build them from the release's
-checkout, and **System → Updates** cannot install releases.
+Each release of UNOS, a git tag `v<x.y.z>`, publishes its images for AMD64,
+ARM64 and RISCV64 on GHCR (`ghcr.io/und3f1ned/unos-supervisor` and
+`unos-webui`, built by `.github/workflows/release.yml`, ADR-0455, ADR-0458):
+`install.sh` and `update.sh` pull them, and nothing is built on the host.
+ARMv7 has no release images (ADR-0458): there the scripts build the supervisor
+from the release's checkout, and **System → Updates** cannot install releases.
+
+### ARMv7
+
+The web UI's build tools (Vite's Rolldown and Lightning CSS) publish no build
+for ARMv7 with musl, the libc of the web UI's builder (ADR-0456), so on an
+ARMv7 host `install.sh` and `update.sh` build only the supervisor and start
+the web UI from the image `deploy-webui:latest`. Make it for each version on a
+machine with Docker that runs linux/arm/v7 images (Docker Desktop does;
+elsewhere `docker run --privileged --rm tonistiigi/binfmt --install arm`), in
+the root of a checkout of the same release tag, and load it on the host (the
+web UI's files are built in that machine's own platform, and only the image's
+Caddy stage is ARMv7's):
+
+```bash
+docker buildx build --platform linux/arm/v7 -t deploy-webui:latest --load webui
+docker save -o deploy-webui.tar deploy-webui:latest
+scp deploy-webui.tar <the host>:
+```
+
+and on the host `sudo docker load -i deploy-webui.tar`. On a fresh host
+Docker comes with `install.sh`: its first run sets up the host, then stops at
+the build and prints these commands; load the image and run it again. Before
+`update.sh`, load the image of the new version; when an update is rolled
+back, load it again.
+
+The supervisor's build on an ARMv7 host has not been checked: cffi and
+greenlet, among others, publish no ARMv7 wheel, and their sources need
+libffi's headers and a C++ compiler, which the supervisor's image does not
+install, so the build probably stops there (ADR-0458).
 
 ### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
 
 Checked on Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
 a BPI-F3 with 4 GB of RAM and the system on a microSD card (ADR-0370, ADR-0372,
-ADR-0373, ADR-0456).
+ADR-0456).
 
-- **The web UI's image comes from another machine.** The web UI's build tools
-  (Vite's Rolldown and Lightning CSS) publish no RISCV64 build, nor one for
-  ARMv7 with musl, and Node.js crashes now and then on the K1 in the middle of
-  a build (nodejs/node#66845), so on every RISCV64 and ARMv7 host `install.sh`
-  and `update.sh` build only the supervisor and start the web UI from the
-  image `deploy-webui:latest`. Make it for each version on a machine with Docker that
-  runs linux/riscv64 images (Docker Desktop does; elsewhere
-  `docker run --privileged --rm tonistiigi/binfmt --install riscv64`), in the
-  root of a checkout of the same release tag, and load it on the board (the web
-  UI's files are built in that machine's own platform, and only the image's
-  Caddy stage is RISCV64's):
-
-  ```bash
-  docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui
-  docker save -o deploy-webui.tar deploy-webui:latest
-  scp deploy-webui.tar <the board>:
-  ```
-
-  and on the board `sudo docker load -i deploy-webui.tar`. On a fresh board
-  Docker comes with `install.sh`: its first run sets up the host, then stops at
-  the build and prints these commands; load the image and run it again. Before
-  `update.sh`, load the image of the new version; when an update is rolled
-  back, load it again.
-- **Build time.** GHCR has no RISCV64 images, so the supervisor is built on the
-  board. Its build compiles cryptography, bcrypt, cffi, psutil and uvloop,
-  which publish no RISCV64 wheel, with a Rust toolchain that the image does not
-  keep: about 35 minutes, and `update.sh` builds it again, without a cache, for
-  each update. Keep Docker's data
+- **Both images come from the release** (ADR-0458; not yet checked on the
+  board, which waits for the first release with RISCV64 images).
+  `install.sh` and `update.sh` pull the release's RISCV64 images, as on AMD64
+  and ARM64, and build nothing on the board: the web UI's build tools have no
+  RISCV64 build and Node.js crashes on the K1 in the middle of one
+  (nodejs/node#66845), and the supervisor's Python packages that publish no
+  RISCV64 wheel (cryptography, bcrypt, cffi, psutil, uvloop, PyYAML) took about
+  35 minutes to compile on the board; the release's wheels are built on GitHub
+  instead. **System → Updates** installs releases there too. Keep Docker's data
   on a disk other than a microSD card where you can, and make Docker wait for
   that disk: with a drop-in `/etc/systemd/system/docker.service.d/data-root.conf`
   that says `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at
@@ -292,8 +302,8 @@ This will:
 4. Download UNOS and check out its newest release, a tag `v<x.y.z>` (it stops
    while the repository has none)
 5. Configure services
-6. Pull the release's images from GHCR (on RISCV64: build them from the
-   checkout) and start UNOS
+6. Pull the release's images from GHCR (on ARMv7: build the supervisor from
+   the checkout) and start UNOS
 7. Print the HTTPS address of the web interface
 
 Run again, it checks out the newest release again.
@@ -488,8 +498,8 @@ such copies.
 
 ### Step 6: Get the Images and Start UNOS
 
-On AMD64 and ARM64, pull the release's images (its tag without the `v`, such
-as `1.3.0`) and give them the names compose starts:
+On AMD64, ARM64 and RISCV64, pull the release's images (its tag without the
+`v`, such as `1.3.0`) and give them the names compose starts:
 
 ```bash
 for service in supervisor webui; do
@@ -501,10 +511,9 @@ cd /opt/unos/deploy
 sudo docker compose --env-file /etc/unos/secrets.env up -d
 ```
 
-On RISCV64 and ARMv7 build them instead: load the web UI's image first and build
-only the supervisor (`sudo UNOS_VERSION=<the tag> docker compose build
-supervisor`) before the `up`: see
-[Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64).
+On ARMv7 build them instead: load the web UI's image first and build only the
+supervisor (`sudo UNOS_VERSION=<the tag> docker compose build supervisor`)
+before the `up`: see [ARMv7](#armv7).
 
 smbd takes the ports and the cache directory of the smb.conf that UNOS writes
 at its first start only when it restarts, not when it reloads the file. Once
@@ -908,14 +917,15 @@ The script:
    when the release runs already ("UNOS runs the newest release") or is not
    newer than the one that runs (or the release it follows, for a checkout
    with commits after a tag). A tag whose images are not published yet (its
-   release run takes up to two hours) stops it in step 2 without a change.
+   release run takes up to three hours, and up to about eight and a half when
+   it builds new RISCV64 wheels) stops it in step 2 without a change.
 2. Pulls the release's two images from GHCR
    (`ghcr.io/und3f1ned/unos-supervisor:<x.y.z>` and `unos-webui`,
    `UNOS_REGISTRY` names another registry) while UNOS keeps running. If they
    cannot be had, nothing has changed. They carry the release's version, which
-   **System → Updates** shows. Where Docker is neither amd64 nor arm64
-   (RISCV64, a 32-bit ARM system), which have no release images, the images
-   are built from the release's checkout in step 4 instead.
+   **System → Updates** shows. Where Docker is neither amd64, arm64 nor
+   riscv64 (a 32-bit ARM system), which has no release images, the supervisor
+   is built from the release's checkout in step 4 instead.
 3. Backs up the database (consistently, with SQLite's online backup API) and
    the rest of the data volume to `/var/lib/unos/backups/update-<date>/` (the
    supervisor mounts that folder and keeps its own copies of the database
@@ -970,7 +980,7 @@ sudo git checkout --detach refs/tags/<tag>
 ```
 
 Then get the release's images as in [Step 6](#step-6-get-the-images-and-start-unos)
-(on RISCV64: `sudo UNOS_VERSION=<tag> docker compose build --no-cache`), and
+(on ARMv7: `sudo UNOS_VERSION=<tag> docker compose build --no-cache supervisor`), and
 start them with /etc/unos/secrets.env: compose recreates the containers of
 the new images.
 

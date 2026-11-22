@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-22
 area: deploy
 decided-by: agent
+superseded-by: ADR-0458
 supersedes: [ADR-0049, ADR-0443]
 ---
 
 # ADR-0455: Releases publish their images to GHCR, and update.sh switches to a release on the host, also for the in-app updater
 
 ## Context
+
+Superseded by ADR-0458: only in part, the platforms of the release images (linux/riscv64 joins amd64 and arm64, so riscv64 hosts pull them and the in-app updater installs there) and where QEMU comes from (the pinned `tonistiigi/binfmt` image in place of Ubuntu's qemu-user-static); every other rule here stays as written.
 
 ADR-0050 proposed releases as git tags with amd64 and arm64 images on GHCR, but no workflow published
 any, so `update.sh` and `install.sh` built both images on every host, hundreds of MB of writes on a

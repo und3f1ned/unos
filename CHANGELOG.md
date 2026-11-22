@@ -20,6 +20,17 @@ manager, encrypted backup uploads, health checks, CI checks).
   change of the automatic install is **Settings changed** (resource `automatic_install`) with the
   fields that changed; settings saved as they are write no entry and no longer rewrite
   `update_config.json`. The Audit Log page names the new actions in English and Russian.
+- riscv64 release images (ADR-0458): `.github/workflows/release.yml` also builds both images for
+  linux/riscv64 under QEMU (the pinned `tonistiigi/binfmt` image, which now registers arm64 too in
+  place of Ubuntu's qemu-user-static). Its new job `wheels` builds the supervisor's Python wheels for
+  riscv64 from `supervisor/Dockerfile.riscv64-wheels` only when GHCR has none under the key of that
+  file and `requirements.txt`, and keeps them there (`unos-riscv64-wheels`, private); the riscv64
+  supervisor installs them without the index, through `scripts/riscv64-release-dockerfile.sh`, so
+  that no release compiles cryptography, bcrypt, cffi, psutil, uvloop or PyYAML again before
+  `requirements.txt` changes. A riscv64 host, a SpacemiT K1 included, pulls both images:
+  `install.sh` and `update.sh` build nothing there and need no web UI image from another machine,
+  and System > Updates installs releases there. ARMv7 keeps building the supervisor and loading the
+  web UI image.
 - Releases (ADR-0455, accepting ADR-0050): pushing a tag `v<x.y.z>` runs `.github/workflows/release.yml`,
   which builds the supervisor and web UI images for linux/amd64 and linux/arm64 with buildx and
   QEMU and pushes them to `ghcr.io/<owner>/unos-supervisor:<x.y.z>` and `unos-webui:<x.y.z>`, then

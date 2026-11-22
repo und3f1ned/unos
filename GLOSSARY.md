@@ -142,8 +142,15 @@ ADR-0244) or 120 seconds (the firewall, ADR-0416; a virtual interface, ADR-0424)
 (what `update.sh` and `deploy.sh` do), undo.
 
 **Release**: A git tag `v<x.y.z>` of UNOS, whose push makes `.github/workflows/release.yml` publish its
-amd64 and arm64 images on GHCR and then the tag's GitHub release; `install.sh` installs the newest
-tag, `update.sh` switches to one (ADR-0050). Avoid: version (also a build of a commit), branch.
+amd64, arm64 and riscv64 images on GHCR and then the tag's GitHub release; `install.sh` installs the
+newest tag, `update.sh` switches to one (ADR-0050, ADR-0458). Avoid: version (also a build of a commit),
+branch.
+
+**Riscv64 wheels**: The wheels of the supervisor's Python packages for linux/riscv64, which the job
+`wheels` of `.github/workflows/release.yml` builds under QEMU from `supervisor/Dockerfile.riscv64-wheels`
+and keeps on GHCR as `unos-riscv64-wheels:<key>`, the key being the sha256 of that file and
+`supervisor/requirements.txt`; a release's riscv64 supervisor installs them without the index
+(ADR-0458). Avoid: wheel cache (pip's own cache).
 
 **Release installer**: The part of an in-app update of UNOS that runs on the host
 (`supervisor/src/updates/installer.py`): `update.sh --fetch`, which gets a release's tag and images,

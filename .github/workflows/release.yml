@@ -1,14 +1,16 @@
 name: Release
 
 # A release is a git tag v<x.y.z> (ADR-0050). Its push builds the images of the supervisor
-# and the web UI from their pinned Dockerfiles (ADR-0305) for linux/amd64 and linux/arm64, with buildx
-# and QEMU for arm64, and pushes them to GHCR as ghcr.io/<owner>/unos-supervisor:<x.y.z> and
-# unos-webui:<x.y.z>, which deploy/install.sh and deploy/update.sh pull. Then it publishes the tag's
-# GitHub release, which the in-app updater's check reads: a release is listed only once its images
-# are there. riscv64 has no release images (ADR-0373, deploy.riscv64-release-images). A NAS pulls
-# without credentials: the owner makes both packages public at the first release
-# (docs/maintenance.md). Every action is pinned to the commit of a release (ADR-0423), and the
-# checkout does not keep the token (persist-credentials: false).
+# and the web UI from their pinned Dockerfiles (ADR-0305) for linux/amd64, linux/arm64 and linux/riscv64,
+# with buildx and QEMU for the last two, and pushes them to GHCR as ghcr.io/<owner>/unos-supervisor:<x.y.z>
+# and unos-webui:<x.y.z>, which deploy/install.sh and deploy/update.sh pull. The riscv64 supervisor
+# installs its Python packages from wheels that the job wheels builds once per content of
+# supervisor/requirements.txt and supervisor/Dockerfile.riscv64-wheels and keeps on GHCR, so that the compile of those without a riscv64 wheel has
+# a job, and its 6 hours, to itself (deploy.riscv64-release-images). Then it publishes the tag's GitHub
+# release, which the in-app updater's check reads: a release is listed only once its images are there. A
+# NAS pulls without credentials: the owner makes both image packages public at the first release
+# (docs/maintenance.md). Every action is pinned to the commit of a release (ADR-0423), and the checkout
+# does not keep the token (persist-credentials: false).
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
@@ -22,14 +24,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  images:
-    name: Images
+  # The wheels of the supervisor's packages for linux/riscv64 (supervisor/Dockerfile.riscv64-wheels),
+  # under the key of that file and requirements.txt on GHCR, a durable cache that a release months
+  # later still finds (GitHub's cache drops an entry unused for 7 days). Only a new key builds them:
+  # cryptography, bcrypt, cffi, psutil, uvloop and PyYAML compile under QEMU, an estimated one to three
+  # hours. This is the only job that compiles them, and its limit stays under GitHub's 6 hours a job
+  # (deploy.riscv64-release-images). The package unos-riscv64-wheels stays private: only this workflow
+  # reads it.
+  wheels:
+    name: riscv64 wheels
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # The only job that may push packages.
+    timeout-minutes: 330
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.wheels.outputs.image }}
 
     steps:
       # The filter above also lets v01.2.3 through.
@@ -44,16 +54,88 @@ jobs:
         with:
           persist-credentials: false
 
-      # QEMU from Ubuntu's archive, for the arm64 build: docker/setup-qemu-action would register it
-      # from an image tag that moves. Buildx's containers need the handler's fix-binary flag (F).
-      - name: Set up QEMU for linux/arm64
+      # QEMU for linux/arm64 and linux/riscv64 from tonistiigi/binfmt by tag and digest (ADR-0305,
+      # deploy.riscv64-release-images): Ubuntu's qemu-user-static moves with the runner's image, and
+      # docker/setup-qemu-action takes the binfmt image by a tag that moves. It runs before the login,
+      # so the privileged container never sees the token. Each handler must be this image's (its
+      # interpreter: a handler registered before stays, and binfmt skips it) with the fix-binary flag
+      # (F) that buildx's containers need. The monthly pass of docs/maintenance.md moves it.
+      - name: Set up QEMU
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-user-static
-          if ! grep -q '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64; then
-            echo "::error::QEMU's linux/arm64 handler is not registered with the fix-binary flag"
+          docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64,riscv64
+          for handler in qemu-aarch64 qemu-riscv64; do
+            if ! grep -qx "interpreter /usr/bin/$handler" "/proc/sys/fs/binfmt_misc/$handler" ||
+              ! grep -q '^flags: .*F' "/proc/sys/fs/binfmt_misc/$handler"; then
+              echo "::error::QEMU's $handler handler is not the pinned image's with the fix-binary flag"
+              exit 1
+            fi
+          done
+
+      # Its BuildKit, which holds the push's credentials, pinned by tag and digest (ADR-0305): the
+      # action's default image is a tag that moves. The monthly pass of docs/maintenance.md moves it.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+
+      # The job's token on standard input, never on a command line.
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      # The image of the wheels by its digest: the job images installs exactly these.
+      - name: Build or reuse the riscv64 wheels
+        id: wheels
+        run: |
+          set -o pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/unos-riscv64-wheels"
+          key=$(cat supervisor/Dockerfile.riscv64-wheels supervisor/requirements.txt | sha256sum | cut -d ' ' -f 1)
+          if digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$image:$key"); then
+            echo "The riscv64 wheels of this requirements.txt are on GHCR: $image:$key"
+          else
+            docker buildx build --platform linux/riscv64 --file supervisor/Dockerfile.riscv64-wheels \
+              --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --provenance=false --tag "$image:$key" --push --metadata-file "$RUNNER_TEMP/wheels.json" supervisor
+            digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/wheels.json")
+          fi
+          if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::GHCR named no digest of the riscv64 wheels ($image:$key): \"$digest\""
             exit 1
           fi
+          echo "image=$image@$digest" >> "$GITHUB_OUTPUT"
+
+  images:
+    name: Images
+    needs: wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    # With the job wheels, the only jobs that may push packages.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # QEMU for linux/arm64 and linux/riscv64 from tonistiigi/binfmt by tag and digest (ADR-0305,
+      # deploy.riscv64-release-images): Ubuntu's qemu-user-static moves with the runner's image, and
+      # docker/setup-qemu-action takes the binfmt image by a tag that moves. It runs before the login,
+      # so the privileged container never sees the token. Each handler must be this image's (its
+      # interpreter: a handler registered before stays, and binfmt skips it) with the fix-binary flag
+      # (F) that buildx's containers need. The monthly pass of docs/maintenance.md moves it.
+      - name: Set up QEMU
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64,riscv64
+          for handler in qemu-aarch64 qemu-riscv64; do
+            if ! grep -qx "interpreter /usr/bin/$handler" "/proc/sys/fs/binfmt_misc/$handler" ||
+              ! grep -q '^flags: .*F' "/proc/sys/fs/binfmt_misc/$handler"; then
+              echo "::error::QEMU's $handler handler is not the pinned image's with the fix-binary flag"
+              exit 1
+            fi
+          done
 
       # Its BuildKit, which holds the push's credentials, pinned by tag and digest (ADR-0305): the
       # action's default image is a tag that moves. The monthly pass of docs/maintenance.md moves it.
@@ -69,20 +151,54 @@ jobs:
         run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       # The supervisor's image carries the release's version and marks itself as a release's
-      # (UNOS_VERSION, UNOS_RELEASE: ADR-0234, ADR-0050).
+      # (UNOS_VERSION, UNOS_RELEASE: ADR-0234, ADR-0050). amd64 and arm64 build supervisor/Dockerfile
+      # as before; riscv64 builds it with its pip layer replaced by an install from the wheels of the
+      # job wheels, without the index (scripts/riscv64-release-dockerfile.sh,
+      # deploy.riscv64-release-images). The riscv64 image takes the versions that requirements.txt
+      # does not pin from its wheels' build, which no other scan sees, so trivy scans it first with
+      # the policy of ADR-0446 (scripts/image-scan.sh), before anything is pushed. Both builds go to
+      # GHCR by digest alone, and one index of the three takes the release's tag. The web UI's
+      # builder runs on the runner's platform, so its riscv64 image costs Caddy's stage alone
+      # (ADR-0456).
       - name: Build and push the images
+        env:
+          WHEELS: ${{ needs.wheels.outputs.image }}
         run: |
           registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          wheels="$registry/unos-riscv64-wheels@sha256:"
+          if [[ $WHEELS != "$wheels"* ]] || ! [[ ${WHEELS#"$wheels"} =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::The job wheels named no image of the riscv64 wheels: \"$WHEELS\""
+            exit 1
+          fi
           version=${GITHUB_REF_NAME#v}
           source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --build-arg "UNOS_VERSION=$GITHUB_REF_NAME" --build-arg "UNOS_RELEASE=$GITHUB_REF_NAME" \
-            --label "org.opencontainers.image.source=$source" \
-            --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
-            --tag "$registry/unos-supervisor:$version" --push supervisor
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --label "org.opencontainers.image.source=$source" \
-            --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
+          labels=(--label "org.opencontainers.image.source=$source" --label "org.opencontainers.image.version=$GITHUB_REF_NAME")
+          release=(--build-arg "UNOS_VERSION=$GITHUB_REF_NAME" --build-arg "UNOS_RELEASE=$GITHUB_REF_NAME")
+          supervisor="$registry/unos-supervisor"
+          by_digest="type=image,name=$supervisor,push-by-digest=true,name-canonical=true,push=true"
+          # The digest of the index that a build pushed, from its metadata file.
+          pushed() {
+            local digest
+            digest=$(jq -r '."containerimage.digest"' "$1")
+            if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::$1 names no pushed image: \"$digest\"" >&2
+              return 1
+            fi
+            echo "$digest"
+          }
+          scripts/riscv64-release-dockerfile.sh supervisor/Dockerfile > "$RUNNER_TEMP/Dockerfile.riscv64"
+          from_wheels=(--platform linux/riscv64 --file "$RUNNER_TEMP/Dockerfile.riscv64"
+            --build-context "riscv64-wheels=docker-image://$WHEELS" "${release[@]}" "${labels[@]}")
+          docker buildx build "${from_wheels[@]}" --tag unos-supervisor-riscv64 --load supervisor
+          scripts/image-scan.sh unos-supervisor-riscv64
+          docker buildx build --platform linux/amd64,linux/arm64 "${release[@]}" "${labels[@]}" \
+            --output "$by_digest" --metadata-file "$RUNNER_TEMP/supervisor.json" supervisor
+          other=$(pushed "$RUNNER_TEMP/supervisor.json")
+          docker buildx build "${from_wheels[@]}" \
+            --output "$by_digest" --metadata-file "$RUNNER_TEMP/supervisor-riscv64.json" supervisor
+          riscv64=$(pushed "$RUNNER_TEMP/supervisor-riscv64.json")
+          docker buildx imagetools create --tag "$supervisor:$version" "$supervisor@$other" "$supervisor@$riscv64"
+          docker buildx build --platform linux/amd64,linux/arm64,linux/riscv64 "${labels[@]}" \
             --tag "$registry/unos-webui:$version" --push webui
 
   release:

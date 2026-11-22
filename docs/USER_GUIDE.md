@@ -2734,7 +2734,7 @@ fact has one place: the dashboard summarizes some of them and links there.
   and why a check failed (GitHub answers 60 checks an hour per address). A
   release is published once its images are on GHCR.
 - **Install, Rollback and the automatic install** show on a NAS that runs the
-  images of a release on AMD64 or ARM64 and has `/opt/unos/deploy/update.sh`
+  images of a release on AMD64, ARM64 or RISCV64 and has `/opt/unos/deploy/update.sh`
   of `install.sh`. **Install &lt;release&gt;** asks first, then gets the
   release's images, backs up the database into
   `/var/lib/unos/backups/in-app-<time>/` on the host (the newest 3 are kept)
@@ -2756,8 +2756,9 @@ fact has one place: the dashboard summarizes some of them and links there.
 - **How to update** elsewhere: the tab names `sudo /opt/unos/deploy/update.sh`
   (see [Upgrading](INSTALL.md#upgrading)), and **Why not from here** gives the
   server's reason: the supervisor runs outside its container (the local
-  stand-in), the host's architecture has no release images (RISCV64: build on
-  the host), UNOS runs a version that is not a release, its images were built
+  stand-in), the host's architecture has no release images (ARMv7 and other
+  32-bit systems: build on the host), UNOS runs a version that is not a
+  release, its images were built
   on the host (a dev device deployed by `scripts/dev/deploy.sh`), or the host
   has no `/opt/unos/deploy/update.sh`.
 

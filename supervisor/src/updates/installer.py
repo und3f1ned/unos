@@ -32,8 +32,9 @@ from ..config import get_settings
 
 # A release: a git tag v<x.y.z> (ADR-0050), the version its images carry.
 RELEASE_TAG = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
-# What uname -m says on the platforms that release.yml builds images for: linux/amd64, linux/arm64.
-RELEASE_MACHINES = ("x86_64", "aarch64")
+# What uname -m says on the platforms that release.yml builds images for: linux/amd64, linux/arm64,
+# linux/riscv64 (deploy.riscv64-release-images).
+RELEASE_MACHINES = ("x86_64", "aarch64", "riscv64")
 # Whether the image that runs is 64-bit: a 32-bit userland on a 64-bit Arm kernel says aarch64 but runs
 # arm images, which no release has.
 USERLAND_64_BIT = sys.maxsize > 2**32
@@ -101,8 +102,9 @@ class HostUpdate:
                     "compose test stack), where nothing is installed.")
         machine = platform.machine()
         if machine not in RELEASE_MACHINES or not USERLAND_64_BIT:
-            return (f"Releases publish images for amd64 and arm64 only, not for this host's {machine} (riscv64 "
-                    f"waits for its own, ADR-0373): update with {self.command}, which builds them here.")
+            userland = "" if USERLAND_64_BIT else " with a 32-bit userland"
+            return (f"Releases publish images for amd64, arm64 and riscv64 only, not for this host's {machine}"
+                    f"{userland}: update with {self.command}, which builds them here.")
         version = os.environ.get("UNOS_VERSION", "").strip() or "unknown"
         release = RELEASE_TAG.fullmatch(version) is not None
         if os.environ.get("UNOS_RELEASE", "").strip() != version:

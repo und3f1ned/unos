@@ -27,11 +27,12 @@
   The app names' sites come the same way, from the volume `app-names`, which the Caddyfile imports
   and the web UI's command loads only when they validate (ADR-0420).
 - `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. A release is a tag
-  `v<x.y.z>` whose amd64 and arm64 images `.github/workflows/release.yml` publishes on GHCR:
+  `v<x.y.z>` whose amd64, arm64 and riscv64 images `.github/workflows/release.yml` publishes on GHCR
+  (riscv64's supervisor from the riscv64 wheels of its job `wheels`, ADR-0458):
   `install.sh` checks out the newest release and pulls them, `update.sh [<tag>]` refuses local
   changes, pulls them while UNOS runs, backs up, switches, waits for health and rolls back on
   failure with the backup's database (ADR-0049, ADR-0050); both build only where Docker is neither
-  amd64 nor arm64 (riscv64, 32-bit arm), which have no release images (ADR-0373). The in-app updater runs `update.sh --fetch` and, in a transient
+  amd64, arm64 nor riscv64 (32-bit arm), which has no release images (ADR-0458). The in-app updater runs `update.sh --fetch` and, in a transient
   systemd unit, `update.sh --in-app` (`supervisor/src/updates/installer.py`); the compose file
   keeps building `deploy-supervisor` and `deploy-webui` for `scripts/dev/deploy.sh`, and the
   scripts give the pulled images those names; `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
@@ -89,7 +90,11 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   them). Restoring the volume or fstab is an owner action.
 - The web UI's static files are built on the workstation, and the device builds only the image's
   final stage (`deploy.sh build-webui`, ADR-0184). The Dockerfiles pin their base images by tag
-  and digest (ADR-0305). A supervisor build after a change to its requirements, or to its base's
+  and digest (ADR-0305). A release's riscv64 supervisor is `supervisor/Dockerfile` with its one pip
+  layer (`RUN pip install --no-cache-dir pip==<x> setuptools==<y> ...`) replaced by an install of the
+  wheels of `supervisor/Dockerfile.riscv64-wheels` (`scripts/riscv64-release-dockerfile.sh`, ADR-0458):
+  keep that layer one instruction and the pins of both files the same, and add no `FROM` without a
+  digest, which build-supervisor refuses. A supervisor build after a change to its requirements, or to its base's
   digest when the image that digest names for linux/arm64 is new to the device, reruns apt-get
   and pip there: tell the owner first. `deploy.sh build-supervisor` says before the build
   whether the device has the pinned base.

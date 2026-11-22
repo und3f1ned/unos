@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-22
 area: webui
 decided-by: agent
+superseded-by: ADR-0458
 supersedes: [ADR-0373]
 ---
 
 # ADR-0456: The web UI builds with SvelteKit 3, Vite 8, Tailwind CSS 4 and TypeScript 6, keeps its look, and a riscv64 or ARMv7 host takes its web UI image from another machine
 
 ## Context
+
+Superseded by ADR-0458: only in part, the web UI's image of riscv64 hosts, which now comes from the release, as the supervisor's does; ARMv7 hosts still take theirs from another machine, and every other rule here stays as written.
 
 ADR-0427 moved the web UI to Svelte 5 on SvelteKit 2 and left the other new majors of its toolchain
 to the feature-list entry `webui.toolchain-major-versions`: SvelteKit 3, @sveltejs/vite-plugin-svelte
