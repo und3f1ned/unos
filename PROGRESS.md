@@ -206,7 +206,7 @@ significant step. Features and their state live in `feature-list.json`, decision
   amd64 and arm64 images to GHCR and update.sh switches to a release on the host, also for the
   in-app updater (ADR-0455, which settles ADR-0443's two choices); the web UI on SvelteKit 3,
   Vite 8 and Tailwind CSS 4 (ADR-0456; TypeScript stays at 6); the Russian web UI walked page by
-  page and corrected (ADR-0453); the keyboard upload test's cause (ADR-0454), the compose stack's
+  page and corrected (ADR-0453); the keyboard upload test's cause (ADR-0454, passes after five full E2E runs), the compose stack's
   sign-in limit (ADR-0452) and a weekly bootstrap job (ADR-0451); one host without high
   availability (ADR-0450), and ADR-0193 accepted, so `shares.acl-aware-parent-check` passes.
 - On 2026-11-21 (Log): the nineteenth batch on the branch `mvp.batch-19`, from `mvp.batch-18`
@@ -820,7 +820,9 @@ Open owner actions:
 - Gates on the merged batch: `make check` 11050 passed, 124 skipped, 1 xfailed, coverage 91.87
   percent, with lint, mypy, shellcheck, svelte-check, the design and text checks, the build, ESLint
   and Prettier; `make e2e-local` 1172 passed, 14 skipped, 0 failed (28.8 min) with Chromium build
-  1200, the first of the five full runs that the keyboard upload entry's step 3 asks for.
+  1200, and four more full runs in a row, each the same (28.6 to 28.8 min): the five that the
+  keyboard upload entry's step 3 asks for, so `testing.keyboard-upload-opens-the-file-chooser`
+  passes.
 - Open for the owner: the push and the pull request; a tag and public GHCR packages for the first
   release; the deploy (the web UI's toolchain rebuilds its image); the look at the web UI in
   Russian on the device.
