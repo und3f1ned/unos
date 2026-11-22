@@ -201,6 +201,14 @@ significant step. Features and their state live in `feature-list.json`, decision
   word (`webui.redesign`, ADR-0428), and TRIM for every pool, NVMe drives of a K1 included
   (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
   paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
+- On 2026-11-22 (Log): the twentieth batch on the branch `mvp.batch-20`, from `mvp.batch-19`
+  (2a42a82b), not deployed: what can be decided and done without the owner. Releases publish
+  amd64 and arm64 images to GHCR and update.sh switches to a release on the host, also for the
+  in-app updater (ADR-0455, which settles ADR-0443's two choices); the web UI on SvelteKit 3,
+  Vite 8 and Tailwind CSS 4 (ADR-0456; TypeScript stays at 6); the Russian web UI walked page by
+  page and corrected (ADR-0453); the keyboard upload test's cause (ADR-0454), the compose stack's
+  sign-in limit (ADR-0452) and a weekly bootstrap job (ADR-0451); one host without high
+  availability (ADR-0450), and ADR-0193 accepted, so `shares.acl-aware-parent-check` passes.
 - On 2026-11-21 (Log): the nineteenth batch on the branch `mvp.batch-19`, from `mvp.batch-18`
   (876968d6), deployed on the dev device and the BPI-F3 and pushed at the owner's word: what
   needs neither the device nor the owner. A compose
@@ -758,6 +766,64 @@ Open owner actions:
     GB on the SD card).
 
 ## Log
+
+### 2026-11-22: The twentieth batch, merged on `mvp.batch-20` (ADR-0450 to ADR-0456)
+
+- The owner: "decide everything that can be decided without me; do it" (in translation). The lead
+  decided the in-app updater's two open choices (ADR-0443): a release's images come from GHCR,
+  published by a workflow on a tag push, and the switch runs on the host in a transient systemd
+  unit, outside the containers it replaces. Six branches from `mvp.batch-19` (2a42a82b), each
+  built by its own agent in its own worktree with one fresh-context review, merged here by the
+  lead; every builder wrote ADR-0450, renumbered at the merge on the lines its branch added.
+- The lead: ADR-0450, UNOS is a NAS of one host, so the ledger's entry for high availability
+  leaves it; ADR-0193 accepted at the owner's delegation, and `shares.acl-aware-parent-check` passes
+  (its steps asserted by the tests, its sticky rule checked on the device before and after a
+  reboot on 2026-11-11).
+- `ci.bootstrap-in-ci` (ADR-0451, b75fb34b): a job `bootstrap` in the weekly Audit workflow, which
+  ADR-0230 keeps on, runs `make setup` on a fresh ubuntu-latest runner (it ends with check-fast and
+  smoke); at most 30 minutes a week. Passes once it has run on GitHub.
+- `testing.compose-stack-sign-in-rate-limit` (ADR-0452, cca0a927): the cause is one client, the
+  stack network's gateway, for the whole run; the test image runs `stack_app`, the supervisor's app
+  with the sign-in limit off, which no production file names. Found on the way and closed: slowapi
+  read `RATELIMIT_ENABLED` and `RATELIMIT_STORAGE_URL` from the environment on a NAS too; every
+  limiter now comes from `client_limiter()` of `src/rate_limits.py`. Three `test-cycle.sh --quick`
+  runs in a row passed; a full stack run was stopped after 446 tests (no 429), so `passes` stays
+  false until a full run.
+- `webui.redesign` and `webui.loading-without-flicker`, the walk in Russian (ADR-0453, ba1ea978):
+  163 views at 1440 and 375 px in both themes, and all 3,215 Russian catalog texts against the
+  English: 149 problems, 142 fixed (grammar and case, plural forms for 21, 13 things with two names,
+  English left on screen, clipped texts). Left: server messages and app descriptions in English
+  (ADR-0287), the decimal point of the dashboard and Files (ADR-0297), date formats across areas.
+  The owner's look on the device is still open.
+- `testing.keyboard-upload-opens-the-file-chooser` (ADR-0454, d2991288): the listener for the file
+  chooser came too late for Enter, which clicks within its key press; the test now listens before
+  the page opens (300 presses per variant under load: 4 and 3 misses before, 0 after). Playwright's
+  Chromium build 1200 is now in the default cache, so `E2E_CHROMIUM_PATH` is no longer needed.
+- `deploy.release-images` and `system.in-app-updater` (ADR-0455, 640fabd2): `release.yml` builds
+  and pushes both images for amd64 and arm64 on a tag `v<x.y.z>` and then publishes the release;
+  `install.sh` and `update.sh [<tag>]` pull them where Docker is amd64 or arm64 and build elsewhere;
+  the in-app updater runs `update.sh --fetch` and, in a transient systemd unit, `update.sh
+  --in-app`, and the next supervisor takes over the job from the unit's result. The tab names why
+  a host cannot install (the dev device among them: its images are built by `scripts/dev/deploy.sh`).
+  Both entries need a pushed tag, public packages and the device check, the owner's.
+- `webui.toolchain-major-versions` (ADR-0456, supersedes ADR-0373; 6300ae03): SvelteKit 3.2.0,
+  Vite 8.3.8, Tailwind CSS 4.3.5, svelte-check 4.7.8, adapter-static 4.0.1, lucide-svelte 1.0.1,
+  TypeScript 6.0.3 (SvelteKit 3 takes ^6 only, so the entry stays open). Vite 8's Rolldown and
+  Lightning CSS have no riscv64 or 32-bit ARM builds, so every riscv64 and ARMv7 host takes its web
+  UI image from another machine, and the web UI's build stage runs on the builder's own platform.
+  Two looks change on purpose: a toast's left edge takes its tone, and the Updates interval field
+  its width, rules that Tailwind 3 had dropped. The browser floor is Chrome 111, Firefox 128 and
+  Safari 16.4.
+- Found at the merges: the toolchain's and the release's changes to `install.sh`, `update.sh` and
+  their tests met: amd64 and arm64 pull, riscv64 and ARMv7 build the supervisor alone; the tests
+  that expected both images built on riscv64 now expect the supervisor alone.
+- Gates on the merged batch: `make check` 11050 passed, 124 skipped, 1 xfailed, coverage 91.87
+  percent, with lint, mypy, shellcheck, svelte-check, the design and text checks, the build, ESLint
+  and Prettier; `make e2e-local` 1172 passed, 14 skipped, 0 failed (28.8 min) with Chromium build
+  1200, the first of the five full runs that the keyboard upload entry's step 3 asks for.
+- Open for the owner: the push and the pull request; a tag and public GHCR packages for the first
+  release; the deploy (the web UI's toolchain rebuilds its image); the look at the web UI in
+  Russian on the device.
 
 ### 2026-11-21: architecture.database-migrations passes on the dev device (ADR-0444)
 

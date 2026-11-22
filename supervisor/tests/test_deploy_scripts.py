@@ -556,7 +556,9 @@ class TestUpdateScript:
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert not any(call.startswith("docker pull") for call in calls)
-        assert "docker compose build --no-cache" in calls
+        # Only the supervisor: the web UI's image of riscv64 and 32-bit ARM comes from another
+        # machine (ADR-0456).
+        assert "docker compose build --no-cache supervisor" in calls
 
     def test_the_newest_release_running_changes_nothing(self, sandbox):
         _at_newer(sandbox)
@@ -694,13 +696,16 @@ class TestUpdateScript:
         assert result.returncode == 0, result.stdout + result.stderr
         assert not any(call.startswith("docker pull") for call in calls)
         assert _index(calls, "docker exec") < _index(calls, "docker compose build")
-        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build --no-cache"]
+        assert [call for call in calls if call.startswith("docker compose build")] == [
+            "docker compose build --no-cache supervisor"
+        ]
         assert (sandbox / "stub" / "build-env").read_text().splitlines() == [f"UNOS_VERSION={NEWER}"]
 
-    def test_on_a_spacemit_k1_only_the_supervisor_is_built(self, sandbox):
-        # The web UI's image of a K1 comes from another machine (ADR-0373): update.sh builds the
-        # supervisor alone, starts the web UI image that is there, and says so.
-        result, calls = _run_update(sandbox, "machine=riscv64", overrides="is_spacemit_k1() { true; }")
+    def test_on_riscv64_only_the_supervisor_is_built(self, sandbox):
+        # The web UI's image of a riscv64 host comes from another machine: its build tools publish
+        # no riscv64 binaries (ADR-0456), and Node.js crashes on the SpacemiT K1 (ADR-0373).
+        # update.sh builds the supervisor alone, starts the web UI image that is there, and says so.
+        result, calls = _run_update(sandbox, "machine=riscv64")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert [call for call in calls if call.startswith("docker compose build")] == [
@@ -708,14 +713,23 @@ class TestUpdateScript:
         ]
         assert "deploy-webui:latest" in result.stdout and "another machine" in result.stdout
 
-    def test_on_a_spacemit_k1_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
+    def test_on_riscv64_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
         # The rollback tags deploy-webui:latest as the previous image again, so the image of the
-        # new version that was loaded for the update loses its tag (ADR-0373).
-        result, calls = _run_update(sandbox, "machine=riscv64", "build-fails", overrides="is_spacemit_k1() { true; }")
+        # new version that was loaded for the update loses its tag (ADR-0373, ADR-0456).
+        result, calls = _run_update(sandbox, "machine=riscv64", "build-fails")
 
         assert result.returncode == 1
         assert "docker image tag deploy-webui:previous deploy-webui" in calls
         assert "load the web UI image of the new version again" in " ".join(result.stdout.split())
+
+    def test_on_armv7_only_the_supervisor_is_built(self, sandbox):
+        result, calls = _run_update(sandbox, "machine=armv7l")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call for call in calls if call.startswith("docker compose build")] == [
+            "docker compose build --no-cache supervisor"
+        ]
+        assert "deploy-webui:latest" in result.stdout and "linux/arm/v7" in result.stdout
 
     def test_a_failed_build_on_riscv64_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
@@ -2143,13 +2157,11 @@ class TestInstallScript:
             assert (sys / "class" / "nvme" / f"nvme{n}" / "power" / "pm_qos_latency_tolerance_us").read_text() == "0\n"
             assert (sys / "devices" / pci / "link" / "l1_aspm").read_text() == "0\n"
 
-    # On a SpacemiT K1 (is_spacemit_k1 replaced, as the device tree would answer).
-    K1 = "is_spacemit_k1() { true; }"
-
-    def test_on_a_spacemit_k1_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
-        # Node.js crashes on the K1 while it builds the web UI (nodejs/node#66845): its image comes
-        # from another machine, and install.sh builds the supervisor alone (ADR-0373).
-        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", prelude=self.K1)
+    def test_on_riscv64_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
+        # The web UI's build tools publish no riscv64 binaries (ADR-0456), and Node.js crashes on
+        # the SpacemiT K1 while it builds (nodejs/node#66845, ADR-0373): the image of a riscv64 host
+        # comes from another machine, and install.sh builds the supervisor alone.
+        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "docker image inspect deploy-webui:latest" in calls
@@ -2157,8 +2169,8 @@ class TestInstallScript:
         assert any(call.startswith("docker compose up") for call in calls)
         assert exec_start
 
-    def test_on_a_spacemit_k1_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
-        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", "no-webui-image", prelude=self.K1)
+    def test_on_riscv64_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", "no-webui-image")
         text = self._text(result)
 
         assert result.returncode == 1
@@ -2169,12 +2181,17 @@ class TestInstallScript:
         assert "docker save -o deploy-webui.tar deploy-webui:latest" in text
         assert "sudo docker load -i deploy-webui.tar" in text
 
-    def test_on_another_riscv64_host_both_images_are_built(self, tmp_path):
-        result, calls, _ = _start_install(tmp_path, "machine=riscv64", "no-webui-image")
+    def test_on_armv7_the_web_ui_image_also_comes_from_another_machine(self, tmp_path):
+        # Rolldown and Lightning CSS publish no build for linux/arm with musl, the libc of the web
+        # UI's builder (ADR-0456): an ARMv7 host takes the image of linux/arm/v7 from elsewhere too.
+        result, calls, exec_start = _start_install(tmp_path, "machine=armv7l", "no-webui-image")
+        text = self._text(result)
 
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build"]
-        assert "docker image inspect deploy-webui:latest" not in calls
+        assert result.returncode == 1
+        assert not [call for call in calls
+                    if call.startswith(("docker compose build", "docker compose up")) and "--help" not in call]
+        assert "docker buildx build --platform linux/arm/v7 -t deploy-webui:latest --load webui" in text
+        assert "linux/riscv64" not in text
 
     @pytest.mark.parametrize(
         "compatible",
@@ -5607,7 +5624,8 @@ class TestContinuousIntegration:
         # constraint nodejs~<major> makes apk fail the build on a release with another one
         # (ADR-0370).
         dockerfile = (REPO_ROOT / "webui" / "Dockerfile").read_text()
-        alpine = re.findall(r"^FROM alpine:(\d+\.\d+)@sha256:[0-9a-f]{64} AS builder$", dockerfile, re.M)
+        alpine = re.findall(r"^FROM --platform=\$BUILDPLATFORM alpine:(\d+\.\d+)@sha256:[0-9a-f]{64} AS builder$",
+                            dockerfile, re.M)
         builder = re.findall(r"^RUN apk add --no-cache nodejs~(\d+) npm$", dockerfile, re.M)
         setup_node = [
             str(step["with"]["node-version"])

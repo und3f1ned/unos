@@ -1,7 +1,7 @@
 """The colour tokens of the web UI in its two themes (webui.light-theme, ADR-0405).
 
-Every colour token of webui/tailwind.config.js is a CSS variable of webui/src/app.css with a value
-for the dark theme and one for the light theme, so that a page that uses the tokens follows the
+Every colour token of the @theme blocks of webui/src/app.css (Tailwind CSS 4, ADR-0456) is a CSS
+variable of that file with a value for the dark theme and one for the light theme, so that a page that uses the tokens follows the
 theme. The text and the controls meet WCAG AA in both themes: the contrast of each pair of tokens
 that text uses is at least 4.5:1, and that of the boundaries of controls, the focus ring and the
 graphics that carry meaning (status dots, chart lines) at least 3:1 (WCAG 1.4.3 and 1.4.11).
@@ -15,7 +15,6 @@ import pytest
 
 WEBUI = Path(__file__).resolve().parents[2] / "webui"
 APP_CSS = WEBUI / "src" / "app.css"
-CONFIG = WEBUI / "tailwind.config.js"
 THEMES = ("dark", "light")
 
 TEXT = 4.5  # WCAG 1.4.3, normal text
@@ -26,7 +25,7 @@ SURFACE = (("surface", 1.0),)
 ELEVATED = (("surface-elevated", 1.0),)
 OVERLAY = (("surface-overlay", 1.0),)
 HOVER = (("surface-hover", 1.0),)
-# .card-nested: surface-muted (half transparent, tailwind.config.js) on a card or a dialog.
+# .card-nested: surface-muted (half transparent, the @theme of app.css) on a card or a dialog.
 NESTED = (("surface-elevated", 1.0), ("surface-muted", 0.5))
 
 
@@ -122,9 +121,23 @@ def theme_colours() -> dict[str, dict[str, tuple[int, int, int]]]:
     return themes
 
 
+THEME = re.compile(r"^@theme\b[^{\n]*\{(?P<body>[^}]*)\}", re.M)
+TOKEN = re.compile(r"--color-([a-z-]+):\s*([^;]*);")
+
+
+def theme_blocks() -> str:
+    """The @theme blocks of app.css, where Tailwind CSS 4 takes the tokens (ADR-0456)."""
+    return "\n".join(match.group("body") for match in THEME.finditer(APP_CSS.read_text()))
+
+
 def config_tokens() -> set[str]:
-    """The tokens that tailwind.config.js reads from app.css: token('surface-elevated')."""
-    return set(re.findall(r"token\('([a-z-]+)'(?:,\s*[0-9.]+)?\)", CONFIG.read_text()))
+    """The colour tokens of the @theme blocks, each the variable of the themes with the same name:
+    --color-surface-elevated: rgb(var(--color-surface-elevated)), or with an opacity of its own."""
+    tokens = set()
+    for name, value in TOKEN.findall(theme_blocks()):
+        assert re.fullmatch(rf"rgb\(var\(--color-{name}\)(?: / [0-9.]+)?\)", value.strip()), (name, value)
+        tokens.add(name)
+    return tokens
 
 
 def luminance(rgb: tuple[float, float, float]) -> float:
@@ -160,15 +173,16 @@ def test_both_themes_give_every_token_a_value():
 
     assert set(themes) == set(THEMES)
     assert themes["dark"].keys() == themes["light"].keys()
-    assert config_tokens(), "tailwind.config.js reads no token of app.css"
+    assert config_tokens(), "the @theme of app.css reads no token of the themes"
     assert config_tokens() <= themes["dark"].keys(), sorted(config_tokens() - themes["dark"].keys())
 
 
 def test_the_config_has_no_colour_of_its_own():
-    """A colour written into tailwind.config.js would be the same in both themes."""
-    colours = CONFIG.read_text().split("colors:", 1)[1].split("spacing:", 1)[0]
+    """A colour written into the @theme of app.css would be the same in both themes."""
+    theme = theme_blocks()
 
-    assert re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d|hsla?\(", colours) == []
+    assert "--color-surface:" in theme
+    assert re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d|hsla?\(|oklch\(|oklab\(|color\(", theme) == []
 
 
 @pytest.mark.parametrize("theme", THEMES)

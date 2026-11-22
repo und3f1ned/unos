@@ -1,5 +1,5 @@
 import { derived, readable, writable } from 'svelte/store';
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { currentSession } from '$lib/api/client';
 import { getTheme, saveTheme, type ThemeChoice } from '$lib/api/theme';
 

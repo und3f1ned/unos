@@ -204,14 +204,18 @@ class TestRawColors:
         assert result.returncode == 1
         assert "bg-slate-800" in result.stderr and "bg-slate-700" not in result.stderr
 
-    def test_the_table_names_only_tokens_of_the_config(self, node, tmp_path):
+    def test_the_table_names_only_tokens_of_the_theme(self, node, tmp_path):
+        # The colour tokens are the --color-* variables of the @theme blocks of src/app.css
+        # (Tailwind CSS 4, ADR-0456); a variable of the themes' blocks is no token.
         webui = demo(tmp_path, {"routes/a/+page.svelte": "<p>x</p>\n"})
-        (webui / "tailwind.config.js").write_text(
-            "export default { theme: { extend: { colors: { surface: { DEFAULT: '#000' } } } } };\n"
+        (webui / "src" / "app.css").write_text(
+            "@theme inline reference {\n\t--color-surface: rgb(var(--color-surface));\n}\n"
+            "[data-theme='dark'] {\n\t--color-content: 1 2 3;\n}\n"
         )
         result = run_check(node, webui)
         assert result.returncode == 1
-        assert "lacks" in result.stderr
+        assert "the token 'content', which the @theme of src/app.css lacks" in result.stderr
+        assert "the token 'surface'," not in result.stderr
 
 
 class TestFoundations:

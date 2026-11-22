@@ -5,7 +5,7 @@
 //
 //   node scripts/runes-check.mjs [webui directory]      (default: the webui/ of this script)
 //
-// Each .svelte file of src/ is compiled as svelte.config.js builds it, in runes mode, and fails
+// Each .svelte file of src/ is compiled as vite.config.ts builds it, in runes mode, and fails
 // - when it is not in runes mode after all (`<svelte:options runes={false} />`);
 // - for what runes mode refuses: `export let`, `$:`, `$$props`, `$$restProps`, beforeUpdate;
 // - for the syntax of Svelte 4 that runes mode still takes: `on:` directives, also on a

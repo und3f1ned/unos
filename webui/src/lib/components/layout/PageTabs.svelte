@@ -41,7 +41,7 @@
 							variant="plain"
 							onclick={() => onselect(tab.id)}
 							aria-current={current ? 'true' : undefined}
-							class="relative flex items-center gap-2 h-8 px-3 rounded border text-[13px] transition-colors xl:w-full xl:h-9 xl:px-2.5 xl:border-0 xl:text-sm {current
+							class="relative flex items-center gap-2 h-8 px-3 rounded border text-[13px] transition-[color,background-color,border-color,text-decoration-color,fill,stroke] xl:w-full xl:h-9 xl:px-2.5 xl:border-0 xl:text-sm {current
 								? 'bg-brand/20 border-brand-ring text-content font-medium xl:before:absolute xl:before:left-0 xl:before:top-2 xl:before:bottom-2 xl:before:w-[3px] xl:before:rounded-r-[3px] xl:before:bg-brand-ring'
 								: 'bg-surface-elevated border-border text-content-secondary hover:bg-surface-overlay hover:text-content xl:bg-transparent'}"
 						>

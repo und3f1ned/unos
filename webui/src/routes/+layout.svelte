@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { onMount, untrack, type Snippet } from 'svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import {
@@ -97,16 +97,16 @@
 		// The page cannot read the session cookie (ADR-0397): the account comes from the server,
 		// and a 401 leads to the sign-in page. Once the session has ended in this tab, nothing asks.
 		if (!currentUser) {
-			if (knownSignedOut()) goto('/login', { replaceState: true });
+			if (knownSignedOut()) goto('/login', { replace: true });
 			else ensureUser();
 			return;
 		}
 		if (isSetupOnly(currentUser)) {
-			if (path !== TWO_FACTOR_SETUP_PATH) goto(TWO_FACTOR_SETUP_PATH, { replaceState: true });
+			if (path !== TWO_FACTOR_SETUP_PATH) goto(TWO_FACTOR_SETUP_PATH, { replace: true });
 			return;
 		}
 		if (!currentUser.is_admin && isAdminOnlyRoute(path)) {
-			goto('/', { replaceState: true });
+			goto('/', { replace: true });
 		}
 	}
 

@@ -202,7 +202,9 @@
 	<div
 		bind:this={overlay}
 		use:inStack
-		class="modal-overlay outline-none {placement === 'side' ? 'modal-overlay-side' : 'items-start overflow-y-auto p-4'}"
+		class="modal-overlay outline-hidden {placement === 'side'
+			? 'modal-overlay-side'
+			: 'items-start overflow-y-auto p-4'}"
 		{@attach (node) => on(node, 'click', handleBackdropClick)}
 		role="dialog"
 		aria-modal="true"

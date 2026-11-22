@@ -139,6 +139,9 @@
 {/if}
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0456). */
+	@reference '../../../app.css';
+
 	/* segmented. A phone: the segments fill the row's width, each from the width of its words, so
 	   that a long label never runs out of its segment. From sm: as wide as their words. */
 	.radio-segments {

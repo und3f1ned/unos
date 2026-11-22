@@ -88,6 +88,13 @@ test.describe('Confirmations and toasts', () => {
     await expect(page.getByText(OTHER.filename, { exact: true })).toHaveCount(0);
     const toast = toasts(page).locator('[data-toast="success"]');
     await expect(toast).toHaveText(`Backup ${OTHER.filename} deleted`);
+    // Its left edge takes the tone's colour, as its icon does (ADR-0432); Tailwind CSS 3 dropped the
+    // edge's rule, whose class the toast names at run time (ADR-0456).
+    const [edge, icon] = await toast.evaluate((element) => [
+      getComputedStyle(element).borderLeftColor,
+      getComputedStyle(element.querySelector('.toast-icon') as Element).color,
+    ]);
+    expect(edge).toBe(icon);
     await toast.getByRole('button', { name: 'Dismiss message' }).click();
     await expect(toast).toHaveCount(0);
     expect(shown).toEqual([]);

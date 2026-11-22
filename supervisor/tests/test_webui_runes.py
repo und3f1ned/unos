@@ -1,7 +1,7 @@
 """Every component of the web UI is a Svelte 5 component in runes mode, none in legacy mode (ADR-0427).
 
 webui/scripts/runes-check.mjs compiles each .svelte file of src/ with Svelte's compiler in runes
-mode, as svelte.config.js builds it, and fails for a component that is not in runes mode after all
+mode, as vite.config.ts builds it, and fails for a component that is not in runes mode after all
 (`<svelte:options runes={false} />`), for what runes mode refuses (`export let`, `$:`, `$$props`,
 `$$restProps`, beforeUpdate) and for the syntax of Svelte 4 that it still accepts: `on:` and `let:`
 directives, `<slot>`, a `slot` attribute, `<svelte:fragment>`, `<svelte:component>`,
@@ -16,6 +16,7 @@ Without node, or without webui/node_modules (make setup), the tests skip.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import textwrap
@@ -130,16 +131,18 @@ def test_a_ts_module_fails_for_the_imports_of_svelte_4(node, tmp_path, module, i
     assert f"src/{module}:1:" in result.stderr and found in result.stderr
 
 
-def test_the_svelte_config_compiles_the_web_ui_in_runes_mode(node):
+def test_the_vite_config_compiles_the_web_ui_in_runes_mode(node):
     # The build refuses a component of legacy mode too: every file of src/ is compiled with
-    # runes: true; only the libraries under node_modules (lucide-svelte 0.x) keep their mode.
+    # runes: true; only the libraries under node_modules (lucide-svelte) keep their mode. SvelteKit 3
+    # takes the options in its Vite plugin, in vite.config.ts (ADR-0456).
+    config = (WEBUI / "vite.config.ts").read_text()
+    assert re.search(r"sveltekit\(\{.*\bdynamicCompileOptions: compileOptions,", config, re.S)
     script = (
-        "const { default: config } = await import(process.argv[1]);"
-        "const options = config.vitePlugin.dynamicCompileOptions;"
+        "const { compileOptions: options } = await import(process.argv[1]);"
         "console.log(JSON.stringify([options({ filename: process.argv[2] }), options({ filename: process.argv[3] })]));"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", script, (WEBUI / "svelte.config.js").as_uri(),
+        [node, "--input-type=module", "-e", script, (WEBUI / "vite.config.ts").as_uri(),
          str(WEBUI / "src" / "routes" / "+page.svelte"), str(WEBUI / "node_modules" / "lucide-svelte" / "dist" / "Icon.svelte")],
         capture_output=True, text=True, timeout=60, cwd=WEBUI,
     )

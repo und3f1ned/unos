@@ -38,7 +38,7 @@
 	// Nothing to set up: no requirement applies to this account, or no longer. Before the markup
 	// is drawn, also the first time; whoever changes the account ($user) tells it.
 	$effect.pre(() => {
-		if ($user && !required && !done) untrack(() => goto('/', { replaceState: true }));
+		if ($user && !required && !done) untrack(() => goto('/', { replace: true }));
 	});
 
 	async function start() {

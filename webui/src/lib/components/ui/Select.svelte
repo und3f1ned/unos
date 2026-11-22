@@ -278,6 +278,9 @@
 </div>
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0456). */
+	@reference '../../../app.css';
+
 	/* The trigger looks like Input's field (ADR-0428); the list is a popover. */
 	.select-trigger {
 		@apply w-full min-h-9 px-3 py-1.5 bg-surface-overlay border border-border-strong rounded text-content
@@ -290,7 +293,7 @@
 
 	.select-trigger:focus,
 	.select-trigger-open {
-		@apply outline-none border-brand-ring;
+		@apply outline-hidden border-brand-ring;
 		box-shadow:
 			0 0 0 1px rgb(var(--color-brand-ring)),
 			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
@@ -314,7 +317,8 @@
 
 	.select-icon {
 		@apply w-4 h-4 text-content-secondary flex-shrink-0;
-		transition: transform var(--dur-base) var(--ease);
+		/* rotate-180 sets rotate, not transform, in Tailwind CSS 4 (ADR-0456). */
+		transition: rotate var(--dur-base) var(--ease);
 	}
 
 	.select-icon-open {

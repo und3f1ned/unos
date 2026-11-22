@@ -264,7 +264,7 @@
 				{@const app = appName(container)}
 				{@const ports = hostPorts(container)}
 				<div
-					class="card flex h-full flex-col gap-3 hover:bg-surface-overlay cursor-pointer transition-colors {selected.has(
+					class="card flex h-full flex-col gap-3 hover:bg-surface-overlay cursor-pointer transition-[color,background-color,border-color,text-decoration-color,fill,stroke] {selected.has(
 						container.id
 					)
 						? 'ring-1 ring-brand-ring'

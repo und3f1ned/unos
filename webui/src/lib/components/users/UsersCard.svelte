@@ -135,6 +135,9 @@
 </Card>
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0456). */
+	@reference '../../../app.css';
+
 	.users-actions {
 		@apply w-px whitespace-nowrap;
 	}

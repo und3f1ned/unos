@@ -23,10 +23,8 @@ export default defineConfig(
 				// The scripts of components in TypeScript, with its types for the rules that read them.
 				projectService: true,
 				extraFileExtensions: ['.svelte'],
-				// svelte.config.js compiles every file of src/ in runes mode (ADR-0427). The parser
-				// reads the rest of that file itself, as far as it can without running it: the module
-				// passed in would put its functions into the configuration, which --cache and
-				// --print-config cannot store.
+				// vite.config.ts compiles every file of src/ in runes mode (ADR-0427); SvelteKit 3 has
+				// no svelte.config.js for the parser to read (ADR-0456).
 				svelteFeatures: { runes: true }
 			}
 		}

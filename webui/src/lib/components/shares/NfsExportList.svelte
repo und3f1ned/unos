@@ -113,6 +113,9 @@
 </section>
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0456). */
+	@reference '../../../app.css';
+
 	.nfs-head {
 		@apply flex items-start justify-between gap-3;
 	}

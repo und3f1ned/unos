@@ -59,7 +59,7 @@
 	<!-- Interface Header -->
 	<Button
 		variant="plain"
-		class="w-full p-4 flex items-center justify-between hover:bg-surface-overlay transition-colors"
+		class="w-full p-4 flex items-center justify-between hover:bg-surface-overlay transition-[color,background-color,border-color,text-decoration-color,fill,stroke]"
 		aria-expanded={expanded}
 		onclick={ontoggle}
 	>

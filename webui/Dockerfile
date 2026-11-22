@@ -6,7 +6,13 @@
 # major version: Alpine 3.22 has Node.js 22 on every platform, the same major version as the
 # frontend job of .github/workflows/test.yml and "engines" in package.json
 # (supervisor/tests/test_deploy_scripts.py checks it).
-FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS builder
+#
+# The builder runs on the platform that builds, whatever the image's (BuildKit, which docker
+# compose and buildx use): the static files are the same on every platform, and the build tools
+# (Vite's Rolldown and Lightning CSS) publish no binaries for linux/riscv64 nor for linux/arm/v7
+# with musl, so the web UI of such a host is built on another machine
+# (`docker buildx build --platform linux/riscv64`, ADR-0456).
+FROM --platform=$BUILDPLATFORM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS builder
 
 RUN apk add --no-cache nodejs~22 npm
 
