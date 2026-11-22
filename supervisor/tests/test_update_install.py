@@ -339,6 +339,18 @@ class TestInstallUpdate:
         assert progress.status == UpdateStatus.FAILED
         assert (await api.get(f"{API}/progress")).json()["can_rollback"] is True
 
+    async def test_images_that_take_too_long_fail_the_update(self, world, api, monkeypatch):
+        """Each step of the installer has its deadline (_within)."""
+        monkeypatch.setattr(updater_module, "FETCH_TIMEOUT_SECONDS", 0.05)
+        world.installer.fetch = asyncio.Event()  # never set
+
+        await api.post(f"{API}/install")
+        progress = await _until_done(world)
+
+        assert progress.status == UpdateStatus.FAILED
+        assert progress.error == f"Getting the images of {RELEASE} took longer than 0.05 seconds"
+        assert world.installer.calls == [("fetch", RELEASE)]
+
     async def test_a_unit_that_does_not_start_fails_the_update(self, world, api):
         world.installer.start = installer_module.InstallerError("The unit unos-update-1 did not start: Access denied")
 
@@ -544,6 +556,31 @@ class TestTheJobPassesToTheNextSupervisor:
         assert UNIT.fullmatch(handover["unit"])
         assert handover["result"].endswith("/update.result")
         assert (handover["from_version"], handover["changelog"]) == (INSTALLED, "Fixes and features.")
+
+    async def test_a_stop_that_lands_as_the_unit_starts_ends_the_job(self, world, api):
+        """compose stops the supervisor just as systemd-run answers: the job ends there, cancelled, and
+        leaves the unit to the next supervisor. asyncio.wait_for of Python 3.11 swallowed a cancel that
+        came as the step it awaited ended, and the job went on to follow the unit until its deadline
+        (a run of TestTheAuditLog waited FOLLOW_TIMEOUT_SECONDS in _handed_over)."""
+        real = world.installer.start_switch
+
+        async def start_switch(unit, action, tag, backup, result):
+            await real(unit, action, tag, backup, result)
+            world.updater._job.cancel()  # the stop lands as the step ends
+
+        world.installer.start_switch = start_switch
+        world.installer.outcome = None
+        await api.post(f"{API}/install")
+        job = world.updater._job
+        try:
+            done, _ = await asyncio.wait({job}, timeout=2)
+            assert job in done and job.cancelled(), "the job went on after the stop"
+        finally:
+            job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+        # The next supervisor finds the job handed over.
+        stored = _stored(world)
+        assert (stored["status"], stored["handover"]["unit"]) == ("installing", world.installer.switches[-1].unit)
 
     async def test_the_release_completes_the_update_it_finds_handed_over(self, world, api, monkeypatch):
         switch = await _handed_over(world, api)
