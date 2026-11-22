@@ -73,6 +73,8 @@ A step that is up to date is skipped: each environment remembers the SHA-256 of 
 installed from, so a rerun installs only what changed. Steps 1-4 need the network.
 `scripts/setup.sh --check` only reports what is missing or outdated; it changes nothing and needs
 no network. Python 3.11 is found as `python3.11` on `PATH`, or set `PYTHON311=/path/to/python`.
+The `bootstrap` job of the weekly Audit workflow runs `make setup` on a fresh runner
+([Scheduled Maintenance](#scheduled-maintenance)).
 
 The make targets use these environments when they exist, and `python3`, `ruff`, `mypy`,
 `shellcheck`, `pip-audit` and `npm` from `PATH` otherwise; override them with `PYTHON=`, `RUFF=`,
@@ -679,6 +681,15 @@ that this page has the commands of the lint and frontend jobs).
   image or a newer package fixes it; an exception goes into `.trivyignore.yaml` with the package
   (`purls`), its reason (`statement`) and a date at most a year on (`expired_at`), after which
   trivy reports it again.
+- The `bootstrap` job of `audit.yml` (Bootstrap (make setup)) runs `make setup` every Monday and
+  on demand on a fresh ubuntu-latest runner (ADR-0451), as a new checkout is set up: a checkout with
+  the whole history and without the token, Python 3.11 and Node.js 22 from setup-python and
+  setup-node without their caches, then `make setup`, which installs everything from the indexes
+  and ends with its baseline, `make check-fast` and then `make smoke`. A missing prerequisite, a
+  failed install or a red baseline exits 1 and fails the run; its last lines name the part. The
+  runner image, the Python and Node.js releases, the indexes and Playwright's browser download
+  change without a change here, which is why the job is weekly and not in the CI workflow, which
+  is off (ADR-0230). Chromium is installed but not started there.
 - The monthly local passes are listed in [maintenance.md](maintenance.md).
 
 ### Running the CI Checks Locally

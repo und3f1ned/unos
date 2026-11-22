@@ -1474,7 +1474,8 @@ STUBS = {
         esac""",
     "venv-python": r"""
         echo "$0 $*" >> "$STUB_LOG"
-        case "$1" in -c) echo 3.11 ;; esac""",
+        case "$1" in -c) echo 3.11 ;; esac
+        if [ "$1 $2" = "-m pip" ] && [ "${STUB_FAILING_STEP:-}" = pip ]; then exit 1; fi""",
     "node": r"""
         echo "node $*" >> "$STUB_LOG"
         case "$1" in --version) echo v22.11.0 ;; esac""",
@@ -1482,7 +1483,8 @@ STUBS = {
         echo "npm $*" >> "$STUB_LOG"
         case "$1" in
             --version) echo 10.9.0 ;;
-            ci) mkdir -p node_modules/.bin && cp "$STUB_DIR/playwright" node_modules/.bin/playwright ;;
+            ci) [ "${STUB_FAILING_STEP:-}" = npm-ci ] && exit 1
+                mkdir -p node_modules/.bin && cp "$STUB_DIR/playwright" node_modules/.bin/playwright ;;
         esac""",
     "playwright": r"""
         echo "playwright $*" >> "$STUB_LOG"
@@ -1490,6 +1492,7 @@ STUBS = {
             echo "browser: chromium version 1"
             echo "  Install location:    $STUB_DIR/browsers/chromium"
         elif [ "$1" = install ]; then
+            [ "${STUB_FAILING_STEP:-}" = chromium ] && exit 1
             mkdir -p "$STUB_DIR/browsers/chromium"
         fi""",
     "make": r"""
@@ -1614,6 +1617,23 @@ def test_a_red_baseline_is_named(sandbox, target, calls):
     assert result.returncode == 1
     assert f"setup.sh: baseline red: make {target} failed before any change" in result.stderr
     assert [call for call in made if call in ("make check-fast", "make smoke")] == calls
+
+
+@pytest.mark.parametrize("step, message", [
+    ("pip", "pip install for supervisor/.venv failed"),
+    ("npm-ci", "npm ci failed"),
+    ("chromium", "installing Chromium failed"),
+])
+def test_a_failed_install_fails_the_setup_before_the_baseline(sandbox, step, message):
+    """A network step that fails stops make setup with status 1, before the baseline: what fails the
+    bootstrap job of the Audit workflow when an install breaks on a fresh runner."""
+    _, run, _, _ = sandbox
+
+    result, calls = run(STUB_FAILING_STEP=step)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"setup.sh: {message}" in result.stderr
+    assert [call for call in calls if call in ("make check-fast", "make smoke")] == []
 
 
 def test_setup_keeps_an_existing_dev_env_and_never_shows_it(sandbox):
@@ -1776,6 +1796,43 @@ def test_the_audit_workflow_checks_the_catalog_images_as_make_does():
         dry_run = make("-n", target, "PYTHON=python").stdout.splitlines()
         assert dry_run == [runs[job][-1]], (job, dry_run)
     assert runs["tags"][-1] == "python scripts/catalog-platforms.py tags"
+
+
+def test_the_audit_workflow_runs_make_setup_on_a_fresh_runner():
+    """The bootstrap job: every Monday and on demand, in the weekly Audit workflow that
+    stays on (ADR-0230), make setup on a fresh ubuntu-latest runner, from a checkout as git clone
+    makes it, with only the prerequisites that setup.sh checks and without a cache. make setup ends
+    with its baseline, make check-fast and then make smoke, and exits 1 when a prerequisite is
+    missing, an install fails or the baseline is red (the setup tests above run it with stubs):
+    nothing in the job turns that into a pass, and the step runs with make setup's own tools."""
+    workflow = _workflow("audit.yml")
+    trigger = _on(workflow)
+    job = workflow["jobs"]["bootstrap"]
+    checkout, python, node, setup = job["steps"]
+    engines = json.loads((REPO_ROOT / "webui" / "package.json").read_text())["engines"]
+
+    # The trigger: the weekly schedule and on demand; no push and no pull request.
+    assert set(trigger) == {"schedule", "workflow_dispatch"}
+    assert [re.fullmatch(r"\d+ \d+ \* \* [0-6]", entry["cron"]) is not None for entry in trigger["schedule"]] == [True]
+    # A fresh runner of its own on every run: no needs, if, continue-on-error, env, defaults,
+    # container, services or strategy.
+    assert set(job) == {"name", "runs-on", "timeout-minutes", "steps"}
+    assert job["runs-on"] == "ubuntu-latest" and 0 < job["timeout-minutes"] <= 30
+    assert not {"env", "defaults"} & set(workflow)
+    # The whole history, as a clone has it: test_feature_list.py compares the ledger with the one at
+    # the merge base with origin/main. The token is not kept in the checkout.
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    # The prerequisites of setup.sh, as a workstation has them, without setup-python's or
+    # setup-node's cache: every package comes from its index.
+    assert python["uses"].startswith("actions/setup-python@") and python["with"] == {"python-version": "3.11"}
+    assert node["uses"].startswith("actions/setup-node@") and node["with"] == {"node-version": "22"}
+    assert engines == {"node": ">=22"}
+    # The one command the owner runs, exactly, with no shell, environment or directory of its own.
+    assert set(setup) == {"name", "run"} and setup["run"] == "make setup"
+    for step in job["steps"]:
+        assert not {"if", "continue-on-error", "env", "shell", "working-directory"} & set(step), step
+    assert make("-n", "setup").stdout.splitlines() == ["scripts/setup.sh"]
 
 
 def test_no_workflow_merges_anything():
