@@ -28,7 +28,7 @@ export const en = {
 	'updates.how.title': 'How to update',
 	'updates.how.run': 'UNOS is updated on the host, with its update script. Run it there as root:',
 	'updates.how.details':
-		'It backs up the database and the data volume, builds the new version while UNOS keeps running, and starts the previous version again if the new one does not answer. The web interface cannot install or roll back updates on this NAS yet.',
+		'It gets the images of the newest release while UNOS keeps running, backs up the database and the data volume, and starts the previous version again, with the database of the backup, if the new one does not answer. The web interface cannot install or roll back updates on this NAS.',
 	'updates.how.more': 'What the script does',
 	// The server's reason why the web interface cannot install releases here (English).
 	'updates.how.why': 'Why not from here',
@@ -116,7 +116,7 @@ export const ru: Translation<typeof en> = {
 	'updates.how.title': 'Как обновить',
 	'updates.how.run': 'UNOS обновляется на хосте своим сценарием обновления. Запустите его там от имени root:',
 	'updates.how.details':
-		'Сценарий создаёт резервную копию базы данных и тома данных, собирает новую версию, пока UNOS продолжает работать, и снова запускает прежнюю версию, если новая не отвечает. На этом NAS веб-интерфейс пока не устанавливает и не откатывает обновления.',
+		'Сценарий получает образы новейшего выпуска, пока UNOS продолжает работать, создаёт резервную копию базы данных и тома данных и снова запускает прежнюю версию с базой данных из резервной копии, если новая не отвечает. На этом NAS веб-интерфейс не устанавливает и не откатывает обновления.',
 	'updates.how.more': 'Что делает сценарий',
 	'updates.how.why': 'Почему не отсюда',
 

@@ -63,8 +63,12 @@ class Settings(BaseSettings):
     mounts_base_path: str = "/mnt"
     # The volume of the served certificate, which only this container and the web UI's mount (ADR-0404).
     served_certificate_dir: str = "/served-certificate"
-    # Where the updater keeps a copy of the database and of /etc/unos before an update (updates/updater.py).
+    # Where the updater keeps a copy of the database before an update (updates/updater.py), on the host's
+    # disk, which deploy/docker-compose.yml mounts at the same path (ADR-0443).
     update_backup_dir: str = "/var/lib/unos/backups"
+    # The host's checkout that install.sh made, whose deploy/update.sh switches to a release on the host
+    # for the in-app updater (updates/installer.py, ADR-0419).
+    install_dir: str = "/opt/unos"
 
     # Docker
     docker_socket: str = "/var/run/docker.sock"
@@ -85,7 +89,7 @@ class Settings(BaseSettings):
     # Debug mode - enables more permissive CORS for development
     debug_mode: bool = False
 
-    @field_validator("fstab_path", "mounts_base_path", "served_certificate_dir", "update_backup_dir")
+    @field_validator("fstab_path", "mounts_base_path", "served_certificate_dir", "update_backup_dir", "install_dir")
     @classmethod
     def _absolute(cls, value: str) -> str:
         if not os.path.isabs(value):

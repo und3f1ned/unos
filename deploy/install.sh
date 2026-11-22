@@ -3,7 +3,10 @@
 # UNOS (Universal NAS Open Software) Installation Script
 # https://github.com/und3f1ned/unos
 #
-# This script installs UNOS on a fresh Debian/Ubuntu system
+# This script installs the newest release of UNOS (a tag v<x.y.z>) on a fresh
+# Debian/Ubuntu system. On AMD64 and ARM64 it pulls the release's images from
+# GHCR, where .github/workflows/release.yml publishes them; on RISCV64, which
+# has none, it builds them from the release's checkout (ADR-0050, ADR-0373).
 # Supports: Debian 11+, Ubuntu 22.04+, ARM64 and AMD64; on RISCV64 Debian 13+
 # and Ubuntu 24.04+
 #
@@ -20,7 +23,13 @@ NC='\033[0m' # No Color
 # Configuration
 UNOS_INSTALL_DIR="${UNOS_INSTALL_DIR:-/opt/unos}"
 UNOS_REPO="${UNOS_REPO:-https://github.com/und3f1ned/unos.git}"
-UNOS_BRANCH="${UNOS_BRANCH:-main}"
+# Where release.yml publishes the images of a release: <registry>/unos-<service>:<x.y.z>
+# (ADR-0050). update.sh has the same.
+UNOS_REGISTRY="${UNOS_REGISTRY:-ghcr.io/und3f1ned}"
+# A release's tag, v<x.y.z> without leading zeros. update.sh has the same.
+RELEASE_TAG='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+# Compose services; their containers are named unos-<service>.
+SERVICES=(supervisor webui)
 # Seconds `docker compose up` (here and in the systemd unit) waits for the
 # supervisor to become healthy; webui starts only then. As long as Docker can
 # take to report the supervisor healthy or unhealthy: start_period +
@@ -320,23 +329,68 @@ setup_directories() {
     log_success "Directories created"
 }
 
-# Clone or download UNOS
+# The newest release among the tags on standard input, one per line: by
+# version (v1.10.0 after v1.9.0). update.sh has the same.
+newest_release() {
+    grep -E "$RELEASE_TAG" | sort -V | tail -n 1
+}
+
+# Whether GHCR has images for this host's Docker: release.yml builds
+# linux/amd64 and linux/arm64; riscv64 and 32-bit arm have none (ADR-0373,
+# deploy.riscv64-release-images). The daemon's architecture, which a pull
+# takes, not the kernel's: a 32-bit userland on a 64-bit Arm kernel runs arm
+# images. update.sh has the same.
+release_images_here() {
+    case "$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" in
+        amd64 | arm64) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# The image of the service $1 of the release $2 on GHCR (v1.3.0: 1.3.0), and
+# the name compose starts it by: its project (deploy, the folder of
+# docker-compose.yml) and the service. update.sh has the same.
+release_image() { echo "$UNOS_REGISTRY/unos-$1:${2#v}"; }
+local_image() { echo "deploy-$1"; }
+
+# Clone UNOS and check out its newest release, a detached HEAD at the tag
+# (ADR-0050). A second run fetches the tags and checks out the newest again;
+# a tag that moved on origin stops it (git refuses to move it here).
 download_unos() {
     log_info "Downloading UNOS..."
-    
+
     if [ -d "$UNOS_INSTALL_DIR/.git" ]; then
-        log_info "UNOS directory exists, pulling latest..."
-        cd "$UNOS_INSTALL_DIR"
-        git fetch origin
-        git checkout "$UNOS_BRANCH"
-        git pull origin "$UNOS_BRANCH"
+        log_info "UNOS directory exists, fetching its releases..."
+        git -C "$UNOS_INSTALL_DIR" fetch --quiet --tags origin
     else
-        # Clone repository
         rm -rf "$UNOS_INSTALL_DIR"
-        git clone --branch "$UNOS_BRANCH" "$UNOS_REPO" "$UNOS_INSTALL_DIR"
+        git clone --quiet --no-checkout "$UNOS_REPO" "$UNOS_INSTALL_DIR"
     fi
-    
-    log_success "UNOS downloaded to $UNOS_INSTALL_DIR"
+
+    local tag
+    tag=$(git -C "$UNOS_INSTALL_DIR" tag --list 'v*' | newest_release)
+    if [ -z "$tag" ]; then
+        log_error "$UNOS_REPO has no release yet (a tag v<x.y.z>): there is nothing to install. The system packages are installed; UNOS is not."
+        exit 1
+    fi
+    git -C "$UNOS_INSTALL_DIR" -c advice.detachedHead=false checkout --quiet --detach "refs/tags/$tag"
+
+    log_success "UNOS $tag downloaded to $UNOS_INSTALL_DIR"
+}
+
+# The release's images from GHCR under the names compose starts; their own
+# names go, so that update.sh's next pull is the only copy (ADR-0050).
+pull_release_images() {
+    local service ref
+    for service in "${SERVICES[@]}"; do
+        ref=$(release_image "$service" "$1")
+        if ! docker pull --quiet "$ref"; then
+            log_error "Could not pull $ref (docker's error is above): is $UNOS_REGISTRY reachable, and are its packages public? Run install.sh again."
+            exit 1
+        fi
+        docker image tag "$ref" "$(local_image "$service")"
+        docker image rm "$ref" || true
+    done
 }
 
 # Prepare the optional environment file read by docker compose and the
@@ -538,12 +592,12 @@ EOF
     log_success "Network discovery configured: Windows and macOS list this server"
 }
 
-# Build and start UNOS containers
+# Get the release's images and start the UNOS containers
 start_unos() {
-    log_info "Building and starting UNOS..."
-    
+    log_info "Starting UNOS..."
+
     cd "$UNOS_INSTALL_DIR/deploy"
-    
+
     # Source optional overrides (comments allowed)
     if [ -f /etc/unos/secrets.env ]; then
         set -a
@@ -551,18 +605,29 @@ start_unos() {
         . /etc/unos/secrets.env
         set +a
     fi
-    
-    # Build containers. The supervisor image carries the version of the
-    # checkout, which the web interface shows (ADR-0234). On a SpacemiT K1
-    # only the supervisor: the web UI's image comes from another machine
-    # (require_k1_webui_image, ADR-0373).
-    local services=()
-    if is_spacemit_k1; then
-        require_k1_webui_image
-        services=(supervisor)
+
+    # The release of the checkout (download_unos), whose version the images
+    # carry and the web interface shows (ADR-0234).
+    local version
+    version=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown)
+    if release_images_here; then
+        # AMD64 and ARM64: the release's images from GHCR; nothing is built here.
+        if ! [[ $version =~ $RELEASE_TAG ]]; then
+            log_error "$UNOS_INSTALL_DIR is at $version, not at a release (a tag v<x.y.z>), whose images it could pull. Run install.sh again."
+            exit 1
+        fi
+        pull_release_images "$version"
+    else
+        # RISCV64 has no release images (ADR-0373): they are built from the
+        # release's checkout. On a SpacemiT K1 only the supervisor: the web
+        # UI's image comes from another machine (require_k1_webui_image).
+        local services=()
+        if is_spacemit_k1; then
+            require_k1_webui_image
+            services=(supervisor)
+        fi
+        UNOS_VERSION=$version docker compose build "${services[@]}"
     fi
-    UNOS_VERSION=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown) \
-        docker compose build "${services[@]}"
 
     # Start containers: webui once the supervisor is healthy.
     # --remove-orphans: a re-run removes the containers of services that a

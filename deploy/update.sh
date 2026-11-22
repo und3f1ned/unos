@@ -1,27 +1,53 @@
 #!/bin/bash
 #
 # UNOS Update Script
-# Updates UNOS to the latest version of $UNOS_BRANCH.
+# Updates UNOS to a release, a git tag v<x.y.z> (ADR-0050):
 #
-# UNOS keeps running while the new images are built, so a failed build changes
-# nothing. The running images are tagged :previous first; if the new version
-# does not start or does not answer its health check, the previous images and
-# source revision are started again. Only one update runs at a time (a flock
-# on /run/unos-update.lock).
+#   sudo update.sh [v<x.y.z>]   the newest release of origin, or the one named
+#
+# The release's images come from GHCR, where .github/workflows/release.yml
+# publishes them, and are pulled while UNOS keeps running, so a release that
+# cannot be had changes nothing; on a host without release images (riscv64,
+# ADR-0373) they are built from the release's checkout instead. Then the
+# database and the data volume are backed up, the running images are tagged
+# :previous, the release is checked out and started. If it does not start or
+# does not answer its health check, it is stopped, the backup's database is put
+# back, and the previous images and checkout start again. Only one update runs
+# at a time (a flock on /run/unos-update.lock).
+#
+# The in-app updater of System > Updates runs it too
+# (supervisor/src/updates/installer.py), without a terminal:
+#
+#   update.sh --fetch v<x.y.z>     the tag and its images; nothing else changes
+#   update.sh --in-app update|rollback --backup <folder> --result <file> v<x.y.z>
+#                                  in a transient systemd unit: no question, no
+#                                  backup of its own (the supervisor's
+#                                  <folder>/unos.db), and how it ended in <file>
+#
+# A rollback starts an older release with the backup's database, the live
+# database's files renamed aside; if that release does not answer, they come
+# back with the version it came from.
 #
 
 set -e
 
-# Colors
+# Colors, on a terminal only: the in-app updater reads the messages.
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+if [ ! -t 1 ]; then
+    RED='' GREEN='' YELLOW='' BLUE='' NC=''
+fi
 
 # Configuration
 UNOS_INSTALL_DIR="${UNOS_INSTALL_DIR:-/opt/unos}"
-UNOS_BRANCH="${UNOS_BRANCH:-main}"
+# Where release.yml publishes the images of a release: <registry>/unos-<service>:<x.y.z>
+# (ADR-0050). install.sh has the same.
+UNOS_REGISTRY="${UNOS_REGISTRY:-ghcr.io/und3f1ned}"
+# A release's tag, v<x.y.z> without leading zeros. install.sh has the same.
+RELEASE_TAG='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 BACKUP_DIR="/var/lib/unos/backups"
 SECRETS_FILE="/etc/unos/secrets.env"
 # Seconds the new version gets to answer over HTTP and HTTPS once
@@ -50,19 +76,112 @@ LOCK_DIR=/run
 LOCK_FILE="$LOCK_DIR/unos-update.lock"
 [ -d "$LOCK_DIR" ] || LOCK_FILE=/tmp/unos-update.lock
 
+# The arguments (parse_args): update (by hand), fetch or in-app; for in-app,
+# update or rollback, the supervisor's backup folder and the result file.
+MODE=update
+IN_APP_ACTION=""
+REQUESTED_TAG=""
+RESULT_FILE=""
+
 # Set while the update runs.
 PREVIOUS_REV=""
 CURRENT_VERSION="unknown"
 NEW_VERSION="unknown"
 BACKUP_PATH=""
 IMAGE_REFS=()
+# The host folder of the supervisor's /data, the unos-data volume (tag_previous_images).
+DATA_FOLDER=""
 # Where the update is, for on_interrupt: build, restart, rollback or done.
 UPDATE_STAGE=""
+# The first error, for the result file; ok or failed once a rollback ended.
+FIRST_ERROR=""
+ROLLBACK_RESULT=""
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_error() {
+    [ -n "$FIRST_ERROR" ] || FIRST_ERROR=$1
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# A wrong argument: nothing has changed yet.
+usage_error() {
+    log_error "$1. Nothing was changed."
+    echo "  Usage: $0 [v<x.y.z>]"
+    exit 1
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --fetch) MODE=fetch ;;
+            --in-app | --backup | --result)
+                [ $# -ge 2 ] || usage_error "$1 needs a value"
+                case "$1" in
+                    --in-app) MODE=in-app IN_APP_ACTION=$2 ;;
+                    --backup) BACKUP_PATH=$2 ;;
+                    --result) RESULT_FILE=$2 ;;
+                esac
+                shift
+                ;;
+            -*) usage_error "Unknown option $1" ;;
+            *)
+                [ -z "$REQUESTED_TAG" ] || usage_error "One release at a time, not $REQUESTED_TAG and $1"
+                REQUESTED_TAG=$1
+                ;;
+        esac
+        shift
+    done
+    if [ -n "$REQUESTED_TAG" ] && ! [[ $REQUESTED_TAG =~ $RELEASE_TAG ]]; then
+        usage_error "$REQUESTED_TAG is not a release (a tag v<x.y.z>)"
+    fi
+    if [ "$MODE" != update ] && [ -z "$REQUESTED_TAG" ]; then
+        usage_error "--$MODE needs the release"
+    fi
+    if [ "$MODE" != in-app ]; then
+        [ -z "$BACKUP_PATH$RESULT_FILE" ] || usage_error "--backup and --result go with --in-app"
+        return 0
+    fi
+    case "$IN_APP_ACTION" in
+        update | rollback) ;;
+        *) usage_error "--in-app takes update or rollback, not \"$IN_APP_ACTION\"" ;;
+    esac
+    [[ $RESULT_FILE == /* ]] || usage_error "--in-app needs --result <absolute file>"
+    [ -f "$BACKUP_PATH/unos.db" ] || usage_error "--in-app needs --backup <folder with unos.db>"
+}
+
+# The in-app modes, on a host that has release images only (release_images_here).
+check_in_app_host() {
+    [ "$MODE" = update ] && return 0
+    release_images_here && return 0
+    log_error "GHCR has no release images for this host's Docker ($(docker version --format '{{.Server.Arch}}' 2>/dev/null || echo unknown); riscv64 waits for its own, ADR-0373): update with $0 by hand, which builds them here. Nothing was changed."
+    exit 1
+}
+
+# In-app: how the update ended, for the supervisor that follows the unit
+# (updater.py): success, rolled-back or failed, then the first error. Written
+# whole and renamed into place, readable by root only, also when update.sh
+# stops early.
+# shellcheck disable=SC2329 # the EXIT trap of main runs it
+write_result() {
+    local status=$? outcome=failed message=$FIRST_ERROR
+    if [ "$status" -eq 0 ]; then
+        outcome=success message=""
+    elif [ "$ROLLBACK_RESULT" = ok ]; then
+        outcome=rolled-back
+    elif [ -n "$DATABASE_PROBLEM" ]; then
+        message="$message; the rollback to $CURRENT_VERSION failed too: $DATABASE_PROBLEM"
+    elif [ "$ROLLBACK_RESULT" = failed ]; then
+        message="$message; the rollback to $CURRENT_VERSION failed too: UNOS did not come back"
+    fi
+    [ "$status" -eq 0 ] || [ -n "$message" ] || message="update.sh ended with status $status"
+    (
+        umask 077
+        printf '%s\n%s\n' "$outcome" "$message" > "$RESULT_FILE.partial" &&
+            mv -f "$RESULT_FILE.partial" "$RESULT_FILE"
+    ) || echo "Could not write $RESULT_FILE" >&2
+}
 
 print_header() {
     echo ""
@@ -197,19 +316,12 @@ check_compose_wait() {
     fi
 }
 
-# Refuse to update a checkout with local changes or on another branch. This
-# script used to stash local changes, which silently replaced a deployed but
-# unmerged change (e.g. a security fix) with the upstream code.
+# Refuse to update a checkout with local changes. This script used to stash
+# local changes, which silently replaced a deployed but unmerged change (e.g.
+# a security fix) with the upstream code.
 check_worktree() {
     cd "$UNOS_INSTALL_DIR" || exit 1
-    local branch changes
-    branch=$(git symbolic-ref --quiet --short HEAD) || branch=""
-    if [ "$branch" != "$UNOS_BRANCH" ]; then
-        log_error "$UNOS_INSTALL_DIR is on ${branch:-a detached HEAD}, not on branch $UNOS_BRANCH. Nothing was changed."
-        echo "  To update the checked-out branch: sudo UNOS_BRANCH=${branch:-<branch>} $0"
-        echo "  To switch to $UNOS_BRANCH:   cd $UNOS_INSTALL_DIR && sudo git checkout $UNOS_BRANCH"
-        exit 1
-    fi
+    local changes
     # Respects .gitignore (node_modules, build output, __pycache__, .env, ...).
     changes=$(git status --porcelain)
     if [ -n "$changes" ]; then
@@ -231,40 +343,108 @@ get_current_version() {
     log_info "Current version: $CURRENT_VERSION"
 }
 
-check_for_updates() {
-    log_info "Checking for updates..."
+# The newest release among the tags on standard input, one per line: by
+# version (v1.10.0 after v1.9.0). install.sh has the same.
+newest_release() {
+    grep -E "$RELEASE_TAG" | sort -V | tail -n 1
+}
 
+# Whether the release $1 is newer than the version $2.
+newer_release() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+}
+
+# NEW_VERSION: the release named, or the newest of origin. By hand and with
+# --fetch its tag alone is fetched: a tag that exists here already must name
+# the same commit, or git refuses to move it. --in-app takes the tag that
+# --fetch brought, without the network.
+choose_release() {
     cd "$UNOS_INSTALL_DIR" || exit 1
-    # A refspec with a destination, so that git also fetches the tags that
-    # point into the branch's history: git describe names the new images
-    # after a release tagged since the install was cloned (ADR-0234).
-    # `git fetch origin <branch>` fetches no tags. A tag that exists here
-    # already stays as it is, where --tags would fail on one that moved.
-    git fetch --quiet origin "+refs/heads/$UNOS_BRANCH:refs/remotes/origin/$UNOS_BRANCH"
-
-    local behind ahead
-    behind=$(git rev-list --count "HEAD..origin/$UNOS_BRANCH")
-    ahead=$(git rev-list --count "origin/$UNOS_BRANCH..HEAD")
-
-    if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
-        log_error "$UNOS_BRANCH has $ahead local commit(s) that are not on origin/$UNOS_BRANCH. Nothing was changed."
-        echo "  Rebase them onto the update first: cd $UNOS_INSTALL_DIR && sudo git rebase origin/$UNOS_BRANCH"
-        echo "  Then run this script again."
+    if [ "$MODE" != in-app ]; then
+        if [ -z "$REQUESTED_TAG" ]; then
+            local tags
+            if ! tags=$(git ls-remote --tags --refs origin 'v*'); then
+                log_error "Could not ask origin for its releases (git's error is above). Nothing was changed."
+                exit 1
+            fi
+            REQUESTED_TAG=$(awk -F 'refs/tags/' '{ print $2 }' <<< "$tags" | newest_release)
+            if [ -z "$REQUESTED_TAG" ]; then
+                log_error "origin has no release (a tag v<x.y.z>) to update to. Nothing was changed."
+                exit 1
+            fi
+        fi
+        if ! git fetch --quiet --no-tags origin "refs/tags/$REQUESTED_TAG:refs/tags/$REQUESTED_TAG"; then
+            log_error "Could not fetch the release $REQUESTED_TAG from origin (git's error is above). Nothing was changed."
+            exit 1
+        fi
+    fi
+    if ! git rev-parse --quiet --verify "refs/tags/$REQUESTED_TAG^{commit}" > /dev/null; then
+        log_error "There is no release $REQUESTED_TAG in $UNOS_INSTALL_DIR. Nothing was changed."
         exit 1
     fi
-
-    if [ "$behind" -eq 0 ]; then
-        if [ "$ahead" -gt 0 ]; then
-            log_success "No new commits on origin/$UNOS_BRANCH ($ahead local commit(s) are not on it)"
-        else
-            log_success "UNOS is already up to date!"
+    NEW_VERSION=$REQUESTED_TAG
+    # The release that the version which runs is, or follows: v1.2.0 for
+    # v1.2.0-3-g712fc3a, the commits after it.
+    local base=${CURRENT_VERSION%-*-g*}
+    if [ "$MODE" = fetch ]; then
+        # Getting an older release's images changes nothing: the in-app
+        # updater's rollback needs those of the version before.
+        :
+    elif [ "$IN_APP_ACTION" = rollback ]; then
+        if ! newer_release "$CURRENT_VERSION" "$NEW_VERSION"; then
+            log_error "A rollback goes to a release older than $CURRENT_VERSION, not to $NEW_VERSION. Nothing was changed."
+            exit 1
         fi
-        if ! confirm "Force rebuild anyway?"; then
-            exit 0
+    elif [ "$NEW_VERSION" = "$CURRENT_VERSION" ] && [ "$MODE" = update ]; then
+        log_success "UNOS runs the newest release, $NEW_VERSION"
+        exit 0
+    elif [[ $base =~ $RELEASE_TAG ]]; then
+        if ! newer_release "$NEW_VERSION" "$base"; then
+            log_error "$NEW_VERSION is not newer than $CURRENT_VERSION, which runs. Nothing was changed."
+            exit 1
         fi
     else
-        log_info "Updates available: $behind commits behind"
+        log_warn "UNOS runs $CURRENT_VERSION, which follows no release: it switches to $NEW_VERSION"
     fi
+    log_info "Release: $NEW_VERSION"
+}
+
+# Whether GHCR has images for this host's Docker: release.yml builds
+# linux/amd64 and linux/arm64; riscv64 and 32-bit arm have none (ADR-0373,
+# deploy.riscv64-release-images). The daemon's architecture, which a pull
+# takes, not the kernel's: a 32-bit userland on a 64-bit Arm kernel runs arm
+# images. install.sh has the same.
+release_images_here() {
+    case "$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" in
+        amd64 | arm64) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# The image of the service $1 of the release $2 on GHCR (v1.3.0: 1.3.0), and
+# the name compose starts it by: its project (deploy, the folder of
+# docker-compose.yml) and the service. install.sh has the same.
+release_image() { echo "$UNOS_REGISTRY/unos-$1:${2#v}"; }
+local_image() { echo "deploy-$1"; }
+
+# The release's images, pulled while UNOS keeps running; those that are here
+# already are kept. On a host without release images they are built from the
+# release's checkout after the backup (use_release_images).
+get_release_images() {
+    release_images_here || return 0
+    log_info "Getting the images of $NEW_VERSION (UNOS keeps running meanwhile)..."
+    local service ref
+    for service in "${SERVICES[@]}"; do
+        ref=$(release_image "$service" "$NEW_VERSION")
+        # Not `docker ... > /dev/null`: bash runs a trap within the redirection of the command it
+        # interrupted, and on_interrupt's messages would go there too.
+        [ -z "$(docker image inspect --format '{{.Id}}' "$ref" 2> /dev/null)" ] || continue
+        if ! docker pull --quiet "$ref"; then
+            log_error "Could not pull $ref (docker's error is above). UNOS keeps running $CURRENT_VERSION; nothing was changed."
+            exit 1
+        fi
+    done
+    log_success "The images of $NEW_VERSION are here"
 }
 
 # SQLite's online backup API, run in the supervisor container: a consistent
@@ -362,15 +542,14 @@ backup_data() {
     fi
 }
 
-pull_updates() {
-    log_info "Pulling updates..."
-
-    cd "$UNOS_INSTALL_DIR" || exit 1
-    # check_for_updates made sure that this is a fast-forward.
-    git merge --ff-only --quiet "origin/$UNOS_BRANCH"
-
-    NEW_VERSION=$(git describe --tags --always 2>/dev/null || echo "unknown")
-    log_success "Updated to: $NEW_VERSION"
+# The release's files: a detached HEAD at its tag.
+check_out_release() {
+    if ! git -C "$UNOS_INSTALL_DIR" -c advice.detachedHead=false checkout --quiet --detach "refs/tags/$NEW_VERSION"; then
+        log_error "Could not check out $NEW_VERSION. UNOS keeps running $CURRENT_VERSION; nothing was changed."
+        restore_previous
+        exit 1
+    fi
+    log_success "Checked out $NEW_VERSION"
 }
 
 # <repository>:previous for an image reference such as deploy-webui[:tag].
@@ -400,7 +579,111 @@ tag_previous_images() {
         docker image tag "$id" "$(previous_tag "$ref")"
         IMAGE_REFS+=("$ref")
     done
+    DATA_FOLDER=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' unos-supervisor 2>/dev/null) || DATA_FOLDER=""
     log_success "Current images tagged"
+}
+
+# Whether the supervisor's container has stopped (or is gone): only then are
+# the database's files touched.
+supervisor_stopped() {
+    [ "$(docker inspect --format '{{.State.Running}}' unos-supervisor 2>/dev/null)" != true ]
+}
+
+# The database's files in the data volume, and those of the backup folder $1
+# copied next to them (unos.db, and unos.db-wal when it has one), readable by
+# root only, under names of their own: the rename into place is all that is
+# left to do.
+DATABASE_FILES=(unos.db unos.db-wal unos.db-shm unos.db-journal)
+STAGED=.unos-update
+stage_database() {
+    local dir=$DATA_FOLDER
+    [ -n "$dir" ] && [ -d "$dir" ] && [ -f "$1/unos.db" ] || return 1
+    rm -f "$dir/unos.db$STAGED" "$dir/unos.db-wal$STAGED"
+    if ! (
+        umask 077
+        cp "$1/unos.db" "$dir/unos.db$STAGED" &&
+            { [ ! -f "$1/unos.db-wal" ] || cp "$1/unos.db-wal" "$dir/unos.db-wal$STAGED"; }
+    ); then
+        rm -f "$dir/unos.db$STAGED" "$dir/unos.db-wal$STAGED"
+        return 1
+    fi
+}
+install_staged_database() {
+    local dir=$DATA_FOLDER
+    mv -f "$dir/unos.db$STAGED" "$dir/unos.db" || return 1
+    [ ! -f "$dir/unos.db-wal$STAGED" ] || mv -f "$dir/unos.db-wal$STAGED" "$dir/unos.db-wal"
+}
+
+# Put the database of the backup folder $1 into the data volume while the
+# supervisor is stopped. The live log, its index and a journal go first:
+# SQLite would apply the log of the database it replaces to the backup's file
+# (ADR-0306).
+put_back_database() {
+    supervisor_stopped && stage_database "$1" || return 1
+    rm -f "$DATA_FOLDER/unos.db-wal" "$DATA_FOLDER/unos.db-shm" "$DATA_FOLDER/unos.db-journal" &&
+        install_staged_database
+}
+
+# A rollback by the in-app updater renames the live database's files aside in
+# the volume (nothing is copied), puts them back when the older release does
+# not answer, and removes them once it does. The backup's copy is staged
+# first, so that only renames lie between the live database and the backup's.
+set_database_aside() {
+    local name
+    for name in "${DATABASE_FILES[@]}"; do
+        [ ! -e "$DATA_FOLDER/$name" ] || mv -f "$DATA_FOLDER/$name" "$DATA_FOLDER/$name.unos-rollback" || return 1
+    done
+}
+take_database_back() {
+    local name
+    supervisor_stopped && [ -e "$DATA_FOLDER/unos.db.unos-rollback" ] || return 1
+    for name in "${DATABASE_FILES[@]}"; do
+        rm -f "$DATA_FOLDER/$name" "$DATA_FOLDER/$name$STAGED"
+    done
+    for name in "${DATABASE_FILES[@]}"; do
+        [ ! -e "$DATA_FOLDER/$name.unos-rollback" ] || mv -f "$DATA_FOLDER/$name.unos-rollback" "$DATA_FOLDER/$name" || return 1
+    done
+}
+drop_database_set_aside() {
+    local name
+    for name in "${DATABASE_FILES[@]}"; do
+        rm -f "$DATA_FOLDER/$name.unos-rollback"
+    done
+}
+
+# The rollback of the in-app updater: UNOS stops, the backup's database is
+# staged, the live one goes aside, and the older release starts with the
+# backup's.
+stop_for_the_backups_database() {
+    log_info "Stopping UNOS to put back the database of $BACKUP_PATH..."
+    compose down --remove-orphans || true
+    if ! supervisor_stopped; then
+        rollback "The supervisor did not stop, so the database of $BACKUP_PATH was not put back."
+    fi
+    if ! { stage_database "$BACKUP_PATH" && set_database_aside && install_staged_database; }; then
+        rollback "Could not put back the database of $BACKUP_PATH (the folder of /data: ${DATA_FOLDER:-unknown})."
+    fi
+}
+
+# The database that ran before the release: by the in-app updater's rollback,
+# the files it renamed aside; otherwise the backup's. A failure is named in
+# DATABASE_PROBLEM, which makes the rollback a failed one.
+DATABASE_PROBLEM=""
+restore_database_of_before() {
+    if [ "$IN_APP_ACTION" = rollback ]; then
+        if [ -e "$DATA_FOLDER/unos.db.unos-rollback" ] && ! take_database_back; then
+            DATABASE_PROBLEM="the database of $CURRENT_VERSION could not be taken back from $DATA_FOLDER/unos.db*.unos-rollback"
+        fi
+    elif [ -z "$BACKUP_PATH" ]; then
+        log_warn "No backup: $CURRENT_VERSION starts with the database as $NEW_VERSION left it"
+    elif put_back_database "$BACKUP_PATH"; then
+        log_info "Put back the database of $BACKUP_PATH"
+    else
+        DATABASE_PROBLEM="the database of $BACKUP_PATH could not be put back into the folder of /data (${DATA_FOLDER:-unknown}), so $CURRENT_VERSION runs with the database that $NEW_VERSION left"
+    fi
+    if [ -n "$DATABASE_PROBLEM" ]; then
+        log_error "Rollback: $DATABASE_PROBLEM"
+    fi
 }
 
 # Point the image references back at the :previous images and the checkout
@@ -429,8 +712,28 @@ is_spacemit_k1() {
         tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
 }
 
+# The release's images under the names compose starts: those pulled from
+# GHCR, whose own names then go, so that each release's images do not stay;
+# on a host without release images they are built from the checkout.
+use_release_images() {
+    if ! release_images_here; then
+        build_images
+        return 0
+    fi
+    local service ref
+    for service in "${SERVICES[@]}"; do
+        ref=$(release_image "$service" "$NEW_VERSION")
+        if ! docker image tag "$ref" "$(local_image "$service")"; then
+            log_error "Could not tag $ref as $(local_image "$service"). UNOS keeps running $CURRENT_VERSION; nothing was changed."
+            restore_previous
+            exit 1
+        fi
+        docker image rm "$ref" || true
+    done
+}
+
 build_images() {
-    log_info "Building the new images (UNOS keeps running meanwhile)..."
+    log_info "Building the images of $NEW_VERSION (UNOS keeps running meanwhile)..."
 
     # On a SpacemiT K1 Node.js crashes while it builds the web UI, so its image
     # deploy-webui:latest comes from another machine (ADR-0373, docs/INSTALL.md)
@@ -442,7 +745,7 @@ build_images() {
     fi
 
     # Build with no cache to ensure fresh build. The supervisor image carries
-    # the version of the new checkout, which the web interface shows (ADR-0234).
+    # the release's version, which the web interface shows (ADR-0234).
     if ! UNOS_VERSION=$NEW_VERSION compose build --no-cache "${services[@]}"; then
         log_error "Building the new images failed. UNOS keeps running $CURRENT_VERSION; nothing was changed."
         restore_previous
@@ -514,6 +817,7 @@ rollback() {
     compose logs --no-color --tail 30 2>&1 | sed 's/^/    /' || true
 
     if [ ${#IMAGE_REFS[@]} -eq 0 ]; then
+        ROLLBACK_RESULT=failed
         log_error "No previous images to roll back to; $UNOS_INSTALL_DIR stays at $NEW_VERSION."
         log_error "Update failed. Backup of the data: ${BACKUP_PATH:-none}"
         exit 1
@@ -521,10 +825,17 @@ rollback() {
 
     log_warn "Rolling back to $CURRENT_VERSION..."
     compose down --remove-orphans || true
+    restore_database_of_before
     restore_previous
     if compose up -d --no-build --force-recreate "${COMPOSE_UP_WAIT[@]}" && wait_for_health; then
+        if [ -n "$DATABASE_PROBLEM" ]; then
+            ROLLBACK_RESULT=failed
+        else
+            ROLLBACK_RESULT=ok
+        fi
         log_warn "Rolled back: UNOS runs $CURRENT_VERSION again"
     else
+        ROLLBACK_RESULT=failed
         log_error "UNOS did not come back after the rollback either. Check: docker ps -a; docker logs unos-supervisor. If the supervisor only needed more time to start, start UNOS again with: sudo systemctl restart unos"
     fi
     log_error "Update to $NEW_VERSION failed. Backup of the data: ${BACKUP_PATH:-none}"
@@ -608,20 +919,40 @@ main() {
     trap 'on_interrupt HUP' HUP
     print_header
     check_root
+    # The result file of the in-app updater, also when an argument is wrong.
+    local arg previous=""
+    for arg in "$@"; do
+        if [ "$previous" = --result ] && [[ $arg == /* ]]; then
+            RESULT_FILE=$arg
+            trap write_result EXIT
+        fi
+        previous=$arg
+    done
+    parse_args "$@"
+    check_in_app_host
     check_health_timeout
     lock_update
     check_installation
     check_worktree
     get_current_version
-    check_for_updates
-    backup_data
+    choose_release
+    get_release_images
+    if [ "$MODE" = fetch ]; then
+        exit 0
+    fi
+    # The in-app updater made its backup (ADR-0443): that folder's database
+    # is the one a rollback puts back.
+    [ "$MODE" = in-app ] || backup_data
     UPDATE_STAGE=build
     tag_previous_images
-    pull_updates
-    build_images
+    check_out_release
+    use_release_images
     # Before the restart, so that a rollback has the result too.
     check_compose_wait
     UPDATE_STAGE=restart
+    if [ "$IN_APP_ACTION" = rollback ]; then
+        stop_for_the_backups_database
+    fi
     restart_services
     if ! wait_for_health; then
         # Suggest twice the time it had, at least 600 seconds and at most what
@@ -629,9 +960,12 @@ main() {
         local retry_timeout=$((HEALTH_TIMEOUT * 2))
         [ "$retry_timeout" -ge 600 ] || retry_timeout=600
         [ "$retry_timeout" -lt 1000000000 ] || retry_timeout=999999999
-        rollback "UNOS did not answer within $HEALTH_TIMEOUT seconds after the update. If it only starts slowly, retry with: sudo UNOS_HEALTH_TIMEOUT=$retry_timeout $0"
+        rollback "UNOS did not answer within $HEALTH_TIMEOUT seconds after the update. If it only starts slowly, retry with: sudo UNOS_HEALTH_TIMEOUT=$retry_timeout $0 $NEW_VERSION"
     fi
     UPDATE_STAGE='done'
+    if [ "$IN_APP_ACTION" = rollback ]; then
+        drop_database_set_aside
+    fi
     cleanup_old_images
     print_completion
 }

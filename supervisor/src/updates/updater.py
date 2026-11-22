@@ -2,15 +2,16 @@
 automatic install (ADR-0234, ADR-0443).
 
 An update gets the release's images, backs up the database with SQLite's backup API
-(``copy_database``, ADR-0306) into a folder of its own in BACKUP_DIR, switches to the release and
-waits for it to answer; when the switch fails or the release does not answer in time, it puts the
-copy back through the open database with the restore's backup API and starts the version before
-again. The images and the switches are the release installer's (installer.py), which is not
-decided yet: until then Install Update, Rollback and the automatic install answer its reason.
+(``copy_database``, ADR-0306) into a folder of its own in BACKUP_DIR, and hands the switch to a unit
+on the host (installer.py: deploy/update.sh), which starts the release, waits for it to answer and,
+when it does not, stops it, puts the backup's database back and starts the version before. The
+switch replaces this supervisor's container, so the job passes through the progress file
+(``handover``): whichever supervisor runs follows the unit until its result file says how it ended,
+the one that started it until it is replaced, the next from its start (``recover_after_start``).
+A rollback does the same with the newest backup, towards the version before.
 """
 
 import asyncio
-import importlib
 import json
 import logging
 import os
@@ -24,15 +25,13 @@ from typing import Literal
 import httpx
 
 from .. import paths, state_files
-from ..backup.router import (
-    BackupValidationError, _replace_database, _verify_database, _verify_page_size, copy_database, restore_running,
-)
-from ..shares import service as shares_service
+from ..backup.router import BackupValidationError, _verify_database, copy_database, restore_running
 from ..config import get_settings
 from ..times import utc_now
 from . import installer
 from .schemas import (
     CurrentVersion,
+    HandOver,
     ReleaseAsset,
     ReleaseInfo,
     UpdateCheck,
@@ -58,14 +57,17 @@ UPDATE_CONFIG_FILE = paths.UPDATE_CONFIG
 # The in-app backups kept: the newest, of the version before the installed one, and two before it.
 KEPT_BACKUPS = 3
 BACKUP_PREFIX = "in-app-"
-# How long a release has to answer after the switch, and how often it is asked: update.sh's
-# UNOS_HEALTH_TIMEOUT default and its pause between two checks (ADR-0049).
-HEALTH_TIMEOUT_SECONDS = 300.0
-HEALTH_INTERVAL_SECONDS = 3.0
-# The longest the installer may take to get a release's images, and to switch the containers: the
-# supervisor may take 680 s to report healthy (deploy/docker-compose.yml), and a switch waits for it.
-FETCH_TIMEOUT_SECONDS = 3600.0
-SWITCH_TIMEOUT_SECONDS = 700.0
+# The longest the installer may take to get a release's images (ADR-0443), and to start the unit of a
+# switch on the host.
+FETCH_TIMEOUT_SECONDS = 3660.0
+START_TIMEOUT_SECONDS = 90.0
+# How often the supervisor reads the result of a switch on the host, and the longest it waits for it
+# from the unit's start: update.sh waits up to 680 s for the supervisor and 300 s for the health
+# check (UNOS_HEALTH_TIMEOUT), and its rollback as long again (ADR-0049).
+FOLLOW_INTERVAL_SECONDS = 3.0
+FOLLOW_TIMEOUT_SECONDS = 2700.0
+# What update.sh writes into the result file: the first line, then its first error.
+RESULTS = ("success", "rolled-back", "failed")
 # How often the automatic install's loop looks whether a check is due.
 AUTOMATIC_TICK_SECONDS = 60.0
 RUNNING = (UpdateStatus.CHECKING, UpdateStatus.DOWNLOADING, UpdateStatus.VERIFYING, UpdateStatus.BACKING_UP,
@@ -373,11 +375,23 @@ class Updater:
         return self._progress.model_copy(update=update)
 
     def recover_after_start(self) -> None:
-        """At the start: an update or rollback that a stop of the supervisor interrupted has ended,
-        failed (ADR-0173: it stayed "downloading" for good, and Install, Reset and Rollback answered
-        409). Its backup and can_rollback stay."""
+        """At the start: a job that handed its switch to a unit on the host is followed until the unit's
+        result says how it ended (ADR-0443); this supervisor is the release, or the version that the
+        unit went back to. Any other update or rollback that a stop of the supervisor interrupted has
+        ended, failed (ADR-0173: it stayed "downloading" for good, and Install, Reset and Rollback
+        answered 409). Its backup and can_rollback stay."""
         self._load_progress_state()
         if self._progress.status not in RUNNING:
+            return
+        handover = self._progress.handover
+        if handover is not None:
+            target = self._progress.version or ""
+            if installed_version() == target:
+                self._update_progress(UpdateStatus.VERIFYING, 80, f"Waiting for {target} to answer")
+            else:
+                self._update_progress(UpdateStatus.ROLLBACK, 90, f"Going back to {handover.from_version}")
+            logger.info("Following the switch to %s in the unit %s on the host", target, handover.unit)
+            self._job = asyncio.get_running_loop().create_task(self._run(self._resume_follow()))
             return
         noun = "rollback" if self._progress.action == "rollback" else "update"
         self._progress.status = UpdateStatus.FAILED
@@ -452,34 +466,6 @@ class Updater:
                               f"{running}: there is no backup of the version before it")
         return newest, version
 
-    async def _restore_database(self, backup: Path) -> None:
-        """Put the backup's database back through the open database, with the restore's backup API
-        (_replace_database): the live file stays in the write-ahead log, and its -wal holds the
-        backup's pages, where a copy over unos.db beside the log was read through the log
-        (ADR-0306). The copy is checked first, so a bad one changes nothing."""
-        copy = backup / "unos.db"
-
-        def restore() -> None:
-            if not copy.is_file():
-                raise UpdateError(f"The backup {backup.name} has no unos.db")
-            _verify_database(copy)
-            _verify_page_size(copy, DB_FILE)
-            _replace_database(copy, DB_FILE)
-
-        # As a restore of a backup: under smb_lock, then its post-restore step (the tables of this
-        # version, SMB and the iSCSI targets after the database, ADR-0138), so that the supervisor
-        # that runs follows the database also when the version before does not start.
-        async with shares_service.smb_lock():
-            try:
-                await asyncio.to_thread(restore)
-            except (OSError, sqlite3.Error, BackupValidationError, TimeoutError) as e:
-                raise UpdateError(f"The database of {backup.name} could not be put back: {e}") from e
-            logger.info("Put back the database of %s", backup)
-            result: dict = {"restored": ["database"], "warnings": []}
-            await importlib.import_module("src.backup.router")._after_database_restore(result)
-        for warning in result["warnings"]:
-            logger.warning("After the database of %s: %s", backup.name, warning)
-
     # --- install and rollback --------------------------------------------------------------------
 
     def _refusal(self) -> str | None:
@@ -497,6 +483,7 @@ class Updater:
         self._progress.action = action
         self._progress.version = version
         self._progress.rolled_back = False
+        self._progress.handover = None
         self._progress.started_at = utc_now()
         self._progress.completed_at = None
         self._update_progress(UpdateStatus.CHECKING, 0, f"Starting the {action}")
@@ -536,22 +523,10 @@ class Updater:
         except Exception:
             logger.exception("The update job failed")
 
-    async def _wait_until_healthy(self, version: str) -> None:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + HEALTH_TIMEOUT_SECONDS
-        while True:
-            try:
-                if await asyncio.wait_for(installer.current.healthy(), max(deadline - loop.time(), 0.001)):
-                    return
-            except Exception as e:  # a check that fails or hangs answers no
-                logger.debug("The health check failed: %s", e)
-            if loop.time() >= deadline:
-                raise UpdateError(f"{version} did not answer within {HEALTH_TIMEOUT_SECONDS:g} seconds")
-            await asyncio.sleep(HEALTH_INTERVAL_SECONDS)
-
     async def install_update(self, release: ReleaseInfo, *, begun: bool = False) -> None:
-        """Get the release's images, back up, switch to the release and wait for it to answer;
-        roll back when the switch fails or it does not answer (ADR-0049, ADR-0050)."""
+        """Get the release's images, back up, and hand the switch to the host's unit, which starts the
+        release, checks its health and rolls back when it does not answer; follow it to its end
+        (ADR-0049, ADR-0050)."""
         async with self._lock:
             if not begun:
                 refusal = self._refusal()
@@ -559,54 +534,30 @@ class Updater:
                     raise UpdateConflict(refusal)
                 self._begin("update", release.tag_name)
             tag = release.tag_name
-            current = (await self.get_current_version()).version
+            current = installed_version()
             started_at = self._progress.started_at or utc_now()
-            backup: Path | None = None
             try:
                 self._update_progress(UpdateStatus.DOWNLOADING, 10, f"Getting the images of {tag}")
-                await _within(installer.current.fetch_release(release), FETCH_TIMEOUT_SECONDS,
+                await _within(installer.current.fetch_release(tag), FETCH_TIMEOUT_SECONDS,
                               f"Getting the images of {tag}")
                 self._update_progress(UpdateStatus.BACKING_UP, 30, "Backing up the database")
                 backup = await self._create_backup(current, tag)
                 self._progress.can_rollback = True
-                self._update_progress(UpdateStatus.INSTALLING, 50, f"Starting {tag}")
-                await _within(installer.current.switch_to(release), SWITCH_TIMEOUT_SECONDS, f"Starting {tag}")
-                self._update_progress(UpdateStatus.VERIFYING, 80, f"Waiting for {tag} to answer")
-                await self._wait_until_healthy(tag)
+                await self._hand_over("update", tag, backup, current, changelog=release.body)
             except Exception as e:
                 error = str(e) or type(e).__name__
-                if backup is not None:
-                    error = await self._roll_back_failed_update(backup, current, error)
-                else:
-                    self._update_progress(UpdateStatus.FAILED, self._progress.progress_percent,
-                                          "Update failed", error=error)
+                self._progress.handover = None
+                self._update_progress(UpdateStatus.FAILED, self._progress.progress_percent, "Update failed",
+                                      error=error)
                 logger.error("The update to %s failed: %s", tag, error)
                 await self._add_history_entry(current, tag, "failed", started_at, utc_now(), error=error)
                 raise UpdateError(error) from e
-
-            self._update_progress(UpdateStatus.COMPLETED, 100, f"Updated to {tag}")
-            logger.info("Updated from %s to %s", current, tag)
-            await self._add_history_entry(current, tag, "success", started_at, utc_now(), changelog=release.body)
-
-    async def _roll_back_failed_update(self, backup: Path, version: str, error: str) -> str:
-        """The automatic rollback of a failed update; returns the update's error with its outcome."""
-        self._update_progress(UpdateStatus.ROLLBACK, 90, f"Rolling back to {version}", error=error)
-        try:
-            await self._restore_database(backup)
-            await _within(installer.current.switch_back(version), SWITCH_TIMEOUT_SECONDS, f"Starting {version}")
-        except Exception as e:
-            error = f"{error}; the rollback to {version} failed too: {e}"
-            self._update_progress(UpdateStatus.FAILED, 90, "Update and rollback failed", error=error)
-            return error
-        error = f"{error}; rolled back to {version}"
-        self._progress.rolled_back = True
-        self._progress.can_rollback = False
-        self._update_progress(UpdateStatus.FAILED, 100, "Update failed, rolled back", error=error)
-        return error
+            await self._follow_switch()
 
     async def rollback(self, *, begun: bool = False) -> None:
-        """Return to the version before the last update: its database from the backup, through the
-        open database, then its containers, and wait for it to answer."""
+        """Return to the version before the last update: its images, then the host's unit, which puts
+        the backup's database back while UNOS is stopped and starts that version, or goes back to the
+        version it came from when it does not answer; follow it to its end (ADR-0443)."""
         async with self._lock:
             if not begun:
                 refusal = self._refusal()
@@ -615,24 +566,104 @@ class Updater:
                 if not self._progress.can_rollback:
                     raise UpdateError("No rollback available")
                 self._begin("rollback", "")
+            current = installed_version()
             try:
                 backup, version = self._rollback_backup()
                 self._progress.version = version
-                self._update_progress(UpdateStatus.ROLLBACK, 20, "Putting back the database")
-                await self._restore_database(backup)
-                self._update_progress(UpdateStatus.ROLLBACK, 50, f"Starting {version}")
-                await _within(installer.current.switch_back(version), SWITCH_TIMEOUT_SECONDS, f"Starting {version}")
-                self._update_progress(UpdateStatus.VERIFYING, 80, f"Waiting for {version} to answer")
-                await self._wait_until_healthy(version)
+                await asyncio.to_thread(_check_backup, backup)
+                self._update_progress(UpdateStatus.DOWNLOADING, 10, f"Getting the images of {version}")
+                await _within(installer.current.fetch_release(version), FETCH_TIMEOUT_SECONDS,
+                              f"Getting the images of {version}")
+                await self._hand_over("rollback", version, backup, current)
             except Exception as e:
                 error = str(e) or type(e).__name__
+                self._progress.handover = None
                 logger.error("The rollback failed: %s", error)
                 self._update_progress(UpdateStatus.FAILED, self._progress.progress_percent, "Rollback failed",
                                       error=error)
                 raise UpdateError(error) from e
+            await self._follow_switch()
+
+    async def _hand_over(self, action: Literal["update", "rollback"], tag: str, backup: Path, current: str,
+                         changelog: str | None = None) -> None:
+        """Record the handover in the progress file, then start the unit of the switch: a supervisor
+        that starts after this one was replaced finds the job there and follows it."""
+        result = backup / f"{action}.result"
+        # The result of an earlier job of this backup (an update before its rollback).
+        await asyncio.to_thread(result.unlink, missing_ok=True)
+        now = utc_now()
+        unit = f"unos-{action}-{now.strftime('%Y%m%d-%H%M%S')}"
+        self._progress.handover = HandOver(unit=unit, result=str(result), from_version=current, changelog=changelog,
+                                           at=now)
+        self._update_progress(UpdateStatus.INSTALLING, 50, f"Starting {tag} on the host ({unit})")
+        try:
+            await _within(installer.current.start_switch(unit, action, tag, backup, result), START_TIMEOUT_SECONDS,
+                          f"Starting the unit {unit}")
+        except Exception as e:
+            # systemd-run may have started the unit and then not answered in time: a unit that runs, or
+            # that ended with a result already, is followed, whatever systemd-run said.
+            if not (await asyncio.to_thread(result.exists) or await installer.current.switch_running(unit)):
+                raise
+            logger.warning("Starting the unit %s answered %s, but it runs: following it", unit, e)
+        logger.info("Handed the %s to %s over to the unit %s on the host", action, tag, unit)
+
+    async def _resume_follow(self) -> None:
+        async with self._lock:
+            await self._follow_switch()
+
+    async def _follow_switch(self) -> None:
+        """Wait until the unit of the switch has ended and record how: its result file, read every
+        FOLLOW_INTERVAL_SECONDS, writes nothing while it waits (ADR-0214). A unit that ended without a
+        result (the host restarted) or that runs past FOLLOW_TIMEOUT_SECONDS fails the job."""
+        handover = self._progress.handover
+        if handover is None:
+            return
+        result = Path(handover.result)
+        deadline = handover.at + timedelta(seconds=FOLLOW_TIMEOUT_SECONDS)
+        while True:
+            outcome = await asyncio.to_thread(_read_result, result)
+            if outcome is None and not await installer.current.switch_running(handover.unit):
+                outcome = await asyncio.to_thread(_read_result, result) or (
+                    "failed", f"The unit {handover.unit} on the host ended without a result: see "
+                              f"journalctl -u {handover.unit} on the host")
+            if outcome is None and utc_now() >= deadline:
+                outcome = ("failed", f"The unit {handover.unit} on the host did not end within "
+                                     f"{FOLLOW_TIMEOUT_SECONDS:g} seconds: see journalctl -u {handover.unit}")
+            if outcome is not None:
+                await self._record_switch(handover, *outcome)
+                return
+            await asyncio.sleep(FOLLOW_INTERVAL_SECONDS)
+
+    async def _record_switch(self, handover: HandOver, outcome: str, message: str) -> None:
+        version = self._progress.version or ""
+        started_at = self._progress.started_at or handover.at
+        self._progress.handover = None
+        if self._progress.action == "rollback":
+            if outcome == "success":
+                self._progress.can_rollback = False
+                self._update_progress(UpdateStatus.COMPLETED, 100, f"Rolled back to {version}")
+                logger.info("Rolled back to %s", version)
+                return
+            error = f"{message}; UNOS runs {handover.from_version} again" if outcome == "rolled-back" else message
+            self._update_progress(UpdateStatus.FAILED, 100, "Rollback failed", error=error)
+            logger.error("The rollback to %s failed: %s", version, error)
+            return
+        if outcome == "success":
+            self._update_progress(UpdateStatus.COMPLETED, 100, f"Updated to {version}")
+            logger.info("Updated from %s to %s", handover.from_version, version)
+            await self._add_history_entry(handover.from_version, version, "success", started_at, utc_now(),
+                                          changelog=handover.changelog)
+            return
+        if outcome == "rolled-back":
+            error = f"{message}; rolled back to {handover.from_version}"
+            self._progress.rolled_back = True
             self._progress.can_rollback = False
-            self._update_progress(UpdateStatus.COMPLETED, 100, f"Rolled back to {version}")
-            logger.info("Rolled back to %s", version)
+            self._update_progress(UpdateStatus.FAILED, 100, "Update failed, rolled back", error=error)
+        else:
+            error = message
+            self._update_progress(UpdateStatus.FAILED, 100, "Update failed", error=error)
+        logger.error("The update to %s failed: %s", version, error)
+        await self._add_history_entry(handover.from_version, version, "failed", started_at, utc_now(), error=error)
 
     async def _add_history_entry(
         self,
@@ -768,6 +799,34 @@ async def stop_automatic_install() -> None:
         _automatic_task.cancel()
         await asyncio.gather(_automatic_task, return_exceptions=True)
         _automatic_task = None
+
+
+def _read_result(path: Path) -> tuple[str, str] | None:
+    """How update.sh says the switch ended (its result file): success, rolled-back or failed, and its
+    first error; None while there is no file."""
+    try:
+        text = path.read_text(errors="replace")
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        logger.warning("Could not read %s: %s", path, e)
+        return None
+    first, _, rest = text.partition("\n")
+    message = " ".join(rest.split())
+    if first.strip() not in RESULTS:
+        return "failed", f"update.sh wrote an unknown result into {path}: {' '.join(text.split())[:200]}"
+    return first.strip(), message or f"update.sh ended: {first.strip()}"
+
+
+def _check_backup(backup: Path) -> None:
+    """The backup's database is whole, before a rollback changes anything (ADR-0443)."""
+    copy = backup / "unos.db"
+    if not copy.is_file():
+        raise UpdateError(f"The backup {backup.name} has no unos.db")
+    try:
+        _verify_database(copy)
+    except (OSError, sqlite3.Error, BackupValidationError) as e:
+        raise UpdateError(f"The database of {backup.name} could not be put back: {e}") from e
 
 
 def _progress_of(state: object) -> UpdateProgress:

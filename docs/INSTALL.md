@@ -49,6 +49,13 @@ is not enough; the script then stops before it changes anything.
   [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
 - **ARMv7** - Limited support, may have performance issues
 
+Each release of UNOS, a git tag `v<x.y.z>`, publishes its images for AMD64 and
+ARM64 on GHCR (`ghcr.io/und3f1ned/unos-supervisor` and `unos-webui`, built by
+`.github/workflows/release.yml`, ADR-0450): `install.sh` and `update.sh` pull
+them, and nothing is built on the host. RISCV64 and ARMv7 have no release
+images yet (ADR-0373): there the scripts build them from the release's
+checkout, and **System → Updates** cannot install releases.
+
 ### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
 
 Checked on Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
@@ -61,7 +68,7 @@ ADR-0373).
   UI from the image `deploy-webui:latest`. Make it for each version on a machine
   with Docker that runs linux/riscv64 images (Docker Desktop does; elsewhere
   `docker run --privileged --rm tonistiigi/binfmt --install riscv64`), in the
-  root of the same checkout, and load it on the board:
+  root of a checkout of the same release tag, and load it on the board:
 
   ```bash
   docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui
@@ -74,10 +81,11 @@ ADR-0373).
   the build and prints these commands; load the image and run it again. Before
   `update.sh`, load the image of the new version; when an update is rolled
   back, load it again.
-- **Build time.** The supervisor is built on the board. Its build compiles
-  cryptography, bcrypt, cffi, psutil and uvloop, which publish no RISCV64 wheel,
-  with a Rust toolchain that the image does not keep: about 35 minutes, and
-  `update.sh` builds it again, without a cache, for each update. Keep Docker's data
+- **Build time.** GHCR has no RISCV64 images, so the supervisor is built on the
+  board. Its build compiles cryptography, bcrypt, cffi, psutil and uvloop,
+  which publish no RISCV64 wheel, with a Rust toolchain that the image does not
+  keep: about 35 minutes, and `update.sh` builds it again, without a cache, for
+  each update. Keep Docker's data
   on a disk other than a microSD card where you can, and make Docker wait for
   that disk: with a drop-in `/etc/systemd/system/docker.service.d/data-root.conf`
   that says `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at
@@ -168,19 +176,20 @@ and Armbian names its images `armsom-w3`. UNOS has no code of its own for the
 board (ADR-0376).
 
 - **Installation.** `install.sh` installs Docker from Docker's repository, as
-  on every ARM64 host, and builds both images on the board. Neither
-  `install.sh` nor the web UI's build has run on the board yet: the dev device
-  was set up by hand, and its web UI is built on another machine.
+  on every ARM64 host, and pulls both images of the newest release from GHCR.
+  It has not run on the board yet: the dev device was set up by hand, and
+  `scripts/dev/deploy.sh` builds its images (ADR-0223), so **System → Updates**
+  cannot install releases there.
 - **Upgrades.** `apt full-upgrade` also replaces the kernel and its device
   trees: `/boot/dtb` then points to the new kernel's directory, so copy a device
   tree overlay of your own into its `rockchip/overlay/` before the reboot.
 - **The eMMC stays as it is.** Write the image to a microSD card and boot from
   it. UNOS neither lists nor formats the eMMC (`mmcblk0`), its boot partitions,
   the microSD card or zram, so whatever is on the eMMC stays there.
-- **Docker's data and the card.** `update.sh` builds both images again, without
-  a cache, for each update. Installing the supervisor's Python packages alone
-  wrote about 440 MiB to the dev device's card, and the web UI's build adds its
-  own. Keep Docker's data root on another disk where you can, and make Docker
+- **Docker's data and the card.** `update.sh` pulls both images of each
+  release: about their size in writes, without the build's layers (installing
+  the supervisor's Python packages alone wrote about 440 MiB to the dev
+  device's card). Keep Docker's data root on another disk where you can, and make Docker
   wait for that disk with a drop-in
   `/etc/systemd/system/docker.service.d/data-root.conf` that says `[Unit]` and
   `RequiresMountsFor=<the data root>`, as on the BPI-F3. Docker, and with it
@@ -274,10 +283,14 @@ This will:
 1. Detect your system
 2. Install dependencies
 3. Install Docker
-4. Download UNOS
+4. Download UNOS and check out its newest release, a tag `v<x.y.z>` (it stops
+   while the repository has none)
 5. Configure services
-6. Start UNOS
+6. Pull the release's images from GHCR (on RISCV64: build them from the
+   checkout) and start UNOS
 7. Print the HTTPS address of the web interface
+
+Run again, it checks out the newest release again.
 
 ### Installation with Options
 
@@ -288,18 +301,15 @@ chmod +x install.sh
 
 # Custom installation directory
 UNOS_INSTALL_DIR=/opt/mynas ./install.sh
-
-# Use specific branch
-UNOS_BRANCH=develop ./install.sh
 ```
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `UNOS_INSTALL_DIR` | `/opt/unos` | Installation directory |
-| `UNOS_BRANCH` | `main` | Git branch to install |
+| `UNOS_INSTALL_DIR` | `/opt/unos` | Installation directory (the supervisor's setting of the same name names it to the in-app updater) |
 | `UNOS_REPO` | GitHub URL | Repository URL |
+| `UNOS_REGISTRY` | `ghcr.io/und3f1ned` | Where the release images are pulled from, `<registry>/unos-supervisor:<x.y.z>` |
 
 Settings of the running containers (such as `UNOS_HOSTNAME`) go into
 `/etc/unos/secrets.env`, see [Step 4](#step-4-prepare-the-secrets-file).
@@ -368,7 +378,10 @@ On a SpacemiT K1 (Banana Pi BPI-F3) that uses an NVMe drive, also set up what
 ### Step 3: Clone UNOS
 
 ```bash
-sudo git clone https://github.com/und3f1ned/unos.git /opt/unos
+sudo git clone --no-checkout https://github.com/und3f1ned/unos.git /opt/unos
+# The newest release, a tag v<x.y.z>
+sudo git -C /opt/unos tag --list 'v*' | sort -V | tail -n 1
+sudo git -C /opt/unos checkout --detach refs/tags/<that tag>
 ```
 
 ### Step 4: Prepare the Secrets File
@@ -467,17 +480,25 @@ installation, the supervisor keeps it as
 `smb.conf.unos-import-backup-20261112_101530_123456`; it keeps the newest 10
 such copies.
 
-### Step 6: Build and Start UNOS
+### Step 6: Get the Images and Start UNOS
+
+On AMD64 and ARM64, pull the release's images (its tag without the `v`, such
+as `1.3.0`) and give them the names compose starts:
 
 ```bash
+for service in supervisor webui; do
+  sudo docker pull ghcr.io/und3f1ned/unos-$service:<x.y.z>
+  sudo docker image tag ghcr.io/und3f1ned/unos-$service:<x.y.z> deploy-$service
+  sudo docker image rm ghcr.io/und3f1ned/unos-$service:<x.y.z>
+done
 cd /opt/unos/deploy
-sudo docker compose build
 sudo docker compose --env-file /etc/unos/secrets.env up -d
 ```
 
-On a SpacemiT K1, load the web UI's image first and build only the supervisor
-(`sudo docker compose build supervisor`): see
-[Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64).
+On RISCV64 build them instead, `sudo UNOS_VERSION=<the tag> docker compose
+build`, before the `up`; on a SpacemiT K1, load the web UI's image first and
+build only the supervisor (`sudo UNOS_VERSION=<the tag> docker compose build
+supervisor`): see [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64).
 
 smbd takes the ports and the cache directory of the smb.conf that UNOS writes
 at its first start only when it restarts, not when it reloads the file. Once
@@ -812,9 +833,10 @@ sudo systemctl restart unos   # docker compose up -d, with /etc/unos/secrets.env
 Run the `down` yourself: `systemctl restart unos` only runs it when the unit
 is active, which it is not between `install.sh` and the next reboot.
 
-`update.sh` refuses to run while `/opt/unos` has local changes: commit the
-change (`cd /opt/unos && sudo git commit -am "Local subnet"`), and when
-`update.sh` later reports local commits, rebase them as it describes.
+`update.sh` refuses to run while `/opt/unos` has local changes, and it checks
+out each release's tag: set the change aside before an update
+(`cd /opt/unos && sudo git stash`) and apply it again afterwards
+(`sudo git stash pop`).
 
 ### Docker Permission Issues
 
@@ -865,36 +887,43 @@ account.
 ### Using the Update Script
 
 ```bash
-sudo /opt/unos/deploy/update.sh
+sudo /opt/unos/deploy/update.sh             # the newest release
+sudo /opt/unos/deploy/update.sh v1.3.0      # a given release, newer than the one that runs
 ```
 
 The script:
 
-1. Stops without changing anything if `/opt/unos` has local changes or is not
-   on the branch it updates (`UNOS_BRANCH`, default `main`), and says how to
-   proceed. It never stashes or discards changes. It also stops if another
-   `update.sh` is running (it holds `/run/unos-update.lock`); without
-   util-linux `flock` it only warns. It then fetches the branch with the
-   release tags in its history. Without new commits it stops too, unless you
-   answer yes to *Force rebuild anyway?* (without a terminal it stops): only
-   a rebuild gives the images the name of a release that was tagged on the
-   commit UNOS already runs.
-2. Backs up the database (consistently, with SQLite's online backup API) and
+1. Stops without changing anything if `/opt/unos` has local changes, and says
+   how to proceed. It never stashes or discards changes. It also stops if
+   another `update.sh` is running (it holds `/run/unos-update.lock`); without
+   util-linux `flock` it only warns. It asks the repository for its newest
+   release (a tag `v<x.y.z>`) unless you named one, and fetches that tag alone:
+   a tag that was moved since it was fetched stops the update. It stops too
+   when the release runs already ("UNOS runs the newest release") or is not
+   newer than the one that runs (or the release it follows, for a checkout
+   with commits after a tag). A tag whose images are not published yet (its
+   release run takes up to two hours) stops it in step 2 without a change.
+2. Pulls the release's two images from GHCR
+   (`ghcr.io/und3f1ned/unos-supervisor:<x.y.z>` and `unos-webui`,
+   `UNOS_REGISTRY` names another registry) while UNOS keeps running. If they
+   cannot be had, nothing has changed. They carry the release's version, which
+   **System → Updates** shows. Where Docker is neither amd64 nor arm64
+   (RISCV64, a 32-bit ARM system), which have no release images, the images
+   are built from the release's checkout in step 4 instead.
+3. Backs up the database (consistently, with SQLite's online backup API) and
    the rest of the data volume to `/var/lib/unos/backups/update-<date>/` (the
    supervisor mounts that folder and keeps its own copies of the database
-   before an in-app update in `in-app-<time>/` beside them, ADR-0443). Only
+   before an in-app update in `in-app-<time>/` beside them). Only
    root can read the backups: they contain the JWT signing secret, the keys
    of the backup tasks next to the scheduled backups those keys decrypt (a
    restored data volume needs both), and `offsite_secrets.json`, the password
    of the off-device copy's repository and its S3 secret key. If the backup
    fails, nothing has changed yet: the script asks whether to update without a
    backup, and stops if the answer is no or there is no terminal.
-3. Tags the running images `:previous`, pulls the update and builds the new
-   images while UNOS keeps running. If the build fails, nothing changes. The
-   supervisor's image carries the version of the new checkout
-   (`git describe --tags --always`, with the tags fetched in step 1), which
-   **System → Updates** shows.
-4. Restarts UNOS (`docker compose up -d --remove-orphans`, which recreates
+4. Tags the running images `:previous`, checks out the release's tag and gives
+   the pulled images the names compose starts (`deploy-supervisor` and
+   `deploy-webui`), removing their GHCR names.
+5. Restarts UNOS (`docker compose up -d --remove-orphans`, which recreates
    the containers of the new images). `docker compose up`
    starts the web interface once the supervisor answers its health check. The
    supervisor first mounts the pools the host has not mounted, up to two
@@ -906,40 +935,46 @@ The script:
    HTTP and HTTPS; if UNOS needs longer to answer, run it again with a longer
    limit, such as `sudo UNOS_HEALTH_TIMEOUT=600 /opt/unos/deploy/update.sh`.
    The error message suggests twice the last limit, at least 600 seconds.
-5. If the new version does not start or answer, starts the previous images and
-   source revision again and exits with an error. Otherwise it removes unused
-   images; the previous ones stay tagged `:previous`.
+6. If the new version does not start or answer, stops it, puts the backup's
+   `unos.db` back into the data volume (after deleting `unos.db-wal` and
+   `unos.db-shm` there, which SQLite would apply to it), starts the previous
+   images and checkout again and exits with an error. Otherwise it removes
+   unused images; the previous ones stay tagged `:previous`.
 
 An interrupted update (Ctrl+C, a closed SSH session, `kill`) is undone the same
-way: during the build the checkout returns to the previous revision, and once
-the restart has begun the previous version is started again. After a closed SSH
-session the messages are in `/var/lib/unos/backups/update-interrupted.log`.
-The rollback restores the program, not the data; the backup is listed in the
-error message. To put the backup's `unos.db` back by hand, stop UNOS and delete
-`unos.db-wal` and `unos.db-shm` in the data volume first: SQLite would apply
-that newer log to the older database. The backup of a supervisor that was not
-running can hold its own `unos.db-wal`, which goes back together with
-`unos.db`.
+way: before the restart the checkout and the image names go back, and once
+the restart has begun the previous version is started again with the backup's
+database. After a closed SSH session the messages are in
+`/var/lib/unos/backups/update-interrupted.log`. The backup is listed in the
+error message.
+
+**System → Updates** runs the same script on the host when an administrator
+installs a release from the web interface (see `docs/USER_GUIDE.md`): first
+`update.sh --fetch <tag>`, which gets the tag and the images, then, after the
+supervisor's own backup, `update.sh --in-app update` in a transient systemd
+unit `unos-update-<time>`, which outlives the supervisor's container that it
+replaces; its output is in `journalctl -u unos-update-<time>`.
 
 ### Manual Upgrade
 
 ```bash
 cd /opt/unos
-sudo git pull --ff-only
+sudo git fetch origin refs/tags/<tag>:refs/tags/<tag>
+sudo git checkout --detach refs/tags/<tag>
+```
 
-# Build while the current version keeps running (on a SpacemiT K1: load the
-# web UI's image of the new version, then build only the supervisor)
-cd deploy
-sudo docker compose build --no-cache
+Then get the release's images as in [Step 6](#step-6-get-the-images-and-start-unos)
+(on RISCV64: `sudo UNOS_VERSION=<tag> docker compose build --no-cache`), and
+start them with /etc/unos/secrets.env: compose recreates the containers of
+the new images.
 
-# Start with /etc/unos/secrets.env: compose recreates the containers of the
-# new images
+```bash
 sudo systemctl restart unos
 ```
 
 Without the systemd unit, run
-`sudo docker compose --env-file /etc/unos/secrets.env up -d` instead of the
-last command.
+`sudo docker compose --env-file /etc/unos/secrets.env up -d` in
+`/opt/unos/deploy` instead of the last command.
 
 ### Upgrade Notes
 

@@ -12,6 +12,24 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- Releases (ADR-0450, accepting ADR-0050): pushing a tag `v<x.y.z>` runs `.github/workflows/release.yml`,
+  which builds the supervisor and web UI images for linux/amd64 and linux/arm64 with buildx and
+  QEMU and pushes them to `ghcr.io/<owner>/unos-supervisor:<x.y.z>` and `unos-webui:<x.y.z>`, then
+  publishes the tag's GitHub release. `install.sh` checks out the newest release and, on amd64 and
+  arm64, pulls its images instead of building them; `update.sh [<tag>]` pulls the newest release's
+  (or the named one's) images while UNOS runs, backs up, switches to the tag and, when the release
+  does not answer, puts the backup's database back while the supervisor is stopped and starts the
+  previous images. riscv64 and 32-bit arm keep building on the host (ADR-0373). `UNOS_BRANCH` is gone from both
+  scripts; `UNOS_REGISTRY` names the registry. The owner makes both packages public at the first
+  release (`docs/maintenance.md`).
+- System > Updates installs releases (ADR-0450): its release installer runs `update.sh --fetch` on
+  the host, then, after the supervisor's backup, `update.sh --in-app` in a transient systemd unit
+  that outlives the supervisor's container; the supervisor that starts then finds the job in the
+  progress file (`handover`) and records how the unit ended. Rollback goes through the same unit,
+  with the backup's database put back while UNOS is stopped. The tab says why where it cannot
+  install: the stand-in, riscv64, a version that is not a release, images built on the host (a dev
+  device deployed by `scripts/dev/deploy.sh`) or no `/opt/unos/deploy/update.sh`
+  (`UNOS_INSTALL_DIR`, a setting of the supervisor again).
 - System > Updates' in-app updater is built up to its release installer (ADR-0443): an update gets
   the release's images, backs up the database with SQLite's backup API into
   `/var/lib/unos/backups/in-app-<time>/` (mounted into the supervisor), switches, waits up to 5

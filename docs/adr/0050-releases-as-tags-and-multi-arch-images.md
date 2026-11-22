@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-11-05
+status: accepted
+date: 2026-11-22
 area: deploy
 decided-by: agent
 ---

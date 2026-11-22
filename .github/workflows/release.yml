@@ -1,0 +1,100 @@
+name: Release
+
+# A release is a git tag v<x.y.z> (ADR-0050). Its push builds the images of the supervisor
+# and the web UI from their pinned Dockerfiles (ADR-0305) for linux/amd64 and linux/arm64, with buildx
+# and QEMU for arm64, and pushes them to GHCR as ghcr.io/<owner>/unos-supervisor:<x.y.z> and
+# unos-webui:<x.y.z>, which deploy/install.sh and deploy/update.sh pull. Then it publishes the tag's
+# GitHub release, which the in-app updater's check reads: a release is listed only once its images
+# are there. riscv64 has no release images (ADR-0373, deploy.riscv64-release-images). A NAS pulls
+# without credentials: the owner makes both packages public at the first release
+# (docs/maintenance.md). Every action is pinned to the commit of a release (ADR-0423), and the
+# checkout does not keep the token (persist-credentials: false).
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+# One run per tag; a second push of the same tag waits for the first.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    name: Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # The only job that may push packages.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # The filter above also lets v01.2.3 through.
+      - name: Check the tag
+        run: |
+          if ! [[ $GITHUB_REF_NAME =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not a release tag v<x.y.z>"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # QEMU from Ubuntu's archive, for the arm64 build: docker/setup-qemu-action would register it
+      # from an image tag that moves. Buildx's containers need the handler's fix-binary flag (F).
+      - name: Set up QEMU for linux/arm64
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          if ! grep -q '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64; then
+            echo "::error::QEMU's linux/arm64 handler is not registered with the fix-binary flag"
+            exit 1
+          fi
+
+      # Its BuildKit, which holds the push's credentials, pinned by tag and digest (ADR-0305): the
+      # action's default image is a tag that moves. The monthly pass of docs/maintenance.md moves it.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+
+      # The job's token on standard input, never on a command line.
+      - name: Log in to GHCR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      # The supervisor's image carries the release's version and marks itself as a release's
+      # (UNOS_VERSION, UNOS_RELEASE: ADR-0234, ADR-0050).
+      - name: Build and push the images
+        run: |
+          registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          version=${GITHUB_REF_NAME#v}
+          source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg "UNOS_VERSION=$GITHUB_REF_NAME" --build-arg "UNOS_RELEASE=$GITHUB_REF_NAME" \
+            --label "org.opencontainers.image.source=$source" \
+            --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
+            --tag "$registry/unos-supervisor:$version" --push supervisor
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.source=$source" \
+            --label "org.opencontainers.image.version=$GITHUB_REF_NAME" \
+            --tag "$registry/unos-webui:$version" --push webui
+
+  release:
+    name: GitHub release
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "UNOS $GITHUB_REF_NAME" --generate-notes

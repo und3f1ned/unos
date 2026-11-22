@@ -26,9 +26,15 @@
   and the supervisor has Caddy load a change with `caddy reload` through `docker exec` (ADR-0404).
   The app names' sites come the same way, from the volume `app-names`, which the Caddyfile imports
   and the web UI's command loads only when they validate (ADR-0420).
-- `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. `update.sh` refuses
-  local changes and other branches, backs up, waits for health and rolls back on failure
-  (ADR-0049); `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
+- `install.sh`, `update.sh` and `uninstall.sh` run as root on a user's host. A release is a tag
+  `v<x.y.z>` whose amd64 and arm64 images `.github/workflows/release.yml` publishes on GHCR:
+  `install.sh` checks out the newest release and pulls them, `update.sh [<tag>]` refuses local
+  changes, pulls them while UNOS runs, backs up, switches, waits for health and rolls back on
+  failure with the backup's database (ADR-0049, ADR-0050); both build only where Docker is neither
+  amd64 nor arm64 (riscv64, 32-bit arm), which have no release images (ADR-0373). The in-app updater runs `update.sh --fetch` and, in a transient
+  systemd unit, `update.sh --in-app` (`supervisor/src/updates/installer.py`); the compose file
+  keeps building `deploy-supervisor` and `deploy-webui` for `scripts/dev/deploy.sh`, and the
+  scripts give the pulled images those names; `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
   entries, with one restart of smbd (ADR-0322), and undoes on the disks of UNOS's udev rule of
   the idle timeouts what UNOS set, with the host's hdparm and smartctl, then removes the rule (only
   the records of disks whose scans stay off remain), before it removes `/opt/unos`, so that a run

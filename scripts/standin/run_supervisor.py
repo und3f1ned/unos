@@ -48,9 +48,10 @@ The stand-in keeps the supervisor away from this machine's system:
   suspend it, to cancel its shutdowns and to change Wake-on-LAN (ADR-0233),
   and the UPS monitor sees a container (container=docker), so it never shuts
   this machine down.
-* The updater installs nothing: its release installer is not decided
-  (src/updates/installer.py, ADR-0443), so Install Update, Rollback and the
-  automatic install refuse with its reason.
+* The updater installs nothing: its release installer runs update.sh on the
+  host, and with host commands on this machine (UNOS_HOST_EXEC=local) it says
+  so (src/updates/installer.py, ADR-0443), so Install Update, Rollback and the
+  automatic install refuse with that reason.
 * The served certificate (ADR-0404) is data/served-certificate/served.pem, which
   front.mjs serves from its next connection on, while it loads, as Caddy would
   after a reload: the supervisor's handshake asks front.mjs (--front-https-port,
@@ -127,6 +128,9 @@ def stand_in_environment(state: Path, *, front_https_port: int = DEFAULT_FRONT_H
         "UNOS_POOLS_BASE_PATH": str(state / "pools"),
         "UNOS_FSTAB_PATH": str(data / "fstab"),
         "UNOS_UPDATE_BACKUP_DIR": str(data / "update-backups"),
+        # The host's checkout of install.sh, which the stand-in has not: its updater installs nothing
+        # (UNOS_HOST_EXEC=local, src/updates/installer.py).
+        "UNOS_INSTALL_DIR": str(state / "install"),
         # The volume that only the supervisor's and the web UI's containers mount (ADR-0404).
         "UNOS_SERVED_CERTIFICATE_DIR": str(data / "served-certificate"),
         # The off-device copy's disk targets lie below the state directory, which stands for /mnt as
