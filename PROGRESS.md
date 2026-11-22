@@ -202,7 +202,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
   paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
 - On 2026-11-22 (Log): the twentieth batch on the branch `mvp.batch-20`, from `mvp.batch-19`
-  (2a42a82b), not deployed: what can be decided and done without the owner. Releases publish
+  (2a42a82b), pushed at the owner's word and not deployed: what can be decided and done without
+  the owner. Releases publish
   amd64 and arm64 images to GHCR and update.sh switches to a release on the host, also for the
   in-app updater (ADR-0455, which settles ADR-0443's two choices); the web UI on SvelteKit 3,
   Vite 8 and Tailwind CSS 4 (ADR-0456; TypeScript stays at 6); the Russian web UI walked page by
@@ -823,7 +824,8 @@ Open owner actions:
   1200, and four more full runs in a row, each the same (28.6 to 28.8 min): the five that the
   keyboard upload entry's step 3 asks for, so `testing.keyboard-upload-opens-the-file-chooser`
   passes.
-- Open for the owner: the push and the pull request; a tag and public GHCR packages for the first
+- Pushed at the owner's word ("yes, push", in translation). Open for the owner: the pull
+  request; a tag and public GHCR packages for the first
   release; the deploy (the web UI's toolchain rebuilds its image); the look at the web UI in
   Russian on the device.
 
