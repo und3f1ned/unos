@@ -217,10 +217,10 @@ async function openPowerTab(page: Page) {
 /** The NAS's time zone, which the fakes' schedule names: the tab shows its times on that clock. */
 const NAS_ZONE = 'Europe/Berlin';
 
-/** The time of `at` as the tab shows it, in the browser's locale and the NAS's time zone. */
+/** The time of `at` as the tab shows it, in the browser's locale and the NAS's time zone (webui.locale-formats). */
 async function shownTime(page: Page, at: string): Promise<string> {
   return page.evaluate(
-    ([value, timeZone]) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone }),
+    ([value, timeZone]) => new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: 'numeric', timeZone }),
     [at, NAS_ZONE],
   );
 }
@@ -528,7 +528,7 @@ test.describe('Power Management', () => {
     await expect(page.getByText('Запланирована перезагрузка')).toBeVisible();
     const at = host.pending.at as string;
     const time = await page.evaluate(
-      ([value, timeZone]) => new Date(value).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit', timeZone }),
+      ([value, timeZone]) => new Date(value).toLocaleTimeString('ru', { hour: 'numeric', minute: 'numeric', timeZone }),
       [at, NAS_ZONE],
     );
     await expect(page.getByText(`Хост перезагрузится в ${time}.`)).toBeVisible();
@@ -578,12 +578,15 @@ const IDLE_ANNOUNCED = {
   since: '2026-11-18T10:21:01+00:00',
 };
 
-/** A time of the API as the Status card shows it, in the browser's locale and the NAS's zone. */
+/**
+ * A time of the API as the Status card shows it, in the browser's locale and the NAS's zone: a date
+ * and time to the minute, as every page writes one (webui.locale-formats).
+ */
 async function shownWhen(page: Page, at: string): Promise<string> {
   return page.evaluate(
     ([value, timeZone]) =>
       new Date(value).toLocaleString([], {
-        weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone,
+        year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', timeZone,
       }),
     [at, NAS_ZONE],
   );

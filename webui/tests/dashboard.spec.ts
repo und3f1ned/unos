@@ -130,7 +130,7 @@ async function expectCards(page: Page, cards: { cpu: string; memory: string; net
   await expect(statsCard(page, 'Disk I/O').locator('.text-lg')).toHaveText(cards.disks);
 }
 
-// The units of a size as the stats cards write them in English (ADR-0297): the largest unit of
+// The units of a size as the stats cards write them in English (webui.locale-formats): the largest unit of
 // 1024 that keeps the number at 1 or more, with at most one decimal.
 const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
 function size(bytes: number): string {
@@ -194,8 +194,8 @@ test.describe('Dashboard', () => {
     await expect(storageSection).toBeVisible();
   });
 
-  // ADR-0297: the stats cards take their units from the catalog, and English keeps the words that
-  // the code wrote before.
+  // webui.locale-formats: the stats cards write their numbers with src/lib/format.ts, and English keeps the words
+  // that the code wrote before.
   test('the stats cards write sizes, rates and the temperature with their units', async ({
     authenticatedPage: page,
   }) => {
@@ -485,18 +485,17 @@ test.describe('Dashboard', () => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
     const main = page.locator('main');
 
-    // The live stats of the fake socket, with Russian units (ADR-0297): sizes, rates per second and
-    // degrees with a space before them. Then the time of their last update on a 24-hour clock, and
-    // the uptime. A regular expression of getByText meets the text with the white space of the
-    // markup around it.
+    // The live stats of the fake socket in the format of the language (webui.locale-formats): a decimal comma, a
+    // no-break space before the percent sign and the degrees, and Russian units. Then the uptime. A
+    // regular expression of getByText meets the text with the white space of the markup around it.
     for (const label of ['ЦП', 'Память', 'Сеть', 'Диски', 'Температура']) {
       await expect(main.getByText(label, { exact: true })).toBeVisible();
     }
     const card = (label: string) => main.locator('.card', { has: page.getByText(label, { exact: true }) });
-    await expect(card('ЦП').locator('.stat-card-value')).toHaveText('12.5%');
+    await expect(card('ЦП').locator('.stat-card-value')).toHaveText(/^\s*12,5\u00a0%\s*$/);
     await expect(card('Память').locator('.stat-card-sublabel')).toHaveText('768 МБ / 2 ГБ');
-    await expect(card('Сеть').locator('.text-lg')).toHaveText(['1.2 МБ/с', '512 Б/с']);
-    await expect(card('Диски').locator('.text-lg')).toHaveText(['3.5 МБ/с', '640 КБ/с']);
+    await expect(card('Сеть').locator('.text-lg')).toHaveText(['1,2 МБ/с', '512 Б/с']);
+    await expect(card('Диски').locator('.text-lg')).toHaveText(['3,5 МБ/с', '640 КБ/с']);
     await expect(card('Диски').getByText('Чтение', { exact: true })).toBeVisible();
     await expect(card('Диски').getByText('Запись', { exact: true })).toBeVisible();
     await expect(card('Температура').locator('.stat-card-value')).toHaveText('46 °C');
@@ -510,7 +509,7 @@ test.describe('Dashboard', () => {
     await expect(pool('e2e_tank').locator('[data-field="used"]')).toHaveCount(0);
     await expect(pool('e2e_media').locator('.badge')).toHaveText('Деградирован');
     await expect(pool('e2e_media').locator('[data-field="issues"]')).toHaveText('Не хватает 1 диска · 2 ошибки дисков');
-    await expect(pool('e2e_media').locator('[data-field="used"]')).toHaveText('465.7 ГБ из 1.8 ТБ');
+    await expect(pool('e2e_media').locator('[data-field="used"]')).toHaveText('465,7 ГБ из 1,8 ТБ');
     await expect(pool('e2e_frozen').locator('.badge')).toHaveText('Ошибка');
     await expect(pool('e2e_frozen').locator('[data-field="issues"]')).toHaveText('Только для чтения после ошибки');
     await expect(pool('e2e_unread').locator('.badge')).toHaveText('Неизвестно');
@@ -518,7 +517,7 @@ test.describe('Dashboard', () => {
     await expect(pool('e2e_archive').locator('[data-field="issues"]')).toHaveText('Только для чтения');
     await expect(pool('e2e_vault').locator('[data-field="issues"]')).toHaveText('3 ошибки дисков · Только для чтения');
     await expect(storage.getByText('Общий объём', { exact: true })).toBeVisible();
-    await expect(storage.getByText('1.9 ТБ / 11.8 ТБ (16.2%)', { exact: true })).toBeVisible();
+    await expect(storage.getByText(/^\s*1,9 ТБ \/ 11,8 ТБ \(16,2\u00a0%\)\s*$/)).toBeVisible();
 
     // A disk to replace soon: the words of the page in Russian, the reasons as the server gives them.
     // The banner lists the pools' issues too, errors first: the rest is behind "Show all".
@@ -598,7 +597,9 @@ test.describe('Dashboard', () => {
       await expect(main.getByText('Signed in as')).toHaveCount(0);
 
       const card = (label: string) => main.locator('.card', { has: page.getByText(label, { exact: true }) });
-      await expect(card('Сеть').locator('.text-lg')).toHaveText([/^[\d.]+ (Б|КБ|МБ|ГБ|ТБ)\/с$/, /^[\d.]+ (Б|КБ|МБ|ГБ|ТБ)\/с$/]);
+      // The rates with at most one decimal after a decimal comma (webui.locale-formats).
+      const rate = /^\d+(,\d)? (Б|КБ|МБ|ГБ|ТБ)\/с$/;
+      await expect(card('Сеть').locator('.text-lg')).toHaveText([rate, rate]);
       await expect(card('Диски').locator('.text-lg')).toHaveText([/\/с$/, /\/с$/]);
       await expect.poll(() => networks.length, { timeout: 15000 }).toBeGreaterThan(1);
       expect(networks.map((network) => network.interfaces)).toEqual(networks.map(() => []));

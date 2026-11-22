@@ -6,7 +6,6 @@
 		max?: number;
 		size?: 'sm' | 'md';
 		variant?: Variant | 'auto';
-		showLabel?: boolean;
 		/** What the bar measures, for screen readers (ADR-0197). */
 		label?: string | undefined;
 		/** The value as words, where a percent of max would mislead (a temperature). */
@@ -19,7 +18,6 @@
 		max = 100,
 		size = 'md',
 		variant = 'auto',
-		showLabel = false,
 		label = undefined,
 		valueText = undefined,
 		class: className = ''
@@ -52,7 +50,4 @@
 			aria-valuemax={max}
 		></div>
 	</div>
-	{#if showLabel}
-		<span class="block mt-1 text-right text-xs text-secondary tabular">{percent.toFixed(1)}%</span>
-	{/if}
 </div>

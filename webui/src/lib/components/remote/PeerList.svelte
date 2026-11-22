@@ -1,12 +1,11 @@
 <script lang="ts">
 	// The devices that may use the tunnel (ADR-0420), each with its address, its last handshake and
 	// its traffic, with Add and Revoke.
-	import { formatBytes } from '$lib/api/backup';
 	import type { RemotePeer } from '$lib/api/remoteAccess';
 	import { Badge, Button, EmptyState } from '$lib/components/ui';
-	import { apiTime } from '$lib/time';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
-	import { formatDateTime } from '$lib/time';
+	import { apiTime, formatDateTime } from '$lib/time';
 	import { Plus, Smartphone, Trash2 } from 'lucide-svelte';
 	import { onMount } from 'svelte';
 
@@ -15,13 +14,11 @@
 		// How far the NAS's clock is ahead of the browser's, in milliseconds (getRemoteAccess).
 		clockAhead: number;
 		busy: boolean;
-		// The units of the traffic in the language of the page (formatBytes).
-		sizeUnits: string[];
 		onadd: () => void;
 		onrevoke: (peer: RemotePeer) => void;
 	};
 
-	let { peers, clockAhead, busy, sizeUnits, onadd, onrevoke }: Props = $props();
+	let { peers, clockAhead, busy, onadd, onrevoke }: Props = $props();
 
 	// WireGuard renews a live session's handshake every 2 minutes: a peer whose last one is younger
 	// than 3 minutes on the NAS's clock is connected now. The age is read again every 15 seconds,
@@ -65,8 +62,8 @@
 					{#if peer.received !== null && peer.sent !== null}
 						<p class="text-sm text-content-secondary">
 							{$t('remote.traffic', {
-								received: formatBytes(peer.received, $intlLocale, sizeUnits),
-								sent: formatBytes(peer.sent, $intlLocale, sizeUnits)
+								received: formatSize(peer.received, $intlLocale, $t, { digits: 2 }),
+								sent: formatSize(peer.sent, $intlLocale, $t, { digits: 2 })
 							})}
 						</p>
 					{/if}

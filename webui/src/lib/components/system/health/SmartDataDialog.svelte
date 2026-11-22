@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { SmartAttribute, SmartInfo } from '$lib/api/health';
 	import { Badge, Modal } from '$lib/components/ui';
+	import { formatTemperature } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { HEALTH_STATUS, capacityText, healthClass, orUnknown, textOf } from './texts';
 
@@ -93,7 +94,7 @@
 			</div>
 			<div>
 				<dt class="text-secondary">{$t('health.temperature')}</dt>
-				<dd>{orNotReported(disk.temperature, (celsius) => $t('health.celsius', { value: celsius }))}</dd>
+				<dd>{orNotReported(disk.temperature, (celsius) => formatTemperature(celsius, $intlLocale))}</dd>
 			</div>
 			<div>
 				<dt class="text-secondary">{$t('health.powerOnHours')}</dt>

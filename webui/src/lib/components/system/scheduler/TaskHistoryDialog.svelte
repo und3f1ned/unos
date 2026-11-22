@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { CheckCircle, History, XCircle } from 'lucide-svelte';
 	import { Badge, Button, EmptyState, Sheet, Alert, StatusDot, TechDetails } from '$lib/components/ui';
+	import { formatDuration } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { apiTime, formatDateTime } from '$lib/time';
 	import type { TaskHistory } from './history.svelte';
@@ -36,17 +37,13 @@
 		Object.prototype.hasOwnProperty.call(RUN_STATUSES, status) ? $t(RUN_STATUSES[status]) : status
 	);
 
-	let formatDuration = $derived((start: string, end?: string): string => {
+	let runDuration = $derived((start: string, end?: string): string => {
 		if (!end) return $t('scheduler.runs.inProgress');
 		const ms = (apiTime(end)?.getTime() ?? NaN) - (apiTime(start)?.getTime() ?? NaN);
 		if (Number.isNaN(ms)) return '';
-		if (ms < 1000) return $t('scheduler.runs.milliseconds', { ms });
-		if (ms < 60000) {
-			// One decimal, with the decimal separator of the page's language.
-			const seconds = (ms / 1000).toLocaleString($intlLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-			return $t('scheduler.runs.seconds', { seconds });
-		}
-		return $t('scheduler.runs.minutes', { minutes: Math.floor(ms / 60000), seconds: Math.floor((ms % 60000) / 1000) });
+		// Under a minute with one decimal of a second, in the language's digits (1.5s); under a
+		// second in milliseconds.
+		return formatDuration(ms / 1000, $intlLocale, $t, { smallest: 's', digits: 1 });
 	});
 </script>
 
@@ -77,12 +74,10 @@
 							<span class="font-medium text-sm break-words min-w-0">{run.task_name}</span>
 							<Badge variant={STATUS_VARIANTS[run.status] ?? 'neutral'}>{getStatusLabel(run.status)}</Badge>
 						</div>
-						<span class="text-xs text-content-muted tabular">{formatDuration(run.started_at, run.finished_at)}</span>
+						<span class="text-xs text-content-muted tabular">{runDuration(run.started_at, run.finished_at)}</span>
 					</div>
 					<div class="flex flex-wrap gap-x-3 text-xs text-content-secondary">
-						<span class="tabular"
-							>{formatDateTime(run.started_at, $intlLocale, { dateStyle: 'medium', timeStyle: 'short', zone })}</span
-						>
+						<span class="tabular">{formatDateTime(run.started_at, $intlLocale, { zone })}</span>
 						{#if typeof run.exit_code === 'number'}
 							<span>{$t('scheduler.runs.exitStatus', { code: run.exit_code })}</span>
 						{/if}

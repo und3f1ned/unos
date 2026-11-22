@@ -992,7 +992,8 @@ test.describe('Scrub (fake data)', () => {
     await expect(card.getByText('1.0 GB / 4.0 GB')).toBeVisible();
     await expect(card.getByText('25.0%')).toBeVisible();
     await expect(card.getByText('16.0 MB/s')).toBeVisible();
-    await expect(card.getByText('0:01:04')).toBeVisible();
+    // The time it has run, as every duration of the web UI writes it (webui.locale-formats).
+    await expect(card.getByText('1m 4s', { exact: true })).toBeVisible();
 
     // Time passes: the page does not ask for the status.
     await page.clock.fastForward('01:00');
@@ -1217,7 +1218,7 @@ test.describe('Balance (fake data)', () => {
     await expect(progress).toHaveAttribute('aria-valuenow', '25');
     await expect(card.getByText('25.0% done')).toBeVisible();
     await expect(card.getByText('25.0%')).toBeVisible();
-    await expect(card.getByText('About 9 min left')).toBeVisible();
+    await expect(card.getByText('About 9m left')).toBeVisible();
 
     // Time passes: the page does not ask for the status.
     await page.clock.fastForward('01:00');
@@ -1225,7 +1226,7 @@ test.describe('Balance (fake data)', () => {
     expect(balanceReads()).toBe(1);
 
     await events.balances([running(9, 7300)]);
-    await expect(card.getByText('About 2 h 2 min left')).toBeVisible();
+    await expect(card.getByText('About 2h 2m left')).toBeVisible();
     await events.balances([running(11, 30)]);
     await expect(card.getByText('Less than a minute left')).toBeVisible();
 
@@ -1255,7 +1256,7 @@ test.describe('Balance (fake data)', () => {
 
     const card = poolCard(page, 'e2e_data');
     await expect(card.getByText('Balance in progress')).toBeVisible();
-    await expect(card.getByText('About 5 min left')).toBeVisible();
+    await expect(card.getByText('About 5m left')).toBeVisible();
 
     await card.getByRole('button', { name: 'Pause' }).click();
     await expect(card.getByText('Balance paused')).toBeVisible();
@@ -2735,7 +2736,7 @@ test.describe('The Storage page in Russian', () => {
     await level.click();
     await page.getByRole('option', { name: 'RAID 1C3 (зеркало, 3 копии) — от 3 дисков' }).click();
     await expect(
-      create.getByText('Зеркалирование в 3 копии. Выдерживает отказ 2 дисков. Полезный объём: 33%.', { exact: true }),
+      create.getByText('Зеркалирование в 3 копии. Выдерживает отказ 2 дисков. Полезный объём: 33\u00a0%.', { exact: true }),
     ).toBeVisible();
     await disk('/dev/e2e-hd2').check();
     await expect(create.getByText('Выбрано: 2 устройства', { exact: true })).toBeVisible();

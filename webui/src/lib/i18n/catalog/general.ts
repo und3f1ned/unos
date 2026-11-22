@@ -26,11 +26,7 @@ export const en = {
 	'general.info.kernel': 'Kernel',
 	'general.info.architecture': 'Architecture',
 	'general.info.uptime': 'Uptime',
-	'general.info.loadFailed': 'The system information could not be read.',
-	// The uptime, as long as it is.
-	'general.uptime.days': '{days}d {hours}h {minutes}m',
-	'general.uptime.hours': '{hours}h {minutes}m',
-	'general.uptime.minutes': '{minutes}m'
+	'general.info.loadFailed': 'The system information could not be read.'
 };
 
 export const ru: Translation<typeof en> = {
@@ -57,8 +53,5 @@ export const ru: Translation<typeof en> = {
 	'general.info.kernel': 'Ядро',
 	'general.info.architecture': 'Архитектура',
 	'general.info.uptime': 'Время работы',
-	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.',
-	'general.uptime.days': '{days}\u00a0дн. {hours}\u00a0ч {minutes}\u00a0мин',
-	'general.uptime.hours': '{hours}\u00a0ч {minutes}\u00a0мин',
-	'general.uptime.minutes': '{minutes}\u00a0мин'
+	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.'
 };

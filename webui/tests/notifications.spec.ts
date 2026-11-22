@@ -487,7 +487,7 @@ test.describe('Notifications', () => {
     await entry.getByRole('button').click();
     await expect(entry.getByText('Информация', { exact: true })).toBeVisible();
     await expect(entry.getByText('Отправлено', { exact: true }).locator('xpath=following-sibling::dd'))
-      .toHaveText(/^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}:\d{2}$/);
+      .toHaveText(/^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$/);
 
     // Nothing of the English tab is left.
     for (const english of ['Active Channels', 'Total Sent', 'Sent at', 'Just now']) {

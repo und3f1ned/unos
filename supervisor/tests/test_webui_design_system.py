@@ -8,7 +8,10 @@ ADR-0432 for the browser's own dialogs (window.confirm, alert, prompt, also in a
 class `uppercase`, a raw checkbox or radio button and a filled primary Button in a card's header or a
 table's row; and since ADR-0438, which removed the baseline of file counts, for a success Alert (a
 success after an action is a toast), a hand-made spinner (animate-spin, loading-spinner) and a raw
-<details>. A comment `design-ignore: <reason>` exempts one use. Each test builds a small web UI in
+<details>; and since ADR-0457, in every file of src/ (ui's too) but src/lib/format.ts and
+src/lib/time.ts, for a number or a date written by hand (toFixed, toLocaleString, Intl's formats, a
+date's getters, padStart(2, '0'), {value}% between tags, and a percentage put together in a
+catalog). A comment `design-ignore: <reason>` exempts one use. Each test builds a small web UI in
 tmp_path and checks it, and the real one passes.
 
 Without node, or without webui/node_modules (make setup), the tests skip.
@@ -432,6 +435,112 @@ class TestLockIn:
         result = check(node, tmp_path, '<!-- design-ignore: -->\n<Alert variant="success">x</Alert>\n<!-- design-ignore -->\n<details></details>\n')
         assert result.returncode == 1
         assert "a success Alert" in result.stderr and "raw <details>" in result.stderr
+
+
+class TestHandMadeFormats:
+    """ADR-0457: numbers and dates are written by src/lib/format.ts and src/lib/time.ts alone."""
+
+    @pytest.mark.parametrize(
+        ("script", "found"),
+        [
+            ("const a = (1.5).toFixed(1);", "toFixed()"),
+            ("const a = n.toPrecision(2);", "toPrecision()"),
+            ("const a = n.toLocaleString(locale);", "toLocaleString()"),
+            ("const a = d.toLocaleDateString(locale);", "toLocaleDateString()"),
+            ("const a = d.toLocaleTimeString(locale, { hour: '2-digit' });", "toLocaleTimeString()"),
+            ("const f = new Intl.NumberFormat(locale);", "Intl.NumberFormat"),
+            ("const f = new Intl.DateTimeFormat(locale, { month: 'short' });", "Intl.DateTimeFormat"),
+            ("const f = Intl.RelativeTimeFormat(locale);", "Intl.RelativeTimeFormat"),
+            ("const f = new Intl.DurationFormat(locale);", "Intl.DurationFormat"),
+            ("const y = `${d.getFullYear()}`;", "a date's getFullYear()"),
+            ("const h = d.getUTCHours();", "a date's getUTCHours()"),
+            ("const m = String(minute).padStart(2, '0');", "padStart(2, '0')"),
+            ("const d = when.toDateString();", "toDateString()"),
+            ("const d = when.toUTCString();", "toUTCString()"),
+            ("const a = Math.round(bytes / 1048576) + ' MB';", "a percentage or a unit put together"),
+            ("const a = `${used}%`;", "a percentage or a unit put together"),
+            ("const a = `${rate} KB/s`;", "a percentage or a unit put together"),
+        ],
+    )
+    def test_a_format_by_hand_in_a_script_fails(self, node, tmp_path, script, found):
+        result = check(node, tmp_path, "<p>{a}</p>\n", script + "\n")
+        assert result.returncode == 1
+        assert "src/routes/a/+page.svelte:2:" in result.stderr
+        assert found in result.stderr and "writes a number or a date by hand" in result.stderr
+        assert "$lib/format and $lib/time (ADR-0457)" in result.stderr
+
+    def test_a_format_by_hand_in_the_markup_fails(self, node, tmp_path):
+        result = check(node, tmp_path, '<p class="x">{used.toFixed(1)}%</p>\n<p>{d.toLocaleString(locale)}</p>\n')
+        assert result.returncode == 1
+        assert "src/routes/a/+page.svelte:1:15: toFixed()" in result.stderr
+        assert "src/routes/a/+page.svelte:1:31: a percentage or a unit put together after a value" in result.stderr
+        assert "src/routes/a/+page.svelte:2:5: toLocaleString()" in result.stderr
+
+    @pytest.mark.parametrize(
+        ("markup", "column"),
+        [
+            ("<p>{used} MB</p>", 10),
+            ('<p title="{used}%">x</p>', 17),
+            ("<p>{used + '%'}</p>", 12),
+            ("<p>{`${rate} GB/s`}</p>", 13),
+        ],
+    )
+    def test_a_unit_put_together_in_the_markup_fails(self, node, tmp_path, markup, column):
+        result = check(node, tmp_path, markup + "\n")
+        assert result.returncode == 1
+        assert f"src/routes/a/+page.svelte:1:{column}: a percentage or a unit put together after a value" in result.stderr
+
+    def test_a_percentage_in_a_style_and_other_methods_pass(self, node, tmp_path):
+        result = check(
+            node,
+            tmp_path,
+            '<div style="width: {percent}%">{name.toLocaleLowerCase()}</div>\n<p>{formatPercent(p, $intlLocale)}</p>\n'
+            "<p>{count} Bytes of {name} MBR</p>\n",
+            "const id = String(n).padStart(4, '0');\nconst list = new Intl.ListFormat(locale).format(names);\n"
+            "const mac = bytes.map((b) => b.toString(16).padStart(2, '0')).join(':');\nconst tag = name + ' %s';\n",
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_ui_and_ts_modules_are_checked_but_the_home_is_not(self, node, tmp_path):
+        webui = demo(
+            tmp_path,
+            {
+                "lib/components/ui/Bar.svelte": "<span>{percent.toFixed(1)}%</span>\n",
+                "lib/api/files.ts": "export const size = (n: number) => n.toFixed(1) + ' MB';\n",
+                "lib/format.ts": "export const f = (n: number, l: string) => new Intl.NumberFormat(l).format(n);\n",
+                "lib/time.ts": "export const d = (v: Date, l: string) => v.toLocaleString(l);\n",
+            },
+        )
+        result = run_check(node, webui)
+        assert result.returncode == 1
+        assert "src/lib/components/ui/Bar.svelte:1:8: toFixed()" in result.stderr
+        assert "src/lib/api/files.ts:1:36: toFixed()" in result.stderr
+        assert "lib/format.ts" not in result.stderr and "lib/time.ts" not in result.stderr
+
+    def test_a_catalog_text_with_a_percentage_put_together_fails(self, node, tmp_path):
+        catalog = (
+            "export const en = { 'a.used': '{value}% used', 'a.raid': '50% space efficiency' };\n"
+            "export const ru = { 'a.used': 'занято {value} %', 'a.raid': 'полезный объём 50%',\n"
+            "  'a.spaced': 'полезный объём 50 %',\n"
+            "  'a.ok': 'полезный объём 50\\u00a0%' };\n"
+        )
+        result = run_check(node, demo(tmp_path, {"lib/i18n/catalog/a.ts": catalog}))
+        assert result.returncode == 1
+        assert "src/lib/i18n/catalog/a.ts:1: a percentage put together in a text" in result.stderr
+        assert "src/lib/i18n/catalog/a.ts:2: a percentage put together in a text" in result.stderr
+        assert "src/lib/i18n/catalog/a.ts:2: a Russian percentage without the no-break space" in result.stderr
+        assert "src/lib/i18n/catalog/a.ts:3: a Russian percentage without the no-break space" in result.stderr
+        assert result.stderr.count("catalog/a.ts") == 4
+
+    def test_design_ignore_with_a_reason_exempts_a_format(self, node, tmp_path):
+        result = check(
+            node,
+            tmp_path,
+            "<!-- design-ignore: the hour field's values, 0 to 23 -->\n<option>{String(h).padStart(2, '0')}</option>\n",
+            "// design-ignore: the commands of an SVG path, not a text\nconst d = 'M ' + x.toFixed(1);\n",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "2 use(s) exempted" in result.stdout
 
 
 def test_make_frontend_runs_the_check():

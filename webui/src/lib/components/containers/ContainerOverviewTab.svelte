@@ -7,7 +7,7 @@
 	import type { Container } from '$lib/api/containers';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
-	import { appOf, NO_SECONDS } from './labels';
+	import { appOf } from './labels';
 
 	type Props = {
 		container: Container;
@@ -25,7 +25,7 @@
 
 	// It reads $intlLocale, so that an open drawer follows a change of the language; no seconds.
 	function formatDate(dateStr: string): string {
-		return formatDateTime(dateStr, $intlLocale, NO_SECONDS);
+		return formatDateTime(dateStr, $intlLocale);
 	}
 </script>
 

@@ -51,7 +51,7 @@
 	// language of the page, in the browser's own format when it is of that language.
 	let formatTimestamp = $derived((ts: string | null): string => {
 		if (!ts) return $t('common.unknown');
-		return formatDateTime(ts, $intlLocale);
+		return formatDateTime(ts, $intlLocale, { seconds: true });
 	});
 
 	// i18n-ignore: the names of browsers, the same in every language

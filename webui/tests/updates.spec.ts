@@ -352,6 +352,9 @@ test.describe('Software Updates with an installer', () => {
     await expect(job.getByText('Updated to v1.3.0', { exact: true })).toBeVisible();
     const history = card(page, 'Update history');
     await expect(history.getByRole('row').filter({ hasText: 'v1.2.0' })).toContainText('Installed');
+    // When it started, on the NAS's clock, in the one format of a date and time (webui.locale-formats): the date in
+    // numbers and the time to the minute.
+    await expect(history.getByRole('row').filter({ hasText: 'v1.2.0' })).toContainText(/12\/2\/2026, \d{1,2}:\d{2}\s[AP]M/);
     await expect(card(page, 'UNOS version').getByText('v1.3.0', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Roll back' })).toBeVisible();
   });

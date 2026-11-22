@@ -200,6 +200,17 @@ Russian, and in English otherwise. Dates and times follow the language: in the
 browser's own format when the browser is set to that language, otherwise with the
 day first and a 24-hour clock.
 
+The pages write their numbers, sizes, percentages, durations, dates and times in
+one way, in the format of the interface's language: a decimal point in
+English (1.5 GB, 12.5%) and a decimal comma with the Russian units in Russian
+(1,5 for 1.5, 12,5 %). A date and time is the date in numbers and the time to the
+minute, such as 11/7/2026, 5:03 AM in a browser set to American English or
+07.11.2026, 05:03 in Russian; the lines of a log (the **Audit Log**, **System** → **Logs** and the sign-in history)
+add the seconds. A duration starts at its largest unit, such as 3d 4h or 1m 4s,
+and a recent event says how long ago it was, such as 5m ago, and its date once it
+is a day old. The times of what the NAS runs by its own clock, such as the
+**Scheduler**'s, are on the NAS's clock (see **System** → **General**).
+
 Every page is translated.
 Messages from the server, such as the reason an action was refused or the
 reason a share is not served, stay in English, and so do the titles and

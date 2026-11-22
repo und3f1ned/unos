@@ -118,15 +118,6 @@
 		}
 		await load();
 	}
-
-	// Sizes in the units of the page's language.
-	let units = $derived([
-		$t('files.unit.b'),
-		$t('files.unit.kb'),
-		$t('files.unit.mb'),
-		$t('files.unit.gb'),
-		$t('files.unit.tb')
-	]);
 </script>
 
 <div class="page-container">
@@ -214,7 +205,7 @@
 			{#snippet emptyState()}
 				<EmptyState icon={Trash} title={$t('files.trash.emptyTitle')} description={$t('files.trash.emptyHint')} />
 			{/snippet}
-			<TrashTable {items} {selected} {units} ontoggle={toggle} />
+			<TrashTable {items} {selected} ontoggle={toggle} />
 		</LoadState>
 	</Card>
 </div>

@@ -161,7 +161,7 @@ test.describe('Disk Health', () => {
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
     await expect(field(sata, 'Overall health')).toHaveText('Passed');
     await expect(field(sata, 'Capacity')).toHaveText('3.64 TB');
-    await expect(field(sata, 'Temperature')).toHaveText('34 °C');
+    await expect(field(sata, 'Temperature')).toHaveText('34°C');
     await expect(field(sata, 'Power-on hours')).toHaveText('51775 (5 years, 332 days)');
     await expect(field(sata, 'Power cycles')).toHaveText('120');
     await expect(field(sata, 'Serial')).toHaveText('E2E-HDD-1');
@@ -185,7 +185,7 @@ test.describe('Disk Health', () => {
       .click();
     const nvme = page.getByRole('dialog', { name: 'E2E NVMe 1TB (/dev/e2e-nvme0n1)' });
     await expect(field(nvme, 'Overall health')).toHaveText('Passed');
-    await expect(field(nvme, 'Temperature')).toHaveText('40 °C');
+    await expect(field(nvme, 'Temperature')).toHaveText('40°C');
     await expect(nvme.getByRole('columnheader')).toHaveText(['Health information', 'Value']);
     await expect(row(nvme, 'Available spare threshold')).toHaveText(['Available spare threshold', '10']);
     await expect(row(nvme, 'Percentage used')).toHaveText(['Percentage used', '2']);

@@ -31,7 +31,19 @@
 //   action did is a toast; an outcome to read before going on keeps its Alert with a reason;
 // - a hand-made spinner, the class `animate-spin` or app.css's `loading-spinner`: use Button's
 //   `loading`, LoadState or Skeleton, and a StatusDot with `pulse` for a job that runs;
-// - a raw <details>: use TechDetails.
+// - a raw <details>: use TechDetails;
+// and, since ADR-0457, in every .svelte file and .ts module of src/ (ui's too) but the one home of the
+// formats, src/lib/format.ts and src/lib/time.ts:
+// - a number or a date written by hand: toFixed, toPrecision, toLocaleString, toLocaleDateString,
+//   toLocaleTimeString, toDateString, toTimeString, toUTCString, Intl.NumberFormat, DateTimeFormat,
+//   RelativeTimeFormat and DurationFormat, a date's getters (getFullYear to getSeconds, also of
+//   UTC) and padStart(2, '0') (not of a number in another base, n.toString(16)), in a script or an
+//   expression of the markup, and a percentage or a unit of a size put together after a value
+//   (value + ' MB', `${value}%`, {value}% between tags or in an attribute other than style): use
+//   the functions of the home;
+// - in a catalog (src/lib/i18n/catalog/), a percentage put together in a text ('{value}%'), and a
+//   Russian text with a digit right before % or a plain space between (Russian writes 80 %, with a
+//   no-break space, as Intl does).
 // A comment `design-ignore: <reason>` exempts what it stands for: above an element (an HTML comment
 // <!-- design-ignore: ... -->), or above or at the end of the statement or property of a script
 // (as `i18n-ignore:` does). Review reads the reasons; the summary counts the exemptions.
@@ -436,6 +448,164 @@ function checkModule(file) {
 	visit(sourceFile);
 }
 
+// --- Numbers and dates (ADR-0457) ----------------------------------------------------------------
+
+// The one home of the formats: every other file of src/, ui's included, writes its numbers and dates
+// with them.
+const FORMAT_HOME = new Set([path.join(SRC, 'lib', 'format.ts'), path.join(SRC, 'lib', 'time.ts')]);
+const CATALOGS = path.join(SRC, 'lib', 'i18n', 'catalog') + path.sep;
+const FORMAT_METHODS = new Set(['toFixed', 'toPrecision', 'toLocaleString', 'toLocaleDateString', 'toLocaleTimeString',
+	'toDateString', 'toTimeString', 'toUTCString']);
+// A percentage or a unit of a size written right after a value: ' %', 'MB', ' GB/s'.
+const UNIT_AFTER = /^\s?(?:%|(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)(?:\/s)?)(?![A-Za-z])/;
+const UNIT_FOUND = 'a percentage or a unit put together after a value'
+const DATE_GETTERS = /^get(?:UTC)?(?:FullYear|Year|Month|Date|Day|Hours|Minutes|Seconds)$/;
+const INTL_FORMATS = new Set(['NumberFormat', 'DateTimeFormat', 'RelativeTimeFormat', 'DurationFormat']);
+const FORMAT_HINT = 'use the functions of $lib/format and $lib/time (ADR-0457)';
+
+/**
+ * What is made by hand in a call or `new` of `method` on `object` (names), with its arguments and
+ * whether its receiver is a number written in another base (`n.toString(16)`, a hex byte of a MAC);
+ * null for nothing.
+ */
+function handMadeFormat(object, method, args, radix = false) {
+	if (object === 'Intl' && INTL_FORMATS.has(method)) return `Intl.${method}`;
+	if (FORMAT_METHODS.has(method)) return `${method}()`;
+	if (DATE_GETTERS.test(method)) return `a date's ${method}()`;
+	if (method === 'padStart' && args[0] === 2 && args[1] === '0' && !radix) return "padStart(2, '0') of a date's or a time's field";
+	return null;
+}
+
+/** The value of a literal argument (a TypeScript or an ESTree node); undefined for another. */
+const literalOf = (node) => node?.type === 'Literal' ? node.value
+	: node?.kind === undefined ? undefined
+		: ts.isNumericLiteral(node) ? Number(node.text)
+			: ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : undefined;
+
+/** The hand-made formats of a TypeScript source, reported at `offset` plus their position. */
+function tsFormats(sourceFile, offset, report) {
+	const visit = (node) => {
+		if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && ts.isPropertyAccessExpression(node.expression)) {
+			const callee = node.expression;
+			const object = ts.isIdentifier(callee.expression) ? callee.expression.text : '';
+			const inner = callee.expression;
+			const radix = ts.isCallExpression(inner) && ts.isPropertyAccessExpression(inner.expression) &&
+				inner.expression.name.text === 'toString' && inner.arguments.length > 0;
+			const found = handMadeFormat(object, callee.name.text, (node.arguments ?? []).map(literalOf), radix);
+			if (found) {
+				if (scriptExempted(node, sourceFile)) exempt += 1;
+				else report(offset + node.getStart(sourceFile), found);
+			}
+		}
+		// A unit after a value: value + ' MB', or `${value}%` (a template's text after a substitution).
+		const units = [];
+		if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken && ts.isStringLiteral(node.right) &&
+			!ts.isStringLiteral(node.left) && UNIT_AFTER.test(node.right.text)) units.push(node.right);
+		if (ts.isTemplateExpression(node)) units.push(...node.templateSpans.map((span) => span.literal).filter((text) => UNIT_AFTER.test(text.text)));
+		for (const unit of units) {
+			if (scriptExempted(node, sourceFile)) exempt += 1;
+			else report(offset + unit.getStart(sourceFile), UNIT_FOUND);
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(sourceFile);
+}
+
+/** The hand-made formats of a .svelte file: in its scripts, its markup's expressions and a `{value}%` of its text. */
+function checkFileFormats(file) {
+	const name = relative(file);
+	const source = readFileSync(file, 'utf8');
+	const { markup, scripts } = split(source);
+	const report = (offset, found) => errors.push(`${name}:${position(source, offset)}: ${found} writes a number or a date by hand: ${FORMAT_HINT}`);
+	for (const script of scripts) {
+		tsFormats(ts.createSourceFile('script.ts', script.body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS), script.offset, report);
+	}
+	let ast;
+	try {
+		ast = parse(markup, { filename: name });
+	} catch {
+		return; // checkFile reports it, or svelte-check does for a file of ui.
+	}
+	const ancestors = [];
+	const exemptedHere = () => {
+		for (let i = ancestors.length - 1; i >= 0; i--) {
+			if (markupExempted(markup, ancestors[i].start)) return true;
+			if (TAG_LIKE.has(ancestors[i].type)) return false;
+		}
+		return false;
+	};
+	walk(ast.html, {
+		enter(node) {
+			const callee = node.callee;
+			if ((node.type === 'CallExpression' || node.type === 'NewExpression') && callee?.type === 'MemberExpression' &&
+				callee.property?.type === 'Identifier') {
+				const object = callee.object?.type === 'Identifier' ? callee.object.name : '';
+				const inner = callee.object;
+				const radix = inner?.type === 'CallExpression' && inner.callee?.type === 'MemberExpression' &&
+					inner.callee.property?.name === 'toString' && inner.arguments.length > 0;
+				const found = handMadeFormat(object, callee.property.name, node.arguments.map(literalOf), radix);
+				if (found) {
+					if (exemptedHere()) exempt += 1;
+					else report(node.start, found);
+				}
+			}
+			// A unit after a value in an expression: {value + '%'}, {`${value} MB`}.
+			const units = [];
+			if (node.type === 'BinaryExpression' && node.operator === '+' && node.right?.type === 'Literal' &&
+				typeof node.right.value === 'string' && node.left?.type !== 'Literal' && UNIT_AFTER.test(node.right.value)) units.push(node.right);
+			if (node.type === 'TemplateLiteral') units.push(...node.quasis.slice(1).filter((quasi) => UNIT_AFTER.test(quasi.value.cooked ?? '')));
+			for (const unit of units) {
+				if (exemptedHere()) exempt += 1;
+				else report(unit.start, UNIT_FOUND);
+			}
+			// A unit after a value in the markup's text: {value}% or {value} MB between tags, or in an
+			// attribute other than a style (title="{value}%"), whose width: {value}% is CSS.
+			const sequences = [node.children ?? []];
+			if (node.type === 'Attribute' && node.name !== 'style' && Array.isArray(node.value)) sequences.push(node.value);
+			for (const parts of sequences) {
+				parts.forEach((part, index) => {
+					const next = parts[index + 1];
+					if ((part.type === 'MustacheTag' || part.type === 'AttributeShorthand') && next?.type === 'Text' && UNIT_AFTER.test(next.data)) {
+						if (markupExempted(markup, node.start) || exemptedHere()) exempt += 1;
+						else report(next.start, `${UNIT_FOUND} ({value}%, {value} MB)`);
+					}
+				});
+			}
+			ancestors.push(node);
+		},
+		leave() {
+			ancestors.pop();
+		}
+	});
+}
+
+/** The hand-made formats of a .ts module; in a catalog, a percentage put together in a text. */
+function checkModuleFormats(file) {
+	const name = relative(file);
+	const text = readFileSync(file, 'utf8');
+	const sourceFile = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+	const report = (offset, found) => errors.push(`${name}:${position(text, offset)}: ${found} writes a number or a date by hand: ${FORMAT_HINT}`);
+	tsFormats(sourceFile, 0, report);
+	if (!file.startsWith(CATALOGS)) return;
+	// The texts of the catalog's halves: a placeholder before % is a percentage put together in a text
+	// (pass formatPercent's in a placeholder), and Russian writes a no-break space before % (80 %), as
+	// formatPercent does.
+	const visit = (node, half) => {
+		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) half = node.name.text;
+		if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+			const key = ts.isPropertyAssignment(node.parent) && node.parent.name === node;
+			const where = text.slice(0, node.getStart(sourceFile)).split('\n').length;
+			if (!key && /\{\w+\}\s?%/.test(node.text)) {
+				errors.push(`${name}:${where}: a percentage put together in a text ({value}%): pass formatPercent's of $lib/format in the placeholder (ADR-0457)`);
+			} else if (!key && half === 'ru' && /\d ?%/.test(node.text)) {
+				errors.push(`${name}:${where}: a Russian percentage without the no-break space before % (write 80\\u00a0%, as formatPercent of $lib/format does) (ADR-0457)`);
+			}
+		}
+		ts.forEachChild(node, (child) => visit(child, half));
+	};
+	visit(sourceFile, '');
+}
+
 const files = readdirSync(SRC, { recursive: true })
 	.filter((entry) => entry.endsWith('.svelte'))
 	.map((entry) => path.join(SRC, entry))
@@ -448,6 +618,15 @@ const modules = readdirSync(SRC, { recursive: true })
 	.filter((file) => !file.startsWith(UI))
 	.sort();
 for (const file of modules) checkModule(file);
+const formatted = readdirSync(SRC, { recursive: true })
+	.filter((entry) => entry.endsWith('.svelte') || (entry.endsWith('.ts') && !entry.endsWith('.d.ts')))
+	.map((entry) => path.join(SRC, entry))
+	.filter((file) => !FORMAT_HOME.has(file))
+	.sort();
+for (const file of formatted) {
+	if (file.endsWith('.svelte')) checkFileFormats(file);
+	else checkModuleFormats(file);
+}
 checkTable();
 
 if (errors.length > 0) {
@@ -458,4 +637,5 @@ if (errors.length > 0) {
 }
 console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, choice, ` +
 	'<details> or bare field, no raw colour class, no browser dialog, no uppercase, no primary button in a card\'s header ' +
-	`or a row, no success Alert and no hand-made spinner; ${exempt} use(s) exempted with design-ignore`);
+	`or a row, no success Alert and no hand-made spinner; ${formatted.length} files of src/ write no number or date by ` +
+	`hand; ${exempt} use(s) exempted with design-ignore`);

@@ -44,13 +44,6 @@
 	let created = $state<RemotePeerCreated | null>(null);
 	let qrDataUrl = $state('');
 
-	let sizeUnits = $derived([
-		$t('remote.size.bytes'),
-		$t('remote.size.kilobytes'),
-		$t('remote.size.megabytes'),
-		$t('remote.size.gigabytes'),
-		$t('remote.size.terabytes')
-	]);
 	let on = $derived(!!status?.enabled);
 
 	onMount(() => {
@@ -302,7 +295,7 @@
 		{/if}
 
 		{#if status.configured}
-			<PeerList peers={status.peers} {clockAhead} {busy} {sizeUnits} onadd={openAdd} onrevoke={revoke} />
+			<PeerList peers={status.peers} {clockAhead} {busy} onadd={openAdd} onrevoke={revoke} />
 		{/if}
 	{/if}
 </Card>

@@ -837,9 +837,10 @@ test.describe('Users page in Russian (fake data)', () => {
     await expect(cells('admin').nth(1)).toHaveText('Администратор');
     await expect(cells('alice').nth(1)).toHaveText('Пользователь');
     await expect(cells('alice').nth(2)).toHaveText('2FA выключена');
-    // The day in the language of the page, the exact time as its hover text.
-    await expect(cells('alice').nth(4)).toHaveText('1 окт. 2026 г.');
-    await expect(cells('alice').nth(4)).toHaveAttribute('title', '1 октября 2026 г. в 09:00');
+    // The day in the language of the page, the exact time as its hover text, in the one format of a
+    // date and of a date and time (webui.locale-formats).
+    await expect(cells('alice').nth(4)).toHaveText('01.10.2026');
+    await expect(cells('alice').nth(4)).toHaveAttribute('title', '01.10.2026, 09:00');
     await expect(cells('bob').nth(3).locator('[title]')).toHaveAttribute('title', RU_PASSWORD_NEEDED_HINT);
     // The server's reason as it comes.
     await expect(cells('Erin.Old').nth(3).locator('[title]')).toHaveAttribute('title', ERIN_REASON);

@@ -3,7 +3,8 @@
 	import { Button, Card } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import AuditEntryItem from './AuditEntryItem.svelte';
-	import { byDay, dayLabel } from './timeline';
+	import { formatDayHeading } from '$lib/time';
+	import { byDay } from './timeline';
 
 	// The entries of the audit log as a timeline, newest first, grouped by the browser's days
 	// (ADR-0401), and Show more while there are more.
@@ -37,7 +38,7 @@
 				<!-- A day's heading as a group label, kept in view while its entries scroll (ADR-0428). -->
 				<h2 class="eyebrow sticky top-0 z-[1] -mx-1 px-1 py-1.5 mb-2 bg-surface-elevated">
 					<!-- In the language of the page: the timeline follows a change of the language. -->
-					<time datetime={group.day}>{dayLabel(group.day, $intlLocale)}</time>
+					<time datetime={group.day}>{formatDayHeading(group.day, $intlLocale)}</time>
 				</h2>
 				<ol class="relative ml-1.5 border-l border-border">
 					{#each group.entries as entry}

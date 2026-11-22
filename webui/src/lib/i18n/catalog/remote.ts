@@ -83,11 +83,6 @@ export const en = {
 	'remote.done': 'Done',
 	'remote.outside':
 		"From outside the LAN: your router forwards UDP port {port} to the NAS, and each device imports its peer's configuration into the WireGuard app. Behind a carrier-grade NAT (no public IPv4 address) no port forward reaches the NAS.",
-	'remote.size.bytes': 'B',
-	'remote.size.kilobytes': 'KB',
-	'remote.size.megabytes': 'MB',
-	'remote.size.gigabytes': 'GB',
-	'remote.size.terabytes': 'TB',
 
 	'remote.names.title': 'Local names for apps',
 	'remote.names.description':
@@ -195,11 +190,6 @@ export const ru: Translation<typeof en> = {
 	'remote.done': 'Готово',
 	'remote.outside':
 		'Извне локальной сети: маршрутизатор перенаправляет UDP-порт {port} на NAS, а каждое устройство импортирует конфигурацию своего узла в приложение WireGuard. За NAT оператора (без внешнего IPv4-адреса) перенаправление портов до NAS не доходит.',
-	'remote.size.bytes': 'Б',
-	'remote.size.kilobytes': 'КБ',
-	'remote.size.megabytes': 'МБ',
-	'remote.size.gigabytes': 'ГБ',
-	'remote.size.terabytes': 'ТБ',
 
 	'remote.names.title': 'Локальные имена приложений',
 	'remote.names.description':

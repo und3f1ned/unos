@@ -17,13 +17,13 @@
 		/** The jobs on the pools. */
 		jobs: PoolJobs;
 		formatBytes: (bytes: number) => string;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 		profileLabel: (profile: string) => string;
 		/** The disks that a new pool can take; null when the disks could not be read. */
 		freeDisks: number | null;
 	};
 
-	let { pools, error, jobs, formatBytes, percentFormat, profileLabel, freeDisks, ...handlers }: Props = $props();
+	let { pools, error, jobs, formatBytes, formatPercentage, profileLabel, freeDisks, ...handlers }: Props = $props();
 </script>
 
 <Card class="space-y-4">
@@ -56,7 +56,7 @@
 					removal={jobs.removal.statuses[pool.name]}
 					removalError={jobs.removal.errors[pool.name]}
 					{formatBytes}
-					{percentFormat}
+					{formatPercentage}
 					{profileLabel}
 					{...handlers}
 				/>

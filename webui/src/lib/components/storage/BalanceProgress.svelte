@@ -5,7 +5,8 @@
 	import { AlertTriangle, CheckCircle, Pause, Play } from 'lucide-svelte';
 	import { Alert, Button, ProgressBar, StatusDot } from '$lib/components/ui';
 	import type { BalanceStatus, Pool } from '$lib/api/storage';
-	import { t } from '$lib/i18n';
+	import { formatDuration } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 	import { balanceProgress, type BalanceAction } from './pools';
 
 	type Props = {
@@ -17,13 +18,13 @@
 		status: BalanceStatus | undefined;
 		/** Why the status could not be read: shown instead of the last one. */
 		error: string | undefined;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 		/** A pause, resume or cancel is on its way. */
 		busy?: boolean;
 		onaction?: (action: BalanceAction) => void;
 	};
 
-	let { part, pool, scrubRunning = false, status, error, percentFormat, busy = false, onaction }: Props = $props();
+	let { part, pool, scrubRunning = false, status, error, formatPercentage, busy = false, onaction }: Props = $props();
 	const mounted = $derived(pool.mounted);
 
 	// What a balance that runs or is paused does, by its status.
@@ -34,13 +35,11 @@
 		paused: 'storage.balance.paused'
 	};
 
-	/** The estimate of the time a balance needs still, in hours and minutes. */
-	const timeLeft = (seconds: number): string => {
-		const minutes = Math.ceil(seconds / 60);
-		if (seconds < 60) return $t('storage.balance.leftSeconds');
-		if (minutes < 60) return $t('storage.balance.leftMinutes', { minutes });
-		return $t('storage.balance.leftHours', { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
-	};
+	/** The estimate of the time a balance needs still, rounded up to a whole minute. */
+	const timeLeft = (seconds: number): string =>
+		seconds < 60
+			? $t('storage.balance.leftSeconds')
+			: $t('storage.balance.left', { duration: formatDuration(Math.ceil(seconds / 60) * 60, $intlLocale, $t) });
 </script>
 
 {#if part === 'result' && mounted && error}
@@ -91,7 +90,7 @@
 		<!-- How far, and how long it needs still: no chunk counts. -->
 		<div class="flex flex-wrap justify-between gap-x-3 text-xs text-secondary tabular">
 			{#if status.expected && status.completed !== null}
-				<span>{$t('storage.balance.done', { percent: percentFormat.format(balanceProgress(status) / 100) })}</span>
+				<span>{$t('storage.balance.done', { percent: formatPercentage(balanceProgress(status)) })}</span>
 			{/if}
 			{#if status.status === 'running' && status.seconds_left !== null}
 				<span>{timeLeft(status.seconds_left)}</span>

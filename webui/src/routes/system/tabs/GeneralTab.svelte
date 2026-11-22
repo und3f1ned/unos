@@ -4,8 +4,8 @@
 	import { Card, ErrorState, Skeleton } from '$lib/components/ui';
 	import { messageOf } from '$lib/errors';
 	import { HostSettings, HostSettingsCard } from '$lib/components/system/general';
-	import { t } from '$lib/i18n';
-	import { apiTime } from '$lib/time';
+	import { formatDuration, secondsSince } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 
 	// System > General (ADR-0431): the facts of the host and its name and time zone. The host name is
 	// shown by its field alone, the version by Updates, the signed-in account by the sidebar.
@@ -35,15 +35,8 @@
 
 	// Reactive, so that the uptime follows a change of the language.
 	let formatUptime = $derived((bootTime: string): string => {
-		const booted = apiTime(bootTime);
-		if (!booted) return bootTime;
-		const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
-		const days = Math.floor(seconds / 86400);
-		const hours = Math.floor((seconds % 86400) / 3600);
-		const minutes = Math.floor((seconds % 3600) / 60);
-		if (days > 0) return $t('general.uptime.days', { days, hours, minutes });
-		if (hours > 0) return $t('general.uptime.hours', { hours, minutes });
-		return $t('general.uptime.minutes', { minutes });
+		const seconds = secondsSince(bootTime);
+		return seconds === null ? bootTime : formatDuration(seconds, $intlLocale, $t, { parts: 3 });
 	});
 </script>
 

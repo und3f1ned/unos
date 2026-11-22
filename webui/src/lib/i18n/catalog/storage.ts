@@ -12,11 +12,6 @@ export const en = {
 	'storage.createBlocked': 'The disks could not be read: Refresh to try again.',
 
 	// A size that the page writes itself, by powers of 1024: {size} is the number, with one decimal.
-	'storage.size.bytes': '{size} B',
-	'storage.size.kb': '{size} KB',
-	'storage.size.mb': '{size} MB',
-	'storage.size.gb': '{size} GB',
-	'storage.size.tb': '{size} TB',
 	// A label or a name shown on its own, such as the label after a filesystem's type.
 	'storage.quoted': '"{name}"',
 	// What the page asks, and what UNOS refuses, of a new pool's or volume's name. The letters are
@@ -187,7 +182,6 @@ export const en = {
 	'storage.scrub.running': 'Scrub in progress',
 	'storage.scrub.progress': 'Scrub progress',
 	// {rate} is a size.
-	'storage.scrub.rate': '{rate}/s',
 	'storage.scrub.noErrors': 'Last scrub: No errors',
 	'storage.scrub.errors': { one: 'Last scrub: {n} error(s)', other: 'Last scrub: {n} error(s)' },
 	// A scrub that did not finish: {stopped} says how it ended.
@@ -209,8 +203,7 @@ export const en = {
 	'storage.balance.progress': 'Balance progress',
 	'storage.balance.done': '{percent} done',
 	'storage.balance.leftSeconds': 'Less than a minute left',
-	'storage.balance.leftMinutes': 'About {minutes} min left',
-	'storage.balance.leftHours': 'About {hours} h {minutes} min left',
+	'storage.balance.left': 'About {duration} left',
 	'storage.balance.finished': 'Last balance: finished',
 	'storage.balance.cancelled': 'Last balance: cancelled before it finished',
 	'storage.balance.failed': 'Last balance failed',
@@ -428,11 +421,6 @@ export const ru: Translation<typeof en> = {
 	'storage.createPool': 'Создать пул',
 	'storage.createBlocked': 'Не удалось прочитать диски: нажмите «Обновить», чтобы попробовать снова.',
 
-	'storage.size.bytes': '{size} Б',
-	'storage.size.kb': '{size} КБ',
-	'storage.size.mb': '{size} МБ',
-	'storage.size.gb': '{size} ГБ',
-	'storage.size.tb': '{size} ТБ',
 	'storage.quoted': '«{name}»',
 	'storage.nameRule':
 		'Используйте латинские буквы, цифры, «-» и «_» (до 63 символов), начиная с латинской буквы или цифры',
@@ -584,7 +572,6 @@ export const ru: Translation<typeof en> = {
 	'storage.scrub.statusError': 'Не удалось прочитать состояние проверки целостности',
 	'storage.scrub.running': 'Идёт проверка целостности',
 	'storage.scrub.progress': 'Ход проверки целостности',
-	'storage.scrub.rate': '{rate}/с',
 	'storage.scrub.noErrors': 'Последняя проверка: ошибок нет',
 	'storage.scrub.errors': {
 		one: 'Последняя проверка: {n} ошибка',
@@ -605,12 +592,11 @@ export const ru: Translation<typeof en> = {
 	'storage.balance.cancelling': 'Балансировка отменяется',
 	'storage.balance.paused': 'Балансировка приостановлена',
 	'storage.balance.pausedNote':
-		'Приостановленная балансировка продолжится, когда вы её возобновите, а также при следующем монтировании пула, например при следующем запуске NAS; чтобы остановить её совсем, отмените её. Когда приостановленная полная балансировка продолжится, она перезапишет только блоки, заполненные меньше чем на 90% (правило ядра Linux): чтобы перезаписать все блоки, отмените её и начните новую полную балансировку.',
+		'Приостановленная балансировка продолжится, когда вы её возобновите, а также при следующем монтировании пула, например при следующем запуске NAS; чтобы остановить её совсем, отмените её. Когда приостановленная полная балансировка продолжится, она перезапишет только блоки, заполненные меньше чем на 90\u00a0% (правило ядра Linux): чтобы перезаписать все блоки, отмените её и начните новую полную балансировку.',
 	'storage.balance.progress': 'Ход балансировки',
 	'storage.balance.done': 'Выполнено {percent}',
 	'storage.balance.leftSeconds': 'Осталось меньше минуты',
-	'storage.balance.leftMinutes': 'Осталось около {minutes} мин',
-	'storage.balance.leftHours': 'Осталось около {hours} ч {minutes} мин',
+	'storage.balance.left': 'Осталось около {duration}',
 	'storage.balance.finished': 'Последняя балансировка: завершена',
 	'storage.balance.cancelled': 'Последняя балансировка: отменена до завершения',
 	'storage.balance.failed': 'Последняя балансировка не удалась',
@@ -626,7 +612,7 @@ export const ru: Translation<typeof en> = {
 	'storage.balance.usageInvalid': 'Введите целое число от 1 до 99',
 	'storage.balance.fullTitle': 'Полная балансировка идёт долго',
 	'storage.balance.fullWarning':
-		'Она перезаписывает все блоки, все данные пула: на жёстком диске это часы, и всё это время пул работает медленнее. Она нужна редко, например после добавления диска в пул. Если она будет приостановлена или работа NAS прервётся до её завершения, дальше она перезапишет только блоки, заполненные меньше чем на 90%: чтобы перезаписать все блоки, отмените её и начните новую.',
+		'Она перезаписывает все блоки, все данные пула: на жёстком диске это часы, и всё это время пул работает медленнее. Она нужна редко, например после добавления диска в пул. Если она будет приостановлена или работа NAS прервётся до её завершения, дальше она перезапишет только блоки, заполненные меньше чем на 90\u00a0%: чтобы перезаписать все блоки, отмените её и начните новую.',
 	'storage.balance.fullConfirm': 'Перезаписать все блоки пула {name}',
 	'storage.balance.start': 'Начать балансировку',
 	'storage.balance.startFailed': 'Балансировка не началась',
@@ -716,11 +702,11 @@ export const ru: Translation<typeof en> = {
 		'Без избыточности. Доступно всё пространство. Отказ одного диска приводит к потере всех данных.',
 	'storage.raid.raid0Hint':
 		'Данные чередуются между дисками ради скорости. Без избыточности. Отказ любого диска приводит к потере всех данных.',
-	'storage.raid.raid1Hint': 'Зеркалирование в 2 копии. Выдерживает отказ 1 диска. Полезный объём: 50%.',
-	'storage.raid.raid1c3Hint': 'Зеркалирование в 3 копии. Выдерживает отказ 2 дисков. Полезный объём: 33%.',
-	'storage.raid.raid1c4Hint': 'Зеркалирование в 4 копии. Выдерживает отказ 3 дисков. Полезный объём: 25%.',
+	'storage.raid.raid1Hint': 'Зеркалирование в 2 копии. Выдерживает отказ 1 диска. Полезный объём: 50\u00a0%.',
+	'storage.raid.raid1c3Hint': 'Зеркалирование в 3 копии. Выдерживает отказ 2 дисков. Полезный объём: 33\u00a0%.',
+	'storage.raid.raid1c4Hint': 'Зеркалирование в 4 копии. Выдерживает отказ 3 дисков. Полезный объём: 25\u00a0%.',
 	'storage.raid.raid10Hint':
-		'Чередование зеркал. Выдерживает отказ 1 диска в каждой зеркальной паре. Полезный объём: 50%.',
+		'Чередование зеркал. Выдерживает отказ 1 диска в каждой зеркальной паре. Полезный объём: 50\u00a0%.',
 
 	'storage.mount.title': 'Смонтировать пул',
 	'storage.mount.question': 'Смонтировать',

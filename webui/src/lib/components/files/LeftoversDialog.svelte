@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { formatSize } from '$lib/api/files';
 	import { Alert, ConfirmDialog } from '$lib/components/ui';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import type { FileBrowser } from './browser.svelte';
@@ -10,13 +10,11 @@
 	type Props = {
 		browser: FileBrowser;
 		leftovers: UploadLeftovers;
-		// Sizes in the units of the page's language.
-		units: readonly string[];
 		// The dialog closed without removing: the page gives the keyboard focus back to the notice.
 		onclosed: () => void;
 	};
 
-	let { browser, leftovers, units, onclosed }: Props = $props();
+	let { browser, leftovers, onclosed }: Props = $props();
 
 	// The dialog's Cancel takes the keyboard focus: a removal cannot be undone (ADR-0354).
 	export function ask() {
@@ -60,7 +58,7 @@
 					<p class="font-mono break-all">{file.path}</p>
 					<p class="text-content-secondary">
 						{$t('files.leftovers.file', {
-							size: formatSize(file.size, units),
+							size: formatSize(file.size, $intlLocale, $t),
 							time: formatDateTime(file.modified, $intlLocale)
 						})}
 					</p>

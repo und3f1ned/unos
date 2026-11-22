@@ -2,8 +2,9 @@
 	// The backups of System > Backup & Restore, newest first as the server lists them (ADR-0432): a
 	// table whose rows become cards on a phone (table-stack); each row's actions in one line, Delete
 	// as an icon and Restore and Download in its ⋯ menu.
-	import { formatBytes, type BackupInfo } from '$lib/api/backup';
+	import type { BackupInfo } from '$lib/api/backup';
 	import { ActionMenu, Badge, Button, EmptyState, Skeleton } from '$lib/components/ui';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { Archive, Download, Lock, RotateCcw, Trash2 } from 'lucide-svelte';
@@ -11,14 +12,12 @@
 	type Props = {
 		backups: BackupInfo[];
 		loading: boolean;
-		// The units of a backup's size in the language of the page (formatBytes).
-		sizeUnits: string[];
 		onrestore: (backup: BackupInfo) => void;
 		ondownload: (filename: string) => void;
 		ondelete: (filename: string) => void;
 	};
 
-	let { backups, loading, sizeUnits, onrestore, ondownload, ondelete }: Props = $props();
+	let { backups, loading, onrestore, ondownload, ondelete }: Props = $props();
 </script>
 
 <section class="card card-flush" aria-label={$t('backup.listLabel')}>
@@ -48,10 +47,10 @@
 								</span>
 							</td>
 							<td data-label={$t('backup.column.created')} class="whitespace-nowrap"
-								>{formatDateTime(backup.created, $intlLocale, { dateStyle: 'medium', timeStyle: 'short' })}</td
+								>{formatDateTime(backup.created, $intlLocale)}</td
 							>
 							<td data-label={$t('backup.column.size')} class="num"
-								>{formatBytes(backup.size, $intlLocale, sizeUnits)}</td
+								>{formatSize(backup.size, $intlLocale, $t, { digits: 2 })}</td
 							>
 							<td data-label={$t('backup.column.version')}>
 								<span class="inline-flex flex-wrap items-center gap-1.5">

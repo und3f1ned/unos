@@ -687,10 +687,12 @@ test.describe('File Browser operations', () => {
   });
 
   // webui.translations (ADR-0287): what the code puts together at run time, in Russian: counts in
-  // their plural forms, sizes in Russian units, dates and times as Russian writes them.
+  // their plural forms, sizes in Russian units with a decimal comma, dates and times as Russian
+  // writes them (webui.locale-formats).
   test('Files and the trash count, size and date their items in Russian', async ({ authenticatedPage: page }) => {
     const dir = scratch!.path;
-    for (const name of ['a.txt', 'b.txt']) await putFile(page, dir, name, Buffer.from('alpha'));
+    await putFile(page, dir, 'a.txt', Buffer.from('alpha'));
+    await putFile(page, dir, 'b.txt', Buffer.alloc(2560, 'b'));
     await chooseRussian(page);
     const select = (name: string) => page.getByRole('checkbox', { name: `Выбрать ${name}`, exact: true });
     const entry = (name: string) => page.locator('main div.grid').filter({ has: select(name) });
@@ -700,6 +702,9 @@ test.describe('File Browser operations', () => {
       await expect(crumb(page, name)).toBeVisible();
     }
     await expect(entry('a.txt')).toContainText('5 Б');
+    await expect(entry('b.txt')).toContainText('2,5 КБ');
+    const today = await page.evaluate(() => new Date().toLocaleDateString('ru'));
+    await expect(entry('a.txt')).toContainText(today);
     await expect(entry('a.txt')).toContainText(/\d{2}\.\d{2}\.\d{4}/);
     await expect(page.getByText('Элементов: 2', { exact: true })).toBeVisible();
 

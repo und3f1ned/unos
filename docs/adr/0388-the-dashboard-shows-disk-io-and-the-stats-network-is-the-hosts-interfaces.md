@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0457
 date: 2026-11-17
 area: system
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0388: The dashboard shows the disks' I/O, and the network of the stats message is the traffic of the host's interfaces
 
 ## Context
+
+Superseded by ADR-0457: only in part, the units of `dashboard.unit.*` and `dashboard.rate` with which the Network and Disk I/O cards wrote their rates; they come from the catalog `format` through `formatRate` of `webui/src/lib/format.ts`. Every other rule here stays in force.
 
 The entry `system.dashboard` says that the dashboard shows live CPU, memory, network and disk I/O,
 but its stats cards had no disk I/O, which the stats message of `/ws/v1/events` already carried.

@@ -9,7 +9,7 @@
 	import type { AppContainer, AppPool, AppTemplate } from '$lib/api/apps';
 	import { intlLocale, t } from '$lib/i18n';
 	import { DISK_AWAKE, memoryBytes, type DataLocation } from './detail';
-	import { formatSize } from './size';
+	import { formatSize } from '$lib/format';
 
 	type Props = {
 		app: AppTemplate;
@@ -28,7 +28,7 @@
 	/** A memory size of the catalog in the page's units; one that is no size as it comes. */
 	function memory(value: string): string {
 		const bytes = memoryBytes(value);
-		return bytes === null ? value : formatSize(bytes, $intlLocale, $t, 1);
+		return bytes === null ? value : formatSize(bytes, $intlLocale, $t);
 	}
 </script>
 
@@ -52,7 +52,7 @@
 				<div>
 					<span class="kv-label">{$t('apps.detail.imagesDisk')}</span>
 					<span class="kv-value">
-						{$t('apps.detail.imagesSize', { size: formatSize(app.system_disk_bytes, $intlLocale, $t, 2) })}
+						{$t('apps.detail.imagesSize', { size: formatSize(app.system_disk_bytes, $intlLocale, $t, { digits: 2 }) })}
 					</span>
 				</div>
 			{/if}

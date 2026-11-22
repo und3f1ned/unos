@@ -2,9 +2,10 @@
 	import { Bell, ChevronDown, ChevronUp } from 'lucide-svelte';
 	import type { NotificationLog } from '$lib/api/notifications';
 	import { Badge, Button, Card, EmptyState, Select, Skeleton, Segmented } from '$lib/components/ui';
+	import { formatAgo } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
-	import { KIND_ORDER, TYPES, colorOf, iconOf, kindName, labelOf, sentWhen } from './channels';
+	import { KIND_ORDER, TYPES, colorOf, iconOf, kindName, labelOf } from './channels';
 	import type { HistoryFilter } from './history.svelte';
 
 	// The History view: every notification sent, newest first, by channel and outcome; an entry
@@ -84,7 +85,7 @@
 									</span>
 									<span class="block text-sm text-muted truncate mt-1">{log.event.message}</span>
 								</span>
-								<span class="text-sm text-muted flex-shrink-0">{sentWhen($t, $intlLocale, log.sent_at)}</span>
+								<span class="text-sm text-muted flex-shrink-0">{formatAgo(log.sent_at, $intlLocale, $t)}</span>
 								{#if expanded}
 									<ChevronUp class="w-4 h-4 mt-0.5 text-muted flex-shrink-0" />
 								{:else}

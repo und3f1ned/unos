@@ -5,7 +5,7 @@
 	import type { LogEntry, LogPriority } from '$lib/api/logs';
 	import { Alert, Badge, Card, EmptyState, Skeleton, StatusDot } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
-	import { apiTime } from '$lib/time';
+	import { formatDateTime } from '$lib/time';
 	import { FileText } from 'lucide-svelte';
 	import { priorityVariant, splitByMatch, textOf } from './logs';
 
@@ -37,22 +37,9 @@
 	};
 
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
-	// in the language of the page, as toLocaleString writes them. One formatter per language for
-	// every row (reactive, so that the list follows a change of the language).
-	let dateFormat = $derived(
-		new Intl.DateTimeFormat($intlLocale, {
-			year: 'numeric',
-			month: 'numeric',
-			day: 'numeric',
-			hour: 'numeric',
-			minute: 'numeric',
-			second: 'numeric'
-		})
-	);
+	// in the language of the page, to the second: a line of a log (webui.locale-formats).
 	function formatTimestamp(ts: string): string {
-		if (!ts) return '';
-		const date = apiTime(ts);
-		return date ? dateFormat.format(date) : ts;
+		return ts ? formatDateTime(ts, $intlLocale, { seconds: true }) : '';
 	}
 </script>
 

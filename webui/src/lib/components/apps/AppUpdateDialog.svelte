@@ -7,7 +7,7 @@
 	import { untrack } from 'svelte';
 	import { Alert, Badge, Button, Modal, Skeleton, TechDetails } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
-	import { formatSize as formatSizeIn } from './size';
+	import { formatSize } from '$lib/format';
 	import {
 		getUpdatePlan,
 		updateApp,
@@ -77,11 +77,6 @@
 		}
 	}
 
-	// A size with one decimal in the language of the page (formatSize of ./size).
-	function formatSize(bytes: number): string {
-		return formatSizeIn(bytes, $intlLocale, $t, 1);
-	}
-
 	/** The image as its tag names it; one created by its digest alone with the start of the digest. */
 	function shortName(image: string | null): string {
 		const [name, digest] = (image ?? '').split('@');
@@ -136,17 +131,17 @@
 				</div>
 				<div>
 					<span class="kv-label">{$t('appUpdates.download')}</span>
-					<span class="kv-value" data-field="download">{formatSize(plan.download_bytes)}</span>
+					<span class="kv-value" data-field="download">{formatSize(plan.download_bytes, $intlLocale, $t)}</span>
 				</div>
 				<div>
 					<span class="kv-label">{$t('appUpdates.systemDisk')}</span>
 					<span class="kv-value" data-field="system-disk">
 						{plan.system_disk_free_bytes !== null
 							? $t('appUpdates.writes', {
-									writes: formatSize(plan.system_disk_bytes),
-									free: formatSize(plan.system_disk_free_bytes)
+									writes: formatSize(plan.system_disk_bytes, $intlLocale, $t),
+									free: formatSize(plan.system_disk_free_bytes, $intlLocale, $t)
 								})
-							: $t('appUpdates.writesNoFree', { writes: formatSize(plan.system_disk_bytes) })}
+							: $t('appUpdates.writesNoFree', { writes: formatSize(plan.system_disk_bytes, $intlLocale, $t) })}
 					</span>
 				</div>
 			</div>
@@ -157,10 +152,10 @@
 						<p class="text-sm text-content-secondary break-words">
 							{$t('appUpdates.copy', {
 								folder: copy.folder,
-								size: formatSize(copy.bytes),
+								size: formatSize(copy.bytes, $intlLocale, $t),
 								copy: copy.copy_folder,
 								pool: copy.pool,
-								free: formatSize(copy.pool_free_bytes)
+								free: formatSize(copy.pool_free_bytes, $intlLocale, $t)
 							})}
 						</p>
 					{/each}

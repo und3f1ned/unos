@@ -10,12 +10,12 @@
 		PowerScheduleCard,
 		PowerStatusCard,
 		REQUESTED,
-		knownZone,
 		WakeOnLan,
 		WakeOnLanCard,
 		type Action
 	} from '$lib/components/system/power';
 	import { t } from '$lib/i18n';
+	import { knownZone } from '$lib/time';
 	import { paletteRequest, type PaletteRequest } from '$lib/stores/palette';
 
 	// Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
@@ -141,7 +141,7 @@
 		return failed.length >= 2 && failed.every((message) => message === failed[0]) ? failed[0] : '';
 	});
 	// The times of the tab are on the NAS's clock, the one its settings are on; named once.
-	let zone = $derived(knownZone(plan.schedule?.timezone));
+	let zone = $derived(knownZone(plan.schedule?.timezone) ? plan.schedule?.timezone : undefined);
 </script>
 
 <div class="space-y-6">

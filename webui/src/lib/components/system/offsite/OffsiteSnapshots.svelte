@@ -1,9 +1,9 @@
 <script lang="ts">
 	// The snapshots of the off-device copy (ADR-0337), with their restores: a configuration lands in
 	// the backup list, files go into a new folder of a pool, by the form of the snapshot `filesOf`.
-	import { formatBytes } from '$lib/api/backup';
 	import type { OffsiteSnapshot, OffsiteStatus } from '$lib/api/offsite';
 	import { Badge, Button, Input, HelpText, EmptyState, ErrorState } from '$lib/components/ui';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { RotateCcw, X, Camera } from 'lucide-svelte';
@@ -12,8 +12,6 @@
 		snapshots: OffsiteSnapshot[];
 		// Why the snapshots could not be listed: the server's message.
 		snapshotsError: string;
-		// The units of sizes in the language of the page (formatBytes).
-		sizeUnits: string[];
 		running: OffsiteStatus['running'];
 		// The snapshot being restored.
 		restoring: string | null;
@@ -31,7 +29,6 @@
 	let {
 		snapshots,
 		snapshotsError,
-		sizeUnits,
 		running,
 		restoring,
 		filesOf,
@@ -73,7 +70,7 @@
 						<span>{formatDateTime(snapshot.time, $intlLocale)}</span>
 						<span class="font-mono text-xs text-content-muted">{snapshot.short_id}</span>
 						{#if snapshot.size !== null}
-							<span class="text-content-muted">{formatBytes(snapshot.size, $intlLocale, sizeUnits)}</span>
+							<span class="text-content-muted">{formatSize(snapshot.size, $intlLocale, $t, { digits: 2 })}</span>
 						{/if}
 						{#if snapshot.files !== null && snapshot.kind !== 'configuration'}
 							<span class="text-content-muted">{$t('offsite.snapshots.files', { n: snapshot.files })}</span>

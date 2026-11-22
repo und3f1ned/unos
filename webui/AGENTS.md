@@ -43,7 +43,9 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   passes data down and callbacks up; each card, table, tab, and dialog with its form is a
   component of `src/lib/components/<area>/` with typed props. Pure helpers of an area are `.ts`
   files beside its components; state with its loading and error that several components share
-  is a `.svelte.ts` module with runes; sizes go through `src/lib/format.ts`, the message of a
+  is a `.svelte.ts` module with runes; every number, size, rate, percentage, temperature, duration
+  and age goes through `src/lib/format.ts` and every date and time through `src/lib/time.ts`, in the
+  format of `$intlLocale` with the words of the catalog `format` (ADR-0457), the message of a
   failed request through `messageOf` of `src/lib/errors.ts`, and a helper that needs texts takes
   `$t` as a `Translate` of `$lib/i18n` (its keys are checked, its other literals are not: keep
   texts in the components). A file above about 400 lines is one concern or is split; duplicated
@@ -108,9 +110,15 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   a table's row (ADR-0432), and for a success `Alert` (a success after an action is a `toast`), a
   hand-made spinner (`animate-spin`, `loading-spinner`: use Button's `loading`, `LoadState`,
   `Skeleton`, or a `StatusDot` with `pulse` for a job that runs) and a raw `<details>` (use
-  `TechDetails`, whose `children` take a list) (ADR-0438). `// design-ignore: <reason>` (an HTML
-  comment above an element) exempts a use: an outcome to read before going on keeps its success
-  `Alert` so, with its reason.
+  `TechDetails`, whose `children` take a list) (ADR-0438). In every file of `src/`, `ui`'s
+  included, but `src/lib/format.ts` and `src/lib/time.ts`, it fails for a number or a date written by
+  hand: `toFixed`, `toPrecision`, `toLocaleString` and its date and time kin, Intl's number, date,
+  relative-time and duration formats, a date's getters, `padStart(2, '0')` and a percentage or a
+  unit of a size put together after a value (`value + ' MB'`, `{value}%` between tags), and in a
+  catalog for `'{value}%'` and a Russian `%` without its no-break space (ADR-0457).
+  `// design-ignore: <reason>` (an HTML comment above an element) exempts a use: an outcome to read
+  before going on keeps its success `Alert` so, with its reason; an SVG path's coordinates keep
+  their `toFixed`.
 
 ## Patterns (ADR-0432)
 
@@ -157,8 +165,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   of the message it needs (`$stats.cpu`, `$stats.network.interfaces`). The same socket fills the
   stores `problems`, `repairJob` (the running or last repair of a share's permissions) and
   `appInstalls` (the running install, update or rollback of an app and the last of each, ADR-0384,
-  ADR-0408) for administrators. Rates come from the server; a page writes sizes and rates with the units of its
-  catalog, as `NetworkTab.svelte` and `MonitorTab.svelte` do (ADR-0287).
+  ADR-0408) for administrators. Rates come from the server; a page writes sizes and rates with
+  `formatSize` and `formatRate` of `src/lib/format.ts` (ADR-0457).
 - No page polls the API: other live data comes over a WebSocket of its own, as a container's log
   (`streamContainerLogs` of `$lib/api/containers.ts`, ADR-0255) and the journal of System > Logs'
   Auto do (`streamLogEntries` of `$lib/api/logs.ts`, ADR-0366), or as a message of
@@ -191,7 +199,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `$t('area.key')`, `$t('area.key', { name })` for `{name}`, and `$t('area.key', { n })` for a
   text with plural forms (`{ one, other }` in English, `{ one, few, many }` in Russian).
   `$lib/i18n` collects every catalog file: an area adds its own file and edits no shared one;
-  `common.ts` has the words that many areas use. Dates take `$intlLocale`. A value that the
+  `common.ts` has the words that many areas use, `format.ts` the units of the numbers. Numbers and
+  dates take `$intlLocale` through `src/lib/format.ts` and `src/lib/time.ts`. A value that the
   server answers as a word (an action, a state, a type) is shown through a map from the value to
   a key, `{ allow: 'firewall.allow' }`, never as it comes. System > Network keeps what
   ip and ss print in its tables (link types, protocols, socket states) as it comes (ADR-0295).

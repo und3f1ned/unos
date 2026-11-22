@@ -587,10 +587,11 @@ test.describe('Scheduler: the time zone of the schedules', () => {
     await expect(zoneLine).toContainText(`Times on this page follow the NAS's clock: ${NAS_ZONE}.`);
     await zoneLine.getByRole('button', { name: 'Details' }).click();
     await expect(zoneLine).toContainText('The NAS\'s time zone is set in General.');
-    await expect(page.getByText(/Daily at 02:00$/)).toBeVisible();
+    // The time of the schedule on the clock of the page's language (webui.locale-formats): 2:00 AM in an en-US browser.
+    await expect(page.getByText(/Daily at 2:00\sAM$/)).toBeVisible();
     // The next run, 03:00 in Berlin (2026-11-08T03:00:00+01:00), is shown as 03:00, not as the
     // browser's 21:00 the evening before in New York.
-    await expect(page.getByText(/^Nov 8, 2026, 3:00\sAM$/)).toBeVisible();
+    await expect(page.getByText(/^11\/8\/2026, 3:00\sAM$/)).toBeVisible();
     await expect(page.getByText(/9:00(:00)?\sPM/)).toHaveCount(0);
 
     // The times of the task form are on the NAS's clock, and the form says so.
@@ -605,7 +606,7 @@ test.describe('Scheduler: the time zone of the schedules', () => {
     // A run started at 01:00:01 UTC, on the NAS's clock: 02:00 in Berlin, without seconds.
     await chooseAction(page, SNAPSHOT_TASK.name, 'View history');
     await expect(page.getByRole('heading', { name: `Run history: ${SNAPSHOT_TASK.name}` })).toBeVisible();
-    await expect(page.getByText(/^Nov 7, 2026, 2:00\sAM$/)).toBeVisible();
+    await expect(page.getByText(/^11\/7\/2026, 2:00\sAM$/)).toBeVisible();
   });
 });
 
@@ -922,10 +923,10 @@ test.describe('Scheduler: in Russian', () => {
 
     // In English, the schedules read as before the catalogs.
     await page.goto('/system#scheduler');
-    await expect(row(SNAPSHOT_TASK.name).getByText(/Snapshot\s+on e2e_tank\s+• Daily at 02:00/)).toBeVisible();
-    await expect(row(SMART_TASK.name).getByText(/SMART test\s+on \/dev\/e2e-gone\s+• Sundays at 03:00/))
+    await expect(row(SNAPSHOT_TASK.name).getByText(/Snapshot\s+on e2e_tank\s+• Daily at 2:00\sAM/)).toBeVisible();
+    await expect(row(SMART_TASK.name).getByText(/SMART test\s+on \/dev\/e2e-gone\s+• Sundays at 3:00\sAM/))
       .toBeVisible();
-    await expect(row(MONTHLY_TASK.name).getByText(/Scrub\s+on e2e_tank\s+• Day 12 at 04:30/)).toBeVisible();
+    await expect(row(MONTHLY_TASK.name).getByText(/Scrub\s+on e2e_tank\s+• Day 12 at 4:30\sAM/)).toBeVisible();
 
     // As the Language card of the Account page leaves it.
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
@@ -942,7 +943,7 @@ test.describe('Scheduler: in Russian', () => {
     ).toBeVisible();
     // The next run, 03:00 in Berlin, on the NAS's clock and in the Russian format.
     await expect(row(SNAPSHOT_TASK.name).getByText('Следующий запуск', { exact: true })).toBeVisible();
-    await expect(row(SNAPSHOT_TASK.name).getByText(/^8 нояб\. 2026 г\.,? 03:00$/)).toBeVisible();
+    await expect(row(SNAPSHOT_TASK.name).getByText(/^08\.11\.2026, 03:00$/)).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'Scheduler', exact: true })).toHaveCount(0);
     // On a phone the longer Russian line of a task's type and schedule wraps, and is not cut off.
     await page.setViewportSize({ width: 375, height: 812 });
@@ -984,7 +985,7 @@ test.describe('Scheduler: in Russian', () => {
       .toBeVisible();
     await expect(page.getByText('Ошибка', { exact: true })).toBeVisible();
     // 01:00:01 UTC on the NAS's clock (Berlin), without seconds.
-    await expect(page.getByText(/^7 нояб\. 2026 г\., 02:00$/)).toBeVisible();
+    await expect(page.getByText(/^07\.11\.2026, 02:00$/)).toBeVisible();
     await expect(page.getByText('11 мс', { exact: true })).toBeVisible();
     await expect(page.getByText(FAILED_SNAPSHOT_RUN.error, { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
@@ -1019,9 +1020,9 @@ test.describe('Scheduler: in Russian', () => {
     const row = (name: string) => page.locator('div.justify-between', { hasText: name });
 
     await page.goto('/system#scheduler');
-    await expect(row(WEEKLY_WITHOUT_DAY.name).getByText(/SMART test\s+on \/dev\/e2e-gone\s+• Sundays at 05:15/))
+    await expect(row(WEEKLY_WITHOUT_DAY.name).getByText(/SMART test\s+on \/dev\/e2e-gone\s+• Sundays at 5:15\sAM/))
       .toBeVisible();
-    await expect(row(MONTHLY_WITHOUT_DAY.name).getByText(/Scrub\s+on e2e_tank\s+• Day 1 at 06:45/))
+    await expect(row(MONTHLY_WITHOUT_DAY.name).getByText(/Scrub\s+on e2e_tank\s+• Day 1 at 6:45\sAM/))
       .toBeVisible();
 
     // As the Language card of the Account page leaves it.

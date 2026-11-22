@@ -32,9 +32,7 @@
 	$effect.pre(() => {
 		if (setupOnly) asCard = true;
 	});
-	const deadline = $derived(
-		required ? formatDateTime(required.by, $intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : ''
-	);
+	const deadline = $derived(required ? formatDateTime(required.by, $intlLocale) : '');
 	// Nothing to set up: no requirement applies to this account, or no longer. Before the markup
 	// is drawn, also the first time; whoever changes the account ($user) tells it.
 	$effect.pre(() => {

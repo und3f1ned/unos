@@ -132,11 +132,8 @@ export const en = {
 	'scheduler.runs.exitStatus': 'Exit status {code}',
 	'scheduler.runs.output': 'View output',
 	'scheduler.runs.close': 'Close',
-	// How long a run took.
-	'scheduler.runs.inProgress': 'Running...',
-	'scheduler.runs.milliseconds': '{ms}ms',
-	'scheduler.runs.seconds': '{seconds}s',
-	'scheduler.runs.minutes': '{minutes}m {seconds}s'
+	// A run that has not ended yet, in place of how long it took.
+	'scheduler.runs.inProgress': 'Running...'
 };
 
 export const ru: Translation<typeof en> = {
@@ -267,8 +264,5 @@ export const ru: Translation<typeof en> = {
 	'scheduler.runs.exitStatus': 'Код завершения {code}',
 	'scheduler.runs.output': 'Показать вывод',
 	'scheduler.runs.close': 'Закрыть',
-	'scheduler.runs.inProgress': 'Выполняется...',
-	'scheduler.runs.milliseconds': '{ms} мс',
-	'scheduler.runs.seconds': '{seconds} с',
-	'scheduler.runs.minutes': '{minutes} мин {seconds} с'
+	'scheduler.runs.inProgress': 'Выполняется...'
 };

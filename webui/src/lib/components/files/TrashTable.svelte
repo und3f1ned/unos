@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { formatSize, type TrashItem } from '$lib/api/files';
+	import type { TrashItem } from '$lib/api/files';
 	import { Checkbox } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
-	import { DATE_TIME_MINUTES } from '$lib/format';
+	import { formatSize } from '$lib/format';
 	import { formatDate, formatDateTime } from '$lib/time';
 	import { trashItemIcon } from './icons';
 
@@ -10,13 +10,11 @@
 		items: TrashItem[];
 		// The paths of the selected items.
 		selected: ReadonlySet<string>;
-		// Sizes in the units of the page's language.
-		units: readonly string[];
 		// An item's checkbox was ticked or cleared.
 		ontoggle: (path: string) => void;
 	};
 
-	let { items, selected, units, ontoggle }: Props = $props();
+	let { items, selected, ontoggle }: Props = $props();
 
 	// The texts that the functions below make follow a change of the language: the markup that
 	// calls them reads $t and $intlLocale through them.
@@ -24,7 +22,7 @@
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
 	// in the language of the page.
 	function formatTime(value: string, dateOnly = false): string {
-		return dateOnly ? formatDate(value, $intlLocale) : formatDateTime(value, $intlLocale, DATE_TIME_MINUTES);
+		return dateOnly ? formatDate(value, $intlLocale) : formatDateTime(value, $intlLocale);
 	}
 
 	// The folder an item was deleted from.
@@ -38,7 +36,7 @@
 	// differ in where and when they were deleted (ADR-0197), to the second, which
 	// the row leaves out.
 	function checkboxLabel(item: TrashItem): string {
-		const time = formatDateTime(item.deleted, $intlLocale);
+		const time = formatDateTime(item.deleted, $intlLocale, { seconds: true });
 		return item.original_path === null
 			? $t('files.trash.selectUnknown', { name: item.name, time })
 			: $t('files.trash.select', { name: item.name, folder: folderOf(item), time });
@@ -86,7 +84,9 @@
 					</td>
 					<td class="whitespace-nowrap tabular">{formatTime(item.deleted)}</td>
 					<td class="hidden sm:table-cell whitespace-nowrap tabular">{formatTime(item.expires, true)}</td>
-					<td class="num whitespace-nowrap">{item.type === 'directory' ? '-' : formatSize(item.size, units)}</td>
+					<td class="num whitespace-nowrap"
+						>{item.type === 'directory' ? '-' : formatSize(item.size, $intlLocale, $t)}</td
+					>
 				</tr>
 			{/each}
 		</tbody>

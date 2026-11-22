@@ -33,24 +33,9 @@ export function dayBound(day: string, last: boolean): string {
 	return Number.isNaN(moment) ? '' : new Date(moment).toISOString();
 }
 
-/** The day `day` (YYYY-MM-DD) as the language of `locale` writes it in full; else `day`. */
-export function dayLabel(day: string, locale: string): string {
-	const [year, month, date] = day.split('-').map(Number);
-	const moment = new Date(year, month - 1, date);
-	if (Number.isNaN(moment.getTime())) return day;
-	return moment.toLocaleDateString(locale, {
-		weekday: 'long',
-		year: 'numeric',
-		month: 'long',
-		day: 'numeric'
-	});
-}
-
 /** The browser's date today as YYYYMMDD, for the file name of an export. */
 export function today(): string {
-	const now = new Date();
-	const pad = (n: number) => String(n).padStart(2, '0');
-	return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+	return (localDay(new Date()) ?? '').replaceAll('-', '');
 }
 
 /** The colour of an entry's mark on the timeline: failures and critical entries are errors. */

@@ -28,7 +28,7 @@
 				{#each history as entry (entry.id)}
 					<tr class="table-row">
 						<td data-label={$t('updates.history.date')} class="tabular">
-							{formatDateTime(entry.started_at, $intlLocale, { dateStyle: 'medium', timeStyle: 'short', zone })}
+							{formatDateTime(entry.started_at, $intlLocale, { zone })}
 						</td>
 						<td data-label={$t('updates.history.from')} class="mono break-all">{entry.from_version}</td>
 						<td data-label={$t('updates.history.to')} class="mono break-all">{entry.to_version}</td>

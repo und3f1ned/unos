@@ -684,22 +684,24 @@ def test_a_label_that_is_not_utf8_hides_no_disk(board_api, board):
     assert board.smartctl == snapshots("/dev/sda", "/dev/nvme0n1", "/dev/sdb")
 
 
-# The texts of the Disk Health tab (HealthTab.svelte) are in its module (ADR-0427).
-HEALTH_TEXTS = REPO / "webui" / "src" / "lib" / "components" / "system" / "health" / "texts.ts"
+# The units of a size that the web UI writes, by the names the server gives them, are in the one
+# home of its numbers (webui.locale-formats).
+FORMAT_TS = REPO / "webui" / "src" / "lib" / "format.ts"
 
 
 @pytest.mark.parametrize("size", [1, 512 * 1024**2, 1_000_204_886_016, 1024**4 - 1, 1024**4, 4_000_787_030_016,
                                   5000 * 1024**4])
 def test_disk_health_shows_each_capacity_the_server_writes_in_the_page_s_units(size):
     """Disk Health writes a disk's capacity, which the server answers as "3.64 TB" (_format_capacity),
-    in the language of the page: its CAPACITY_UNITS map the unit to a key of the health catalog, and
-    in English the text of that key with the number is the server's text word for word (ADR-0287)."""
+    in the language of the page: SIZE_UNITS of webui/src/lib/format.ts maps the unit to a key of the
+    catalog `format`, and in English the text of that key with the number is the server's text word
+    for word (ADR-0287)."""
     capacity = health_router._format_capacity(size)
     number, unit = capacity.split(" ")
     assert number.replace(".", "", 1).isdigit()  # the number form that the tab reads
-    units = key_map(HEALTH_TEXTS, "CAPACITY_UNITS")
+    units = key_map(FORMAT_TS, "SIZE_UNITS")
     assert unit in units, capacity
 
-    catalog = read_catalog("health")  # skips without node
+    catalog = read_catalog("format")  # skips without node
     assert catalog["en"][units[unit]].replace("{size}", number) == capacity
     assert "{size}" in catalog["ru"][units[unit]]

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PendingAction, PowerFinding, PowerSchedule } from '$lib/api/power';
 	import { Alert, Badge, Button, Card, Skeleton } from '$lib/components/ui';
+	import { formatNumber } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime, formatTimeOfDay } from '$lib/time';
 	import { COUNTED, FOUND, FOUND_WITHOUT_SUBJECT, STATES, grouped } from './texts';
@@ -44,7 +45,7 @@
 	let describe = $derived((finding: PowerFinding, count: number): string => {
 		const key =
 			(finding.subject === null && FOUND_WITHOUT_SUBJECT[finding.kind]) || FOUND[finding.kind] || FOUND.unreadable;
-		const mib = ((finding.amount ?? 0) / 1048576).toLocaleString($intlLocale, { maximumFractionDigits: 1 });
+		const mib = formatNumber((finding.amount ?? 0) / 1048576, $intlLocale, { digits: 1, grouping: true });
 		const counted = COUNTED.has(finding.kind);
 		const text = $t(key, {
 			subject: finding.subject ?? '',
@@ -54,19 +55,8 @@
 		});
 		return count > 1 && !counted ? $t('power.found.repeated', { text, n: count }) : text;
 	});
-	let when = $derived((at: string | null): string =>
-		formatDateTime(at, $intlLocale, {
-			weekday: 'short',
-			day: 'numeric',
-			month: 'short',
-			hour: '2-digit',
-			minute: '2-digit',
-			timeZone: zone
-		})
-	);
-	let timeOf = $derived((at: string): string =>
-		formatTimeOfDay(at, $intlLocale, { hour: '2-digit', minute: '2-digit', timeZone: zone })
-	);
+	let when = $derived((at: string | null): string => formatDateTime(at, $intlLocale, { zone }));
+	let timeOf = $derived((at: string): string => formatTimeOfDay(at, $intlLocale, { zone }));
 </script>
 
 {#snippet findingList(findings: PowerFinding[])}

@@ -4,7 +4,7 @@
 	// type) is shown as it comes (ADR-0295).
 	import type { NetworkInterface } from '$lib/api/network';
 	import { Badge, Button } from '$lib/components/ui';
-	import { formatNumber, scaleBytes } from '$lib/format';
+	import { formatNumber, formatRate, formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import type { NetworkInterface as WSNetworkInterface } from '$lib/stores/stats';
 	import { ArrowDown, ArrowUp, Cable, ChevronDown, ChevronUp, Network, Power, PowerOff, Wifi } from 'lucide-svelte';
@@ -24,95 +24,83 @@
 
 	let { iface, wsIface, expanded, busy, ontoggle, ondisable, onenable }: Props = $props();
 
-	// The units of a count of bytes, one for each power of 1024: keys of the catalog.
-	const BYTE_UNITS = [
-		'network.bytes.b',
-		'network.bytes.kb',
-		'network.bytes.mb',
-		'network.bytes.gb',
-		'network.bytes.tb'
-	];
-
 	let ifaceIsUp = $derived(iface.state === 'UP');
 
-	// The speed of a link in the units and the number format of the page.
+	// The speed of a link, the traffic and the rates in the units and the number format of the page:
+	// a count of bytes in the largest unit that keeps it at 1 or more, with up to two decimals.
 	function formatSpeed(mbps: number): string {
 		return mbps >= 1000
-			? $t('network.speed.gbps', { speed: (mbps / 1000).toLocaleString($intlLocale) })
-			: $t('network.speed.mbps', { speed: mbps.toLocaleString($intlLocale) });
+			? $t('network.speed.gbps', { speed: formatNumber(mbps / 1000, $intlLocale, { digits: 2 }) })
+			: $t('network.speed.mbps', { speed: formatNumber(mbps, $intlLocale) });
 	}
-
-	// The traffic of the stats stream in the units and the number format of the page: a count of
-	// bytes in the largest unit that keeps it at 1 or more, with up to two decimals, as formatBytes
-	// of $lib/stores/stats writes it in English.
-	function formatSize(bytes: number): string {
-		const { value, power } = scaleBytes(bytes, BYTE_UNITS.length);
-		return $t('network.bytes.size', { value: formatNumber(value, $intlLocale, 2), unit: $t(BYTE_UNITS[power]) });
+	function size(bytes: number): string {
+		return formatSize(bytes, $intlLocale, $t, { digits: 2 });
 	}
-
-	function formatRate(bytesPerSecond: number): string {
-		return $t('network.bytes.perSecond', { size: formatSize(bytesPerSecond) });
+	function rate(bytesPerSecond: number): string {
+		return formatRate(bytesPerSecond, $intlLocale, $t, { digits: 2 });
 	}
 </script>
 
 <section class="card p-0 overflow-hidden" aria-label={$t('network.interface.label', { name: iface.name })}>
 	<!-- Interface Header -->
+	<!-- The name and the live rates share a box that wraps: on a phone, or with long rates in either
+	     language, the rates go below the name, and the chevron keeps its place at the end. -->
 	<Button
 		variant="plain"
-		class="w-full p-4 flex items-center justify-between hover:bg-surface-overlay transition-[color,background-color,border-color,text-decoration-color,fill,stroke]"
+		class="w-full p-4 flex items-center gap-3 hover:bg-surface-overlay transition-[color,background-color,border-color,text-decoration-color,fill,stroke]"
 		aria-expanded={expanded}
 		onclick={ontoggle}
 	>
-		<div class="flex items-center gap-4">
-			<div class="p-2 rounded-lg {ifaceIsUp ? 'bg-status-success/20' : 'bg-surface-overlay'}">
-				{#if iface.type === 'ether' || iface.type === 'ethernet'}
-					<Cable class="w-5 h-5 {ifaceIsUp ? 'text-status-success' : 'text-content-muted'}" />
-				{:else if iface.type === 'wlan' || iface.name.startsWith('wlan')}
-					<Wifi class="w-5 h-5 {ifaceIsUp ? 'text-status-success' : 'text-content-muted'}" />
-				{:else}
-					<Network class="w-5 h-5 {ifaceIsUp ? 'text-status-success' : 'text-content-muted'}" />
-				{/if}
-			</div>
-			<div class="text-left">
-				<div class="flex items-center gap-2">
-					<span class="font-semibold text-content">{iface.name}</span>
-					<Badge variant={!iface.enabled ? 'neutral' : ifaceIsUp ? 'success' : 'warning'}>
-						{iface.enabled ? labelOf($t, LINK_STATES, iface.state) : $t('network.interface.disabled')}
-					</Badge>
-					{#if iface.speed}
-						<span class="text-xs text-content-secondary">{formatSpeed(iface.speed)}</span>
+		<div class="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-6 gap-y-2">
+			<div class="flex min-w-0 items-center gap-4">
+				<div class="shrink-0 p-2 rounded-lg {ifaceIsUp ? 'bg-status-success/20' : 'bg-surface-overlay'}">
+					{#if iface.type === 'ether' || iface.type === 'ethernet'}
+						<Cable class="w-5 h-5 {ifaceIsUp ? 'text-status-success' : 'text-content-muted'}" />
+					{:else if iface.type === 'wlan' || iface.name.startsWith('wlan')}
+						<Wifi class="w-5 h-5 {ifaceIsUp ? 'text-status-success' : 'text-content-muted'}" />
+					{:else}
+						<Network class="w-5 h-5 {ifaceIsUp ? 'text-status-success' : 'text-content-muted'}" />
 					{/if}
 				</div>
-				<p class="text-sm text-content-secondary">
-					{iface.ip_addresses.length ? iface.ip_addresses[0] : $t('network.interface.noIp')}
-					{#if iface.ip_addresses.length > 1}
-						<span class="text-content-muted">{$t('network.more', { n: iface.ip_addresses.length - 1 })}</span>
-					{/if}
-				</p>
+				<div class="min-w-0 text-left">
+					<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+						<span class="font-semibold text-content">{iface.name}</span>
+						<Badge variant={!iface.enabled ? 'neutral' : ifaceIsUp ? 'success' : 'warning'}>
+							{iface.enabled ? labelOf($t, LINK_STATES, iface.state) : $t('network.interface.disabled')}
+						</Badge>
+						{#if iface.speed}
+							<span class="text-xs text-content-secondary">{formatSpeed(iface.speed)}</span>
+						{/if}
+					</div>
+					<p class="text-sm text-content-secondary break-words">
+						{iface.ip_addresses.length ? iface.ip_addresses[0] : $t('network.interface.noIp')}
+						{#if iface.ip_addresses.length > 1}
+							<span class="text-content-muted">{$t('network.more', { n: iface.ip_addresses.length - 1 })}</span>
+						{/if}
+					</p>
+				</div>
 			</div>
-		</div>
 
-		<div class="flex items-center gap-6">
 			<!-- Live rates from the WebSocket -->
 			{#if wsIface && ifaceIsUp}
-				<div class="flex items-center gap-4 text-sm">
-					<span class="flex items-center gap-1 text-content-secondary tabular">
+				<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+					<span class="flex items-center gap-1 whitespace-nowrap text-content-secondary tabular">
 						<ArrowDown class="w-3 h-3" aria-hidden="true" />
-						{formatRate(wsIface.bytes_recv_rate)}
+						{rate(wsIface.bytes_recv_rate)}
 					</span>
-					<span class="flex items-center gap-1 text-content-secondary tabular">
+					<span class="flex items-center gap-1 whitespace-nowrap text-content-secondary tabular">
 						<ArrowUp class="w-3 h-3" aria-hidden="true" />
-						{formatRate(wsIface.bytes_sent_rate)}
+						{rate(wsIface.bytes_sent_rate)}
 					</span>
 				</div>
 			{/if}
-
-			{#if expanded}
-				<ChevronUp class="w-5 h-5 text-content-muted" />
-			{:else}
-				<ChevronDown class="w-5 h-5 text-content-muted" />
-			{/if}
 		</div>
+
+		{#if expanded}
+			<ChevronUp class="w-5 h-5 shrink-0 text-content-muted" />
+		{:else}
+			<ChevronDown class="w-5 h-5 shrink-0 text-content-muted" />
+		{/if}
 	</Button>
 
 	<!-- Expanded Details -->
@@ -152,19 +140,19 @@
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 						<div>
 							<p class="text-xs text-content-muted">{$t('network.interface.rxBytes')}</p>
-							<p class="text-sm tabular">{formatSize(wsIface.bytes_recv)}</p>
+							<p class="text-sm tabular">{size(wsIface.bytes_recv)}</p>
 						</div>
 						<div>
 							<p class="text-xs text-content-muted">{$t('network.interface.txBytes')}</p>
-							<p class="text-sm tabular">{formatSize(wsIface.bytes_sent)}</p>
+							<p class="text-sm tabular">{size(wsIface.bytes_sent)}</p>
 						</div>
 						<div>
 							<p class="text-xs text-content-muted">{$t('network.interface.rxRate')}</p>
-							<p class="text-sm tabular">{formatRate(wsIface.bytes_recv_rate)}</p>
+							<p class="text-sm tabular">{rate(wsIface.bytes_recv_rate)}</p>
 						</div>
 						<div>
 							<p class="text-xs text-content-muted">{$t('network.interface.txRate')}</p>
-							<p class="text-sm tabular">{formatRate(wsIface.bytes_sent_rate)}</p>
+							<p class="text-sm tabular">{rate(wsIface.bytes_sent_rate)}</p>
 						</div>
 					</div>
 				</div>

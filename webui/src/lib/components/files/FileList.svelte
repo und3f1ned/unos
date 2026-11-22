@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { ArrowUp } from 'lucide-svelte';
-	import { formatSize, type FileInfo } from '$lib/api/files';
+	import type { FileInfo } from '$lib/api/files';
 	import { Button, Checkbox, Input } from '$lib/components/ui';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDate } from '$lib/time';
 	import type { FileBrowser } from './browser.svelte';
@@ -10,11 +11,9 @@
 
 	type Props = {
 		browser: FileBrowser;
-		// Sizes in the units of the page's language.
-		units: readonly string[];
 	};
 
-	let { browser, units }: Props = $props();
+	let { browser }: Props = $props();
 
 	// The columns of the list and its header: the check box, the name, the size and, from sm up,
 	// the day of the last change. Fixed widths, so that the rows, each a grid, line up.
@@ -209,7 +208,7 @@
 					</div>
 					<span class="text-sm text-content-secondary tabular">
 						<!-- A folder's size is not known without walking it: the cell stays empty rather than "-". -->
-						{item.type === 'directory' ? '' : formatSize(item.size, units)}
+						{item.type === 'directory' ? '' : formatSize(item.size, $intlLocale, $t)}
 					</span>
 					<span class="hidden sm:block text-sm text-content-secondary tabular">
 						{formatDate(item.modified, $intlLocale)}
@@ -224,6 +223,6 @@
 {#if browser.listing}
 	<div class="mt-2 text-sm text-content-secondary flex justify-between">
 		<span>{$t('files.itemCount', { n: browser.listing.item_count })}</span>
-		<span>{formatSize(browser.listing.total_size, units)}</span>
+		<span>{formatSize(browser.listing.total_size, $intlLocale, $t)}</span>
 	</div>
 {/if}

@@ -1,4 +1,5 @@
 import type { DiskPrediction, SmartInfo } from '$lib/api/health';
+import { formatNumber, sizeUnitKey } from '$lib/format';
 import type { Translate } from '$lib/i18n';
 
 // What System > Health shows of a disk's health, in the language of the page (ADR-0287). The
@@ -23,13 +24,6 @@ export const RECOMMENDATION: Record<string, string> = {
 	'Disk health degrading. Monitor daily and prepare replacement.': 'health.recommendation.monitorClosely',
 	'Minor issues detected. Continue monitoring.': 'health.recommendation.watch',
 	'No concerning trends detected.': 'health.recommendation.healthy'
-};
-
-// A disk's capacity as the server writes it, "3.64 TB" or "931.51 GB" (_format_capacity of
-// supervisor/src/health/router.py), by the unit: keys of the catalog.
-const CAPACITY_UNITS: Record<string, string> = {
-	GB: 'health.size.gb',
-	TB: 'health.size.tb'
 };
 
 // By smartctl's serial, which the SMART monitor records too: a disk's path
@@ -71,17 +65,15 @@ export function orUnknown(t: Translate, value: string): string {
 	return value === 'Unknown' ? t('common.unknown') : value;
 }
 
-/** A capacity with its number in the format of the page and the unit of the catalog; another
- *  text as it comes. */
+/**
+ * A disk's capacity as the server writes it, "3.64 TB" or "931.51 GB" (_format_capacity of
+ * supervisor/src/health/router.py), with its number in the format of the page, its decimals kept,
+ * and the unit of the catalog `format`; another text as it comes.
+ */
 export function capacityText(t: Translate, locale: string, capacity: string): string {
 	const [number, unit, ...rest] = capacity.split(' ');
-	const known = Object.prototype.hasOwnProperty.call(CAPACITY_UNITS, unit);
-	if (rest.length > 0 || !known || !/^\d+(\.\d+)?$/.test(number)) return orUnknown(t, capacity);
-	const decimals = number.split('.')[1]?.length ?? 0;
-	const size = Number(number).toLocaleString(locale, {
-		minimumFractionDigits: decimals,
-		maximumFractionDigits: decimals,
-		useGrouping: false
-	});
-	return t(CAPACITY_UNITS[unit], { size });
+	const key = sizeUnitKey(unit);
+	if (rest.length > 0 || !key || !/^\d+(\.\d+)?$/.test(number)) return orUnknown(t, capacity);
+	const digits = number.split('.')[1]?.length ?? 0;
+	return t(key, { size: formatNumber(Number(number), locale, { digits, fixed: true }) });
 }

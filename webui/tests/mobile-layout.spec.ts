@@ -1069,7 +1069,7 @@ const VIEWS: View[] = [
             : {}),
         }),
       }),
-    shows: (page) => page.getByText(/^(About 27 h 27 min left|Осталось около 27 ч 27 мин)$/),
+    shows: (page) => page.getByText(/^(About 1d 3h left|Осталось около 1\sдн\.\s3\sч)$/),
   },
   {
     // A pool card with a disk removal in progress: its long path, its progress and the bytes left (ADR-0411).

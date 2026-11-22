@@ -249,13 +249,6 @@ export const en = {
 	'apps.detail.install': 'Install {name}',
 	'apps.detail.close': 'Close',
 
-	// A size that the page writes itself, by powers of 1024: {size} is the number.
-	'apps.size.bytes': '{size} B',
-	'apps.size.kb': '{size} KB',
-	'apps.size.mb': '{size} MB',
-	'apps.size.gb': '{size} GB',
-	'apps.size.tb': '{size} TB',
-
 	// An install that runs in the background (ADR-0384): what the details dialog says while the
 	// job checks, and why it offers no install while another runs; then the card of each job on
 	// the App Store: its name for screen readers, its title, its state, the step it reached, each
@@ -419,7 +412,7 @@ export const ru: Translation<typeof en> = {
 	'apps.limits.memoryHint':
 		'От {min} МБ до значения меньше {max} МБ — памяти этого NAS. На пределе ядро отбирает у контейнера память, а затем завершает его процессы.',
 	'apps.limits.memoryNow':
-		'Сейчас он использует {used} МБ: пока он работает, новое ограничение должно оставлять запас сверх этого — 10%, не меньше 32 МБ.',
+		'Сейчас он использует {used} МБ: пока он работает, новое ограничение должно оставлять запас сверх этого — 10\u00a0%, не меньше 32 МБ.',
 	'apps.limits.cpu': 'Ограничение ЦП (процессоров)',
 	'apps.limits.cpuHint':
 		'От {min} до {max} ЦП — процессоров этого NAS, с точностью до сотых. На пределе контейнер работает медленнее.',
@@ -529,12 +522,6 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.installFailed': 'Не удалось установить приложение',
 	'apps.detail.install': 'Установить {name}',
 	'apps.detail.close': 'Закрыть',
-
-	'apps.size.bytes': '{size} Б',
-	'apps.size.kb': '{size} КБ',
-	'apps.size.mb': '{size} МБ',
-	'apps.size.gb': '{size} ГБ',
-	'apps.size.tb': '{size} ТБ',
 
 	'apps.detail.checking': 'Проверка пула, портов и свободного места...',
 	'apps.detail.notAvailable':

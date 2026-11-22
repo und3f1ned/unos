@@ -6,7 +6,7 @@
 	import { Ban, X } from 'lucide-svelte';
 	import { Alert, Badge, Button, Card, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
-	import { formatSize as formatSizeIn } from './size';
+	import { formatSize } from '$lib/format';
 	import { missingHardware, type AppInstallJob, type AppTemplate, type ImagePull } from '$lib/api/apps';
 
 	type Props = {
@@ -96,11 +96,6 @@
 		failed: { key: 'apps.job.container.failed', variant: 'error' },
 		removed: { key: 'apps.job.container.removed', variant: 'neutral' }
 	};
-
-	// A size with one decimal in the language of the page (formatSize of ./size).
-	function formatSize(bytes: number): string {
-		return formatSizeIn(bytes, $intlLocale, $t, 1);
-	}
 
 	function templateOf(job: AppInstallJob): AppTemplate | undefined {
 		return catalog.find((app) => app.id === job.template_id);
@@ -249,8 +244,8 @@
 								{#if image.bytes_total > 0}
 									<p class="text-xs text-content-muted mt-1 tabular">
 										{$t('apps.job.bytes', {
-											done: formatSize(image.bytes_done),
-											total: formatSize(image.bytes_total)
+											done: formatSize(image.bytes_done, $intlLocale, $t),
+											total: formatSize(image.bytes_total, $intlLocale, $t)
 										})}
 									</p>
 								{/if}

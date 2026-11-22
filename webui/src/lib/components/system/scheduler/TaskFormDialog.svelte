@@ -294,6 +294,7 @@
 							class="form-select w-24 tabular"
 						>
 							{#each Array(24), i}
+								<!-- design-ignore: the hour field's values, 00 to 23, as the 24-hour clock of the NAS's schedules -->
 								<option value={i}>{String(i).padStart(2, '0')}</option>
 							{/each}
 						</select>
@@ -309,6 +310,7 @@
 						class="form-select w-24 tabular"
 					>
 						{#each [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55] as m}
+							<!-- design-ignore: the minute field's values, 00 to 55 -->
 							<option value={m}>{String(m).padStart(2, '0')}</option>
 						{/each}
 					</select>

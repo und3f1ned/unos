@@ -40,7 +40,7 @@
 	<span class="absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full {markerClass(entry)}" aria-hidden="true"></span>
 	<div class="flex flex-wrap items-center gap-2">
 		<time datetime={apiTime(entry.timestamp)?.toISOString() ?? entry.timestamp} class="mono text-content-muted"
-			>{formatTimeOfDay(entry.timestamp, $intlLocale)}</time
+			>{formatTimeOfDay(entry.timestamp, $intlLocale, { seconds: true })}</time
 		>
 		<span class="min-w-0 break-words font-medium text-content">{headline}</span>
 		{#if !entry.success}
