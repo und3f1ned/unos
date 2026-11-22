@@ -78,7 +78,11 @@ and proposes the changes, and the owner reviews them.
     example `docker buildx imagetools inspect python:3.11-slim`); a pin that is older and that no
     open Dependabot pull request moves gets a pull request of its own. When the new digest's
     linux/arm64 image differs, the dev device's next supervisor build pulls the base and runs
-    apt-get and pip again: say so in the pull request.
+    apt-get and pip again: say so in the pull request. A new digest of `python:3.11-slim`,
+    `caddy:2-alpine` or `alpine:3.22` must still list linux/riscv64 in that output, or the next
+    release fails (ADR-0457); a new `python:3.11-slim` digest moves
+    `supervisor/Dockerfile.riscv64-wheels` too, so the next release builds the riscv64 wheels
+    again.
 12. **The pinned check tools.** Dependabot leaves `.github/lint-requirements.txt` and
     `.github/audit-env-requirements.txt` alone (ADR-0423). Regenerate the first with `--upgrade`
     (docs/TESTING.md, "Updating the lint tools"), then move the second to the same pip and
@@ -92,7 +96,9 @@ and proposes the changes, and the owner reviews them.
     releases that are a week old, with what the new ESLint finds fixed and the new Prettier's
     format written in the same change (docs/TESTING.md, "Updating the lint tools"; ADR-0449). The
     BuildKit image of `.github/workflows/release.yml` (`driver-opts`), which Dependabot does not
-    move, goes to the tag and index digest of a newer release that is a week old.
+    move, goes to the tag and index digest of a newer release that is a week old, and so does the
+    QEMU image of `.github/workflows/release.yml` (`tonistiigi/binfmt`), in both of its "Set up
+    QEMU" steps (ADR-0457).
 
 ## At each release
 
@@ -100,20 +106,27 @@ The owner releases (ADR-0050, ADR-0455):
 
 1. **Tag and push.** On the commit of `main` to release, `git tag v<x.y.z>` and `git push origin
    v<x.y.z>`, after `make check` and the device checks of its changes. The tag runs
-   `.github/workflows/release.yml`: it builds both images for linux/amd64 and linux/arm64 and
-   pushes them as `ghcr.io/<owner>/unos-supervisor:<x.y.z>` and `unos-webui:<x.y.z>`, then
-   publishes the GitHub release, which System > Updates offers. A failed run publishes no release;
-   a tag is never moved: a fix gets the next version. `install.sh` and `update.sh` take the newest
-   tag, so between the push and the end of the run (up to two hours) they find no images for it and
-   stop without a change; push a tag only when its run can follow.
+   `.github/workflows/release.yml`: it builds both images for linux/amd64, linux/arm64 and
+   linux/riscv64 and pushes them as `ghcr.io/<owner>/unos-supervisor:<x.y.z>` and
+   `unos-webui:<x.y.z>`, then publishes the GitHub release, which System > Updates offers. A failed
+   run publishes no release; a tag is never moved: a fix gets the next version. `install.sh` and
+   `update.sh` take the newest tag, so between the push and the end of the run (up to three hours,
+   and up to about eight and a half when its job wheels builds the riscv64 wheels of a changed
+   `supervisor/requirements.txt` under QEMU) they find no images for it and stop without a change;
+   push a tag only when its run can follow (ADR-0457).
 2. **Only at the first release: make both packages public.** A NAS pulls them without
    credentials. On GitHub, the owner's (or organization's) **Packages**, `unos-supervisor` and
    then `unos-webui`, **Package settings**, **Change visibility**, **Public**. Until then
    `install.sh` and `update.sh` fail to pull ("are its packages public?"). While the repository
    is private, the release check of System > Updates and the one-line install answer 404 as
    well (ADR-0050).
-3. **riscv64** gets no images (`deploy.riscv64-release-images`): a K1 still loads the web UI
-   image of the new tag from another machine before `update.sh` (`docs/INSTALL.md`).
+3. **The riscv64 wheels** stay in the package `unos-riscv64-wheels`, private as GHCR makes a new
+   package, which only the workflow reads: leave it private. It holds one tagged version for each
+   key (the sha256 of `supervisor/Dockerfile.riscv64-wheels` and `supervisor/requirements.txt`).
+   A version whose tag no current key names may be deleted in the package's settings; a release
+   whose key it was builds it again. ARMv7 gets no
+   images: an ARMv7 host loads the web UI image of the new tag from another machine before
+   `update.sh` (`docs/INSTALL.md`, ARMv7).
 
 ## After a session that went badly
 

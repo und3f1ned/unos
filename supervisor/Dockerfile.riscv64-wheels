@@ -1,0 +1,25 @@
+# The wheels of the supervisor's Python packages for linux/riscv64, which a release's riscv64 image
+# installs without the index (scripts/riscv64-release-dockerfile.sh, deploy.riscv64-release-images). The
+# job wheels of .github/workflows/release.yml builds this file under QEMU only when GHCR has no image
+# under its key, the sha256 of this file and requirements.txt, and pushes the result there as
+# ghcr.io/<owner>/unos-riscv64-wheels:<key>: a scratch image that holds /wheels.
+#
+# The base of supervisor/Dockerfile, by tag and digest (ADR-0305): the wheels are built for its Python
+# and against its libraries (OpenSSL, libffi), and Dependabot moves both files together.
+FROM python:3.11-slim@sha256:65bd3d9f1d7fa268dd1909973ba7eb4bdf41f6dcf2cfbe76ba9528b170f3fd79 AS build
+
+# What the riscv64 branch of supervisor/Dockerfile's pip layer compiles with, and gcc and python3-dev of
+# its first layer: cryptography, bcrypt, cffi, psutil, uvloop and PyYAML publish no riscv64 wheel.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc python3-dev cargo rustc pkg-config libssl-dev libffi-dev make \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+# pip 26.3 first: the base's pip 24.0 takes no wheel built for linux/riscv64 (ADR-0370). Then a wheel of
+# every package the image installs, the pip and setuptools of supervisor/Dockerfile's pip layer
+# included: PyPI's where it has one, built here otherwise.
+RUN pip install --no-cache-dir pip==26.3 \
+    && pip wheel --no-cache-dir --wheel-dir /wheels pip==26.3 setuptools==84.2.1 -r requirements.txt
+
+FROM scratch
+COPY --from=build /wheels /wheels

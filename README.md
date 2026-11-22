@@ -102,8 +102,8 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Wake-on-LAN** - Turned on or off per Ethernet interface, and set again after every reboot
 
 ### System Updates
-- **Releases and the update script** - a release is a git tag `v<x.y.z>` whose amd64 and arm64 images are published on GHCR; `install.sh` installs the newest, and `sudo /opt/unos/deploy/update.sh` pulls the newest one's images, backs up the database and the data volume first, and rolls back automatically, with the backup's database, if the new version does not start
-- **Updates from the web UI** - System > Updates shows the installed version and the latest release on GitHub; on a NAS that runs a release on amd64 or arm64 it installs a release, rolls it back and installs new ones automatically, through `update.sh` on the host, and elsewhere names the update script and why
+- **Releases and the update script** - a release is a git tag `v<x.y.z>` whose amd64, arm64 and riscv64 images are published on GHCR; `install.sh` installs the newest, and `sudo /opt/unos/deploy/update.sh` pulls the newest one's images, backs up the database and the data volume first, and rolls back automatically, with the backup's database, if the new version does not start
+- **Updates from the web UI** - System > Updates shows the installed version and the latest release on GitHub; on a NAS that runs a release on amd64, arm64 or riscv64 it installs a release, rolls it back and installs new ones automatically, through `update.sh` on the host, and elsewhere names the update script and why
 
 ### Planned
 
@@ -224,7 +224,7 @@ sudo /opt/unos/deploy/update.sh
 ```
 
 The script refuses to run over local changes in `/opt/unos`, pulls the newest
-release's images while UNOS keeps running (on riscv64 and 32-bit arm it builds them), and
+release's images while UNOS keeps running (on 32-bit arm it builds the supervisor), and
 rolls back if the new version does not start. `docs/INSTALL.md` describes it
 and the manual upgrade.
 

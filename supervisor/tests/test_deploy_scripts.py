@@ -11,6 +11,7 @@ host.
 
 import contextlib
 import fcntl
+import hashlib
 import http.server
 import json
 import os
@@ -548,16 +549,15 @@ class TestUpdateScript:
         assert calls == []
         assert newer.returncode == 0, newer.stdout + newer.stderr
 
-    @pytest.mark.parametrize("machine", ["riscv64", "armv7l"])
-    def test_hosts_without_release_images_build_the_release(self, sandbox, machine):
+    def test_hosts_without_release_images_build_the_release(self, sandbox):
         # Docker's architecture decides, not the kernel's: 32-bit Raspberry Pi OS on a Pi 4 runs a
-        # 64-bit kernel and arm images.
-        result, calls = _run_update(sandbox, f"machine={machine}")
+        # 64-bit kernel and arm images. A release has no linux/arm/v7 images (deploy.riscv64-release-images).
+        result, calls = _run_update(sandbox, "machine=armv7l")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert not any(call.startswith("docker pull") for call in calls)
-        # Only the supervisor: the web UI's image of riscv64 and 32-bit ARM comes from another
-        # machine (ADR-0456).
+        # Only the supervisor: the web UI's image of 32-bit ARM comes from another machine
+        # (ADR-0456).
         assert "docker compose build --no-cache supervisor" in calls
 
     def test_the_newest_release_running_changes_nothing(self, sandbox):
@@ -680,49 +680,49 @@ class TestUpdateScript:
         assert result.returncode == 1
         assert _volume_now(sandbox) == {"unos.db": "stopped db", "unos.db-wal": "stopped log", "jwt_secret": "secret"}
 
-    @pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
-    def test_no_image_is_built_on_amd64_or_arm64(self, sandbox, machine):
+    @pytest.mark.parametrize("machine", ["x86_64", "aarch64", "riscv64"])
+    def test_no_image_is_built_on_amd64_arm64_or_riscv64(self, sandbox, machine):
+        # A release publishes linux/riscv64 images too (deploy.riscv64-release-images): a
+        # riscv64 host, a SpacemiT K1 included, pulls both and builds nothing, also not the web UI.
         result, calls = _run_update(sandbox, f"machine={machine}")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert f"docker pull --quiet {SUPERVISOR_IMAGE}" in calls
+        assert f"docker pull --quiet {WEBUI_IMAGE}" in calls
+        assert f"docker image tag {WEBUI_IMAGE} deploy-webui" in calls
         assert not any(call.startswith(("docker compose build", "docker build", "docker buildx")) for call in calls)
+        assert "another machine" not in result.stdout and "deploy-webui:latest" not in result.stdout
 
-    def test_on_riscv64_the_release_is_built_from_its_checkout(self, sandbox):
-        # GHCR has no images for linux/riscv64 (ADR-0373): the release's checkout is built here,
-        # with its version (ADR-0234), after the backup.
-        result, calls = _run_update(sandbox, "machine=riscv64")
+    def test_a_rollback_on_riscv64_asks_for_no_web_ui_image(self, sandbox):
+        # The previous web UI is the pulled image of the version before: nothing to load again.
+        result, calls = _run_update(sandbox, "machine=riscv64", "unhealthy")
+
+        assert result.returncode == 1
+        assert "docker image tag deploy-webui:previous deploy-webui" in calls
+        assert "load the web UI image" not in " ".join(result.stdout.split())
+
+    def test_on_armv7_the_release_is_built_from_its_checkout(self, sandbox):
+        # GHCR has no images for linux/arm/v7 (deploy.riscv64-release-images): the release's checkout is built
+        # here, with its version (ADR-0234), after the backup.
+        result, calls = _run_update(sandbox, "machine=armv7l")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert not any(call.startswith("docker pull") for call in calls)
         assert _index(calls, "docker exec") < _index(calls, "docker compose build")
-        assert [call for call in calls if call.startswith("docker compose build")] == [
-            "docker compose build --no-cache supervisor"
-        ]
         assert (sandbox / "stub" / "build-env").read_text().splitlines() == [f"UNOS_VERSION={NEWER}"]
 
-    def test_on_riscv64_only_the_supervisor_is_built(self, sandbox):
-        # The web UI's image of a riscv64 host comes from another machine: its build tools publish
-        # no riscv64 binaries (ADR-0456), and Node.js crashes on the SpacemiT K1 (ADR-0373).
-        # update.sh builds the supervisor alone, starts the web UI image that is there, and says so.
-        result, calls = _run_update(sandbox, "machine=riscv64")
-
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert [call for call in calls if call.startswith("docker compose build")] == [
-            "docker compose build --no-cache supervisor"
-        ]
-        assert "deploy-webui:latest" in result.stdout and "another machine" in result.stdout
-
-    def test_on_riscv64_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
+    def test_on_armv7_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
         # The rollback tags deploy-webui:latest as the previous image again, so the image of the
-        # new version that was loaded for the update loses its tag (ADR-0373, ADR-0456).
-        result, calls = _run_update(sandbox, "machine=riscv64", "build-fails")
+        # new version that was loaded for the update loses its tag (ADR-0456).
+        result, calls = _run_update(sandbox, "machine=armv7l", "build-fails")
 
         assert result.returncode == 1
         assert "docker image tag deploy-webui:previous deploy-webui" in calls
         assert "load the web UI image of the new version again" in " ".join(result.stdout.split())
 
     def test_on_armv7_only_the_supervisor_is_built(self, sandbox):
+        # The web UI's build tools publish no binaries for linux/arm with musl (ADR-0456): update.sh
+        # builds the supervisor alone, starts the web UI image that is there, and says so.
         result, calls = _run_update(sandbox, "machine=armv7l")
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -730,11 +730,12 @@ class TestUpdateScript:
             "docker compose build --no-cache supervisor"
         ]
         assert "deploy-webui:latest" in result.stdout and "linux/arm/v7" in result.stdout
+        assert "another machine" in result.stdout
 
-    def test_a_failed_build_on_riscv64_leaves_the_running_version_alone(self, sandbox):
+    def test_a_failed_build_on_armv7_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
 
-        result, calls = _run_update(sandbox, "machine=riscv64", "build-fails")
+        result, calls = _run_update(sandbox, "machine=armv7l", "build-fails")
 
         assert result.returncode == 1
         assert not any(call.startswith(("docker compose down", "docker compose up")) for call in calls)
@@ -840,10 +841,10 @@ class TestUpdateScript:
         assert not any(call.startswith(("docker compose down", "docker compose up")) for call in calls)
 
     @pytest.mark.parametrize("signal", ["INT", "HUP", "TERM"])
-    def test_an_interrupted_build_on_riscv64_is_undone(self, sandbox, signal):
+    def test_an_interrupted_build_on_armv7_is_undone(self, sandbox, signal):
         before = _head(sandbox)
 
-        result, calls = _run_update(sandbox, "machine=riscv64", "interrupt-at-build", f"signal={signal}")
+        result, calls = _run_update(sandbox, "machine=armv7l", "interrupt-at-build", f"signal={signal}")
 
         assert result.returncode == 1
         assert _head(sandbox) == before
@@ -1138,13 +1139,22 @@ class TestUpdateScriptInApp:
         # Without a terminal, no colours for the supervisor to strip.
         assert "\x1b[" not in result.stdout
 
-    @pytest.mark.parametrize("machine,arch", [("riscv64", "riscv64"), ("armv7l", "arm")])
-    def test_without_release_images_for_the_host_the_in_app_modes_refuse(self, sandbox, machine, arch):
-        result, calls = _run_update(sandbox, f"machine={machine}", args=["--fetch", NEWER])
+    def test_without_release_images_for_the_host_the_in_app_modes_refuse(self, sandbox):
+        result, calls = _run_update(sandbox, "machine=armv7l", args=["--fetch", NEWER])
 
         assert result.returncode == 1
-        assert f"GHCR has no release images for this host's Docker ({arch};" in result.stdout
+        assert "GHCR has no release images for this host's Docker (arm;" in result.stdout
+        assert "releases publish amd64, arm64 and riscv64" in result.stdout
         assert not any(call.startswith(("docker pull", "docker image")) for call in calls)
+
+    def test_a_riscv64_host_fetches_a_release_as_amd64_and_arm64_do(self, sandbox):
+        # linux/riscv64 is a release platform (deploy.riscv64-release-images): the in-app updater installs
+        # there too.
+        result, calls = _run_update(sandbox, "machine=riscv64", args=["--fetch", NEWER])
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"docker pull --quiet {SUPERVISOR_IMAGE}" in calls
+        assert f"docker pull --quiet {WEBUI_IMAGE}" in calls
 
     def test_an_update_uses_the_supervisors_backup_and_says_it_passed(self, sandbox):
         _run_update(sandbox, args=["--fetch", NEWER])
@@ -1327,11 +1337,12 @@ def _install_lib(tmp_path, paths):
     return lib
 
 
-def _start_install(tmp_path, *scenario, prelude="", tag="v9.9.9"):
+def _start_install(tmp_path, *scenario, prelude="", tag="v9.9.9", compatible=None):
     """check_compose_wait, start_unos and create_systemd_service of install.sh
     with the docker and uname stubs of the update sandbox (aarch64 unless the
     scenario says machine=<name>), in a checkout at the release `tag` (none:
-    no checkout), after the shell code `prelude`. Returns the result, the
+    no checkout), after the shell code `prelude`, on a host whose device tree's
+    compatible is `compatible` (none by default). Returns the result, the
     docker calls and the ExecStart lines of the unit (None without a unit)."""
     install = tmp_path / "install"
     (install / "deploy").mkdir(parents=True)
@@ -1353,7 +1364,9 @@ def _start_install(tmp_path, *scenario, prelude="", tag="v9.9.9"):
     stub_dir.mkdir()
     (stub_dir / "calls").write_text("")
     (stub_dir / "scenario").write_text("".join(f"{s}\n" for s in scenario))
-    lib = _install_lib(tmp_path, ["/etc/systemd/system", "/etc/unos"])
+    if compatible is not None:
+        (tmp_path / "proc-device-tree-compatible").write_text(compatible)
+    lib = _install_lib(tmp_path, ["/etc/systemd/system", "/etc/unos", "/proc/device-tree/compatible"])
 
     result = subprocess.run(
         ["bash", "-c", '. "$LIB"; eval "$PRELUDE"; check_compose_wait; start_unos; create_systemd_service'],
@@ -1945,10 +1958,11 @@ class TestInstallScript:
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
 
-    @pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
-    def test_amd64_and_arm64_pull_the_release_of_the_checkout_and_build_nothing(self, tmp_path, machine):
+    @pytest.mark.parametrize("machine", ["x86_64", "aarch64", "riscv64"])
+    def test_amd64_arm64_and_riscv64_pull_the_release_of_the_checkout_and_build_nothing(self, tmp_path, machine):
         # The release's images from GHCR (ADR-0050), under the names compose starts: no image is built
-        # on the host (deploy.release-images). They carry the release's version (ADR-0234).
+        # on the host (deploy.release-images), riscv64 included (deploy.riscv64-release-images,
+        # deploy.riscv64-release-images). They carry the release's version (ADR-0234).
         result, calls, exec_start = _start_install(tmp_path, f"machine={machine}")
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -1977,9 +1991,10 @@ class TestInstallScript:
         assert "are its packages public" in result.stdout
         assert _up_calls(calls) == [] and exec_start is None
 
-    def test_on_riscv64_the_release_is_built_with_its_version(self, tmp_path):
-        # GHCR has no linux/riscv64 images (ADR-0373): the checkout of the release is built here.
-        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64")
+    def test_on_armv7_the_release_is_built_with_its_version(self, tmp_path):
+        # GHCR has no linux/arm/v7 images (deploy.riscv64-release-images): the checkout of the release is
+        # built here.
+        result, calls, exec_start = _start_install(tmp_path, "machine=armv7l")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert not any(call.startswith("docker pull") for call in calls)
@@ -2157,11 +2172,10 @@ class TestInstallScript:
             assert (sys / "class" / "nvme" / f"nvme{n}" / "power" / "pm_qos_latency_tolerance_us").read_text() == "0\n"
             assert (sys / "devices" / pci / "link" / "l1_aspm").read_text() == "0\n"
 
-    def test_on_riscv64_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
-        # The web UI's build tools publish no riscv64 binaries (ADR-0456), and Node.js crashes on
-        # the SpacemiT K1 while it builds (nodejs/node#66845, ADR-0373): the image of a riscv64 host
-        # comes from another machine, and install.sh builds the supervisor alone.
-        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64")
+    def test_on_armv7_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
+        # The web UI's build tools publish no binaries for linux/arm with musl (ADR-0456): the image
+        # of an ARMv7 host comes from another machine, and install.sh builds the supervisor alone.
+        result, calls, exec_start = _start_install(tmp_path, "machine=armv7l")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "docker image inspect deploy-webui:latest" in calls
@@ -2169,15 +2183,28 @@ class TestInstallScript:
         assert any(call.startswith("docker compose up") for call in calls)
         assert exec_start
 
-    def test_on_riscv64_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
-        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", "no-webui-image")
+    def test_a_spacemit_k1_pulls_both_images_without_a_loaded_web_ui_image(self, tmp_path):
+        # Node.js crashes on the K1 in the web UI's build (ADR-0373), and its build tools have no
+        # riscv64 binaries (ADR-0456): the release's riscv64 images end that (deploy.riscv64-release-images).
+        # A K1 pulls the web UI's image as every riscv64 host does, needs none loaded and builds nothing.
+        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", "no-webui-image",
+                                                   compatible=SPACEMIT_K1)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        for service in ("supervisor", "webui"):
+            assert f"docker pull --quiet ghcr.io/und3f1ned/unos-{service}:9.9.9" in calls
+        assert "docker image inspect deploy-webui:latest" not in calls
+        assert not any(call.startswith(("docker compose build", "docker build", "docker buildx")) for call in calls)
+        assert exec_start
+
+    def test_on_armv7_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path, "machine=armv7l", "no-webui-image")
         text = self._text(result)
 
         assert result.returncode == 1
         assert not [call for call in calls
                     if call.startswith(("docker compose build", "docker compose up")) and "--help" not in call]
         assert exec_start is None
-        assert "docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui" in text
         assert "docker save -o deploy-webui.tar deploy-webui:latest" in text
         assert "sudo docker load -i deploy-webui.tar" in text
 
@@ -5939,29 +5966,93 @@ def _release_step(job, name):
     return next(step for step in _release_jobs()[job]["steps"] if step.get("name") == name)
 
 
-def _run_release_step(tmp_path, job, name, tag="v1.3.0", owner="Und3f1ned"):
-    """The shell of a step of release.yml as the runner runs it (bash -e), with GitHub's variables of a
-    push of `tag` and stub docker, gh, sudo and grep commands that log their calls."""
+# The docker of the release's steps that build: it logs its calls, `buildx imagetools inspect`
+# prints $CACHED_DIGEST (and fails without one), a `buildx build` with --metadata-file writes the
+# digest of what it pushed there, $DIGEST_<its --platform, non-alphanumerics as _>, as buildx does,
+# and trivy's scan of an image (scripts/image-scan.sh) exits $SCAN_EXIT (0 by default).
+RELEASE_DOCKER_STUB = r"""#!/bin/bash
+printf "%s\n" "docker $*" >> "$CALLS"
+cat > /dev/null
+if [ "$1" = run ] && [[ " $* " == *" --input /scan/image.tar "* ]]; then
+    exit "${SCAN_EXIT:-0}"
+elif [ "$1 $2 $3" = "buildx imagetools inspect" ]; then
+    [ -n "${CACHED_DIGEST:-}" ] || { echo "ERROR: not found" >&2; exit 1; }
+    echo "$CACHED_DIGEST"
+elif [ "$1 $2" = "buildx build" ]; then
+    args=("$@")
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        case "${args[i]}" in
+            --metadata-file) metadata=${args[i + 1]} ;;
+            --platform) platform=${args[i + 1]} ;;
+        esac
+    done
+    if [ -n "${metadata:-}" ]; then
+        variable="DIGEST_${platform//[^a-zA-Z0-9]/_}"
+        printf '{\n  "buildx.build.ref": "builder/builder0/x",\n  "containerimage.digest": "%s"\n}\n' \
+            "${!variable:-}" > "$metadata"
+    fi
+fi
+"""
+WHEELS_IMAGE = "ghcr.io/und3f1ned/unos-riscv64-wheels"
+DIGEST_A, DIGEST_B, DIGEST_C = ("sha256:" + digit * 64 for digit in "abc")
+
+
+def _run_release_step(tmp_path, job, name, tag="v1.3.0", owner="Und3f1ned", docker=None, cwd=REPO_ROOT, env=None):
+    """The shell of a step of release.yml as the runner runs it (bash -e), in `cwd` (the repository), with
+    GitHub's variables of a push of `tag`, RUNNER_TEMP, GITHUB_OUTPUT and HOME in tmp_path, the step's own
+    `env`, and stub docker (`docker`, a script, or one that logs its calls), gh and sudo commands."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     for program in ("docker", "gh", "sudo"):
         (bin_dir / program).write_text(f'#!/bin/bash\nprintf "%s\\n" "{program} $*" >> "$CALLS"\ncat > /dev/null\n')
         (bin_dir / program).chmod(0o755)
+    if docker:
+        (bin_dir / "docker").write_text(docker)
     calls = tmp_path / "calls"
     calls.write_text("")
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(exist_ok=True)
+    output = tmp_path / "github-output"
+    output.write_text("")
     result = subprocess.run(
         ["bash", "-e", "-c", _release_step(job, name)["run"]],
+        cwd=cwd,
         env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "GITHUB_REF_NAME": tag,
              "GITHUB_REPOSITORY_OWNER": owner, "GITHUB_REPOSITORY": f"{owner}/unos", "GITHUB_ACTOR": "someone",
-             "GITHUB_SERVER_URL": "https://github.com", "TOKEN": "t", "GH_TOKEN": "t"},
+             "GITHUB_SERVER_URL": "https://github.com", "TOKEN": "t", "GH_TOKEN": "t",
+             "RUNNER_TEMP": str(runner_temp), "GITHUB_OUTPUT": str(output), "HOME": str(tmp_path / "home"),
+             **(env or {})},
         stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
     )
     return result, calls.read_text().splitlines()
 
 
+def _wheels_key(root=REPO_ROOT):
+    """The key of the riscv64 wheels on GHCR: the sha256 of supervisor/Dockerfile.riscv64-wheels and
+    supervisor/requirements.txt, one after the other."""
+    supervisor = root / "supervisor"
+    content = (supervisor / "Dockerfile.riscv64-wheels").read_bytes() + (supervisor / "requirements.txt").read_bytes()
+    return hashlib.sha256(content).hexdigest()
+
+
+def _github_output(tmp_path):
+    return (tmp_path / "github-output").read_text().splitlines()
+
+
+# The QEMU image that registers the handlers of linux/arm64 and linux/riscv64, by tag and digest
+# (ADR-0305, deploy.riscv64-release-images), and the check that each has the fix-binary flag that buildx's
+# containers need.
+QEMU_INSTALL = re.compile(r"docker run --privileged --rm tonistiigi/binfmt:qemu-v\d+\.\d+\.\d+@sha256:[0-9a-f]{64} "
+                          r"--install arm64,riscv64")
+RELEASE_LABELS = ("--label org.opencontainers.image.source=https://github.com/Und3f1ned/unos "
+                  "--label org.opencontainers.image.version=v1.3.0")
+RELEASE_ARGS = "--build-arg UNOS_VERSION=v1.3.0 --build-arg UNOS_RELEASE=v1.3.0"
+
+
 class TestReleaseWorkflow:
-    """.github/workflows/release.yml: a tag v<x.y.z> publishes the release's images on GHCR, then its
-    GitHub release (deploy.release-images, ADR-0050)."""
+    """.github/workflows/release.yml: a tag v<x.y.z> publishes the release's images on GHCR, for linux/amd64,
+    linux/arm64 and linux/riscv64, then its GitHub release (deploy.release-images, ADR-0050;
+    deploy.riscv64-release-images)."""
 
     def test_only_the_push_of_a_release_tag_runs_it(self):
         workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
@@ -5973,69 +6064,232 @@ class TestReleaseWorkflow:
     @pytest.mark.parametrize("tag,passes", [("v1.3.0", True), ("v10.0.12", True), ("v01.3.0", False),
                                             ("v1.3", False), ("v1.3.0-rc.1", False)])
     def test_the_tag_is_checked_first(self, tmp_path, tag, passes):
-        assert _release_jobs()["images"]["steps"][0]["name"] == "Check the tag"
+        # The first job checks it first; every other job runs after it.
+        jobs = _release_jobs()
+        assert "needs" not in jobs["wheels"]
+        assert jobs["images"]["needs"] == "wheels" and jobs["release"]["needs"] == "images"
+        assert jobs["wheels"]["steps"][0]["name"] == "Check the tag"
 
-        result, _ = _run_release_step(tmp_path, "images", "Check the tag", tag=tag)
+        result, _ = _run_release_step(tmp_path, "wheels", "Check the tag", tag=tag)
 
         assert (result.returncode == 0) is passes, result.stdout
 
-    def test_only_the_images_job_may_push_packages_and_only_the_release_job_write(self):
+    def test_only_the_wheels_and_images_jobs_may_push_packages_and_only_the_release_job_write(self):
         workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
         jobs = workflow["jobs"]
 
         assert workflow["permissions"] == {"contents": "read"}
+        assert jobs["wheels"]["permissions"] == {"contents": "read", "packages": "write"}
         assert jobs["images"]["permissions"] == {"contents": "read", "packages": "write"}
         assert jobs["release"]["permissions"] == {"contents": "write"}
-        assert set(jobs) == {"images", "release"}
-        assert all(job.get("timeout-minutes") for job in jobs.values())
+        assert set(jobs) == {"wheels", "images", "release"}
+
+    def test_every_job_ends_within_githubs_limit_of_six_hours(self):
+        # A hosted job is cancelled after 360 minutes; the cold build of the riscv64 wheels under QEMU
+        # has a job and its limit to itself (deploy.riscv64-release-images).
+        limits = {name: job.get("timeout-minutes") for name, job in _release_jobs().items()}
+
+        assert all(limits.values()) and max(limits.values()) < 360, limits
+        assert limits["wheels"] >= 300, limits
 
     def test_the_checkout_does_not_keep_the_token_and_actions_are_pinned_as_elsewhere(self):
         text = RELEASE_WORKFLOW.read_text()
         checkouts = [step for job in _release_jobs().values() for step in job["steps"]
                      if step.get("uses", "").startswith("actions/checkout@")]
 
-        assert [step["with"] for step in checkouts] == [{"persist-credentials": False}]
+        assert [step["with"] for step in checkouts] == [{"persist-credentials": False}] * 2
         assert _unpinned_actions(text) == []
-        # No action beyond those the CI workflow pins: QEMU comes from Ubuntu's archive.
+        # No action beyond those the CI workflow pins: QEMU comes from a pinned image, the wheels'
+        # cache is GHCR.
         actions = {uses[1].split("@")[0] for uses in map(USES_LINE.match, text.splitlines()) if uses}
         assert actions == {"actions/checkout", "docker/setup-buildx-action"}
 
-    def test_buildkit_which_holds_the_credentials_is_pinned_by_tag_and_digest(self):
-        step = _release_step("images", "Set up Docker Buildx")
+    @pytest.mark.parametrize("job", ["wheels", "images"])
+    def test_buildkit_which_holds_the_credentials_is_pinned_by_tag_and_digest(self, job):
+        step = _release_step(job, "Set up Docker Buildx")
 
         assert re.fullmatch(r"image=moby/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}", step["with"]["driver-opts"])
 
-    def test_qemu_comes_from_ubuntu_with_the_fix_binary_flag(self, tmp_path):
-        step = _release_step("images", "Set up QEMU for linux/arm64")["run"]
+    @pytest.mark.parametrize("job", ["wheels", "images"])
+    def test_qemu_comes_from_a_pinned_image_with_the_fix_binary_flag_before_any_credentials(self, job):
+        # tonistiigi/binfmt by tag and digest (deploy.riscv64-release-images): the QEMU of Ubuntu's archive
+        # moves with the runner's image, and docker/setup-qemu-action takes a binfmt image by a tag that
+        # moves. The privileged container runs before docker login, so it never sees the token.
+        step = _release_step(job, "Set up QEMU")["run"]
+        names = [step.get("name") for step in _release_jobs()[job]["steps"]]
 
-        assert "sudo apt-get install -y -qq qemu-user-static" in step
-        assert "grep -q '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64" in step
+        assert len(QEMU_INSTALL.findall(step)) == 1, step
+        assert "for handler in qemu-aarch64 qemu-riscv64; do" in step
+        # The pinned image's handler (binfmt keeps one registered before), with the fix-binary flag.
+        assert 'grep -qx "interpreter /usr/bin/$handler" "/proc/sys/fs/binfmt_misc/$handler"' in step
+        assert "grep -q '^flags: .*F' \"/proc/sys/fs/binfmt_misc/$handler\"" in step
+        assert names.index("Set up QEMU") < names.index("Set up Docker Buildx") < names.index("Log in to GHCR")
+        assert not [step for job in _release_jobs().values() for step in job["steps"]
+                    if "qemu-user-static" in step.get("run", "")]
 
-    def test_the_token_reaches_docker_login_on_standard_input(self, tmp_path):
-        step = _release_step("images", "Log in to GHCR")
+    def test_both_jobs_take_the_same_qemu_which_the_monthly_pass_moves(self):
+        # Dependabot moves no image of a workflow's run step: docs/maintenance.md does.
+        maintenance = " ".join((REPO_ROOT / "docs" / "maintenance.md").read_text().split())
+
+        assert _release_step("wheels", "Set up QEMU")["run"] == _release_step("images", "Set up QEMU")["run"]
+        assert "QEMU image of `.github/workflows/release.yml` (`tonistiigi/binfmt`)" in maintenance
+
+    @pytest.mark.parametrize("job", ["wheels", "images"])
+    def test_the_token_reaches_docker_login_on_standard_input(self, tmp_path, job):
+        step = _release_step(job, "Log in to GHCR")
 
         assert step["env"] == {"TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
-        result, calls = _run_release_step(tmp_path, "images", "Log in to GHCR")
+        result, calls = _run_release_step(tmp_path, job, "Log in to GHCR")
         assert result.returncode == 0, result.stderr
         assert calls == ["docker login ghcr.io --username someone --password-stdin"]
 
-    def test_both_images_are_built_for_amd64_and_arm64_and_pushed_under_the_owners_name(self, tmp_path):
-        names = [step.get("name") for step in _release_jobs()["images"]["steps"]]
-        assert names.index("Set up QEMU for linux/arm64") < names.index("Set up Docker Buildx") \
-            < names.index("Log in to GHCR") < names.index("Build and push the images")
+    def test_the_wheels_of_a_new_requirements_file_are_built_under_qemu_and_pushed(self, tmp_path):
+        # Missing on GHCR: the job builds supervisor/Dockerfile.riscv64-wheels for linux/riscv64 and
+        # pushes it under its key, then hands the digest it pushed to the job images
+        # (deploy.riscv64-release-images).
+        names = [step.get("name") for step in _release_jobs()["wheels"]["steps"]]
+        assert names.index("Log in to GHCR") < names.index("Build or reuse the riscv64 wheels")
 
-        result, calls = _run_release_step(tmp_path, "images", "Build and push the images")
+        result, calls = _run_release_step(tmp_path, "wheels", "Build or reuse the riscv64 wheels",
+                                          docker=RELEASE_DOCKER_STUB, env={"DIGEST_linux_riscv64": DIGEST_B})
 
         assert result.returncode == 0, result.stderr
-        labels = ("--label org.opencontainers.image.source=https://github.com/Und3f1ned/unos "
-                  "--label org.opencontainers.image.version=v1.3.0")
-        # The owner in lowercase, as GHCR names packages; the tag without its v.
+        key = _wheels_key()
         assert calls == [
-            "docker buildx build --platform linux/amd64,linux/arm64 --build-arg UNOS_VERSION=v1.3.0 "
-            f"--build-arg UNOS_RELEASE=v1.3.0 {labels} --tag ghcr.io/und3f1ned/unos-supervisor:1.3.0 --push supervisor",
-            f"docker buildx build --platform linux/amd64,linux/arm64 {labels} "
+            f"docker buildx imagetools inspect --format {{{{.Manifest.Digest}}}} {WHEELS_IMAGE}:{key}",
+            "docker buildx build --platform linux/riscv64 --file supervisor/Dockerfile.riscv64-wheels "
+            "--label org.opencontainers.image.source=https://github.com/Und3f1ned/unos --provenance=false "
+            f"--tag {WHEELS_IMAGE}:{key} --push --metadata-file {tmp_path}/runner-temp/wheels.json supervisor",
+        ]
+        assert _github_output(tmp_path) == [f"image={WHEELS_IMAGE}@{DIGEST_B}"]
+        assert _release_jobs()["wheels"]["outputs"] == {"image": "${{ steps.wheels.outputs.image }}"}
+        assert _release_step("wheels", "Build or reuse the riscv64 wheels")["id"] == "wheels"
+
+    def test_wheels_that_are_on_ghcr_are_reused(self, tmp_path):
+        result, calls = _run_release_step(tmp_path, "wheels", "Build or reuse the riscv64 wheels",
+                                          docker=RELEASE_DOCKER_STUB, env={"CACHED_DIGEST": DIGEST_A})
+
+        assert result.returncode == 0, result.stderr
+        assert calls == [f"docker buildx imagetools inspect --format {{{{.Manifest.Digest}}}} {WHEELS_IMAGE}:{_wheels_key()}"]
+        assert _github_output(tmp_path) == [f"image={WHEELS_IMAGE}@{DIGEST_A}"]
+
+    def test_the_key_changes_with_the_requirements_and_the_wheels_dockerfile_only(self, tmp_path):
+        def key_in(root):
+            run = tmp_path / f"run-{root.name}"
+            run.mkdir()
+            result, calls = _run_release_step(run, "wheels", "Build or reuse the riscv64 wheels", cwd=root,
+                                              docker=RELEASE_DOCKER_STUB, env={"CACHED_DIGEST": DIGEST_A})
+            assert result.returncode == 0, result.stderr
+            return calls[0].rsplit(":", 1)[1]
+
+        copies = []
+        for name in ("same", "requirements", "dockerfile", "other"):
+            root = tmp_path / f"repo-{name}"
+            (root / "supervisor").mkdir(parents=True)
+            for file in ("Dockerfile.riscv64-wheels", "requirements.txt", "Dockerfile"):
+                shutil.copy(REPO_ROOT / "supervisor" / file, root / "supervisor" / file)
+            copies.append(root)
+        with open(copies[1] / "supervisor" / "requirements.txt", "a") as requirements:
+            requirements.write("idna==3.11\n")
+        with open(copies[2] / "supervisor" / "Dockerfile.riscv64-wheels", "a") as dockerfile:
+            dockerfile.write("# changed\n")
+        with open(copies[3] / "supervisor" / "Dockerfile", "a") as dockerfile:
+            dockerfile.write("# changed\n")
+
+        keys = [key_in(root) for root in copies]
+
+        assert keys[0] == _wheels_key() == keys[3]
+        assert len({keys[0], keys[1], keys[2]}) == 3
+        assert keys[1] == _wheels_key(copies[1]) and keys[2] == _wheels_key(copies[2])
+
+    def test_a_missing_file_of_the_key_fails_the_job(self, tmp_path):
+        root = tmp_path / "repo"
+        (root / "supervisor").mkdir(parents=True)
+        shutil.copy(WHEELS_DOCKERFILE, root / "supervisor" / "Dockerfile.riscv64-wheels")
+
+        result, calls = _run_release_step(tmp_path, "wheels", "Build or reuse the riscv64 wheels", cwd=root,
+                                          docker=RELEASE_DOCKER_STUB, env={"CACHED_DIGEST": DIGEST_A})
+
+        assert result.returncode != 0
+        assert calls == [] and _github_output(tmp_path) == []
+
+    @pytest.mark.parametrize("digest", ["", "null", "sha256:123"])
+    def test_a_build_that_names_no_pushed_digest_fails_the_job(self, tmp_path, digest):
+        result, calls = _run_release_step(tmp_path, "wheels", "Build or reuse the riscv64 wheels",
+                                          docker=RELEASE_DOCKER_STUB, env={"DIGEST_linux_riscv64": digest})
+
+        assert result.returncode != 0
+        assert _github_output(tmp_path) == []
+
+    def test_the_images_of_all_three_platforms_are_built_and_pushed_under_the_owners_name(self, tmp_path):
+        # amd64 and arm64 from supervisor/Dockerfile as before; riscv64 from the same file with its pip
+        # layer replaced by an install from the wheels of the job wheels (scripts/riscv64-release-
+        # dockerfile.sh); the three in one index under the release's tag. The web UI's builder runs on
+        # the runner's platform, so its riscv64 image costs Caddy's stage alone (ADR-0456).
+        names = [step.get("name") for step in _release_jobs()["images"]["steps"]]
+        assert names.index("Set up QEMU") < names.index("Set up Docker Buildx") \
+            < names.index("Log in to GHCR") < names.index("Build and push the images")
+        step = _release_step("images", "Build and push the images")
+        assert step["env"] == {"WHEELS": "${{ needs.wheels.outputs.image }}"}
+
+        result, calls = _run_release_step(
+            tmp_path, "images", "Build and push the images", docker=RELEASE_DOCKER_STUB,
+            env={"WHEELS": f"{WHEELS_IMAGE}@{DIGEST_C}", "DIGEST_linux_amd64_linux_arm64": DIGEST_A,
+                 "DIGEST_linux_riscv64": DIGEST_B})
+
+        assert result.returncode == 0, result.stderr
+        temp = tmp_path / "runner-temp"
+        supervisor = "ghcr.io/und3f1ned/unos-supervisor"
+        by_digest = f"--output type=image,name={supervisor},push-by-digest=true,name-canonical=true,push=true"
+        from_wheels = (f"--platform linux/riscv64 --file {temp}/Dockerfile.riscv64 "
+                       f"--build-context riscv64-wheels=docker-image://{WHEELS_IMAGE}@{DIGEST_C} {RELEASE_ARGS} "
+                       f"{RELEASE_LABELS}")
+        scan = [call for call in calls if call.startswith(("docker run ", "docker image save "))]
+        # The owner in lowercase, as GHCR names packages; the tag without its v.
+        assert [call for call in calls if call not in scan] == [
+            f"docker buildx build {from_wheels} --tag unos-supervisor-riscv64 --load supervisor",
+            f"docker buildx build --platform linux/amd64,linux/arm64 {RELEASE_ARGS} {RELEASE_LABELS} {by_digest} "
+            f"--metadata-file {temp}/supervisor.json supervisor",
+            f"docker buildx build {from_wheels} {by_digest} --metadata-file {temp}/supervisor-riscv64.json supervisor",
+            f"docker buildx imagetools create --tag {supervisor}:1.3.0 {supervisor}@{DIGEST_A} {supervisor}@{DIGEST_B}",
+            f"docker buildx build --platform linux/amd64,linux/arm64,linux/riscv64 {RELEASE_LABELS} "
             "--tag ghcr.io/und3f1ned/unos-webui:1.3.0 --push webui",
         ]
+        # scripts/image-scan.sh scans the riscv64 image as the weekly audit scans the others (ADR-0446),
+        # before anything is pushed.
+        assert calls.index(scan[0]) == 1 and calls.index(scan[-1]) == len(scan)
+        assert scan[1].startswith("docker image save -o ") and scan[1].endswith(" unos-supervisor-riscv64")
+        assert "--input /scan/image.tar" in scan[2] and "--exit-code 3" in scan[2]
+        assert (temp / "Dockerfile.riscv64").read_text() == _riscv64_release_dockerfile().stdout
+
+    def test_a_vulnerable_riscv64_image_is_not_pushed(self, tmp_path):
+        # The versions that requirements.txt does not pin come from the wheels' build of its key, which
+        # neither pip-audit nor the weekly scan of the native images sees (ADR-0446).
+        result, calls = _run_release_step(
+            tmp_path, "images", "Build and push the images", docker=RELEASE_DOCKER_STUB,
+            env={"WHEELS": f"{WHEELS_IMAGE}@{DIGEST_C}", "SCAN_EXIT": "3",
+                 "DIGEST_linux_amd64_linux_arm64": DIGEST_A, "DIGEST_linux_riscv64": DIGEST_B})
+
+        assert result.returncode != 0
+        assert "fixable HIGH or CRITICAL" in result.stderr
+        assert not any("push" in call or "imagetools create" in call for call in calls)
+
+    @pytest.mark.parametrize("wheels", ["", f"{WHEELS_IMAGE}:latest", f"ghcr.io/someone/unos-riscv64-wheels@{DIGEST_C}x",
+                                        f"docker.io/und3f1ned/unos-riscv64-wheels@{DIGEST_C}"])
+    def test_without_the_wheels_of_the_job_wheels_nothing_is_built(self, tmp_path, wheels):
+        result, calls = _run_release_step(tmp_path, "images", "Build and push the images", docker=RELEASE_DOCKER_STUB,
+                                          env={"WHEELS": wheels})
+
+        assert result.returncode != 0
+        assert calls == []
+
+    def test_a_platform_build_that_names_no_digest_publishes_no_tag(self, tmp_path):
+        result, calls = _run_release_step(
+            tmp_path, "images", "Build and push the images", docker=RELEASE_DOCKER_STUB,
+            env={"WHEELS": f"{WHEELS_IMAGE}@{DIGEST_C}", "DIGEST_linux_amd64_linux_arm64": DIGEST_A})
+
+        assert result.returncode != 0
+        assert not any("imagetools create" in call or "--push webui" in call for call in calls)
 
     def test_the_names_are_those_that_install_and_update_pull(self):
         for script in ("install.sh", "update.sh"):
@@ -6062,6 +6316,79 @@ class TestReleaseWorkflow:
         assert result.returncode == 0, result.stderr
         assert calls == ["gh release create v1.3.0 --repo Und3f1ned/unos --verify-tag --title UNOS v1.3.0 "
                          "--generate-notes"]
+
+
+RISCV64_RELEASE_DOCKERFILE = REPO_ROOT / "scripts" / "riscv64-release-dockerfile.sh"
+WHEELS_DOCKERFILE = REPO_ROOT / "supervisor" / "Dockerfile.riscv64-wheels"
+
+
+def _riscv64_release_dockerfile(dockerfile=REPO_ROOT / "supervisor" / "Dockerfile"):
+    return subprocess.run(["bash", str(RISCV64_RELEASE_DOCKERFILE), str(dockerfile)], capture_output=True,
+                          text=True, timeout=30)
+
+
+def _pip_pins(instruction):
+    """The pip and setuptools pins of a pip install of a Dockerfile's instruction."""
+    found = re.findall(r"\bpip==\d+(?:\.\d+)+ setuptools==\d+(?:\.\d+)+", instruction)
+    assert len(found) == 1, instruction
+    return found[0]
+
+
+class TestRiscv64ReleaseImage:
+    """The release's linux/riscv64 supervisor: supervisor/Dockerfile with its pip layer replaced by an
+    install from the wheels that supervisor/Dockerfile.riscv64-wheels builds (deploy.riscv64-release-images)."""
+
+    def test_only_the_pip_layer_changes_and_it_installs_the_wheels_without_the_index(self):
+        result = _riscv64_release_dockerfile()
+        assert result.returncode == 0, result.stderr
+        source = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
+        derived = [line.strip() for line in result.stdout.splitlines()]
+        at = _pip_layer(source)
+        end = at
+        while source[end].endswith("\\"):
+            end += 1
+
+        replaced = [line for line in derived if line not in source]
+        layer = derived.index(replaced[0])
+        assert derived[:layer] == source[:at] and derived[layer + 3:] == source[end + 1:]
+        assert _instruction(derived, layer) == (
+            "RUN --mount=type=bind,from=riscv64-wheels,source=/wheels,target=/wheels "
+            f"pip install --no-cache-dir --no-index --find-links /wheels {_pip_pins(_instruction(source, at))} "
+            "&& pip install --no-cache-dir --no-index --find-links /wheels -r requirements.txt"
+        )
+
+    @pytest.mark.parametrize("layers", [0, 2])
+    def test_a_dockerfile_without_one_pip_layer_is_refused(self, tmp_path, layers):
+        source = (REPO_ROOT / "supervisor" / "Dockerfile").read_text()
+        lines = source.splitlines(keepends=True)
+        layer = "".join(lines[_pip_layer([line.strip() for line in lines]):]).split("\n\n")[0] + "\n"
+        dockerfile = tmp_path / "Dockerfile"
+        dockerfile.write_text(source.replace(layer, "") if layers == 0 else source.replace(layer, layer + layer))
+
+        result = _riscv64_release_dockerfile(dockerfile)
+
+        assert result.returncode != 0
+        assert "pip layer" in result.stderr
+
+    def test_the_wheels_build_on_the_images_base_with_its_riscv64_toolchain_and_pins(self):
+        text = WHEELS_DOCKERFILE.read_text()
+        lines = [line.strip() for line in text.splitlines()]
+        froms = [line for line in lines if line.startswith("FROM ")]
+        supervisor = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
+        base = next(line for line in supervisor if line.startswith("FROM ")).split()[1]
+        toolchain = "cargo rustc pkg-config libssl-dev libffi-dev make"
+
+        assert froms == [f"FROM {base} AS build", "FROM scratch"]
+        assert f"gcc python3-dev {toolchain}" in _instruction(lines, next(
+            i for i, line in enumerate(lines) if line.startswith("RUN apt-get")))
+        assert toolchain in _instruction(supervisor, _pip_layer(supervisor))
+        wheels = _instruction(lines, next(i for i, line in enumerate(lines) if line.startswith("RUN pip")))
+        pins = _pip_pins(_instruction(supervisor, _pip_layer(supervisor)))
+        assert wheels == (f"RUN pip install --no-cache-dir {pins.split()[0]} && pip wheel --no-cache-dir "
+                          f"--wheel-dir /wheels {pins} -r requirements.txt")
+        assert lines.index("COPY requirements.txt .") < lines.index(next(line for line in lines if line.startswith("RUN pip")))
+        assert lines[-1] == "COPY --from=build /wheels /wheels"
+        assert lines.index("FROM scratch") == len(lines) - 2
 
 
 class TestAuditEnvironment:

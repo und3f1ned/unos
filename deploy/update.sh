@@ -7,13 +7,13 @@
 #
 # The release's images come from GHCR, where .github/workflows/release.yml
 # publishes them, and are pulled while UNOS keeps running, so a release that
-# cannot be had changes nothing; on a host without release images (riscv64,
-# ADR-0373) they are built from the release's checkout instead. Then the
-# database and the data volume are backed up, the running images are tagged
-# :previous, the release is checked out and started. If it does not start or
-# does not answer its health check, it is stopped, the backup's database is put
-# back, and the previous images and checkout start again. Only one update runs
-# at a time (a flock on /run/unos-update.lock).
+# cannot be had changes nothing; on a host without release images (32-bit ARM,
+# deploy.riscv64-release-images) they are built from the release's checkout
+# instead. Then the database and the data volume are backed up, the running
+# images are tagged :previous, the release is checked out and started. If it
+# does not start or does not answer its health check, it is stopped, the
+# backup's database is put back, and the previous images and checkout start
+# again. Only one update runs at a time (a flock on /run/unos-update.lock).
 #
 # The in-app updater of System > Updates runs it too
 # (supervisor/src/updates/installer.py), without a terminal:
@@ -155,7 +155,7 @@ parse_args() {
 check_in_app_host() {
     [ "$MODE" = update ] && return 0
     release_images_here && return 0
-    log_error "GHCR has no release images for this host's Docker ($(docker version --format '{{.Server.Arch}}' 2>/dev/null || echo unknown); riscv64 waits for its own, ADR-0373): update with $0 by hand, which builds them here. Nothing was changed."
+    log_error "GHCR has no release images for this host's Docker ($(docker version --format '{{.Server.Arch}}' 2>/dev/null || echo unknown); releases publish amd64, arm64 and riscv64): update with $0 by hand, which builds them here. Nothing was changed."
     exit 1
 }
 
@@ -410,13 +410,13 @@ choose_release() {
 }
 
 # Whether GHCR has images for this host's Docker: release.yml builds
-# linux/amd64 and linux/arm64; riscv64 and 32-bit arm have none (ADR-0373,
-# deploy.riscv64-release-images). The daemon's architecture, which a pull
+# linux/amd64, linux/arm64 and linux/riscv64; 32-bit arm has none
+# (deploy.riscv64-release-images). The daemon's architecture, which a pull
 # takes, not the kernel's: a 32-bit userland on a 64-bit Arm kernel runs arm
 # images. install.sh has the same.
 release_images_here() {
     case "$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" in
-        amd64 | arm64) return 0 ;;
+        amd64 | arm64 | riscv64) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -695,8 +695,8 @@ restore_previous() {
         docker image tag "$(previous_tag "$ref")" "$ref" ||
             log_error "Could not tag $(previous_tag "$ref") as $ref"
     done
-    # On riscv64 and 32-bit ARM that takes the tag from the web UI's image of
-    # the new version, which came from another machine (ADR-0373, ADR-0456).
+    # On 32-bit ARM that takes the tag from the web UI's image of the new
+    # version, which came from another machine (ADR-0456).
     if [ -n "$(webui_elsewhere_platform)" ]; then
         log_warn "$(webui_elsewhere_platform): deploy-webui:latest is the previous web UI again; load the web UI image of the new version again before the next update.sh."
     fi
@@ -705,12 +705,11 @@ restore_previous() {
 }
 
 # The platform of a host that builds no web UI, and nothing elsewhere: its build
-# tools publish no binaries for riscv64, nor for 32-bit ARM with musl
-# (ADR-0456), and Node.js crashes in the build on a SpacemiT K1 (ADR-0373).
-# install.sh has the same function.
+# tools publish no binaries for 32-bit ARM with musl (ADR-0456); riscv64 pulls
+# the release's (deploy.riscv64-release-images). install.sh has the same
+# function.
 webui_elsewhere_platform() {
     case "$(uname -m)" in
-        riscv64) echo linux/riscv64 ;;
         armv7l) echo linux/arm/v7 ;;
     esac
 }
@@ -738,9 +737,8 @@ use_release_images() {
 build_images() {
     log_info "Building the images of $NEW_VERSION (UNOS keeps running meanwhile)..."
 
-    # On riscv64 and 32-bit ARM the web UI's image deploy-webui:latest comes
-    # from another machine (ADR-0373, ADR-0456, docs/INSTALL.md) and only the
-    # supervisor is built here.
+    # On 32-bit ARM the web UI's image deploy-webui:latest comes from another
+    # machine (ADR-0456, docs/INSTALL.md) and only the supervisor is built here.
     local services=() platform
     platform=$(webui_elsewhere_platform)
     if [ -n "$platform" ]; then

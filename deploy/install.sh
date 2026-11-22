@@ -4,9 +4,10 @@
 # https://github.com/und3f1ned/unos
 #
 # This script installs the newest release of UNOS (a tag v<x.y.z>) on a fresh
-# Debian/Ubuntu system. On AMD64 and ARM64 it pulls the release's images from
-# GHCR, where .github/workflows/release.yml publishes them; on RISCV64, which
-# has none, it builds them from the release's checkout (ADR-0050, ADR-0373).
+# Debian/Ubuntu system. On AMD64, ARM64 and RISCV64 it pulls the release's
+# images from GHCR, where .github/workflows/release.yml publishes them; on
+# ARMv7, which has none, it builds the supervisor from the release's checkout
+# (ADR-0050, deploy.riscv64-release-images).
 # Supports: Debian 11+, Ubuntu 22.04+, ARM64 and AMD64; on RISCV64 Debian 13+
 # and Ubuntu 24.04+
 #
@@ -251,14 +252,12 @@ is_spacemit_k1() {
 
 # The platform of a host that builds no web UI, for docker buildx, and nothing
 # elsewhere: the web UI's build tools (Vite's Rolldown and Lightning CSS)
-# publish no binaries for riscv64, nor for 32-bit ARM with musl, the libc of
-# the web UI's builder (ADR-0456), and Node.js crashes now and then in the
-# middle of the build on a SpacemiT K1 (nodejs/node#66845, ADR-0373). The
-# image is built on another machine and loaded here. update.sh has the same
-# function.
+# publish no binaries for 32-bit ARM with musl, the libc of the web UI's
+# builder (ADR-0456). The image is built on another machine and loaded here.
+# riscv64, which they lack too, pulls the release's
+# (deploy.riscv64-release-images). update.sh has the same function.
 webui_elsewhere_platform() {
     case "$(uname -m)" in
-        riscv64) echo linux/riscv64 ;;
         armv7l) echo linux/arm/v7 ;;
     esac
 }
@@ -273,7 +272,7 @@ require_elsewhere_webui_image() {
     echo "  scp deploy-webui.tar <this host>:"
     echo "and here:"
     echo "  sudo docker load -i deploy-webui.tar"
-    echo "Everything before this step is done; run install.sh again (docs/INSTALL.md, Banana Pi BPI-F3)."
+    echo "Everything before this step is done; run install.sh again (docs/INSTALL.md, ARMv7)."
     exit 1
 }
 
@@ -348,13 +347,13 @@ newest_release() {
 }
 
 # Whether GHCR has images for this host's Docker: release.yml builds
-# linux/amd64 and linux/arm64; riscv64 and 32-bit arm have none (ADR-0373,
-# deploy.riscv64-release-images). The daemon's architecture, which a pull
+# linux/amd64, linux/arm64 and linux/riscv64; 32-bit arm has none
+# (deploy.riscv64-release-images). The daemon's architecture, which a pull
 # takes, not the kernel's: a 32-bit userland on a 64-bit Arm kernel runs arm
 # images. update.sh has the same.
 release_images_here() {
     case "$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" in
-        amd64 | arm64) return 0 ;;
+        amd64 | arm64 | riscv64) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -623,17 +622,18 @@ start_unos() {
     local version
     version=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown)
     if release_images_here; then
-        # AMD64 and ARM64: the release's images from GHCR; nothing is built here.
+        # AMD64, ARM64 and RISCV64, a SpacemiT K1 included: the release's
+        # images from GHCR; nothing is built here
+        # (deploy.riscv64-release-images).
         if ! [[ $version =~ $RELEASE_TAG ]]; then
             log_error "$UNOS_INSTALL_DIR is at $version, not at a release (a tag v<x.y.z>), whose images it could pull. Run install.sh again."
             exit 1
         fi
         pull_release_images "$version"
     else
-        # Hosts without release images build them from the release's checkout
-        # (ADR-0373). On riscv64 and 32-bit ARM only the supervisor: the web
-        # UI's image comes from another machine (require_elsewhere_webui_image,
-        # ADR-0373, ADR-0456).
+        # Hosts without release images build them from the release's checkout.
+        # On 32-bit ARM only the supervisor: the web UI's image comes from
+        # another machine (require_elsewhere_webui_image, ADR-0456).
         local services=() platform
         platform=$(webui_elsewhere_platform)
         if [ -n "$platform" ]; then
