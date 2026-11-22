@@ -50,7 +50,7 @@
 		# Applied after reverse_proxy, so these values always win.
 		defer
 		# Inline scripts: the meta CSP that SvelteKit writes into index.html
-		# (kit.csp in svelte.config.js) allows only the hashed bootstrap
+		# (csp of sveltekit() in vite.config.ts) allows only the hashed bootstrap
 		# script; both policies apply, so 'unsafe-inline' here does not
 		# widen that. This header carries everything a static file cannot:
 		# frame-ancestors, and the WebSocket origin of the current host

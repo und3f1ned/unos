@@ -2,7 +2,7 @@
 	// The head of an app's details under the dialog's title (the app's name and icon): its
 	// description, its category, version and source as outline badges (no state, ADR-0432), whether it is installed,
 	// and the links to its website, code and documentation (webui.ux-apps).
-	import { BadgeCheck, BookOpen, Check, Github, Globe, Tag } from 'lucide-svelte';
+	import { BadgeCheck, BookOpen, Check, Code, Globe, Tag } from 'lucide-svelte';
 	import { Badge, type IconComponent } from '$lib/components/ui';
 	import type { AppTemplate } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
@@ -50,7 +50,7 @@
 	{#if app.website || app.github || app.documentation}
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-1">
 			{#if app.website}{@render link(app.website, Globe, 'apps.detail.website')}{/if}
-			{#if app.github}{@render link(app.github, Github, 'apps.detail.github')}{/if}
+			{#if app.github}{@render link(app.github, Code, 'apps.detail.github')}{/if}
 			{#if app.documentation}{@render link(app.documentation, BookOpen, 'apps.detail.docs')}{/if}
 		</div>
 	{/if}

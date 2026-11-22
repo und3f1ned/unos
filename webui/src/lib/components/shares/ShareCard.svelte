@@ -294,6 +294,9 @@
 </article>
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0450). */
+	@reference '../../../app.css';
+
 	/* The name and its facts on the left, the actions at the top right; on a phone the actions go
 	   under the facts, in one row, the same for every share. */
 	.share-head {

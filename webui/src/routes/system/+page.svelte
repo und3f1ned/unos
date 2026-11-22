@@ -64,7 +64,7 @@
 		activeTab = id;
 		// SvelteKit's goto, not history.replaceState: it updates page.url and
 		// keeps the router's state in the history entry, which Back/Forward need.
-		goto(`#${id}`, { replaceState: true, noScroll: true, keepFocus: true });
+		goto(`#${id}`, { replace: true, reset: false });
 	}
 </script>
 

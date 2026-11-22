@@ -2,7 +2,7 @@
 	import { readable } from 'svelte/store';
 	import { on } from 'svelte/events';
 	import { Menu, Search, Server, X } from 'lucide-svelte';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { afterNavigate } from '$app/navigation';
 	import type { User } from '$lib/api/auth';
 	import { Button, Skeleton } from '$lib/components/ui';
@@ -174,7 +174,7 @@
 		onfocusout={handleSidebarFocusOut}
 		class="{menuOpen
 			? 'visible translate-x-0 transition-transform'
-			: 'invisible -translate-x-full transition-[transform,visibility]'} md:visible md:translate-x-0 flex flex-1 min-h-0 flex-col fixed md:static top-14 bottom-0 left-0 z-40 w-72 max-w-[85vw] md:w-auto md:max-w-none bg-surface-elevated border-r md:border-r-0 border-border duration-[180ms] ease-[cubic-bezier(0.2,0,0,1)] md:transition-none"
+			: 'invisible -translate-x-full transition-[translate,visibility]'} md:visible md:translate-x-0 flex flex-1 min-h-0 flex-col fixed md:static top-14 bottom-0 left-0 z-40 w-72 max-w-[85vw] md:w-auto md:max-w-none bg-surface-elevated border-r md:border-r-0 border-border duration-[180ms] ease-[cubic-bezier(0.2,0,0,1)] md:transition-none"
 	>
 		<!-- From md: the command palette's Search button, before the links (ADR-0428). Its name
 		     starts with its visible word; the keys' hint is for the eye. -->
@@ -186,7 +186,7 @@
 					aria-label={$t('palette.field')}
 					aria-keyshortcuts={keyShortcut}
 					onclick={onpalette}
-					class="w-full h-9 flex items-center gap-2 pl-2.5 pr-1.5 rounded border border-border bg-surface text-[13px] text-content-muted hover:border-border-strong hover:text-content-secondary transition-colors"
+					class="w-full h-9 flex items-center gap-2 pl-2.5 pr-1.5 rounded border border-border bg-surface text-[13px] text-content-muted hover:border-border-strong hover:text-content-secondary transition-[color,background-color,border-color,text-decoration-color,fill,stroke]"
 				>
 					<Search class="w-4 h-4 shrink-0" aria-hidden="true" />
 					<span class="flex-1 min-w-0 truncate text-left">{$t('palette.trigger')}</span>

@@ -734,9 +734,9 @@ make frontend
   without pip (`--disable-pip --no-deps --strict`). `pip-audit -r` resolved them itself, after it had
   installed the latest pip, setuptools and wheel, unpinned (ADR-0423). `npm audit` asks the npm
   registry. Both need network access.
-- `npm run check` first runs `svelte-kit sync`, which writes
-  `.svelte-kit/tsconfig.json`: `tsconfig.json` extends it (`npm run build`
-  writes it too).
+- `npm run check` first runs `svelte-kit sync`, which writes SvelteKit 3's
+  `node_modules/$app/tsconfig.json`: `tsconfig.json` extends it as
+  `$app/tsconfig` (`npm run build` writes it too, ADR-0450).
 - `make frontend-lint` and `make frontend-format` run ESLint and Prettier's check alone, and
   `npm run format` in `webui/` writes Prettier's format over `src/` (ADR-0449). A finding of
   ESLint is fixed; a rule turned off in `webui/eslint.config.js`, or a line exempted with

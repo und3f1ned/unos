@@ -1,15 +1,160 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind CSS 4 (ADR-0450): its theme's variables and its preflight here, and its utilities that
+   the files of src/ use after this file's components, in their layer (below). */
+@layer theme, base, components;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+
+/* hover: on every device, as Tailwind CSS 3 had it (Tailwind CSS 4 applies it only where a pointer
+   can hover), so that a tap on a phone looks as before. */
+@custom-variant hover (&:hover);
+
+/* The design tokens (ADR-0012, ADR-0400, ADR-0428).
+
+   The colour tokens: each is the CSS variable --color-<name> of the themes below, the red, green
+   and blue of the current theme, and takes Tailwind's opacity modifier (bg-surface/50).
+   surface-muted and border-muted are half transparent. `inline reference`: a utility writes the
+   value itself (bg-surface: rgb(var(--color-surface))), and Tailwind declares no variable of its
+   own, which would replace the theme's. No colour is written here;
+   supervisor/tests/test_webui_theme.py checks that both themes give every token a value and meet
+   WCAG AA. The radii and shadows likewise: the shadows are variables of each theme. */
+@theme inline reference {
+	/* Backgrounds */
+	--color-surface: rgb(var(--color-surface)); /* main background */
+	--color-surface-elevated: rgb(var(--color-surface-elevated)); /* cards, modals */
+	--color-surface-overlay: rgb(var(--color-surface-overlay)); /* fields, secondary buttons, hover states, nested */
+	--color-surface-hover: rgb(var(--color-surface-hover)); /* hover over overlay */
+	--color-surface-muted: rgb(var(--color-surface-muted) / 0.5); /* subtle backgrounds (nested cards) */
+	/* A tooltip, under content-inverse: the other theme's surface. */
+	--color-surface-inverse: rgb(var(--color-surface-inverse));
+	/* Borders */
+	--color-border: rgb(var(--color-border));
+	--color-border-strong: rgb(var(--color-border-strong)); /* field borders */
+	--color-border-muted: rgb(var(--color-border-muted) / 0.5);
+	/* Text */
+	--color-content: rgb(var(--color-content)); /* primary text */
+	--color-content-secondary: rgb(var(--color-content-secondary)); /* secondary text */
+	--color-content-muted: rgb(var(--color-content-muted)); /* hints, placeholders */
+	--color-content-soft: rgb(var(--color-content-soft)); /* between primary and secondary */
+	--color-content-inverse: rgb(var(--color-content-inverse)); /* on a background of the other theme */
+	--color-content-on-brand: rgb(var(--color-content-on-brand)); /* on brand and other solid fills */
+	--color-content-link: rgb(var(--color-content-link)); /* text links (ADR-0428) */
+	/* Accents (for icons and highlights) */
+	--color-accent-cpu: rgb(var(--color-accent-cpu));
+	--color-accent-memory: rgb(var(--color-accent-memory));
+	--color-accent-network: rgb(var(--color-accent-network));
+	--color-accent-storage: rgb(var(--color-accent-storage));
+	--color-accent-container: rgb(var(--color-accent-container));
+	--color-accent-temperature: rgb(var(--color-accent-temperature));
+	/* Brand (primary actions, selected tabs, focus) */
+	--color-brand: rgb(var(--color-brand));
+	--color-brand-hover: rgb(var(--color-brand-hover));
+	--color-brand-ring: rgb(var(--color-brand-ring)); /* focus and selection lines */
+	--color-brand-disabled: rgb(var(--color-brand-disabled));
+	/* Semantic status colors */
+	--color-status-success: rgb(var(--color-status-success));
+	--color-status-warning: rgb(var(--color-status-warning));
+	--color-status-error: rgb(var(--color-status-error));
+	--color-status-info: rgb(var(--color-status-info));
+	--color-status-neutral: rgb(var(--color-status-neutral)); /* off, unknown */
+	/* Solid fills with content-on-brand text: the variants of Button */
+	--color-solid-success: rgb(var(--color-solid-success));
+	--color-solid-success-hover: rgb(var(--color-solid-success-hover));
+	--color-solid-warning: rgb(var(--color-solid-warning));
+	--color-solid-warning-hover: rgb(var(--color-solid-warning-hover));
+	--color-solid-error: rgb(var(--color-solid-error));
+	--color-solid-error-hover: rgb(var(--color-solid-error-hover));
+
+	/* A ring without a colour of its own takes the theme's, not currentColor, 3 px wide. */
+	--default-ring-color: rgb(var(--color-brand-ring));
+	--default-ring-width: 3px;
+
+	/* Radii (ADR-0428): controls, badges and tabs 6 px, cards and menus 10 px, dialogs 12 px. */
+	--radius: 0.375rem;
+	--radius-card: 0.625rem;
+	--radius-dialog: 0.75rem;
+
+	/* Elevation: CSS variables of each theme below, built from the token shadow. */
+	--shadow-raised: var(--shadow-raised);
+	--shadow-popover: var(--shadow-popover);
+	--shadow-dialog: var(--shadow-dialog);
+}
+
+@theme {
+	/* Typography (ADR-0428): the system's own fonts, no download; all of them carry Cyrillic. */
+	--font-sans:
+		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue',
+		Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+	--font-mono:
+		ui-monospace, SFMono-Regular, 'SF Mono', Menlo, 'Cascadia Mono', 'Roboto Mono', 'Liberation Mono', Consolas,
+		monospace;
+	/* The breakpoints of Tailwind CSS 3, in px like the media queries of this file (4's are in rem,
+	   which move with the browser's font size). */
+	--breakpoint-sm: 640px;
+	--breakpoint-md: 768px;
+	--breakpoint-lg: 1024px;
+	--breakpoint-xl: 1280px;
+	--breakpoint-2xl: 1536px;
+
+	--text-2xs: 0.6875rem; /* 11px, counts and group labels */
+	--text-2xs--line-height: 0.875rem;
+	/* The line heights of Tailwind CSS 3, in rem: Tailwind CSS 4's are ratios, which a text of
+	   another size inside inherits as a ratio (text-[13px] in a text-sm row: 18.6 px, not 20 px). */
+	--text-xs--line-height: 1rem;
+	--text-sm--line-height: 1.25rem;
+	--text-base--line-height: 1.5rem;
+	--text-lg--line-height: 1.75rem;
+	--text-xl--line-height: 1.75rem;
+	--text-2xl--line-height: 2rem;
+	--text-3xl--line-height: 2.25rem;
+	--text-4xl--line-height: 2.5rem;
+
+	/* Animation */
+	--animate-spin-slow: spin 2s linear infinite;
+}
+
+/* space-y and divide-y as Tailwind CSS 3 drew them, so that no page moves: the space or the line
+   before every child but the first, over the child's own margin or border. Tailwind CSS 4 puts them
+   after every child but the last, under the child's own (:where), which moves a child with a margin
+   of its own (a legend, a help text with mt-0.5) and a list whose last child draws nothing. Its own
+   rule for the same class stays, and gives nothing: its space is a calc() with
+   --tw-space-y-reverse, which `none` makes invalid (so 0, or the child's own margin), and its line
+   on the first child is taken off here; the others take Tailwind CSS 3's. */
+@utility space-y-* {
+	& > * {
+		--tw-space-y-reverse: none;
+	}
+
+	& > :not([hidden]) ~ :not([hidden]) {
+		margin-top: --spacing(--value(number));
+		margin-bottom: 0;
+	}
+}
+
+@utility divide-y {
+	:where(&) > :first-child {
+		border-bottom-width: 0;
+	}
+
+	& > :not([hidden]) ~ :not([hidden]) {
+		border-top-width: 1px;
+		border-bottom-width: 0;
+	}
+}
+
+@utility divide-* {
+	& > :not([hidden]) ~ :not([hidden]) {
+		border-color: --value(--color-*);
+	}
+}
 
 /* ============================================
    The themes (ADR-0405)
    ============================================ */
 
-/* The colour tokens of tailwind.config.js: red, green and blue of each, per theme. The dark theme
+/* The colour tokens of the @theme above: red, green and blue of each, per theme. The dark theme
    is the default; static/theme-init.js sets data-theme on <html> before the page is drawn, and the
    theme store ($lib/stores/theme) keeps it. surface-muted and border-muted are half transparent
-   (tailwind.config.js). supervisor/tests/test_webui_theme.py checks that both themes give every
+   (the @theme above). supervisor/tests/test_webui_theme.py checks that both themes give every
    token a value and that the pairs that text and controls use meet WCAG AA. */
 @layer base {
 	:root,
@@ -139,7 +284,97 @@
 		--ease: cubic-bezier(0.2, 0, 0, 1);
 	}
 
-	/* 14 px body text, the system's own fonts (tailwind.config.js). */
+	/* What Tailwind CSS 3's preflight gave and 4's does not: a border without a colour of its own
+	   takes the theme's border token, not currentColor, and a button shows the pointer. */
+	*,
+	::after,
+	::before,
+	::backdrop,
+	::file-selector-button {
+		border-color: rgb(var(--color-border));
+	}
+
+	button,
+	[role='button'] {
+		cursor: pointer;
+	}
+
+	:disabled {
+		cursor: default;
+	}
+
+	/* And what it left to the browser, where 4's resets it: a table cell's and an option's padding,
+	   a field's background and corners, a field's or a button's figures and style of font (not the
+	   text's around it: 4 makes them inherit), a search field drawn as a text field, and the parts
+	   of a date or time field. */
+	td,
+	th {
+		padding: 1px;
+	}
+
+	option {
+		padding: revert;
+	}
+
+	input:where(:not([type='button'], [type='reset'], [type='submit'])),
+	select,
+	optgroup,
+	textarea {
+		border-radius: revert;
+		background-color: revert;
+	}
+
+	button,
+	input,
+	select,
+	optgroup,
+	textarea {
+		font-style: revert;
+		font-variant: revert;
+		font-stretch: revert;
+		font-kerning: revert;
+		font-optical-sizing: revert;
+	}
+
+	[type='search'] {
+		appearance: textfield;
+		outline-offset: -2px;
+	}
+
+	::-webkit-search-decoration {
+		appearance: none;
+	}
+
+	::-webkit-date-and-time-value {
+		min-height: revert;
+		text-align: revert;
+	}
+
+	::-webkit-datetime-edit {
+		display: revert;
+	}
+
+	::-webkit-datetime-edit-fields-wrapper {
+		padding: revert;
+	}
+
+	::-webkit-datetime-edit,
+	::-webkit-datetime-edit-year-field,
+	::-webkit-datetime-edit-month-field,
+	::-webkit-datetime-edit-day-field,
+	::-webkit-datetime-edit-hour-field,
+	::-webkit-datetime-edit-minute-field,
+	::-webkit-datetime-edit-second-field,
+	::-webkit-datetime-edit-millisecond-field,
+	::-webkit-datetime-edit-meridiem-field {
+		padding-block: revert;
+	}
+
+	::-webkit-calendar-picker-indicator {
+		line-height: revert;
+	}
+
+	/* 14 px body text, the system's own fonts (the @theme above). */
 	body {
 		@apply bg-surface text-content font-sans text-sm antialiased;
 	}
@@ -422,7 +657,7 @@
 	/* A focused field: its border, a ring of brand-ring and a halo. */
 	.form-input:focus,
 	.form-select:focus {
-		@apply outline-none border-brand-ring;
+		@apply outline-hidden border-brand-ring;
 		box-shadow:
 			0 0 0 1px rgb(var(--color-brand-ring)),
 			0 0 0 4px rgb(var(--color-brand-ring) / 0.25);
@@ -578,10 +813,11 @@
 			border-color var(--dur-fast);
 	}
 
+	/* translate-x-4 sets translate, not transform, in Tailwind CSS 4 (ADR-0450). */
 	.switch-knob {
 		@apply pointer-events-none absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-border-strong;
 		transition:
-			transform var(--dur-base) var(--ease),
+			translate var(--dur-base) var(--ease),
 			background-color var(--dur-fast);
 	}
 
@@ -863,12 +1099,13 @@
 	   Modal / Dialog
 	   ---------------------------------------- */
 	/* The dimmed backdrop of a dialog or a drawer: the theme's scrim colour (60 % dark, 45 % light). */
-	.scrim {
+	.scrim,
+	.modal-overlay {
 		background-color: rgb(var(--color-scrim) / var(--scrim-alpha));
 	}
 
 	.modal-overlay {
-		@apply fixed inset-0 scrim flex items-center justify-center z-50;
+		@apply fixed inset-0 flex items-center justify-center z-50;
 	}
 
 	.modal {
@@ -1260,7 +1497,8 @@
 	}
 
 	.bulk-bar-count {
-		@apply text-sm text-content-secondary tabular;
+		@apply text-sm text-content-secondary;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.bulk-bar[data-active] .bulk-bar-count {
@@ -1300,13 +1538,13 @@
 	/* A menu (Menu, ActionMenu): a list that floats below its button. */
 	.menu {
 		@apply fixed z-[150] m-0 min-w-[11rem] max-w-[min(20rem,calc(100vw-16px))] overflow-y-auto p-1 rounded-card
-		       border border-border bg-surface-elevated text-content shadow-popover outline-none;
+		       border border-border bg-surface-elevated text-content shadow-popover outline-hidden;
 		inset: auto;
 		animation: menu-in var(--dur-fast) var(--ease);
 	}
 
 	.menu-item {
-		@apply flex w-full items-start gap-2.5 px-2.5 py-2 rounded text-sm text-content outline-none cursor-pointer
+		@apply flex w-full items-start gap-2.5 px-2.5 py-2 rounded text-sm text-content outline-hidden cursor-pointer
 		       hover:bg-surface-overlay focus:bg-surface-overlay;
 	}
 
@@ -1476,8 +1714,9 @@
 	/* ----------------------------------------
 	   Stat Cards (Dashboard widgets)
 	   ---------------------------------------- */
+	/* A card (.card), with less padding. */
 	.stat-card {
-		@apply card p-4 flex flex-col gap-1.5;
+		@apply bg-surface-elevated border border-border rounded-card shadow-raised min-w-0 p-4 flex flex-col gap-1.5;
 	}
 
 	.stat-card-header {
@@ -1674,27 +1913,35 @@
 /* ============================================
    Custom Scrollbar (optional enhancement)
    ============================================ */
-@layer utilities {
-	.scrollbar-thin {
-		scrollbar-width: thin;
-		scrollbar-color: rgb(var(--color-surface-hover)) transparent;
-	}
+/* Tailwind's utilities, in the layer of the components above and after them, as Tailwind CSS 3 put
+   them: a utility wins over a component's class of the same specificity, and a component's more
+   specific selector (.table-stack tr) over a utility (table-row). In a layer of their own, as
+   Tailwind CSS 4 puts them, every utility would win. */
+@layer components {
+	@tailwind utilities source('.');
+}
 
-	.scrollbar-thin::-webkit-scrollbar {
+/* A thin scrollbar in the theme's colours. A utility, so that a class of this file applies it
+   (.modal-side); Tailwind CSS 4's own scrollbar-thin gives only the width. */
+@utility scrollbar-thin {
+	scrollbar-width: thin;
+	scrollbar-color: rgb(var(--color-surface-hover)) transparent;
+
+	&::-webkit-scrollbar {
 		width: 6px;
 		height: 6px;
 	}
 
-	.scrollbar-thin::-webkit-scrollbar-track {
+	&::-webkit-scrollbar-track {
 		background: transparent;
 	}
 
-	.scrollbar-thin::-webkit-scrollbar-thumb {
+	&::-webkit-scrollbar-thumb {
 		background-color: rgb(var(--color-surface-hover));
 		border-radius: 3px;
 	}
 
-	.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+	&::-webkit-scrollbar-thumb:hover {
 		background-color: rgb(var(--color-status-neutral));
 	}
 }
@@ -1718,7 +1965,7 @@
    under it a thin bar that shows only when the start takes a while. It covers the page from the
    first frame, drawn by this style sheet alone (no script: the CSP allows only SvelteKit's own),
    until $lib/boot.ts marks it done: it then fades out in 160 ms, no longer catches the pointer,
-   and is removed. Outside the layers, so that it is in the style sheet whatever the build finds. */
+   and is removed. Outside the layers, after them: nothing of the page's styles reaches it. */
 .boot {
 	position: fixed;
 	inset: 0;

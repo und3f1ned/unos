@@ -45,23 +45,28 @@ is not enough; the script then stops before it changes anything.
 - **AMD64** (x86_64) - Intel/AMD processors
 - **ARM64** (AArch64) - Raspberry Pi 4/5, ARM SBCs; see
   [Banana Pi BPI-W3](#banana-pi-bpi-w3-rockchip-rk3588-arm64)
-- **RISCV64** - Debian 13 or Ubuntu 24.04 only; see
-  [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
-- **ARMv7** - Limited support, may have performance issues
+- **RISCV64** - Debian 13 or Ubuntu 24.04 only; the web UI's image comes from
+  another machine; see [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
+- **ARMv7** - Limited support, may have performance issues; the web UI's image
+  comes from another machine, as on RISCV64 (`--platform linux/arm/v7`)
 
 ### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
 
 Checked on Armbian 26.8 (Debian 13) with its `current-spacemit` kernel 6.18 on
 a BPI-F3 with 4 GB of RAM and the system on a microSD card (ADR-0370, ADR-0372,
-ADR-0373).
+ADR-0373, ADR-0450).
 
-- **The web UI's image comes from another machine.** Node.js crashes now and
-  then on the K1 in the middle of the web UI's build (nodejs/node#66845), so on
-  a K1 `install.sh` and `update.sh` build only the supervisor and start the web
-  UI from the image `deploy-webui:latest`. Make it for each version on a machine
-  with Docker that runs linux/riscv64 images (Docker Desktop does; elsewhere
+- **The web UI's image comes from another machine.** The web UI's build tools
+  (Vite's Rolldown and Lightning CSS) publish no RISCV64 build, nor one for
+  ARMv7 with musl, and Node.js crashes now and then on the K1 in the middle of
+  a build (nodejs/node#66845), so on every RISCV64 and ARMv7 host `install.sh`
+  and `update.sh` build only the supervisor and start the web UI from the
+  image `deploy-webui:latest`. Make it for each version on a machine with Docker that
+  runs linux/riscv64 images (Docker Desktop does; elsewhere
   `docker run --privileged --rm tonistiigi/binfmt --install riscv64`), in the
-  root of the same checkout, and load it on the board:
+  root of the same checkout, and load it on the board (the web UI's files are
+  built in that machine's own platform, and only the image's Caddy stage is
+  RISCV64's):
 
   ```bash
   docker buildx build --platform linux/riscv64 -t deploy-webui:latest --load webui
@@ -233,6 +238,7 @@ board (ADR-0376).
 | RAM | 1 GB |
 | System Storage | 8 GB |
 | Network | 100 Mbps Ethernet |
+| Browser of the web interface | Chrome or Edge 111, Firefox 128, Safari 16.4 (iOS 16.4) or newer |
 
 ### Recommended Requirements
 
@@ -475,7 +481,7 @@ sudo docker compose build
 sudo docker compose --env-file /etc/unos/secrets.env up -d
 ```
 
-On a SpacemiT K1, load the web UI's image first and build only the supervisor
+On RISCV64 and ARMv7, load the web UI's image first and build only the supervisor
 (`sudo docker compose build supervisor`): see
 [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64).
 

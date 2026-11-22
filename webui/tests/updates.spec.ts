@@ -426,6 +426,9 @@ test.describe('Software Updates with an installer', () => {
     await expect(auto.getByRole('button', { name: 'Save' })).toBeDisabled();
 
     await auto.getByRole('switch', { name: 'Install new releases automatically' }).click();
+    // A field of a few digits, Input's width xs (8.5rem), not the card's; Tailwind CSS 3 dropped the
+    // rule of that width, whose class Input names at run time (ADR-0450).
+    expect((await auto.getByLabel('Look every').boundingBox())?.width).toBeLessThanOrEqual(136);
     await auto.getByLabel('Look every').fill('12');
     await auto.getByRole('button', { name: 'Save' }).click();
 

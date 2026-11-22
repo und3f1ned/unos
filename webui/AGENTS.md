@@ -1,20 +1,22 @@
 # webui/: the SvelteKit web UI and the E2E specs
 
-SvelteKit 2 with Svelte 5 in runes mode only (ADR-0427), `<script lang="ts">`, the static
-adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built files and proxies
-`/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
+SvelteKit 3 with Svelte 5 in runes mode only (ADR-0427), Vite 8, `<script lang="ts">`, the static
+adapter, strict TypeScript 6 and Tailwind CSS 4 (ADR-0012, ADR-0450). SvelteKit 3 takes its
+configuration in its Vite plugin, `sveltekit({...})` of `vite.config.ts`: there is no
+`svelte.config.js`, and `$lib` is the alias of that configuration. Caddy serves the built files
+and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 
 ## Components and state (ADR-0427)
 
-- Every component is in runes mode: `svelte.config.js` compiles `src/` with `runes: true`
+- Every component is in runes mode: `vite.config.ts` compiles `src/` with `runes: true`
   (`export let` and `$:` fail the build), and `scripts/runes-check.mjs` (`npm run runes`, run by
   `make frontend`, tested by `supervisor/tests/test_webui_runes.py`) fails for
   `<svelte:options runes={false} />` and the syntax of Svelte 4: `on:`, `let:`, `<slot>`,
   `$$slots`, `slot=`, `<svelte:fragment>`, `<svelte:component>`, `<svelte:self>`,
   `<script context="module">`, the options accessors and immutable, `svelte/legacy`,
   `createEventDispatcher`, `$app/stores` (use `$app/state`), and for a plain `let` that the
-  markup shows and that changes (it is no state in runes mode). The icons of lucide-svelte 0.x,
-  a library's, are the one part compiled in legacy mode.
+  markup shows and that changes (it is no state in runes mode). The icons of lucide-svelte, a
+  library's, are the one part compiled in legacy mode.
 - Props: `type Props = { ... }` and `let { a = 1, class: className = '', children, onsaved }: Props
   = $props();`; `$bindable()` only for a value the parent binds (a form field). Events are
   attributes (`onclick={...}`, a modifier is code: `e.preventDefault()`) and callback props `on` +
@@ -61,7 +63,8 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   `label`, and dialogs, lists and hints work with the keyboard and screen readers (ADR-0361).
   A dialog asked from a dialog opens over it, which stays open: `Modal` keeps the stack of open
   dialogs, and Escape closes only the top one, whatever the markup order.
-- Colours are the tokens of `tailwind.config.js`: `surface`, `surface-elevated`,
+- Colours are the tokens of the `@theme` blocks of `src/app.css` (Tailwind CSS 4: no
+  `tailwind.config.js`, no PostCSS): `surface`, `surface-elevated`,
   `surface-overlay`, `surface-muted`; `content`, `content-secondary`, `content-muted`; `border`;
   `status-success`, `status-warning`, `status-error`, `status-info`. Each token is a CSS variable of
   `src/app.css` with a value for the dark and the light theme, which `data-theme` on `<html>`
@@ -222,6 +225,21 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   at a space, and Svelte 5 keeps a line break between `{' '}` and a block element as a second
   space: such an element keeps its source with `<!-- prettier-ignore -->` above it, where the
   comment adds no space (between table cells, at the start of a block), and its reason.
+- Tailwind CSS 4 (ADR-0450): `src/app.css` imports its theme and preflight, holds the tokens in
+  `@theme` blocks, and puts the utilities in the layer `components` after its own classes, as
+  Tailwind CSS 3 ordered them (a more specific class of `app.css` wins over a utility). It keeps 3's
+  line heights, `hover:` on every device, 3's `space-y-*` and `divide-y` (before every child but
+  the first), and in its base layer what 3's preflight gave fields, buttons and table cells.
+  `translate-x-*` and `rotate-*` set `translate` and `rotate`: a transition names those, not
+  `transform`. `transition-colors` also fades `outline-color`, so a focus ring fades in: the
+  web UI writes 3's list (`transition-[color,background-color,...]`). `@apply` takes utilities only
+  (`@utility` of `app.css` included): a class of `app.css` is written out. A component's `<style>`
+  names no layer (its sheet can load before `app.css`, and its first layer would set the order of
+  all), so it wins over every layer; with `@apply` it starts with `@reference` to `src/app.css`.
+  Breakpoints are in px. A colour with an
+  opacity is a `color-mix()`, which the browser reports as `oklab(...)` (`tests/theme.spec.ts`
+  reads it). The web UI's build tools have no riscv64 binaries and none for ARMv7 with musl: such
+  a host takes the image from another machine.
 - `webui/node_modules` comes from `make setup` (`npm ci` from `package-lock.json`). A new
   dependency is the owner's call: it needs the network and a lockfile change.
 - The Node.js version of `webui/Dockerfile`, of `engines` in `package.json` and of CI agree;

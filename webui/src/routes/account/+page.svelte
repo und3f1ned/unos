@@ -33,7 +33,7 @@
 
 	function setTab(id: string) {
 		activeTab = id;
-		goto(`#${id}`, { replaceState: true, noScroll: true, keepFocus: true });
+		goto(`#${id}`, { replace: true, reset: false });
 	}
 </script>
 

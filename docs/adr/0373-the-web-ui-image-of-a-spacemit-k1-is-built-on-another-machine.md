@@ -1,14 +1,17 @@
 ---
-status: proposed
+status: superseded
 date: 2026-11-13
 area: deploy
 decided-by: agent
 supersedes: [ADR-0371]
+superseded-by: ADR-0450
 ---
 
 # ADR-0373: The web UI's image of a SpacemiT K1 is built on another machine, and install.sh and update.sh build only the supervisor there
 
 ## Context
+
+Superseded by ADR-0450: the web UI's builder runs on the platform that builds, and every riscv64 and ARMv7 host, not only a K1, takes its web UI image from another machine, since the web UI's build tools publish no binaries for them.
 
 ADR-0371 ran vite without Node.js's Maglev compiler on riscv64, after Alpine's Node.js 22.23.5
 had stopped the web UI's build on a Banana Pi BPI-F3 (SpacemiT K1) with "Fatal error ...

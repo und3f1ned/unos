@@ -31,8 +31,15 @@ async function expectTheme(page: Page, theme: Theme) {
 async function tokens(page: Page, theme: Theme): Promise<Record<string, string>> {
   return page.evaluate((theme) => {
     const names = new Set<string>();
+    // The rules of a sheet, also those inside @layer blocks (Tailwind CSS 4 puts app.css's base styles
+    // in its layer base, ADR-0450), @media, @supports and nested rules.
+    const rules = (list: CSSRuleList): CSSRule[] =>
+      [...list].flatMap((rule) => [
+        ...(rule instanceof CSSStyleRule || !(rule instanceof CSSGroupingRule) ? [rule] : []),
+        ...(rule instanceof CSSGroupingRule ? rules(rule.cssRules) : []),
+      ]);
     for (const sheet of [...document.styleSheets]) {
-      for (const rule of [...sheet.cssRules]) {
+      for (const rule of rules(sheet.cssRules)) {
         if (!(rule instanceof CSSStyleRule) || !rule.selectorText.includes('data-theme')) continue;
         for (const property of [...rule.style]) if (property.startsWith('--color-')) names.add(property.slice(8));
       }
@@ -49,10 +56,35 @@ async function tokens(page: Page, theme: Theme): Promise<Record<string, string>>
   }, theme);
 }
 
+/**
+ * The red, green, blue and opacity of a computed colour: 'rgba(1, 2, 3, 0.5)', or 'oklab(L a b / 0.5)',
+ * in which the browser writes a token with an opacity of Tailwind CSS 4 (bg-brand/20 is a color-mix in
+ * oklab, ADR-0450); the conversion gives back the token's red, green and blue exactly.
+ */
+function rgba(css: string): { rgb: string; alpha: number } | null {
+  const rgb = css.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+  if (rgb) return { rgb: `${rgb[1]} ${rgb[2]} ${rgb[3]}`, alpha: rgb[4] === undefined ? 1 : Number(rgb[4]) };
+  const lab = css.match(/^oklab\((\S+) (\S+) (\S+)(?: \/ ([\d.]+))?\)$/);
+  if (!lab) return null;
+  const [L, a, b] = [Number(lab[1]), Number(lab[2]), Number(lab[3])];
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  const srgb = linear.map((x) => {
+    const v = x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
+    return Math.round(255 * Math.min(1, Math.max(0, v)));
+  });
+  return { rgb: srgb.join(' '), alpha: lab[4] === undefined ? 1 : Number(lab[4]) };
+}
+
 /** 'r g b' of a computed colour such as 'rgba(1, 2, 3, 0.5)'. */
 function channels(css: string): string {
-  const match = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  return match ? `${match[1]} ${match[2]} ${match[3]}` : css;
+  return rgba(css)?.rgb ?? css;
 }
 
 // The tokens that are never a background, never text, never a border: the text colours of one
@@ -75,19 +107,15 @@ async function foreignColours(page: Page): Promise<string[]> {
   const allowed = (excluded: string[]) =>
     Object.entries(values).filter(([name]) => !excluded.includes(name)).map(([, value]) => value);
   const sets = { text: allowed(NOT_TEXT), background: allowed(NOT_BACKGROUND), border: allowed(NOT_BORDER) };
-  return page.evaluate((sets) => {
+  const known = { text: new Set(sets.text), background: new Set(sets.background), border: new Set(sets.border) };
+  const colours = await page.evaluate(() => {
     // A colour on its way to another (transition-colors, as a tab that was selected) counts as
     // where it goes.
     for (const animation of document.getAnimations()) {
       if (animation instanceof CSSTransition) animation.finish();
     }
-    const known = { text: new Set(sets.text), background: new Set(sets.background), border: new Set(sets.border) };
-    const found = new Set<string>();
-    const rgb = (css: string) => {
-      const match = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-      if (!match || match[4] === '0') return null;
-      return `${match[1]} ${match[2]} ${match[3]}`;
-    };
+    // Each colour of each kind once, with the first element that has it.
+    const found = new Map<string, [keyof typeof known, string, string]>();
     for (const element of document.body.querySelectorAll('*')) {
       // The browser draws these itself (their accent colour is the theme's).
       if (element instanceof HTMLInputElement && ['checkbox', 'radio', 'range', 'file'].includes(element.type)) continue;
@@ -104,14 +132,20 @@ async function foreignColours(page: Page): Promise<string[]> {
         }
       }
       for (const [kind, property, value] of colours) {
-        const colour = rgb(value);
-        if (colour === null || known[kind].has(colour)) continue;
+        if (found.has(`${kind} ${value}`)) continue;
         const words = (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-        found.add(`<${element.tagName.toLowerCase()} class="${element.getAttribute('class') ?? ''}"> ${property} ${value} ${words}`);
+        found.set(`${kind} ${value}`, [kind, value, `<${element.tagName.toLowerCase()} class="${element.getAttribute('class') ?? ''}"> ${property} ${value} ${words}`]);
       }
     }
-    return [...found].slice(0, 20);
-  }, sets);
+    return [...found.values()];
+  });
+  return colours
+    .filter(([kind, value]) => {
+      const colour = rgba(value);
+      return colour !== null && colour.alpha !== 0 && !known[kind].has(colour.rgb);
+    })
+    .map(([, , where]) => where)
+    .slice(0, 20);
 }
 
 async function background(page: Page, selector: string): Promise<string> {
@@ -479,8 +513,8 @@ test.describe('Every page in each theme', () => {
       expect(await colour(page, 'main h2.text-xl')).toBe(values['content']); // Security of the NAS
       expect(await background(page, 'nav .nav-item-active')).toBe(values['brand']);
       // A 20 % tint of the brand, which test_webui_theme.py checks with the text on it.
-      expect(await page.locator('nav .nav-item-active').first().evaluate((e) => getComputedStyle(e).backgroundColor))
-        .toMatch(/^rgba\(\d+, \d+, \d+, 0\.2\)$/);
+      expect(rgba(await page.locator('nav .nav-item-active').first().evaluate((e) => getComputedStyle(e).backgroundColor))?.alpha)
+        .toBe(0.2);
       // The active link is a brand tint with the text's colour (webui.redesign, ADR-0428).
       expect(await colour(page, 'nav .nav-item-active')).toBe(values['content']);
       const lightPage = luminance(values['surface']) > 0.8 && luminance(values['content']) < 0.05;

@@ -412,32 +412,36 @@ restore_previous() {
         docker image tag "$(previous_tag "$ref")" "$ref" ||
             log_error "Could not tag $(previous_tag "$ref") as $ref"
     done
-    # On a SpacemiT K1 that takes the tag from the web UI's image of the new
-    # version, which came from another machine (ADR-0373).
-    if is_spacemit_k1; then
-        log_warn "SpacemiT K1: deploy-webui:latest is the previous web UI again; load the web UI image of the new version again before the next update.sh."
+    # On riscv64 and 32-bit ARM that takes the tag from the web UI's image of
+    # the new version, which came from another machine (ADR-0373, ADR-0450).
+    if [ -n "$(webui_elsewhere_platform)" ]; then
+        log_warn "$(webui_elsewhere_platform): deploy-webui:latest is the previous web UI again; load the web UI image of the new version again before the next update.sh."
     fi
     git -C "$UNOS_INSTALL_DIR" reset --hard --quiet "$PREVIOUS_REV" ||
         log_error "Could not reset $UNOS_INSTALL_DIR to $PREVIOUS_REV"
 }
 
-# The SpacemiT K1 (Banana Pi BPI-F3), as its device tree names it: under the
-# vendor's kernel "spacemit,k1-x", under the mainline one "spacemit,k1".
-# install.sh has the same test.
-is_spacemit_k1() {
-    [ -r /proc/device-tree/compatible ] &&
-        tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
+# The platform of a host that builds no web UI, and nothing elsewhere: its build
+# tools publish no binaries for riscv64, nor for 32-bit ARM with musl
+# (ADR-0450), and Node.js crashes in the build on a SpacemiT K1 (ADR-0373).
+# install.sh has the same function.
+webui_elsewhere_platform() {
+    case "$(uname -m)" in
+        riscv64) echo linux/riscv64 ;;
+        armv7l) echo linux/arm/v7 ;;
+    esac
 }
 
 build_images() {
     log_info "Building the new images (UNOS keeps running meanwhile)..."
 
-    # On a SpacemiT K1 Node.js crashes while it builds the web UI, so its image
-    # deploy-webui:latest comes from another machine (ADR-0373, docs/INSTALL.md)
-    # and only the supervisor is built here.
-    local services=()
-    if is_spacemit_k1; then
-        log_warn "SpacemiT K1: only the supervisor is built. The web UI starts from the image deploy-webui:latest, which comes from another machine: load that of the new version before the update (docs/INSTALL.md)."
+    # On riscv64 and 32-bit ARM the web UI's image deploy-webui:latest comes
+    # from another machine (ADR-0373, ADR-0450, docs/INSTALL.md) and only the
+    # supervisor is built here.
+    local services=() platform
+    platform=$(webui_elsewhere_platform)
+    if [ -n "$platform" ]; then
+        log_warn "$platform: only the supervisor is built. The web UI starts from the image deploy-webui:latest, which comes from another machine (docker buildx build --platform $platform): load that of the new version before the update (docs/INSTALL.md)."
         services=(supervisor)
     fi
 

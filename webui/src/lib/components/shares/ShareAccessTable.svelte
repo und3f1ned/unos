@@ -223,6 +223,9 @@
 </fieldset>
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0450). */
+	@reference '../../../app.css';
+
 	.access-table {
 		@apply rounded-card border border-border;
 	}

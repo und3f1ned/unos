@@ -29,7 +29,7 @@
 </script>
 
 <div
-	class="card flex h-full flex-col hover:bg-surface-overlay transition-colors cursor-pointer"
+	class="card flex h-full flex-col hover:bg-surface-overlay transition-[color,background-color,border-color,text-decoration-color,fill,stroke] cursor-pointer"
 	onclick={() => onopen(app)}
 	role="button"
 	tabindex="0"

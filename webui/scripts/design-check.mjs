@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Pages are built from the design system: the components of src/lib/components/ui and the colour
-// tokens of tailwind.config.js (ADR-0012, ADR-0400). make frontend runs this check (npm run
+// tokens of the @theme of src/app.css (ADR-0012, ADR-0400). make frontend runs this check (npm run
 // design); supervisor/tests/test_webui_design_system.py tests it.
 //
 //   node scripts/design-check.mjs [webui directory]      (default: the webui/ of this script)
@@ -15,7 +15,7 @@
 // - a raw Tailwind colour: a utility of the palette (bg-slate-700, text-red-400, hover:bg-blue-600,
 //   border-green-500/50, ring-white) in a class attribute, a `class:` directive or any string
 //   literal of the markup or a <script>. Use the token of the same role (the message names it);
-//   a colour that no token covers is added to tailwind.config.js first;
+//   a colour that no token covers is added to the @theme of src/app.css first;
 // and, since ADR-0432:
 // - the browser's own dialogs, window.confirm, window.alert and window.prompt (called so or bare,
 //   in a .svelte file or a .ts module): use confirm() and toast of $lib/components/ui;
@@ -38,7 +38,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { parse } from 'svelte/compiler';
 import { walk } from './svelte-walk.mjs';
 import ts from 'typescript';
@@ -74,20 +74,17 @@ function position(text, offset) {
 
 // --- The tokens ----------------------------------------------------------------------------------
 
-/** The class names of the colour tokens of tailwind.config.js ('surface-overlay', 'status-error'). */
-async function tokenNames() {
-	const config = path.join(webui, 'tailwind.config.js');
-	if (!existsSync(config)) return null;
-	const colors = (await import(pathToFileURL(config).href)).default?.theme?.extend?.colors ?? {};
+/**
+ * The class names of the colour tokens ('surface-overlay', 'status-error'): the variables
+ * --color-<name> of the @theme blocks of src/app.css (Tailwind CSS 4, ADR-0450).
+ */
+function tokenNames() {
+	const css = path.join(webui, 'src', 'app.css');
+	if (!existsSync(css)) return null;
 	const names = new Set();
-	const add = (prefix, value) => {
-		if (typeof value === 'string') {
-			names.add(prefix);
-			return;
-		}
-		for (const [key, inner] of Object.entries(value)) add(key === 'DEFAULT' ? prefix : `${prefix}-${key}`, inner);
-	};
-	for (const [key, value] of Object.entries(colors)) add(key, value);
+	for (const block of readFileSync(css, 'utf8').matchAll(/^@theme\b[^{\n]*\{([^}]*)\}/gm)) {
+		for (const variable of block[1].matchAll(/--color-([a-z0-9-]+)\s*:/g)) names.add(variable[1]);
+	}
 	return names;
 }
 
@@ -112,19 +109,19 @@ const FAMILY_TOKEN = { red: 'status-error', green: 'status-success', emerald: 's
 function hint(utility, family, shade, white) {
 	const kind = /^(?:text|fill|stroke|caret|decoration|placeholder|accent)$/.test(utility) ? 'text'
 		: /^(?:border|ring|ring-offset|divide|outline)/.test(utility) ? 'line' : 'fill';
-	if (white === 'black') return 'the `scrim` class for a backdrop, else a token of tailwind.config.js';
-	if (white === 'white') return kind === 'text' ? `${utility}-content-on-brand` : 'a token of tailwind.config.js';
+	if (white === 'black') return 'the `scrim` class for a backdrop, else a token of the @theme of src/app.css';
+	if (white === 'white') return kind === 'text' ? `${utility}-content-on-brand` : 'a token of the @theme of src/app.css';
 	const n = Number(shade);
 	if (family === 'slate' || family === 'gray' || family === 'zinc' || family === 'neutral' || family === 'stone') {
 		const table = kind === 'text' ? SLATE_TEXT : kind === 'line' ? SLATE_LINE : SLATE_FILL;
 		const token = table[n];
 		if (token === 'surface-overlay' && kind === 'line') return `${utility}-border`;
-		return token ? `${utility}-${token}` : 'a token of tailwind.config.js';
+		return token ? `${utility}-${token}` : 'a token of the @theme of src/app.css';
 	}
 	if (family === 'blue' && n >= 500) return `${utility}-brand (brand-hover, brand-ring, brand-disabled)`;
 	if (n >= 600 && FAMILY_TOKEN[family]) return 'a Button, Badge or Alert variant';
 	const token = FAMILY_TOKEN[family];
-	return token ? `${utility}-${token}` : 'a token of tailwind.config.js';
+	return token ? `${utility}-${token}` : 'a token of the @theme of src/app.css';
 }
 
 // --- What to look for ----------------------------------------------------------------------------
@@ -412,13 +409,13 @@ function checkFile(file) {
 }
 
 /** The names of every colour token that the table above can answer with, checked against the config. */
-async function checkTable() {
-	const tokens = await tokenNames();
+function checkTable() {
+	const tokens = tokenNames();
 	if (tokens === null) return;
 	const named = new Set([...Object.values(SLATE_FILL), ...Object.values(SLATE_TEXT), ...Object.values(SLATE_LINE),
 		...Object.values(FAMILY_TOKEN), 'content-on-brand', 'brand', 'brand-hover', 'brand-ring', 'brand-disabled']);
 	for (const token of named) {
-		if (!tokens.has(token)) errors.push(`scripts/design-check.mjs: the table names the token '${token}', which tailwind.config.js lacks`);
+		if (!tokens.has(token)) errors.push(`scripts/design-check.mjs: the table names the token '${token}', which the @theme of src/app.css lacks`);
 	}
 }
 
@@ -451,12 +448,12 @@ const modules = readdirSync(SRC, { recursive: true })
 	.filter((file) => !file.startsWith(UI))
 	.sort();
 for (const file of modules) checkModule(file);
-await checkTable();
+checkTable();
 
 if (errors.length > 0) {
 	for (const error of errors) console.error(error);
 	console.error(`design: ${errors.length} problem(s). Pages use the components of $lib/components/ui and the colour ` +
-		'tokens of tailwind.config.js (webui/AGENTS.md, ADR-0400); `design-ignore: <reason>` exempts a use.');
+		'tokens of the @theme of src/app.css (webui/AGENTS.md, ADR-0400); `design-ignore: <reason>` exempts a use.');
 	process.exit(1);
 }
 console.log(`design: ${files.length} .svelte files outside lib/components/ui use no raw <button>, choice, ` +

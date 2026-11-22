@@ -89,6 +89,9 @@
 </li>
 
 <style>
+	/* The utilities and tokens of app.css for @apply (Tailwind CSS 4, ADR-0450). */
+	@reference '../../../app.css';
+
 	.iscsi-head {
 		@apply grid grid-cols-1 items-start gap-3;
 	}

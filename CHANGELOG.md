@@ -52,6 +52,20 @@ manager, encrypted backup uploads, health checks, CI checks).
   `app_names_changed` in the audit log, ADR-0420).
 
 ### Changed
+- The web UI builds with SvelteKit 3.2, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4,
+  TypeScript 6, @sveltejs/adapter-static 4 and lucide-svelte 1 (ADR-0450); TypeScript 7 waits for
+  SvelteKit, svelte-check and typescript-eslint to accept it. Its configuration is in
+  `webui/vite.config.ts`, and Tailwind CSS's theme in `webui/src/app.css` (no `svelte.config.js`,
+  `tailwind.config.js` or PostCSS). The pages look as before; lucide redrew a few icons, and Slack's
+  channel and an app's GitHub link take generic icons, since lucide-svelte 1 has no brand logos.
+  Two rules that Tailwind CSS 3 had dropped now apply: a toast's left edge takes its tone's colour,
+  and the interval of System > Updates' automatic install is a narrow field. The web interface
+  needs Chrome or Edge 111, Firefox 128 or Safari 16.4 (iOS 16.4) or newer.
+- On riscv64 and ARMv7 the web UI's image comes from another machine on every host, not only on a
+  SpacemiT K1: Vite 8 and Tailwind CSS 4 build with native tools that have no build for them.
+  `install.sh` and `update.sh` build only the supervisor there, and `docker buildx build
+  --platform linux/riscv64 ... webui` builds the web UI's files in the building machine's own
+  platform (ADR-0450).
 - The database's schema comes from Alembic migrations (ADR-0444), which the supervisor applies at
   its start, before it serves: a change to an existing table ships as a revision. A database made
   before them keeps its tables and is recorded at the first revision, the baseline; one of a newer

@@ -144,7 +144,7 @@ jobs:
         run: npm ci
 
       # The scripts of package.json: check (svelte-kit sync, which writes
-      # .svelte-kit/tsconfig.json, then svelte-check --threshold error), the
+      # node_modules/$app/tsconfig.json, then svelte-check --threshold error), the
       # checks of runes, texts and design, the build, lint (ESLint, a warning
       # fails too) and format-check (Prettier). npm run takes the programs from
       # node_modules/.bin, where npm ci installed the versions of

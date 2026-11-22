@@ -240,15 +240,27 @@ is_spacemit_k1() {
         tr '\0' '\n' < /proc/device-tree/compatible | grep -qxE 'spacemit,k1(-x)?'
 }
 
-# The web UI's image on a SpacemiT K1, which Node.js cannot build there: it
-# crashes now and then in the middle of the build (nodejs/node#66845). The
-# image is built on another machine and loaded here (ADR-0373).
-K1_WEBUI_IMAGE=deploy-webui:latest
-require_k1_webui_image() {
-    docker image inspect "$K1_WEBUI_IMAGE" >/dev/null 2>&1 && return 0
-    log_error "Node.js crashes on the SpacemiT K1 while it builds the web UI, so the image $K1_WEBUI_IMAGE comes from another machine. On a machine with Docker that runs linux/riscv64 images (QEMU's binfmt) and the same checkout of UNOS, run in its root:"
-    echo "  docker buildx build --platform linux/riscv64 -t $K1_WEBUI_IMAGE --load webui"
-    echo "  docker save -o deploy-webui.tar $K1_WEBUI_IMAGE"
+# The platform of a host that builds no web UI, for docker buildx, and nothing
+# elsewhere: the web UI's build tools (Vite's Rolldown and Lightning CSS)
+# publish no binaries for riscv64, nor for 32-bit ARM with musl, the libc of
+# the web UI's builder (ADR-0450), and Node.js crashes now and then in the
+# middle of the build on a SpacemiT K1 (nodejs/node#66845, ADR-0373). The
+# image is built on another machine and loaded here. update.sh has the same
+# function.
+webui_elsewhere_platform() {
+    case "$(uname -m)" in
+        riscv64) echo linux/riscv64 ;;
+        armv7l) echo linux/arm/v7 ;;
+    esac
+}
+
+ELSEWHERE_WEBUI_IMAGE=deploy-webui:latest
+require_elsewhere_webui_image() {
+    local platform=$1
+    docker image inspect "$ELSEWHERE_WEBUI_IMAGE" >/dev/null 2>&1 && return 0
+    log_error "The web UI's build tools have no build for $platform, so the image $ELSEWHERE_WEBUI_IMAGE comes from another machine. On a machine with Docker that runs $platform images (QEMU's binfmt) and the same checkout of UNOS, run in its root:"
+    echo "  docker buildx build --platform $platform -t $ELSEWHERE_WEBUI_IMAGE --load webui"
+    echo "  docker save -o deploy-webui.tar $ELSEWHERE_WEBUI_IMAGE"
     echo "  scp deploy-webui.tar <this host>:"
     echo "and here:"
     echo "  sudo docker load -i deploy-webui.tar"
@@ -553,12 +565,13 @@ start_unos() {
     fi
     
     # Build containers. The supervisor image carries the version of the
-    # checkout, which the web interface shows (ADR-0234). On a SpacemiT K1
-    # only the supervisor: the web UI's image comes from another machine
-    # (require_k1_webui_image, ADR-0373).
-    local services=()
-    if is_spacemit_k1; then
-        require_k1_webui_image
+    # checkout, which the web interface shows (ADR-0234). On riscv64 and
+    # 32-bit ARM only the supervisor: the web UI's image comes from another
+    # machine (require_elsewhere_webui_image, ADR-0373, ADR-0450).
+    local services=() platform
+    platform=$(webui_elsewhere_platform)
+    if [ -n "$platform" ]; then
+        require_elsewhere_webui_image "$platform"
         services=(supervisor)
     fi
     UNOS_VERSION=$(git -C "$UNOS_INSTALL_DIR" describe --tags --always 2>/dev/null || echo unknown) \

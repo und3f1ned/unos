@@ -110,7 +110,7 @@
 						<tbody class="font-mono text-xs max-sm:block">
 							{#each entries as entry}
 								<tr
-									class="border-b border-border/50 hover:bg-surface-overlay/50 transition-colors max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-3 max-sm:py-2"
+									class="border-b border-border/50 hover:bg-surface-overlay/50 transition-[color,background-color,border-color,text-decoration-color,fill,stroke] max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:px-3 max-sm:py-2"
 								>
 									<td class="px-3 py-2 text-secondary whitespace-nowrap max-sm:p-0">
 										{formatTimestamp(entry.timestamp)}

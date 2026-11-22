@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, Info, Mail, MessageCircle, MessageSquare, Slack, Webhook } from 'lucide-svelte';
+import { AlertTriangle, CheckCircle, Hash, Info, Mail, MessageCircle, MessageSquare, Webhook } from 'lucide-svelte';
 import type { ChannelKind, NotificationConfig } from '$lib/api/notifications';
 import type { IconComponent } from '$lib/components/ui';
 import type { Translate } from '$lib/i18n';
@@ -13,13 +13,14 @@ export type { Translate } from '$lib/i18n';
 
 export const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 
-// Each kind's name (a key of the catalog) and icon.
+// Each kind's name (a key of the catalog) and icon. lucide-svelte 1 has no brand logos: Discord and
+// Slack take generic icons (ADR-0450).
 export const KINDS: Record<ChannelKind, { name: string; icon: IconComponent }> = {
 	email: { name: 'notifications.kinds.email', icon: Mail },
 	telegram: { name: 'notifications.kinds.telegram', icon: MessageCircle },
 	webhook: { name: 'notifications.kinds.webhook', icon: Webhook },
 	discord: { name: 'notifications.kinds.discord', icon: MessageSquare },
-	slack: { name: 'notifications.kinds.slack', icon: Slack }
+	slack: { name: 'notifications.kinds.slack', icon: Hash }
 };
 export const KIND_ORDER: ChannelKind[] = ['email', 'telegram', 'webhook', 'discord', 'slack'];
 // The URL field of the kinds that have one: its label and hint (keys of the catalog), and an example.

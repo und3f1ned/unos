@@ -153,6 +153,7 @@ anyone who can reach the page can create it.
 - **RAM:** 1 GB
 - **Storage:** 8 GB for system
 - **OS:** Debian 11+ or Ubuntu 22.04+
+- **Browser:** Chrome or Edge 111, Firefox 128, Safari 16.4 (iOS 16.4) or newer
 
 ### Recommended
 - **CPU:** 2 GHz quad-core
@@ -212,8 +213,8 @@ anyone who can reach the page can create it.
 - docker-py, psutil
 
 ### Frontend (WebUI)
-- SvelteKit 2 with Svelte 5 (runes), TypeScript
-- TailwindCSS, Lucide Icons
+- SvelteKit 3 with Svelte 5 (runes), Vite 8, TypeScript 6
+- Tailwind CSS 4, Lucide Icons
 - Caddy (reverse proxy)
 
 ## Updating
