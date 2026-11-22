@@ -102,8 +102,8 @@ UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a m
 - **Wake-on-LAN** - Turned on or off per Ethernet interface, and set again after every reboot
 
 ### System Updates
-- **Update script** - `sudo /opt/unos/deploy/update.sh` updates UNOS from its git branch, backs up the database and the data volume first, and rolls back automatically if the new version does not start
-- **Version check** - System > Updates shows the installed version and the latest release on GitHub, and names the update script; Install, Rollback and the automatic install from the web UI are built up to the part that is still to be decided (where a release's images come from and how UNOS replaces its own container, ADR-0443)
+- **Releases and the update script** - a release is a git tag `v<x.y.z>` whose amd64 and arm64 images are published on GHCR; `install.sh` installs the newest, and `sudo /opt/unos/deploy/update.sh` pulls the newest one's images, backs up the database and the data volume first, and rolls back automatically, with the backup's database, if the new version does not start
+- **Updates from the web UI** - System > Updates shows the installed version and the latest release on GitHub; on a NAS that runs a release on amd64 or arm64 it installs a release, rolls it back and installs new ones automatically, through `update.sh` on the host, and elsewhere names the update script and why
 
 ### Planned
 
@@ -126,7 +126,7 @@ curl -fsSL https://raw.githubusercontent.com/und3f1ned/unos/main/deploy/install.
 ```bash
 git clone https://github.com/und3f1ned/unos.git /opt/unos
 cd /opt/unos/deploy
-sudo ./install.sh
+sudo ./install.sh   # checks out the newest release and pulls its images
 ```
 
 ### Access the Web Interface
@@ -222,16 +222,10 @@ anyone who can reach the page can create it.
 sudo /opt/unos/deploy/update.sh
 ```
 
-The script refuses to run over local changes in `/opt/unos`, builds the new
-images while UNOS keeps running, and rolls back if the new version does not
-start. Or manually:
-```bash
-cd /opt/unos
-sudo git pull --ff-only
-cd deploy
-sudo docker compose build
-sudo systemctl restart unos   # docker compose up -d with /etc/unos/secrets.env
-```
+The script refuses to run over local changes in `/opt/unos`, pulls the newest
+release's images while UNOS keeps running (on riscv64 and 32-bit arm it builds them), and
+rolls back if the new version does not start. `docs/INSTALL.md` describes it
+and the manual upgrade.
 
 ## Uninstalling
 

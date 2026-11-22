@@ -2712,36 +2712,42 @@ fact has one place: the dashboard summarizes some of them and links there.
 
 ### Updates
 
-- **Current version**: the one place of the version UNOS was built from, as `git describe`
-  named its checkout at the build: a release tag such as `v1.2.0`, or, marked
-  **dev**, a tag with the commits after it such as `v1.2.0-3-g712fc3a` or only
-  the commit while no tag was in its history. A release tagged later on the
-  commit UNOS runs shows after a rebuild (see [Upgrading](INSTALL.md#upgrading)).
-  An installation whose images were built without `install.sh` or `update.sh`
-  shows `unknown`.
+- **Current version**: the one place of the version UNOS runs: a release tag
+  such as `v1.2.0`, which the release's images carry, or, marked **dev**, what
+  `git describe` named the checkout of a build on the host, such as
+  `v1.2.0-3-g712fc3a` or only the commit. An installation whose images were
+  built without a version shows `unknown`.
 - **Latest release**: checked on GitHub when the tab opens, and again with
   **Check again**; **Include pre-releases** checks for pre-releases too. The
   tab says when an update is available, with the release's notes and a link
   to it, when you run the latest release, when no release is published yet,
-  and why a check failed (GitHub answers 60 checks an hour per address).
-- **How to update**: UNOS is updated on the host, with
-  `sudo /opt/unos/deploy/update.sh` (see
-  [Upgrading](INSTALL.md#upgrading)). The web interface cannot install updates
-  or roll them back yet: where a release's images come from and how UNOS
-  replaces its own container are still to be decided, and **Why not from here**
-  shows the server's reason (feature-list entry `system.in-app-updater`,
-  ADR-0443).
-- **Install, Rollback and the automatic install** show only on a NAS whose
-  supervisor can install releases, which none can yet. There **Install
-  &lt;release&gt;** asks first, then gets the release's images, backs up the
-  database into `/var/lib/unos/backups/in-app-<time>/` on the host (the newest
-  3 are kept), starts the release and waits up to 5 minutes for it to answer;
-  when it does not, UNOS goes back to the version before with the database of
-  the backup. **Last update** follows each step and says how it ended,
+  and why a check failed (GitHub answers 60 checks an hour per address). A
+  release is published once its images are on GHCR.
+- **Install, Rollback and the automatic install** show on a NAS that runs the
+  images of a release on AMD64 or ARM64 and has `/opt/unos/deploy/update.sh`
+  of `install.sh`. **Install &lt;release&gt;** asks first, then gets the
+  release's images, backs up the database into
+  `/var/lib/unos/backups/in-app-<time>/` on the host (the newest 3 are kept)
+  and hands the switch to `update.sh` in a unit of the host
+  (`unos-update-<time>`), which starts the release, waits for it to start (up
+  to about 11 minutes) and then up to 5 minutes for it to answer; when it does not, the unit stops it, puts the backup's
+  database back and starts the version before. The web interface is away while
+  UNOS restarts; the supervisor that starts then follows the unit and records
+  how it ended. **Last update** follows each step and says how it ended,
   **Roll back** returns to the version before with the database of the backup
-  (changes made since are lost), **Update history** lists the updates, and
-  **Automatic install** installs a newer stable release at the interval you set
-  (1 to 168 hours), the first time one interval after you turn it on.
+  (changes made since are lost; when that version does not answer, UNOS stays
+  on the one it ran, with its own database, and Roll back can be tried
+  again), **Update history** lists the updates, and **Automatic install**
+  installs a newer stable release at the interval you set (1 to 168 hours),
+  the first time one interval after you turn it on. When the unit's output is
+  needed, `journalctl -u unos-update-<time>` on the host shows it.
+- **How to update** elsewhere: the tab names `sudo /opt/unos/deploy/update.sh`
+  (see [Upgrading](INSTALL.md#upgrading)), and **Why not from here** gives the
+  server's reason: the supervisor runs outside its container (the local
+  stand-in), the host's architecture has no release images (RISCV64: build on
+  the host), UNOS runs a version that is not a release, its images were built
+  on the host (a dev device deployed by `scripts/dev/deploy.sh`), or the host
+  has no `/opt/unos/deploy/update.sh`.
 
 ### Resource Monitor
 

@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0455
 date: 2026-11-21
 area: system
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0173]
 # ADR-0443: The in-app updater backs up and rolls back the database through SQLite's backup API, and installs only through a release installer that is not decided yet
 
 ## Context
+
+Superseded by ADR-0455: only in part, the release installer (`HostUpdate`, which runs update.sh's steps on the host and hands the job over through the progress file), the rollback's database (put back by update.sh while the supervisor is stopped, not through the open database) and the failing of a handed-over job at a start; every other rule here stays in force.
 
 Install Update and Rollback of System > Updates started nothing (ADR-0173): FastAPI's BackgroundTasks ran `asyncio.create_task` in a worker thread, and the updater ran git and `docker compose` in a checkout that the supervisor's container does not have. Its backup copied `unos.db` with `shutil.copy2` into the container's writable layer, without the commits still in `unos.db-wal`, and its rollback copied that file back beside the live log, which SQLite then reads through (ADR-0306). An interrupted update stayed "downloading" for good, and the download's progress rewrote `update_state.json` for every 8 KiB. Two choices that make an install work are settled by no ADR: where a release's images come from while GHCR has none (ADR-0050 proposes it; the workflow that would publish them is off, ADR-0230, and building them on the device writes hundreds of MB to its SD card, ADR-0214), and how the supervisor replaces its own container, since the process that runs the update is in one of the containers it replaces (entry `system.in-app-updater`).
 

@@ -119,7 +119,7 @@ class TestTheScript:
 
         assert result.returncode == 0, result.stdout + result.stderr
         build, download, save, scan, save_webui, scan_webui = calls
-        # Without the build cache, as update.sh builds: the packages of the day.
+        # Without the build cache, as a release builds them: the packages of the day.
         assert build == f"compose -f {REPO_ROOT}/deploy/docker-compose.yml --project-name unos-image-scan build --no-cache"
         # The database first, with the network, into the cache; then each image from its archive. As
         # the calling user: without capabilities, root could not write a cache or read an archive of

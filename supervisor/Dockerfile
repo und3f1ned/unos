@@ -46,12 +46,18 @@ COPY src/ ./src/
 # No .pyc files: the container's writable layer is on the system disk (SD card).
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# The version System > Updates and General show: `git describe --tags --always`
-# of the checkout, which deploy/install.sh and deploy/update.sh pass through
-# deploy/docker-compose.yml (ADR-0234). After the code and the packages, so
-# that a new version rebuilds only these layers.
+# The version System > Updates shows: the release's tag, which
+# .github/workflows/release.yml passes, or `git describe --tags --always` of
+# the checkout where the image is built here, which deploy/install.sh and
+# deploy/update.sh pass on riscv64 through deploy/docker-compose.yml
+# (ADR-0234). UNOS_RELEASE is the tag too in a release's image and empty in one
+# built here: the in-app updater installs only over a release (ADR-0050).
+# After the code and the packages, so that a new version rebuilds only these
+# layers.
 ARG UNOS_VERSION=unknown
 ENV UNOS_VERSION=${UNOS_VERSION}
+ARG UNOS_RELEASE=
+ENV UNOS_RELEASE=${UNOS_RELEASE}
 
 EXPOSE 8080
 

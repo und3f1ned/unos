@@ -275,8 +275,9 @@ test.describe('Software Updates', () => {
   });
 });
 
-// The stand-in's own updater: its release installer is not decided (src/updates/installer.py,
-// ADR-0443), so the tab names update.sh and, folded, the server's reason.
+// The stand-in's own updater: its release installer runs update.sh on the host, which the stand-in
+// has not (src/updates/installer.py, ADR-0443), so the tab names update.sh and, folded, the server's
+// reason.
 test.describe('Software Updates where the supervisor cannot install', () => {
   test('the tab says why and names the update script', async ({ authenticatedPage: page }) => {
     await fakeUpdatesApi(page, { version: 'v1.2.0', check: checked('v1.2.0', release('v1.3.0'), true), updater: 'stand-in' });
@@ -286,7 +287,7 @@ test.describe('Software Updates where the supervisor cannot install', () => {
     await expect(versionCard.getByText('Update with the script below.', { exact: true })).toBeVisible();
     await expectUpdateScriptOnly(page);
     await versionCard.getByText('Why not from here', { exact: true }).click();
-    await expect(versionCard.getByText(/waits for two decisions: where a release's images come from/)).toBeVisible();
+    await expect(versionCard.getByText(/^This supervisor runs outside its container/)).toBeVisible();
   });
 });
 

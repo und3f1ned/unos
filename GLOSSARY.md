@@ -141,10 +141,19 @@ host that runs unless the administrator keeps the change within 60 seconds (an i
 ADR-0244) or 120 seconds (the firewall, ADR-0416; a virtual interface, ADR-0424). Avoid: rollback
 (what `update.sh` and `deploy.sh` do), undo.
 
-**Release installer**: The part of an in-app update of UNOS that gets a release's images and
-switches the containers to it and back (`supervisor/src/updates/installer.py`); the updater runs the
-backup, the health check and the rollback around it. None is decided yet, so Install Update and
-Rollback answer why (ADR-0443). Avoid: updater (the whole), `update.sh` (the script on the host).
+**Release**: A git tag `v<x.y.z>` of UNOS, whose push makes `.github/workflows/release.yml` publish its
+amd64 and arm64 images on GHCR and then the tag's GitHub release; `install.sh` installs the newest
+tag, `update.sh` switches to one (ADR-0050). Avoid: version (also a build of a commit), branch.
+
+**Release installer**: The part of an in-app update of UNOS that runs on the host
+(`supervisor/src/updates/installer.py`): `update.sh --fetch`, which gets a release's tag and images,
+and `update.sh --in-app` in a transient systemd unit, which switches the containers, checks the
+release's health and rolls back; the updater makes the backup before it and follows the unit
+(ADR-0443). Avoid: updater (the whole), `update.sh` (the script itself).
+
+**Handover**: The record in the updater's progress file of a switch that a unit on the host runs:
+the unit, its result file and the version before. The supervisor that starts after the switch
+replaced its container follows the unit until the result says how it ended. Avoid: restart.
 
 **Virtual interface**: A bond, VLAN or bridge that UNOS made on the host with systemd-networkd,
 whose `.netdev` file names it as UNOS's; UNOS lists and removes only those (ADR-0424). Its files

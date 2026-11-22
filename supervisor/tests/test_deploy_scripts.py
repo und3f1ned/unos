@@ -1,11 +1,12 @@
 """deploy/update.sh and install.sh, the compose files, the image build
-contexts and the CI workflow.
+contexts, the CI workflow and the release workflow.
 
-update.sh runs in a sandbox: a local git "origin", a clone as the install
-directory, and stub docker/curl commands on PATH that log their calls. git is
-logged too, and flock is a stand-in that takes a real lock. Functions of
-install.sh run with the same docker stub and with /etc moved. Nothing reaches
-Docker, the network or the host.
+update.sh runs in a sandbox: a local git "origin" with release tags, a clone
+at the older release as the install directory, and stub docker/curl/uname
+commands on PATH that log their calls. git is logged too, and flock is a
+stand-in that takes a real lock. Functions of install.sh run with the same
+docker stub and with /etc moved. Nothing reaches Docker, the network or the
+host.
 """
 
 import contextlib
@@ -76,17 +77,54 @@ DOCKER_STUB = textwrap.dedent(
         shift
       done
     }
+    # The files of the supervisor's data volume ($STUB_DIR/volume) when compose runs $1: one line
+    # name=content each, in $STUB_DIR/volume-at-<$1>-<n>.
+    snapshot() {
+      local n=1
+      while [ -e "$STUB_DIR/volume-at-$1-$n" ]; do n=$((n + 1)); done
+      (cd "$STUB_DIR/volume" 2>/dev/null && for f in *; do [ -e "$f" ] && echo "$f=$(cat "$f")"; done) > "$STUB_DIR/volume-at-$1-$n"
+    }
+    # Docker's architecture from uname -m of the scenario (machine=<name>, aarch64 by default).
+    machine=$(sed -n 's/^machine=//p' "$STUB_DIR/scenario" 2> /dev/null)
+    case "${machine:-aarch64}" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; armv7l) arch=arm ;; *) arch=$machine ;; esac
+    # A release's image that was pulled (or images-here) and has its GHCR name still.
+    here() { has images-here || grep -qxF "$1" "$STUB_DIR/pulled" 2> /dev/null; }
     case "$1" in
-      # no-webui-image: no image deploy-webui:latest has been loaded.
-      image) if [ "$2" = inspect ] && has no-webui-image; then exit 1; fi ;;
+      version) echo "$arch" ;;
+      image)
+        case "$2" in
+          # A release's image is here once pulled, or with images-here. no-webui-image: no image
+          # deploy-webui:latest has been loaded.
+          inspect)
+            ref=${@: -1}
+            if [[ $ref == ghcr.io/* ]]; then
+              here "$ref" || exit 1
+              echo "sha256:$ref"
+            elif has no-webui-image; then exit 1; fi ;;
+          tag)
+            if [[ $3 == ghcr.io/* ]]; then
+              interrupt_at retag
+              here "$3" || { echo "Error response from daemon: No such image: $3" >&2; exit 1; }
+            fi ;;
+          # The GHCR name goes; the image stays under its other names.
+          rm) if [ -e "$STUB_DIR/pulled" ]; then grep -vxF "$3" "$STUB_DIR/pulled" > "$STUB_DIR/pulled.new"; mv "$STUB_DIR/pulled.new" "$STUB_DIR/pulled"; fi ;;
+        esac ;;
+      # pull-fails: the registry does not have it (or cannot be reached).
+      pull)
+        if has probe-lock && [[ $* == *unos-supervisor* ]]; then probe_lock; fi
+        interrupt_at pull
+        if has pull-fails; then echo "Error response from daemon: manifest unknown" >&2; exit 1; fi
+        echo "${@: -1}" >> "$STUB_DIR/pulled" ;;
       # stopped: the supervisor's container exists but does not run; its /data is $STUB_DIR/data.
       cp)
         if [ "$3" = - ]; then tar -C "$STUB_DIR" -cf - data; else cp "$STUB_DIR/${2#unos-supervisor:/}" "$3"; fi ;;
       inspect)
         case "$3" in
-          '{{.State.Running}}') if has stopped; then echo false; else echo true; fi ;;
+          # stopped: before the update; containers-down: after a compose down, until the next up.
+          '{{.State.Running}}') if has stopped || [ -e "$STUB_DIR/containers-down" ]; then echo false; else echo true; fi ;;
           '{{.Config.Image}}') echo "deploy-${4#unos-}" ;;
           '{{.Image}}') echo "sha256:running-${4#unos-}" ;;
+          *.Mounts*) if has no-volume; then echo "$STUB_DIR/no-volume"; else echo "$STUB_DIR/volume"; fi ;;
           *) echo "UNOS_HOSTNAME=unos" ;;
         esac ;;
       exec)
@@ -103,7 +141,8 @@ DOCKER_STUB = textwrap.dedent(
           # The version the images get (ADR-0234): one line per build.
           build) echo "UNOS_VERSION=${UNOS_VERSION-<unset>}" >> "$STUB_DIR/build-env"
                  interrupt_at build; has probe-lock && probe_lock; has build-fails && exit 1 ;;
-          down) ;;
+          # down-fails: the containers keep running.
+          down) snapshot down; has down-fails && exit 1; touch "$STUB_DIR/containers-down" ;;
           up) # Part of the help: --wait since Compose 2.1.1, --wait-timeout since 2.17.
               if [ "$3" = --help ]; then
                 echo "  -d, --detach                   Detached mode: Run containers in the background"
@@ -114,6 +153,8 @@ DOCKER_STUB = textwrap.dedent(
                 exit 0
               fi
               check_up_options "${@:3}" || exit 1
+              rm -f "$STUB_DIR/containers-down"
+              snapshot up
               interrupt_at up
               [[ " $* " == *" --force-recreate "* ]] && touch "$STUB_DIR/rolled-back"
               has probe-lock && probe_lock
@@ -127,6 +168,15 @@ DOCKER_STUB = textwrap.dedent(
         esac ;;
     esac
     exit 0
+    """
+).lstrip()
+
+# uname -m of the host: aarch64 (linux/arm64), or the scenario's machine=<name>.
+UNAME_STUB = textwrap.dedent(
+    """
+    #!/bin/bash
+    machine=$(sed -n 's/^machine=//p' "$STUB_DIR/scenario" 2> /dev/null)
+    echo "${machine:-aarch64}"
     """
 ).lstrip()
 
@@ -185,32 +235,52 @@ def _update_lib():
     return (REPO_ROOT / "deploy" / "update.sh").read_text().rstrip("\n").rsplit("\n", 1)[0] + "\n"
 
 
+# The releases of the sandbox's origin: the installed one, and the newer one tagged after the install.
+INSTALLED = "v1.2.0"
+NEWER = "v1.3.0"
+# The images of the newer release on GHCR (release.yml).
+SUPERVISOR_IMAGE = "ghcr.io/und3f1ned/unos-supervisor:1.3.0"
+WEBUI_IMAGE = "ghcr.io/und3f1ned/unos-webui:1.3.0"
+
+
+def _release(seed, version, tag):
+    """A commit of VERSION <version> in the seed, tagged and pushed with main."""
+    (seed / "VERSION").write_text(f"{version}\n")
+    _git("add", "-A", cwd=seed)
+    _git("commit", "-qm", tag, cwd=seed)
+    _git("tag", tag, cwd=seed)
+    _git("push", "-q", "origin", "main", tag, cwd=seed)
+
+
 @pytest.fixture
 def sandbox(tmp_path):
-    """An install directory one commit behind its origin, plus stub commands."""
+    """An install directory at the release v1.2.0, whose origin has the release v1.3.0 too, plus stub
+    commands, and the supervisor's data volume with its live database."""
     _git("init", "-q", "--bare", str(tmp_path / "origin.git"), cwd=tmp_path)
     seed = tmp_path / "seed"
     _git("clone", "-q", str(tmp_path / "origin.git"), str(seed), cwd=tmp_path)
     (seed / "deploy").mkdir()
     (seed / "deploy" / "docker-compose.yml").write_text("services: {}\n")
-    (seed / "VERSION").write_text("1\n")
-    _git("add", "-A", cwd=seed)
-    _git("commit", "-qm", "v1", cwd=seed)
-    _git("push", "-q", "origin", "main", cwd=seed)
+    _release(seed, 1, INSTALLED)
     install = tmp_path / "install"
     _git("clone", "-q", str(tmp_path / "origin.git"), str(install), cwd=tmp_path)
-    (seed / "VERSION").write_text("2\n")
-    _git("commit", "-qam", "v2", cwd=seed)
-    _git("push", "-q", "origin", "main", cwd=seed)
+    _git("-c", "advice.detachedHead=false", "checkout", "-q", "--detach", INSTALLED, cwd=install)
+    _release(seed, 2, NEWER)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name, body in (("docker", DOCKER_STUB), ("curl", CURL_STUB), ("git", GIT_STUB), ("flock", FLOCK_STUB)):
+    for name, body in (("docker", DOCKER_STUB), ("curl", CURL_STUB), ("git", GIT_STUB), ("flock", FLOCK_STUB),
+                       ("uname", UNAME_STUB)):
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
     (stub_dir / "calls").write_text("")
+    volume = stub_dir / "volume"
+    volume.mkdir()
+    for name, content in (("unos.db", "live"), ("unos.db-wal", "live log"), ("unos.db-shm", "live index"),
+                          ("jwt_secret", "secret")):
+        (volume / name).write_text(content)
     # main() of update.sh is run without the root check.
     (tmp_path / "update-lib.sh").write_text(_update_lib())
     return tmp_path
@@ -238,8 +308,8 @@ _WITH_DEFAULT_SIGNALS = [
 ]
 
 
-def _run_update(sandbox, *scenario, overrides="", **extra_env):
-    """main() of update.sh in the sandbox. `overrides`: shell code run after
+def _run_update(sandbox, *scenario, overrides="", args=(), **extra_env):
+    """main() of update.sh in the sandbox, with the arguments `args`. `overrides`: shell code run after
     update.sh is sourced, such as a function that replaces one of its own."""
     (sandbox / "stub" / "scenario").write_text("".join(f"{s}\n" for s in scenario))
     env = {
@@ -262,7 +332,9 @@ def _run_update(sandbox, *scenario, overrides="", **extra_env):
             "bash",
             "-c",
             'echo $$ > "$STUB_DIR/pgid"; . "$LIB"; check_root() { :; }; eval "$OVERRIDES";'
-            ' BACKUP_DIR="$BACKUPS"; LOCK_FILE="$LOCK"; main',
+            ' BACKUP_DIR="$BACKUPS"; LOCK_FILE="$LOCK"; main "$@"',
+            "update",
+            *args,
         ],
         check=False,
         env=env,
@@ -279,6 +351,14 @@ def _run_update(sandbox, *scenario, overrides="", **extra_env):
 
 def _index(calls, prefix):
     return next(i for i, call in enumerate(calls) if call.startswith(prefix))
+
+
+def _git_output(sandbox, *args):
+    """What git prints for `args` in the install directory."""
+    return subprocess.run(
+        ["git", *args], cwd=sandbox / "install", check=True, capture_output=True, text=True,
+        env=_without_git_variables(os.environ),
+    ).stdout.strip()
 
 
 def _git_calls(sandbox):
@@ -329,6 +409,17 @@ def _path_without(command, sandbox):
     return os.pathsep.join(path)
 
 
+def _volume(sandbox, when):
+    """The files of the data volume, {name: content}, when compose ran `when` (down-1, up-2, ...)."""
+    path = sandbox / "stub" / f"volume-at-{when}"
+    assert path.exists(), f"compose ran no {when}"
+    return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
+
+def _volume_now(sandbox):
+    return {path.name: path.read_text() for path in (sandbox / "stub" / "volume").iterdir()}
+
+
 def _up_calls(calls):
     """The `docker compose up` calls that start containers (not `up --help`)."""
     return [call for call in calls if call.startswith("docker compose up ") and not call.endswith(" --help")]
@@ -355,6 +446,8 @@ def _compose_before_2_30(script, versions):
 
 
 class TestUpdateScript:
+    """update.sh by hand: to the newest release of origin, or to the one named (ADR-0050)."""
+
     def test_local_changes_stop_the_update_before_anything_changes(self, sandbox):
         (sandbox / "install" / "VERSION").write_text("local edit\n")
         before = _head(sandbox)
@@ -367,31 +460,151 @@ class TestUpdateScript:
         assert _head(sandbox) == before
         assert (sandbox / "install" / "VERSION").read_text() == "local edit\n"
 
-    def test_another_branch_stops_the_update(self, sandbox):
-        _git("checkout", "-qb", "feature", cwd=sandbox / "install")
-
-        result, calls = _run_update(sandbox)
-
-        assert result.returncode == 1
-        assert calls == []
-
-    def test_builds_while_running_then_switches_and_prunes_after_health(self, sandbox):
+    def test_pulls_while_running_then_switches_and_prunes_after_health(self, sandbox):
         result, calls = _run_update(sandbox)
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert calls.index("docker image tag sha256:running-supervisor deploy-supervisor:previous") < _index(
-            calls, "docker compose build"
-        )
-        assert _index(calls, "docker compose build") < _index(calls, "docker compose up -d --no-build")
-        # No compose down first (deploy.no-legacy-network-recreate, ADR-0207): up recreates the
-        # containers of the new images, and the network of a release without the fixed subnet
-        # (ADR-0048) is no installation's.
+        # The release's images from GHCR, before the backup: a release that cannot be had changes
+        # nothing (ADR-0050). Nothing is built (deploy.release-images).
+        assert calls.index(f"docker pull --quiet {SUPERVISOR_IMAGE}") < calls.index(
+            f"docker pull --quiet {WEBUI_IMAGE}") < _index(calls, "docker exec")
+        assert not any(call.startswith("docker compose build") for call in calls)
+        # The running images become :previous, the release's take the names compose starts, and
+        # their GHCR names go, so that each release's images do not stay.
+        previous = calls.index("docker image tag sha256:running-supervisor deploy-supervisor:previous")
+        named = calls.index(f"docker image tag {SUPERVISOR_IMAGE} deploy-supervisor")
+        assert previous < named < calls.index(f"docker image rm {SUPERVISOR_IMAGE}")
+        assert f"docker image tag {WEBUI_IMAGE} deploy-webui" in calls
+        assert named < _index(calls, "docker compose up -d --no-build")
+        # No compose down first (deploy.no-legacy-network-recreate, ADR-0207).
         assert not any(call.startswith("docker compose down") for call in calls)
         assert _index(calls, "curl") < _index(calls, "docker image prune")
         backup = next((sandbox / "backups").iterdir())
         assert sorted(p.name for p in backup.iterdir()) == ["data.tar.gz", "unos.db"]
         assert (backup.stat().st_mode & 0o777) == 0o700
+        # The release's checkout, at its tag.
         assert (sandbox / "install" / "VERSION").read_text() == "2\n"
+        assert _git_output(sandbox, "describe", "--tags", "--exact-match") == NEWER
+        assert f"UNOS {NEWER} is running" in result.stdout
+
+    def test_the_newest_release_of_origin_is_taken(self, sandbox):
+        _release(sandbox / "seed", 4, "v1.10.0")
+        _release(sandbox / "seed", 3, "v1.9.0")
+
+        result, calls = _run_update(sandbox)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        # By version, not by the order of the tags: 1.10.0 is newer than 1.9.0.
+        assert "docker pull --quiet ghcr.io/und3f1ned/unos-supervisor:1.10.0" in calls
+        assert (sandbox / "install" / "VERSION").read_text() == "4\n"
+
+    def test_a_named_release_is_installed(self, sandbox):
+        _release(sandbox / "seed", 3, "v1.4.0")
+
+        result, calls = _run_update(sandbox, args=[NEWER])
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"docker pull --quiet {SUPERVISOR_IMAGE}" in calls
+        assert (sandbox / "install" / "VERSION").read_text() == "2\n"
+
+    def test_the_registry_is_a_setting(self, sandbox):
+        result, calls = _run_update(sandbox, UNOS_REGISTRY="ghcr.io/someone")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "docker pull --quiet ghcr.io/someone/unos-webui:1.3.0" in calls
+
+    @pytest.mark.parametrize("tag", ["main", "v1.3", "1.3.0", "v1.3.0-rc.1", "v01.3.0"])
+    def test_a_tag_that_is_not_a_release_is_refused(self, sandbox, tag):
+        before = _head(sandbox)
+
+        result, calls = _run_update(sandbox, args=[tag])
+
+        assert result.returncode == 1
+        assert "is not a release" in result.stdout
+        assert calls == [] and _git_calls(sandbox) == []
+        assert _head(sandbox) == before
+
+    def test_an_older_release_is_refused(self, sandbox):
+        _at_newer(sandbox)
+
+        result, calls = _run_update(sandbox, args=[INSTALLED])
+
+        assert result.returncode == 1
+        assert f"{INSTALLED} is not newer than {NEWER}" in result.stdout
+        assert calls == []
+
+    def test_commits_after_a_release_do_not_go_back_to_it(self, sandbox):
+        # v1.2.0-1-g<commit>: the release v1.2.0 would be older code than the one that runs.
+        install = sandbox / "install"
+        (install / "LOCAL").write_text("x\n")
+        _git("add", "LOCAL", cwd=install)
+        _git("commit", "-qm", "after the release", cwd=install)
+
+        refused, calls = _run_update(sandbox, args=[INSTALLED])
+        newer, _ = _run_update(sandbox, args=[NEWER])
+
+        assert refused.returncode == 1
+        assert f"{INSTALLED} is not newer than {INSTALLED}-1-g" in refused.stdout
+        assert calls == []
+        assert newer.returncode == 0, newer.stdout + newer.stderr
+
+    @pytest.mark.parametrize("machine", ["riscv64", "armv7l"])
+    def test_hosts_without_release_images_build_the_release(self, sandbox, machine):
+        # Docker's architecture decides, not the kernel's: 32-bit Raspberry Pi OS on a Pi 4 runs a
+        # 64-bit kernel and arm images.
+        result, calls = _run_update(sandbox, f"machine={machine}")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call.startswith("docker pull") for call in calls)
+        assert "docker compose build --no-cache" in calls
+
+    def test_the_newest_release_running_changes_nothing(self, sandbox):
+        _at_newer(sandbox)
+
+        result, calls = _run_update(sandbox)
+
+        assert result.returncode == 0
+        assert f"UNOS runs the newest release, {NEWER}" in result.stdout
+        assert calls == []
+
+    def test_an_origin_without_a_release_stops_the_update(self, sandbox):
+        _git("push", "-q", "origin", f":refs/tags/{NEWER}", f":refs/tags/{INSTALLED}", cwd=sandbox / "seed")
+
+        result, calls = _run_update(sandbox)
+
+        assert result.returncode == 1
+        assert "origin has no release" in result.stdout
+        assert calls == []
+
+    def test_a_release_tag_that_moved_is_refused(self, sandbox):
+        # Here v1.3.0 names another commit than origin's: git refuses to move it, and so does update.sh.
+        _git("tag", NEWER, INSTALLED, cwd=sandbox / "install")
+
+        result, calls = _run_update(sandbox, args=[NEWER])
+
+        assert result.returncode == 1
+        assert f"Could not fetch the release {NEWER} from origin" in result.stdout
+        assert calls == []
+        assert (sandbox / "install" / "VERSION").read_text() == "1\n"
+
+    def test_images_that_cannot_be_pulled_change_nothing(self, sandbox):
+        before = _head(sandbox)
+
+        result, calls = _run_update(sandbox, "pull-fails")
+
+        assert result.returncode == 1
+        assert f"Could not pull {SUPERVISOR_IMAGE}" in result.stdout
+        assert "nothing was changed" in result.stdout
+        assert calls == ["docker version --format {{.Server.Arch}}",
+                         f"docker image inspect --format {{{{.Id}}}} {SUPERVISOR_IMAGE}", f"docker pull --quiet {SUPERVISOR_IMAGE}"]
+        assert not (sandbox / "backups").exists()
+        assert _head(sandbox) == before
+
+    def test_images_that_are_here_are_not_pulled_again(self, sandbox):
+        result, calls = _run_update(sandbox, "images-here")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call.startswith("docker pull") for call in calls)
 
     def test_the_backup_of_a_stopped_supervisor_keeps_the_commits_of_its_log(self, sandbox):
         """A supervisor that stopped without its checkpoint (a crash, or a kill after docker
@@ -424,51 +637,70 @@ class TestUpdateScript:
         with contextlib.closing(sqlite3.connect(copies / "unos.db")) as conn:
             assert conn.execute("SELECT name FROM users").fetchall() == [("admin",)]
 
-    def test_the_new_images_carry_the_version_of_the_new_checkout(self, sandbox):
-        # System > Updates shows the version the supervisor image was built with (ADR-0234).
-        _git("tag", "v0.1.0", "HEAD", cwd=sandbox / "install")
+    def test_a_failed_update_puts_the_backups_database_back_while_the_supervisor_is_stopped(self, sandbox):
+        """The release may have migrated the database, which the version before cannot read: the
+        rollback stops the release, puts the backup's database in place of the live one, without the
+        live log, which SQLite would apply to it (ADR-0306), and starts the version before."""
+        result, calls = _run_update(sandbox, "unhealthy")
 
-        result, calls = _run_update(sandbox)
+        assert result.returncode == 1
+        assert "Rolled back" in result.stdout
+        down = calls.index("docker compose down --remove-orphans")
+        assert down < _index(calls, "docker compose up -d --no-build --force-recreate")
+        # Stopped with the release's database, started again with the backup's alone.
+        assert _volume(sandbox, "down-1")["unos.db"] == "live"
+        assert _volume(sandbox, "up-2") == {"unos.db": "SQLite format 3", "jwt_secret": "secret"}
+        assert _volume_now(sandbox) == {"unos.db": "SQLite format 3", "jwt_secret": "secret"}
+
+    def test_a_database_that_cannot_be_put_back_is_named(self, sandbox):
+        result, _ = _run_update(sandbox, "unhealthy", "no-volume")
+
+        assert result.returncode == 1
+        assert "Rollback: the database of" in result.stdout and "could not be put back" in result.stdout
+        assert _volume_now(sandbox)["unos.db"] == "live"
+
+    def test_a_supervisor_that_did_not_stop_keeps_its_database(self, sandbox):
+        # compose down failed: the supervisor may still have unos.db open, so nothing is replaced.
+        result, _ = _run_update(sandbox, "unhealthy", "down-fails")
+
+        assert result.returncode == 1
+        assert "could not be put back" in result.stdout
+        assert _volume_now(sandbox) == {"unos.db": "live", "unos.db-wal": "live log", "unos.db-shm": "live index",
+                                        "jwt_secret": "secret"}
+
+    def test_a_backup_with_the_log_of_a_stopped_supervisor_comes_back_with_it(self, sandbox):
+        data = sandbox / "stub" / "data"
+        data.mkdir()
+        (data / "unos.db").write_text("stopped db")
+        (data / "unos.db-wal").write_text("stopped log")
+        result, _ = _run_update(sandbox, "stopped", "unhealthy")
+
+        assert result.returncode == 1
+        assert _volume_now(sandbox) == {"unos.db": "stopped db", "unos.db-wal": "stopped log", "jwt_secret": "secret"}
+
+    @pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
+    def test_no_image_is_built_on_amd64_or_arm64(self, sandbox, machine):
+        result, calls = _run_update(sandbox, f"machine={machine}")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        # One commit after the tag: <tag>-1-g<commit>, as git describe names it.
-        built = (sandbox / "stub" / "build-env").read_text().splitlines()
-        assert len(built) == 1 and built[0].startswith("UNOS_VERSION=v0.1.0-1-g"), built
-        assert _head(sandbox).startswith(built[0].removeprefix("UNOS_VERSION=v0.1.0-1-g"))
-        assert f"Updated to: {built[0].removeprefix('UNOS_VERSION=')}" in result.stdout
+        assert f"docker pull --quiet {SUPERVISOR_IMAGE}" in calls
+        assert not any(call.startswith(("docker compose build", "docker build", "docker buildx")) for call in calls)
 
-    @pytest.mark.parametrize("tag_at_install", [None, "v0.9.0"], ids=["no-tag-at-install", "older-tag-at-install"])
-    def test_a_release_tagged_after_the_install_names_the_new_images(self, sandbox, tag_at_install):
-        # The release is tagged on the new commit and published after the install was cloned.
-        # Unless the fetch brings its tag, git describe names the commit (or the older tag with
-        # the commits after it), and System > Updates offers the installed release as an update.
-        if tag_at_install:
-            _git("tag", tag_at_install, "HEAD", cwd=sandbox / "install")
-        _git("tag", "v1.0.0", "HEAD", cwd=sandbox / "seed")
-        _git("push", "-q", "origin", "v1.0.0", cwd=sandbox / "seed")
-
-        result, _ = _run_update(sandbox)
+    def test_on_riscv64_the_release_is_built_from_its_checkout(self, sandbox):
+        # GHCR has no images for linux/riscv64 (ADR-0373): the release's checkout is built here,
+        # with its version (ADR-0234), after the backup.
+        result, calls = _run_update(sandbox, "machine=riscv64")
 
         assert result.returncode == 0, result.stdout + result.stderr
-        assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
-        assert "Updated to: v1.0.0" in result.stdout
-
-    def test_a_forced_rebuild_names_a_release_tagged_on_the_installed_commit(self, sandbox):
-        # docs/INSTALL.md: without new commits only a rebuild names the images after the release.
-        _git("pull", "-q", "--ff-only", cwd=sandbox / "install")
-        _git("tag", "v1.0.0", "HEAD", cwd=sandbox / "seed")
-        _git("push", "-q", "origin", "v1.0.0", cwd=sandbox / "seed")
-
-        result, _ = _run_update(sandbox, overrides="confirm() { true; }")
-
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert "UNOS is already up to date!" in result.stdout
-        assert (sandbox / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v1.0.0"]
+        assert not any(call.startswith("docker pull") for call in calls)
+        assert _index(calls, "docker exec") < _index(calls, "docker compose build")
+        assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build --no-cache"]
+        assert (sandbox / "stub" / "build-env").read_text().splitlines() == [f"UNOS_VERSION={NEWER}"]
 
     def test_on_a_spacemit_k1_only_the_supervisor_is_built(self, sandbox):
         # The web UI's image of a K1 comes from another machine (ADR-0373): update.sh builds the
         # supervisor alone, starts the web UI image that is there, and says so.
-        result, calls = _run_update(sandbox, overrides="is_spacemit_k1() { true; }")
+        result, calls = _run_update(sandbox, "machine=riscv64", overrides="is_spacemit_k1() { true; }")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert [call for call in calls if call.startswith("docker compose build")] == [
@@ -479,16 +711,16 @@ class TestUpdateScript:
     def test_on_a_spacemit_k1_a_rollback_asks_to_load_the_web_ui_image_again(self, sandbox):
         # The rollback tags deploy-webui:latest as the previous image again, so the image of the
         # new version that was loaded for the update loses its tag (ADR-0373).
-        result, calls = _run_update(sandbox, "build-fails", overrides="is_spacemit_k1() { true; }")
+        result, calls = _run_update(sandbox, "machine=riscv64", "build-fails", overrides="is_spacemit_k1() { true; }")
 
         assert result.returncode == 1
         assert "docker image tag deploy-webui:previous deploy-webui" in calls
         assert "load the web UI image of the new version again" in " ".join(result.stdout.split())
 
-    def test_failed_build_leaves_the_running_version_alone(self, sandbox):
+    def test_a_failed_build_on_riscv64_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
 
-        result, calls = _run_update(sandbox, "build-fails")
+        result, calls = _run_update(sandbox, "machine=riscv64", "build-fails")
 
         assert result.returncode == 1
         assert not any(call.startswith(("docker compose down", "docker compose up")) for call in calls)
@@ -529,16 +761,8 @@ class TestUpdateScript:
         assert result.returncode == 1
         assert "Rolled back" in result.stdout
         assert f"UNOS did not answer within {timeout} seconds" in result.stdout
-        assert f"retry with: sudo UNOS_HEALTH_TIMEOUT={suggested} " in result.stdout
-
-    def test_up_to_date_without_a_terminal_changes_nothing(self, sandbox):
-        _git("pull", "-q", cwd=sandbox / "install")
-
-        result, calls = _run_update(sandbox)
-
-        assert result.returncode == 0
-        assert "already up to date" in result.stdout
-        assert calls == []
+        # $0, here "update", and the release it tried.
+        assert f"retry with: sudo UNOS_HEALTH_TIMEOUT={suggested} update {NEWER}" in result.stdout
 
     def test_database_backup_is_a_consistent_copy(self, sandbox):
         live = sqlite3.connect(sandbox / "stub" / "live.db")
@@ -589,17 +813,34 @@ class TestUpdateScript:
         assert "Waiting for UNOS to answer (up to 1000 seconds)" in result.stdout
 
     @pytest.mark.parametrize("signal", ["INT", "HUP", "TERM"])
-    def test_interrupted_build_is_undone(self, sandbox, signal):
-        # Before: a closed SSH session left the checkout at the new version
-        # while the old one kept running.
+    def test_an_interrupt_before_the_restart_is_undone(self, sandbox, signal):
+        # Interrupted while the release's images take their names: the checkout and the names go
+        # back, and the version before keeps running.
         before = _head(sandbox)
 
-        result, calls = _run_update(sandbox, "interrupt-at-build", f"signal={signal}")
+        result, calls = _run_update(sandbox, "interrupt-at-retag", f"signal={signal}")
 
         assert result.returncode == 1
         assert _head(sandbox) == before
         assert "docker image tag deploy-supervisor:previous deploy-supervisor" in calls
         assert not any(call.startswith(("docker compose down", "docker compose up")) for call in calls)
+
+    @pytest.mark.parametrize("signal", ["INT", "HUP", "TERM"])
+    def test_an_interrupted_build_on_riscv64_is_undone(self, sandbox, signal):
+        before = _head(sandbox)
+
+        result, calls = _run_update(sandbox, "machine=riscv64", "interrupt-at-build", f"signal={signal}")
+
+        assert result.returncode == 1
+        assert _head(sandbox) == before
+        assert not any(call.startswith(("docker compose down", "docker compose up")) for call in calls)
+
+    def test_an_interrupted_pull_changes_nothing(self, sandbox):
+        result, calls = _run_update(sandbox, "interrupt-at-pull", "signal=INT")
+
+        assert result.returncode == 1
+        assert "Nothing was changed" in result.stdout
+        assert not any(call.startswith(("docker image tag", "docker exec")) for call in calls)
 
     @pytest.mark.parametrize("signal", ["INT", "HUP"])
     def test_interrupted_restart_starts_the_previous_version(self, sandbox, signal):
@@ -614,6 +855,7 @@ class TestUpdateScript:
         assert _index(calls, "docker compose up -d --no-build --force-recreate") > retag
         assert not any(call.startswith("docker image prune") for call in calls)
         assert _head(sandbox) == before
+        assert _volume_now(sandbox)["unos.db"] == "SQLite format 3"
         if signal == "HUP":
             log = (sandbox / "backups" / "update-interrupted.log").read_text()
             assert "Rolled back" in log
@@ -628,7 +870,7 @@ class TestUpdateScript:
     def test_second_update_stops_before_it_runs_git_or_docker(self, sandbox):
         # Two SSH sessions, or cron and a manual run: the second one would
         # interleave its compose up with the first one's, and its rollback
-        # (git reset --hard) would hit the first one's build.
+        # (git reset --hard) would hit the first one's switch.
         before = _head(sandbox)
 
         with _lock_held(sandbox / "update.lock"):
@@ -648,7 +890,7 @@ class TestUpdateScript:
             # A prefix, as elsewhere: options may follow (--wait-timeout).
             assert any(call.startswith("docker compose up -d --no-build") for call in calls)
             assert _git_calls(sandbox)
-            # Held during the build and during the restart (compose up),
+            # Held during the pull and during the restart (compose up),
             # which a second update must not interleave with.
             assert (sandbox / "stub" / "lock-state").read_text() == "held\nheld\n"
             # Neither git nor docker got the lock's descriptor: the process
@@ -663,13 +905,13 @@ class TestUpdateScript:
                     os.kill(int(leftover.read_text()), signal.SIGKILL)
 
     def test_lock_is_held_during_the_rollback(self, sandbox):
-        # A second update must not start its build while the rollback resets
-        # the checkout (git reset --hard) and restarts the previous version.
+        # A second update must not start while the rollback resets the checkout (git reset --hard)
+        # and restarts the previous version.
         result, _ = _run_update(sandbox, "unhealthy", "probe-lock")
 
         assert result.returncode == 1
         assert "Rolled back" in result.stdout
-        # The build, the restart, and the restart of the previous version.
+        # The pull, the restart, and the restart of the previous version.
         assert (sandbox / "stub" / "lock-state").read_text() == "held\nheld\nheld\n"
 
     def test_unusable_lock_file_stops_the_update(self, sandbox):
@@ -814,6 +1056,251 @@ class TestUpdateScript:
         assert f"may wait longer than {SUPERVISOR_START} seconds" in result.stdout
 
 
+def _at_newer(sandbox):
+    """The install runs the newer release (an update to it passed); the version before has a tag."""
+    install = sandbox / "install"
+    _git("fetch", "-q", "origin", f"refs/tags/{NEWER}:refs/tags/{NEWER}", cwd=install)
+    _git("-c", "advice.detachedHead=false", "checkout", "-q", "--detach", NEWER, cwd=install)
+
+
+def _in_app_backup(sandbox, content="backup db"):
+    """The in-app updater's backup folder of the update (UNOS_UPDATE_BACKUP_DIR, ADR-0443)."""
+    backup = sandbox / "host-backups" / "in-app-20261201-100000-000000"
+    backup.mkdir(parents=True)
+    (backup / "unos.db").write_text(content)
+    (backup / "backup_info.json").write_text("{}")
+    return backup
+
+
+def _result(path):
+    """What update.sh wrote into the result file: the outcome and its message."""
+    outcome, _, message = path.read_text().partition("\n")
+    return outcome, message.strip()
+
+
+class TestUpdateScriptInApp:
+    """The in-app updater runs update.sh on the host (supervisor/src/updates/installer.py, ADR-0443):
+    --fetch while the supervisor runs, then --in-app in a transient unit that outlives it."""
+
+    def _switch(self, sandbox, action, tag, *scenario, backup=None, **env):
+        backup = backup or _in_app_backup(sandbox)
+        result_file = backup / f"{action}.result"
+        result, calls = _run_update(sandbox, *scenario, args=[
+            "--in-app", action, "--backup", str(backup), "--result", str(result_file), tag], **env)
+        return result, calls, result_file
+
+    def test_fetch_gets_the_tag_and_the_images_and_changes_nothing_else(self, sandbox):
+        before = _head(sandbox)
+
+        result, calls = _run_update(sandbox, args=["--fetch", NEWER])
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        # Docker's architecture, asked once for the in-app modes and once for the images.
+        assert calls == ["docker version --format {{.Server.Arch}}"] * 2 + [
+            f"docker image inspect --format {{{{.Id}}}} {SUPERVISOR_IMAGE}", f"docker pull --quiet {SUPERVISOR_IMAGE}",
+            f"docker image inspect --format {{{{.Id}}}} {WEBUI_IMAGE}", f"docker pull --quiet {WEBUI_IMAGE}"]
+        assert _head(sandbox) == before
+        seed = subprocess.run(["git", "rev-parse", "HEAD"], cwd=sandbox / "seed", check=True, capture_output=True,
+                              text=True, env=_without_git_variables(os.environ)).stdout.strip()
+        assert _git_output(sandbox, "rev-parse", f"refs/tags/{NEWER}") == seed
+        assert not (sandbox / "backups").exists()
+
+    def test_fetch_gets_the_version_before_for_a_rollback(self, sandbox):
+        # At the newer release, Rollback gets the images of the version before first.
+        _at_newer(sandbox)
+        before = _head(sandbox)
+
+        result, calls = _run_update(sandbox, args=["--fetch", INSTALLED])
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "docker pull --quiet ghcr.io/und3f1ned/unos-supervisor:1.2.0" in calls
+        assert _head(sandbox) == before
+
+    def test_a_fetch_that_fails_prints_its_error_and_changes_nothing(self, sandbox):
+        result, calls = _run_update(sandbox, "pull-fails", args=["--fetch", NEWER])
+
+        assert result.returncode == 1
+        assert f"[ERROR] Could not pull {SUPERVISOR_IMAGE}" in result.stdout
+        # Without a terminal, no colours for the supervisor to strip.
+        assert "\x1b[" not in result.stdout
+
+    @pytest.mark.parametrize("machine,arch", [("riscv64", "riscv64"), ("armv7l", "arm")])
+    def test_without_release_images_for_the_host_the_in_app_modes_refuse(self, sandbox, machine, arch):
+        result, calls = _run_update(sandbox, f"machine={machine}", args=["--fetch", NEWER])
+
+        assert result.returncode == 1
+        assert f"GHCR has no release images for this host's Docker ({arch};" in result.stdout
+        assert not any(call.startswith(("docker pull", "docker image")) for call in calls)
+
+    def test_an_update_uses_the_supervisors_backup_and_says_it_passed(self, sandbox):
+        _run_update(sandbox, args=["--fetch", NEWER])
+        (sandbox / "stub" / "calls").write_text("")
+        (sandbox / "stub" / "git-calls").unlink()
+
+        result, calls, result_file = self._switch(sandbox, "update", NEWER)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _result(result_file) == ("success", "")
+        # No backup of its own, no question, no network: the images and the tag are here.
+        assert not (sandbox / "backups").exists()
+        assert not any(call.startswith(("docker exec", "docker pull")) for call in calls)
+        assert not [call for call in _git_calls(sandbox) if " fetch " in call or " ls-remote " in call]
+        assert (sandbox / "install" / "VERSION").read_text() == "2\n"
+        assert stat.S_IMODE(result_file.stat().st_mode) == 0o600
+
+    def test_an_update_that_does_not_answer_is_rolled_back_with_the_backups_database(self, sandbox):
+        _run_update(sandbox, args=["--fetch", NEWER])
+
+        result, calls, result_file = self._switch(sandbox, "update", NEWER, "unhealthy")
+
+        assert result.returncode == 1
+        outcome, message = _result(result_file)
+        assert outcome == "rolled-back"
+        assert message.startswith("UNOS did not answer within 0 seconds after the update.")
+        assert _volume(sandbox, "down-1")["unos.db"] == "live"
+        assert _volume_now(sandbox) == {"unos.db": "backup db", "jwt_secret": "secret"}
+        assert (sandbox / "install" / "VERSION").read_text() == "1\n"
+
+    def test_a_rollback_that_fails_too_says_so(self, sandbox):
+        _run_update(sandbox, args=["--fetch", NEWER])
+
+        result, _, result_file = self._switch(sandbox, "update", NEWER, "unhealthy",
+                                              overrides="wait_for_health() { false; }")
+
+        outcome, message = _result(result_file)
+        assert outcome == "failed"
+        assert "UNOS did not answer" in message and "the rollback to v1.2.0 failed too" in message
+
+    def test_an_update_while_another_runs_changes_nothing_and_says_why(self, sandbox):
+        backup = _in_app_backup(sandbox)
+
+        with _lock_held(sandbox / "update.lock"):
+            result, calls, result_file = self._switch(sandbox, "update", NEWER, backup=backup)
+
+        assert result.returncode == 1
+        outcome, message = _result(result_file)
+        assert outcome == "failed"
+        assert message.startswith("Another update.sh is running")
+        assert calls == ["docker version --format {{.Server.Arch}}"]
+
+    def test_a_stop_of_the_unit_rolls_the_switch_back(self, sandbox):
+        # systemctl stop sends SIGTERM: the rollback runs and its result is written.
+        _run_update(sandbox, args=["--fetch", NEWER])
+
+        result, _, result_file = self._switch(sandbox, "update", NEWER, "interrupt-at-up", "signal=TERM")
+
+        assert result.returncode == 1
+        assert _result(result_file)[0] == "rolled-back"
+        assert _volume_now(sandbox)["unos.db"] == "backup db"
+
+    def test_a_rollback_starts_the_version_before_with_the_backups_database(self, sandbox):
+        _at_newer(sandbox)
+        before = _head(sandbox)
+        assert _run_update(sandbox, args=["--fetch", INSTALLED])[0].returncode == 0
+        (sandbox / "stub" / "calls").write_text("")
+
+        result, calls, result_file = self._switch(sandbox, "rollback", INSTALLED)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert _result(result_file) == ("success", "")
+        # Stopped first, then the backup's database alone, then started: the live files were only
+        # renamed aside, and go once the version before answers.
+        down = calls.index("docker compose down --remove-orphans")
+        assert down < _index(calls, "docker compose up -d --no-build --remove-orphans")
+        assert _volume(sandbox, "up-1") == {
+            "unos.db": "backup db", "jwt_secret": "secret", "unos.db.unos-rollback": "live",
+            "unos.db-wal.unos-rollback": "live log", "unos.db-shm.unos-rollback": "live index"}
+        assert _volume_now(sandbox) == {"unos.db": "backup db", "jwt_secret": "secret"}
+        assert (sandbox / "install" / "VERSION").read_text() == "1\n"
+        assert _head(sandbox) != before
+        assert "docker image tag ghcr.io/und3f1ned/unos-supervisor:1.2.0 deploy-supervisor" in calls
+
+    def test_a_rollback_whose_supervisor_does_not_stop_changes_no_database(self, sandbox):
+        _at_newer(sandbox)
+
+        result, _, result_file = self._switch(sandbox, "rollback", INSTALLED, "images-here", "down-fails")
+
+        assert result.returncode == 1
+        outcome, message = _result(result_file)
+        assert message.startswith("The supervisor did not stop, so the database of")
+        assert _volume_now(sandbox) == {"unos.db": "live", "unos.db-wal": "live log", "unos.db-shm": "live index",
+                                        "jwt_secret": "secret"}
+
+    def test_an_update_whose_backup_cannot_be_put_back_is_no_clean_rollback(self, sandbox):
+        _run_update(sandbox, args=["--fetch", NEWER])
+
+        result, _, result_file = self._switch(sandbox, "update", NEWER, "unhealthy", "no-volume")
+
+        outcome, message = _result(result_file)
+        assert outcome == "failed"
+        assert "the rollback to v1.2.0 failed too: the database of" in message
+        assert "could not be put back" in message
+
+    def test_a_rollback_that_does_not_answer_goes_back_with_the_live_database(self, sandbox):
+        _at_newer(sandbox)
+        before = _head(sandbox)
+
+        result, calls, result_file = self._switch(sandbox, "rollback", INSTALLED, "images-here", "unhealthy")
+
+        assert result.returncode == 1
+        assert _result(result_file)[0] == "rolled-back"
+        assert _volume_now(sandbox) == {"unos.db": "live", "unos.db-wal": "live log", "unos.db-shm": "live index",
+                                        "jwt_secret": "secret"}
+        assert _head(sandbox) == before
+
+    def test_a_rollback_goes_to_an_older_release_only(self, sandbox):
+        _git("fetch", "-q", "origin", f"refs/tags/{NEWER}:refs/tags/{NEWER}", cwd=sandbox / "install")
+
+        result, calls, result_file = self._switch(sandbox, "rollback", NEWER)
+
+        assert result.returncode == 1
+        assert _result(result_file) == (
+            "failed", f"A rollback goes to a release older than {INSTALLED}, not to {NEWER}. Nothing was changed.")
+        assert not any(call.startswith(("docker pull", "docker image", "docker compose")) for call in calls)
+
+    def test_an_update_goes_to_a_newer_release_only(self, sandbox):
+        _at_newer(sandbox)
+
+        result, calls, result_file = self._switch(sandbox, "update", INSTALLED)
+
+        assert result.returncode == 1
+        assert _result(result_file) == ("failed", f"{INSTALLED} is not newer than {NEWER}, which runs. Nothing was changed.")
+        assert not any(call.startswith(("docker pull", "docker image", "docker compose")) for call in calls)
+
+    def test_a_wrong_argument_of_the_in_app_updater_is_in_its_result(self, sandbox):
+        backup = _in_app_backup(sandbox)
+
+        result, calls = _run_update(sandbox, args=["--in-app", "upgrade", "--backup", str(backup),
+                                                   "--result", str(backup / "update.result"), NEWER])
+
+        assert result.returncode == 1
+        assert _result(backup / "update.result") == (
+            "failed", '--in-app takes update or rollback, not "upgrade". Nothing was changed.')
+
+    @pytest.mark.parametrize("args", [
+        ["--in-app"],  # an option without its value
+        ["--in-app", "update", NEWER],  # no backup
+        ["--in-app", "upgrade", "--backup", "{backup}", "--result", "{result}", NEWER],
+        ["--in-app", "update", "--backup", "{empty}", "--result", "{result}", NEWER],  # no unos.db
+        ["--in-app", "update", "--backup", "{backup}", "--result", "{result}"],  # no tag
+        ["--backup", "{backup}", NEWER],  # a backup without --in-app
+        ["--fetch"],
+        ["--force", NEWER],
+        [NEWER, "v1.4.0"],
+    ])
+    def test_arguments_that_do_not_fit_change_nothing(self, sandbox, args):
+        backup = _in_app_backup(sandbox)
+        empty = sandbox / "empty"
+        empty.mkdir()
+        args = [arg.format(backup=backup, result=backup / "update.result", empty=empty) for arg in args]
+
+        result, calls = _run_update(sandbox, args=args)
+
+        assert result.returncode == 1
+        assert "Nothing was changed" in result.stdout
+        assert calls == [] and _git_calls(sandbox) == []
+
+
 def _install_lib(tmp_path, paths):
     """install.sh without its last line (`main "$@"`), with the system paths
     in `paths` moved into tmp_path. Returns the path of the copy."""
@@ -826,18 +1313,27 @@ def _install_lib(tmp_path, paths):
     return lib
 
 
-def _start_install(tmp_path, *scenario, prelude=""):
+def _start_install(tmp_path, *scenario, prelude="", tag="v9.9.9"):
     """check_compose_wait, start_unos and create_systemd_service of install.sh
-    with the docker stub of the update sandbox, after the shell code `prelude`.
-    Returns the result, the docker calls and the ExecStart lines of the unit
-    (None without a unit)."""
-    (tmp_path / "install" / "deploy").mkdir(parents=True)
+    with the docker and uname stubs of the update sandbox (aarch64 unless the
+    scenario says machine=<name>), in a checkout at the release `tag` (none:
+    no checkout), after the shell code `prelude`. Returns the result, the
+    docker calls and the ExecStart lines of the unit (None without a unit)."""
+    install = tmp_path / "install"
+    (install / "deploy").mkdir(parents=True)
+    if tag:
+        _git("init", "-q", str(install), cwd=tmp_path)
+        (install / "README.md").write_text("UNOS\n")
+        _git("add", "-A", cwd=install)
+        _git("commit", "-qm", "release", cwd=install)
+        _git("tag", tag, cwd=install)
     (tmp_path / "etc-systemd-system").mkdir()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "docker").write_text(DOCKER_STUB)
+    (bin_dir / "uname").write_text(UNAME_STUB)
     (bin_dir / "systemctl").write_text("#!/bin/sh\nexit 0\n")
-    for name in ("docker", "systemctl"):
+    for name in ("docker", "uname", "systemctl"):
         (bin_dir / name).chmod(0o755)
     stub_dir = tmp_path / "stub"
     stub_dir.mkdir()
@@ -849,10 +1345,11 @@ def _start_install(tmp_path, *scenario, prelude=""):
         ["bash", "-c", '. "$LIB"; eval "$PRELUDE"; check_compose_wait; start_unos; create_systemd_service'],
         env={
             **os.environ,
+            **_without_git_variables(os.environ),
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "LIB": str(lib),
             "STUB_DIR": str(stub_dir),
-            "UNOS_INSTALL_DIR": str(tmp_path / "install"),
+            "UNOS_INSTALL_DIR": str(install),
             "PRELUDE": prelude,
         },
         stdin=subprocess.DEVNULL,
@@ -1434,25 +1931,45 @@ class TestInstallScript:
         assert exec_start == [f"ExecStart=/usr/bin/docker compose up -d --wait-timeout {SUPERVISOR_START}"]
         assert "Docker Compose 2.26.1 cannot limit its wait" in result.stdout
 
-    def test_the_images_carry_the_version_of_the_checkout(self, tmp_path):
-        # System > Updates shows the version the supervisor image was built with (ADR-0234).
-        install = tmp_path / "install"
-        _git("init", "-q", str(install), cwd=tmp_path)
-        (install / "README.md").write_text("UNOS\n")
-        _git("add", "-A", cwd=install)
-        _git("commit", "-qm", "release", cwd=install)
-        _git("tag", "v9.9.9", cwd=install)
-
-        result, calls, exec_start = _start_install(tmp_path)
+    @pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
+    def test_amd64_and_arm64_pull_the_release_of_the_checkout_and_build_nothing(self, tmp_path, machine):
+        # The release's images from GHCR (ADR-0050), under the names compose starts: no image is built
+        # on the host (deploy.release-images). They carry the release's version (ADR-0234).
+        result, calls, exec_start = _start_install(tmp_path, f"machine={machine}")
 
         assert result.returncode == 0, result.stdout + result.stderr
+        for service in ("supervisor", "webui"):
+            ref = f"ghcr.io/und3f1ned/unos-{service}:9.9.9"
+            pulled = calls.index(f"docker pull --quiet {ref}")
+            assert pulled < calls.index(f"docker image tag {ref} deploy-{service}") < calls.index(f"docker image rm {ref}")
+        assert not any(call.startswith(("docker compose build", "docker build", "docker buildx")) for call in calls)
+        assert calls.index("docker image rm ghcr.io/und3f1ned/unos-webui:9.9.9") < _index(calls, "docker compose up --remove")
+        assert not (tmp_path / "stub" / "build-env").exists()
+        assert exec_start
+
+    def test_a_checkout_that_is_not_at_a_release_stops_before_anything_starts(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path, tag=None)
+
+        assert result.returncode == 1
+        assert "is at unknown, not at a release (a tag v<x.y.z>)" in result.stdout
+        assert not any(call.startswith(("docker pull", "docker compose build")) for call in calls)
+        assert _up_calls(calls) == [] and exec_start is None
+
+    def test_a_pull_that_fails_stops_the_install(self, tmp_path):
+        result, calls, exec_start = _start_install(tmp_path, "pull-fails")
+
+        assert result.returncode == 1
+        assert "Could not pull ghcr.io/und3f1ned/unos-supervisor:9.9.9" in result.stdout
+        assert "are its packages public" in result.stdout
+        assert _up_calls(calls) == [] and exec_start is None
+
+    def test_on_riscv64_the_release_is_built_with_its_version(self, tmp_path):
+        # GHCR has no linux/riscv64 images (ADR-0373): the checkout of the release is built here.
+        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not any(call.startswith("docker pull") for call in calls)
         assert (tmp_path / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=v9.9.9"]
-
-    def test_without_a_git_checkout_the_version_is_unknown(self, tmp_path):
-        result, calls, exec_start = _start_install(tmp_path)
-
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert (tmp_path / "stub" / "build-env").read_text().splitlines() == ["UNOS_VERSION=unknown"]
 
     def test_failed_start_names_the_supervisor_health(self, tmp_path):
         result, calls, exec_start = _start_install(tmp_path, "up-fails")
@@ -1632,7 +2149,7 @@ class TestInstallScript:
     def test_on_a_spacemit_k1_only_the_supervisor_is_built_beside_a_loaded_web_ui_image(self, tmp_path):
         # Node.js crashes on the K1 while it builds the web UI (nodejs/node#66845): its image comes
         # from another machine, and install.sh builds the supervisor alone (ADR-0373).
-        result, calls, exec_start = _start_install(tmp_path, prelude=self.K1)
+        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", prelude=self.K1)
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert "docker image inspect deploy-webui:latest" in calls
@@ -1641,7 +2158,7 @@ class TestInstallScript:
         assert exec_start
 
     def test_on_a_spacemit_k1_without_a_web_ui_image_it_stops_and_says_how_to_load_one(self, tmp_path):
-        result, calls, exec_start = _start_install(tmp_path, "no-webui-image", prelude=self.K1)
+        result, calls, exec_start = _start_install(tmp_path, "machine=riscv64", "no-webui-image", prelude=self.K1)
         text = self._text(result)
 
         assert result.returncode == 1
@@ -1652,8 +2169,8 @@ class TestInstallScript:
         assert "docker save -o deploy-webui.tar deploy-webui:latest" in text
         assert "sudo docker load -i deploy-webui.tar" in text
 
-    def test_elsewhere_both_images_are_built(self, tmp_path):
-        result, calls, _ = _start_install(tmp_path, "no-webui-image")
+    def test_on_another_riscv64_host_both_images_are_built(self, tmp_path):
+        result, calls, _ = _start_install(tmp_path, "machine=riscv64", "no-webui-image")
 
         assert result.returncode == 0, result.stdout + result.stderr
         assert [call for call in calls if call.startswith("docker compose build")] == ["docker compose build"]
@@ -1670,6 +2187,85 @@ class TestInstallScript:
         assert not [call for call in calls if call.startswith("udevadm") or "fstrim" in call]
         assert not (tmp_path / "etc-udev-rules.d").exists()
         assert not (tmp_path / "usr-local-sbin").exists()
+
+
+class TestInstallTakesTheNewestRelease:
+    """download_unos of install.sh: the newest release tag v<x.y.z> of the repository, checked out
+    detached (ADR-0050)."""
+
+    def _origin(self, tmp_path, *tags):
+        seed = tmp_path / "seed"
+        _git("init", "-q", str(seed), cwd=tmp_path)
+        for n, tag in enumerate(tags, start=1):
+            (seed / "VERSION").write_text(f"{tag}\n")
+            _git("add", "-A", cwd=seed)
+            _git("commit", "-qm", f"commit {n}", cwd=seed)
+            if tag.startswith("v"):
+                _git("tag", tag, cwd=seed)
+        return seed
+
+    def _download(self, tmp_path, origin):
+        lib = _install_lib(tmp_path, [])
+        return subprocess.run(
+            ["bash", "-c", '. "$LIB"; download_unos'],
+            env={**_without_git_variables(os.environ), "LIB": str(lib), "UNOS_INSTALL_DIR": str(tmp_path / "install"),
+                 "UNOS_REPO": str(origin)},
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60,
+        )
+
+    def _describe(self, tmp_path):
+        return subprocess.run(["git", "describe", "--tags", "--exact-match"], cwd=tmp_path / "install",
+                              capture_output=True, text=True, env=_without_git_variables(os.environ)).stdout.strip()
+
+    def test_the_newest_release_is_checked_out(self, tmp_path):
+        origin = self._origin(tmp_path, "v1.2.0", "v1.10.0", "v1.9.0", "v2.0.0-rc.1", "after the release")
+
+        result = self._download(tmp_path, origin)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self._describe(tmp_path) == "v1.10.0"
+        assert (tmp_path / "install" / "VERSION").read_text() == "v1.10.0\n"
+
+    def test_without_a_release_nothing_is_installed(self, tmp_path):
+        origin = self._origin(tmp_path, "no release yet")
+
+        result = self._download(tmp_path, origin)
+
+        assert result.returncode == 1
+        assert "has no release yet (a tag v<x.y.z>)" in result.stdout
+        assert not (tmp_path / "install" / "VERSION").exists()
+
+    def test_a_second_run_takes_the_newest_release_again(self, tmp_path):
+        origin = self._origin(tmp_path, "v1.2.0")
+        assert self._download(tmp_path, origin).returncode == 0
+        (origin / "VERSION").write_text("v1.3.0\n")
+        _git("commit", "-qam", "release", cwd=origin)
+        _git("tag", "v1.3.0", cwd=origin)
+
+        result = self._download(tmp_path, origin)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert self._describe(tmp_path) == "v1.3.0"
+
+
+def _shell_function(script, name):
+    """The definition of the shell function `name` in deploy/<script>."""
+    text = (REPO_ROOT / "deploy" / script).read_text()
+    match = re.search(rf"^{name}\(\) (\{{[^\n]*\}}|\{{.*?^\}})$", text, re.M | re.S)
+    assert match, (script, name)
+    return match.group(0)
+
+
+@pytest.mark.parametrize("name", ["release_images_here", "release_image", "local_image", "newest_release"])
+def test_install_and_update_name_releases_and_their_images_alike(name):
+    assert _shell_function("install.sh", name) == _shell_function("update.sh", name)
+
+
+def test_install_and_update_take_the_same_registry_and_release_tags():
+    for line in ('UNOS_REGISTRY="${UNOS_REGISTRY:-ghcr.io/und3f1ned}"',
+                 "RELEASE_TAG='^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'"):
+        for script in ("install.sh", "update.sh"):
+            assert (REPO_ROOT / "deploy" / script).read_text().count(f"\n{line}\n") == 1, (script, line)
 
 
 # The line of uninstall.sh that adds the system's folders of programs to PATH, after those it was
@@ -5176,7 +5772,7 @@ class TestContinuousIntegration:
     def test_every_action_is_pinned_to_a_commit_with_the_version_of_its_release(self):
         # A tag such as v7 can be moved to other code by whoever controls the action's repository,
         # and the next run takes it with the job's token. Every workflow, not only test.yml.
-        assert [path.name for path in WORKFLOWS] == ["audit.yml", "test.yml"]
+        assert [path.name for path in WORKFLOWS] == ["audit.yml", "release.yml", "test.yml"]
         for path in WORKFLOWS:
             text = path.read_text()
             jobs = yaml.safe_load(text)["jobs"]
@@ -5312,6 +5908,142 @@ AUDIT_FAKES = {
 }
 RESOLVED = {"install": [{"metadata": {"name": "fastapi", "version": "0.162.0"}},
                         {"metadata": {"name": "nut2", "version": "2.1.1"}}]}
+
+
+RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+
+
+def _release_jobs():
+    return yaml.safe_load(RELEASE_WORKFLOW.read_text())["jobs"]
+
+
+def _release_step(job, name):
+    return next(step for step in _release_jobs()[job]["steps"] if step.get("name") == name)
+
+
+def _run_release_step(tmp_path, job, name, tag="v1.3.0", owner="Und3f1ned"):
+    """The shell of a step of release.yml as the runner runs it (bash -e), with GitHub's variables of a
+    push of `tag` and stub docker, gh, sudo and grep commands that log their calls."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for program in ("docker", "gh", "sudo"):
+        (bin_dir / program).write_text(f'#!/bin/bash\nprintf "%s\\n" "{program} $*" >> "$CALLS"\ncat > /dev/null\n')
+        (bin_dir / program).chmod(0o755)
+    calls = tmp_path / "calls"
+    calls.write_text("")
+    result = subprocess.run(
+        ["bash", "-e", "-c", _release_step(job, name)["run"]],
+        env={"PATH": f"{bin_dir}:{os.environ['PATH']}", "CALLS": str(calls), "GITHUB_REF_NAME": tag,
+             "GITHUB_REPOSITORY_OWNER": owner, "GITHUB_REPOSITORY": f"{owner}/unos", "GITHUB_ACTOR": "someone",
+             "GITHUB_SERVER_URL": "https://github.com", "TOKEN": "t", "GH_TOKEN": "t"},
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+    )
+    return result, calls.read_text().splitlines()
+
+
+class TestReleaseWorkflow:
+    """.github/workflows/release.yml: a tag v<x.y.z> publishes the release's images on GHCR, then its
+    GitHub release (deploy.release-images, ADR-0050)."""
+
+    def test_only_the_push_of_a_release_tag_runs_it(self):
+        workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
+        # PyYAML reads the key "on" as True.
+        trigger = workflow.get("on", workflow.get(True))
+
+        assert trigger == {"push": {"tags": ["v[0-9]+.[0-9]+.[0-9]+"]}}
+
+    @pytest.mark.parametrize("tag,passes", [("v1.3.0", True), ("v10.0.12", True), ("v01.3.0", False),
+                                            ("v1.3", False), ("v1.3.0-rc.1", False)])
+    def test_the_tag_is_checked_first(self, tmp_path, tag, passes):
+        assert _release_jobs()["images"]["steps"][0]["name"] == "Check the tag"
+
+        result, _ = _run_release_step(tmp_path, "images", "Check the tag", tag=tag)
+
+        assert (result.returncode == 0) is passes, result.stdout
+
+    def test_only_the_images_job_may_push_packages_and_only_the_release_job_write(self):
+        workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
+        jobs = workflow["jobs"]
+
+        assert workflow["permissions"] == {"contents": "read"}
+        assert jobs["images"]["permissions"] == {"contents": "read", "packages": "write"}
+        assert jobs["release"]["permissions"] == {"contents": "write"}
+        assert set(jobs) == {"images", "release"}
+        assert all(job.get("timeout-minutes") for job in jobs.values())
+
+    def test_the_checkout_does_not_keep_the_token_and_actions_are_pinned_as_elsewhere(self):
+        text = RELEASE_WORKFLOW.read_text()
+        checkouts = [step for job in _release_jobs().values() for step in job["steps"]
+                     if step.get("uses", "").startswith("actions/checkout@")]
+
+        assert [step["with"] for step in checkouts] == [{"persist-credentials": False}]
+        assert _unpinned_actions(text) == []
+        # No action beyond those the CI workflow pins: QEMU comes from Ubuntu's archive.
+        actions = {uses[1].split("@")[0] for uses in map(USES_LINE.match, text.splitlines()) if uses}
+        assert actions == {"actions/checkout", "docker/setup-buildx-action"}
+
+    def test_buildkit_which_holds_the_credentials_is_pinned_by_tag_and_digest(self):
+        step = _release_step("images", "Set up Docker Buildx")
+
+        assert re.fullmatch(r"image=moby/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}", step["with"]["driver-opts"])
+
+    def test_qemu_comes_from_ubuntu_with_the_fix_binary_flag(self, tmp_path):
+        step = _release_step("images", "Set up QEMU for linux/arm64")["run"]
+
+        assert "sudo apt-get install -y -qq qemu-user-static" in step
+        assert "grep -q '^flags: .*F' /proc/sys/fs/binfmt_misc/qemu-aarch64" in step
+
+    def test_the_token_reaches_docker_login_on_standard_input(self, tmp_path):
+        step = _release_step("images", "Log in to GHCR")
+
+        assert step["env"] == {"TOKEN": "${{ secrets.GITHUB_TOKEN }}"}
+        result, calls = _run_release_step(tmp_path, "images", "Log in to GHCR")
+        assert result.returncode == 0, result.stderr
+        assert calls == ["docker login ghcr.io --username someone --password-stdin"]
+
+    def test_both_images_are_built_for_amd64_and_arm64_and_pushed_under_the_owners_name(self, tmp_path):
+        names = [step.get("name") for step in _release_jobs()["images"]["steps"]]
+        assert names.index("Set up QEMU for linux/arm64") < names.index("Set up Docker Buildx") \
+            < names.index("Log in to GHCR") < names.index("Build and push the images")
+
+        result, calls = _run_release_step(tmp_path, "images", "Build and push the images")
+
+        assert result.returncode == 0, result.stderr
+        labels = ("--label org.opencontainers.image.source=https://github.com/Und3f1ned/unos "
+                  "--label org.opencontainers.image.version=v1.3.0")
+        # The owner in lowercase, as GHCR names packages; the tag without its v.
+        assert calls == [
+            "docker buildx build --platform linux/amd64,linux/arm64 --build-arg UNOS_VERSION=v1.3.0 "
+            f"--build-arg UNOS_RELEASE=v1.3.0 {labels} --tag ghcr.io/und3f1ned/unos-supervisor:1.3.0 --push supervisor",
+            f"docker buildx build --platform linux/amd64,linux/arm64 {labels} "
+            "--tag ghcr.io/und3f1ned/unos-webui:1.3.0 --push webui",
+        ]
+
+    def test_the_names_are_those_that_install_and_update_pull(self):
+        for script in ("install.sh", "update.sh"):
+            text = (REPO_ROOT / "deploy" / script).read_text()
+            assert 'release_image() { echo "$UNOS_REGISTRY/unos-$1:${2#v}"; }' in text, script
+            assert "SERVICES=(supervisor webui)" in text, script
+
+    def test_the_supervisor_image_marks_itself_as_a_release(self):
+        lines = [line.strip() for line in (REPO_ROOT / "supervisor" / "Dockerfile").read_text().splitlines()]
+
+        arg = lines.index("ARG UNOS_RELEASE=")
+        assert lines[arg + 1] == "ENV UNOS_RELEASE=${UNOS_RELEASE}"
+        assert arg > lines.index("COPY src/ ./src/") > _pip_layer(lines)
+        # Built here, it stays empty: compose passes no UNOS_RELEASE.
+        build = _compose_file("docker-compose.yml")["services"]["supervisor"]["build"]
+        assert "UNOS_RELEASE" not in build["args"]
+
+    def test_the_github_release_comes_after_the_images(self, tmp_path):
+        assert _release_jobs()["release"]["needs"] == "images"
+        assert _release_step("release", "Publish the release")["env"] == {"GH_TOKEN": "${{ github.token }}"}
+
+        result, calls = _run_release_step(tmp_path, "release", "Publish the release")
+
+        assert result.returncode == 0, result.stderr
+        assert calls == ["gh release create v1.3.0 --repo Und3f1ned/unos --verify-tag --title UNOS v1.3.0 "
+                         "--generate-notes"]
 
 
 class TestAuditEnvironment:
@@ -5450,7 +6182,7 @@ class TestWheelsOnly:
         assert "binary" not in _instruction(lines, _pip_layer(lines))
 
     def test_every_install_of_the_supervisors_requirements_lets_nut2_come_as_its_sdist(self):
-        texts = {path.name: path.read_text() for path in WORKFLOWS}
+        texts = {path.name: path.read_text() for path in self._installing_workflows()}
         for path in ("docs/TESTING.md", "supervisor/Dockerfile.test", "scripts/audit-python.sh"):
             texts[path] = (REPO_ROOT / path).read_text()
         # scripts/audit-python.sh writes its resolution over two lines.
@@ -5496,8 +6228,15 @@ class TestWheelsOnly:
             "alpha": "alpha-1.0-py3-none-any.whl", "beta": "beta-1.0-py3-none-any.whl", "nut2": "nut2-1.0.tar.gz",
         }
 
+    @staticmethod
+    def _installing_workflows():
+        """The workflows that install Python packages: not release.yml, which builds the images, whose
+        pip layer keeps pip's default (supervisor/Dockerfile, ADR-0423)."""
+        assert "pip install" not in RELEASE_WORKFLOW.read_text()
+        return [path for path in WORKFLOWS if path != RELEASE_WORKFLOW]
+
     def test_every_pip_install_of_the_workflows_the_guide_and_the_test_image_takes_wheels_only(self):
-        texts = {path.name: path.read_text() for path in WORKFLOWS}
+        texts = {path.name: path.read_text() for path in self._installing_workflows()}
         for path in ("docs/TESTING.md", "supervisor/Dockerfile.test"):
             texts[path] = (REPO_ROOT / path).read_text()
         installs = {where: re.findall(r"\bpip install\b[^\n`]*", text) for where, text in texts.items()}

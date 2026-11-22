@@ -78,6 +78,7 @@ HOST_DEFAULTS = {
     "mounts_base_path": "/mnt",
     "served_certificate_dir": "/served-certificate",
     "update_backup_dir": "/var/lib/unos/backups",
+    "install_dir": "/opt/unos",
     "docker_socket": "/var/run/docker.sock",
     "webui_tls_host": "webui",
     "webui_tls_port": 443,
@@ -92,6 +93,7 @@ HOST_SETTINGS = {
     "UNOS_MOUNTS_BASE_PATH": "mnt",
     "UNOS_SERVED_CERTIFICATE_DIR": "served-certificate",
     "UNOS_UPDATE_BACKUP_DIR": "update-backups",
+    "UNOS_INSTALL_DIR": "install",
 }
 HOST_PATHS = {
     "settings.smb_conf_path": "smb.conf",
@@ -101,12 +103,14 @@ HOST_PATHS = {
     "settings.mounts_base_path": "mnt",
     "settings.served_certificate_dir": "served-certificate",
     "settings.update_backup_dir": "update-backups",
+    "settings.install_dir": "install",
     "src.storage.pools.FSTAB_PATH": "fstab",
     "src.storage.pools.FSTAB_BACKUP_PATH": "fstab.unos-backup",
     "src.files.router.BASE_PATH": "pools",
     "src.offsite.service.MOUNTS_BASE": "mnt",
     "src.security.serving.SERVED_DIR": "served-certificate",
     "src.updates.updater.BACKUP_DIR": "update-backups",
+    "src.updates.installer.INSTALL_DIR": "install",
 }
 # Host paths without a setting, the same wherever the data directory is.
 FIXED_PATHS = {
@@ -304,7 +308,8 @@ class TestTheSetting:
         assert result.returncode != 0
         assert "DataDirError" in result.stderr and reason in result.stderr, result.stderr[-2000:]
 
-    @pytest.mark.parametrize("field", ["fstab_path", "mounts_base_path", "served_certificate_dir", "update_backup_dir"])
+    @pytest.mark.parametrize("field", ["fstab_path", "mounts_base_path", "served_certificate_dir", "update_backup_dir",
+                                       "install_dir"])
     def test_a_host_path_setting_must_be_absolute(self, field):
         from pydantic import ValidationError
 

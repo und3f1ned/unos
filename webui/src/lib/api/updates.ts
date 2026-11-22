@@ -50,7 +50,7 @@ export interface UpdateProgress {
 	/** The release the update installs, or the version the rollback returns to. */
 	version: string | null;
 	rolled_back: boolean;
-	/** Why this NAS cannot install releases (the release installer is not decided); null when it can. */
+	/** Why this NAS cannot install releases (src/updates/installer.py of the supervisor); null when it can. */
 	install_unavailable: string | null;
 	next_automatic_check: string | null;
 }

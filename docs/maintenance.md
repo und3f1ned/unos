@@ -11,7 +11,7 @@ nothing is not a result.
 | --- | --- | --- | --- |
 | Dependency audit | GitHub Actions: `.github/workflows/audit.yml`, every week and on demand (`workflow_dispatch`) | `scripts/audit-python.sh` (pip-audit of `supervisor/requirements.txt`, resolved in the audit environment, ADR-0423), and `npm audit --omit=dev --audit-level=high` in `webui/` | A failed run: the owner updates the dependency, or a feature-list entry when the update needs work |
 | Dependency updates | Dependabot: `.github/dependabot.yml` | New versions for pip, npm, GitHub Actions (the commit of a newer release and its version comment, ADR-0423) and the Docker base images, grouped, after a cooldown, with Conventional Commit prefixes; no new major npm versions and no Playwright (ADR-0427), no ESLint or Prettier (ADR-0449) | Pull requests that the owner reviews and merges by hand after `make check` passes in a checkout set up from the pull request's branch, since CI is off (ADR-0230): never automatically, because the supervisor runs privileged with the Docker socket |
-| Image vulnerabilities | GitHub Actions: the `images` job of `audit.yml` | `make image-scan`: both images built as an install builds them, then trivy, pinned by digest, without the network: fixable HIGH and CRITICAL vulnerabilities of their OS packages and libraries, minus `.trivyignore.yaml` (ADR-0446) | A failed run names the package and its fixed version: the owner moves the base image's digest or the package, or adds an entry with its reason and expiry to `.trivyignore.yaml`; an expired entry fails the run again |
+| Image vulnerabilities | GitHub Actions: the `images` job of `audit.yml` | `make image-scan`: both images built as a release builds them, then trivy, pinned by digest, without the network: fixable HIGH and CRITICAL vulnerabilities of their OS packages and libraries, minus `.trivyignore.yaml` (ADR-0446) | A failed run names the package and its fixed version: the owner moves the base image's digest or the package, or adds an entry with its reason and expiry to `.trivyignore.yaml`; an expired entry fails the run again |
 | Catalog image platforms | GitHub Actions: the `platforms` job of `audit.yml` | `scripts/catalog-platforms.py check`: the platforms recorded for every pinned image of the app catalog against the registries' manifests of its index (ADR-0403, ADR-0410) | A failed run: a pin whose record was not rewritten, or an index that its registry no longer serves; the owner runs `make catalog-platforms`, then `scripts/catalog-platforms.py record` and reviews the diff |
 | Catalog image tags | GitHub Actions: the `tags` job of `audit.yml` | `scripts/catalog-platforms.py tags`: the tag of every pinned image of the app catalog against the index its registry names now (ADR-0410) | A failed run: a publisher pushed a pinned version again or a line tag (Traefik's `v3.7`) moved on (`MOVED`, with the templates and both digests), or a pinned index is gone; the owner reviews the new index and pins it in `supervisor/src/apps/catalog.py` with its `VOLUME`s and size, then runs `scripts/catalog-platforms.py record`, or keeps the pin. Immich's five pins move only together with an Immich release: a re-pin offers the dev device's Immich an update |
 | Bootstrap | GitHub Actions: the `bootstrap` job of `audit.yml` | `make setup` on a fresh ubuntu-latest runner with Python 3.11 and Node.js 22 and no cache, as a new checkout is set up, and its baseline, `make check-fast` and then `make smoke` (ADR-0451) | A failed run: its last lines name the prerequisite, the install or the target that failed; the owner fixes `scripts/setup.sh`, the pin or the test, or a feature-list entry when it needs work |
@@ -90,7 +90,30 @@ and proposes the changes, and the owner reviews them.
     moves to the digest of a newer release's index that is a week old, then `make image-scan` runs
     (ADR-0446). ESLint, Prettier and their plugins in `webui/package.json` move to their newest
     releases that are a week old, with what the new ESLint finds fixed and the new Prettier's
-    format written in the same change (docs/TESTING.md, "Updating the lint tools"; ADR-0449).
+    format written in the same change (docs/TESTING.md, "Updating the lint tools"; ADR-0449). The
+    BuildKit image of `.github/workflows/release.yml` (`driver-opts`), which Dependabot does not
+    move, goes to the tag and index digest of a newer release that is a week old.
+
+## At each release
+
+The owner releases (ADR-0050, ADR-0455):
+
+1. **Tag and push.** On the commit of `main` to release, `git tag v<x.y.z>` and `git push origin
+   v<x.y.z>`, after `make check` and the device checks of its changes. The tag runs
+   `.github/workflows/release.yml`: it builds both images for linux/amd64 and linux/arm64 and
+   pushes them as `ghcr.io/<owner>/unos-supervisor:<x.y.z>` and `unos-webui:<x.y.z>`, then
+   publishes the GitHub release, which System > Updates offers. A failed run publishes no release;
+   a tag is never moved: a fix gets the next version. `install.sh` and `update.sh` take the newest
+   tag, so between the push and the end of the run (up to two hours) they find no images for it and
+   stop without a change; push a tag only when its run can follow.
+2. **Only at the first release: make both packages public.** A NAS pulls them without
+   credentials. On GitHub, the owner's (or organization's) **Packages**, `unos-supervisor` and
+   then `unos-webui`, **Package settings**, **Change visibility**, **Public**. Until then
+   `install.sh` and `update.sh` fail to pull ("are its packages public?"). While the repository
+   is private, the release check of System > Updates and the one-line install answer 404 as
+   well (ADR-0050).
+3. **riscv64** gets no images (`deploy.riscv64-release-images`): a K1 still loads the web UI
+   image of the new tag from another machine before `update.sh` (`docs/INSTALL.md`).
 
 ## After a session that went badly
 

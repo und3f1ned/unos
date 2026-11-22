@@ -406,7 +406,7 @@ and this index, and `make check-fast` runs it.
 | [0421](0421-check-sh-measures-heat-only-in-zones-that-slow-a-processor-and-unos-keeps-its-idle-budget.md) | The device check measures heat only in zones that slow a processor, and UNOS keeps its idle budget | accepted | 2026-11-19 |
 | [0424](0424-bonds-vlans-and-bridges-are-systemd-networkd-files-and-a-change-that-may-cut-the-connection-waits-to-be-kept.md) | Bonds, VLANs and bridges are systemd-networkd files that UNOS writes, and a change that may cut the connection waits to be kept | accepted | 2026-11-19 |
 | [0441](0441-unos-sends-no-telemetry.md) | UNOS sends no telemetry, not even when an administrator turns it on | accepted | 2026-11-21 |
-| [0443](0443-the-in-app-updater-backs-up-and-rolls-back-the-database-safely-and-waits-for-a-release-installer.md) | The in-app updater backs up and rolls back the database through SQLite's backup API, and installs only through a release installer that is not decided yet | accepted | 2026-11-21 |
+| [0443](0443-the-in-app-updater-backs-up-and-rolls-back-the-database-safely-and-waits-for-a-release-installer.md) | The in-app updater backs up and rolls back the database through SQLite's backup API, and installs only through a release installer that is not decided yet | superseded by [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | 2026-11-21 |
 
 ## Web UI
 
@@ -450,8 +450,8 @@ and this index, and `make check-fast` runs it.
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0048](0048-fixed-compose-subnet-and-trusted-proxy.md) | A fixed compose subnet lets uvicorn trust X-Forwarded-For only from the web UI | accepted | 2026-11-05 |
-| [0049](0049-update-sh-with-backup-health-check-and-rollback.md) | Updates go through update.sh, with a backup, a health check and automatic rollback | accepted | 2026-11-05 |
-| [0050](0050-releases-as-tags-and-multi-arch-images.md) | Release with git tags and multi-arch images on GHCR | proposed | 2026-11-05 |
+| [0049](0049-update-sh-with-backup-health-check-and-rollback.md) | Updates go through update.sh, with a backup, a health check and automatic rollback | superseded by [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | 2026-11-05 |
+| [0050](0050-releases-as-tags-and-multi-arch-images.md) | Release with git tags and multi-arch images on GHCR | accepted | 2026-11-22 |
 | [0176](0176-docker-health-checks-and-ordered-start.md) | Both containers have health checks, and the web UI waits for a healthy supervisor | superseded by [0338](0338-health-checks-ordered-start-and-an-access-log-of-refused-and-failed-requests.md) | 2026-11-06 |
 | [0177](0177-tmpfs-cap-for-small-boards.md) | Size the /tmp tmpfs for boards with 1 GB of RAM | superseded by [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | 2026-11-06 |
 | [0178](0178-docker-log-rotation.md) | Rotate Docker's json-file logs when they grow | superseded by [0330](0330-docker-rotates-the-logs-of-every-container-unos-creates.md) | 2026-11-06 |
@@ -471,6 +471,7 @@ and this index, and `make check-fast` runs it.
 | [0376](0376-the-banana-pi-bpi-w3-gets-no-code-of-its-own-for-the-rk3588.md) | The Banana Pi BPI-W3 gets no code of its own for the RK3588 | proposed | 2026-11-15 |
 | [0406](0406-the-supervisors-tmpfs-is-192-mib-and-a-backup-may-hold-a-database-of-48-mib.md) | The supervisor's /tmp tmpfs is 192 MiB and a backup may hold a database of 48 MiB | accepted | 2026-11-18 |
 | [0413](0413-install-sh-installs-only-the-packages-unos-runs-so-no-mdadm-assembles-an-old-nas.md) | The package list of install.sh holds only what UNOS runs, so no mdadm assembles the arrays of an old NAS | accepted | 2026-11-18 |
+| [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | Releases publish their images to GHCR, and update.sh switches to a release on the host, also for the in-app updater | accepted | 2026-11-22 |
 
 ## Device
 

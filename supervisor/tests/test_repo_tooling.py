@@ -1229,7 +1229,7 @@ GIT_STEPS = (
     "tests/test_repo_tooling.py::test_setup_in_a_linked_worktree_uses_the_main_checkouts_dev_env",
     "tests/test_repo_tooling.py::test_a_conforming_range_passes",
     "tests/test_repo_tooling.py::test_gitignore_covers_the_local_environments_and_a_linked_node_modules",
-    "tests/test_deploy_scripts.py::TestUpdateScript::test_builds_while_running_then_switches_and_prunes_after_health",
+    "tests/test_deploy_scripts.py::TestUpdateScript::test_pulls_while_running_then_switches_and_prunes_after_health",
 )
 
 

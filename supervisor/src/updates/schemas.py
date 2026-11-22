@@ -88,13 +88,26 @@ class UpdateCheck(BaseModel):
     checked_at: UtcDatetime = Field(description="When GitHub was asked, in UTC.")
 
 
+class HandOver(BaseModel):
+    """The switch that an update or a rollback handed to a unit on the host (ADR-0443): whichever
+    supervisor runs follows it until its result file says how it ended."""
+
+    unit: str = Field(description="The transient systemd unit on the host that runs deploy/update.sh --in-app; "
+                                  "journalctl -u <unit> shows its output.")
+    result: str = Field(description="The file in which update.sh writes how the switch ended.")
+    from_version: str = Field(description="The version that ran when the job started.")
+    changelog: str | None = Field(default=None, description="The release's notes, for the history after a "
+                                                             "success; null for a rollback.")
+    at: UtcDatetime = Field(description="When the unit was started, in UTC.")
+
+
 class UpdateProgress(BaseModel):
     """The update or rollback that runs, or the last one, and the updater's state (ADR-0443)."""
     model_config = ConfigDict(json_schema_extra={"examples": [{
         "status": "verifying", "progress_percent": 80, "message": "Waiting for v1.3.0 to answer",
         "started_at": "2026-11-19T10:06:00.118221Z", "completed_at": None, "error": None, "can_rollback": True,
         "action": "update", "version": "v1.3.0", "rolled_back": False, "install_unavailable": None,
-        "next_automatic_check": None,
+        "next_automatic_check": None, "handover": None,
     }]})
 
     status: UpdateStatus = Field(description="What the update or the rollback does now: idle (none ran), "
@@ -122,6 +135,9 @@ class UpdateProgress(BaseModel):
     next_automatic_check: UtcDatetime | None = Field(default=None, description="When the automatic install looks for a "
                                                                        "new release next, in UTC; null while it "
                                                                        "is off.")
+    handover: HandOver | None = Field(default=None, description="The unit on the host that switches the containers, "
+                                                        "while an update or a rollback waits for it; null "
+                                                        "otherwise.")
 
 
 class UpdateHistoryEntry(BaseModel):

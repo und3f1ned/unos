@@ -4,8 +4,8 @@
 # and the web UI's image, with the policy of ADR-0446.
 #
 # - Without arguments it builds both images from this checkout with docker compose
-#   (deploy/docker-compose.yml, project unos-image-scan) without the build cache, as update.sh
-#   builds them: apt-get and apk install the packages of the day, as an install or update would.
+#   (deploy/docker-compose.yml, project unos-image-scan) without the build cache, as a release
+#   (.github/workflows/release.yml) builds them: apt-get and apk install the packages of the day.
 #   Arguments name images that are built already, which it scans instead.
 # - trivy downloads its vulnerability database first, in a run of its own with the network, into
 #   TRIVY_CACHE (default: trivy's own ~/.cache/trivy, kept between runs). Each image is then saved

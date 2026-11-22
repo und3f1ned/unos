@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0455
 date: 2026-11-05
 area: deploy
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0049: Updates go through update.sh, with a backup, a health check and automatic rollback
 
 ## Context
+
+Superseded by ADR-0455: only in part, where update.sh followed its branch (`UNOS_BRANCH`) and built the images on the host: it switches to a release tag and pulls the release's images, and its rollback puts the backup's database back; every other rule here stays in force.
 
 The `update.sh` of 1.0.0 built whatever HEAD of main it pulled, could not roll back, backed up the wrong Docker volume (`unos-data` instead of `deploy_unos-data`) and hid that error, and its `git stash` silently replaced deployed but unmerged changes with the upstream code. The in-app updater does not work either (ADR-0173).
 
