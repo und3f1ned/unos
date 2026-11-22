@@ -73,6 +73,7 @@ and this index, and `make check-fast` runs it.
 | [0419](0419-every-data-path-of-the-supervisor-follows-unos-data-dir-read-once-at-its-start.md) | Every data path of the supervisor follows UNOS_DATA_DIR, read once at its start, and the stand-in patches no constant | accepted | 2026-11-19 |
 | [0440](0440-unos-takes-no-plugins-and-backends-channels-and-sign-in-providers-are-added-in-its-own-code.md) | UNOS takes no plugins, and storage backends, notification channels and sign-in providers are added in its own code | accepted | 2026-11-21 |
 | [0444](0444-changes-to-existing-tables-ship-as-alembic-migrations-which-the-supervisor-applies-at-its-start.md) | Changes to existing tables ship as Alembic migrations, which the supervisor applies at its start | accepted | 2026-11-21 |
+| [0450](0450-unos-runs-on-one-host-and-has-no-high-availability.md) | UNOS runs on one host and has no high availability | accepted | 2026-11-22 |
 
 ## Security
 
@@ -273,7 +274,7 @@ and this index, and `make check-fast` runs it.
 | [0163](0163-nfs-unchanged-in-slice-2.md) | NFS exports stay unchanged in slice 2 | superseded by [0292](0292-nfs-exports-in-their-own-file-read-as-exportfs-reads-them.md) | 2026-11-06 |
 | [0164](0164-smb-and-audit-follow-ups-left-for-later.md) | Six SMB and audit follow-ups wait for later slices | accepted | 2026-11-06 |
 | [0192](0192-reread-host-facts-before-destructive-commands.md) | Host facts are read again right before destructive commands, and doubt fails closed | accepted | 2026-11-07 |
-| [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | proposed | 2026-11-07 |
+| [0193](0193-acl-entries-and-sticky-folders-in-the-parent-chain.md) | ACL entries and sticky folders count in the parent-chain rule | accepted | 2026-11-22 |
 | [0194](0194-reduce-samba-runtime-writes.md) | Reduce Samba's remaining writes to the system disk | superseded by [0278](0278-samba-keeps-a-password-history-of-three.md) | 2026-11-07 |
 | [0195](0195-open-smb-follow-ups-after-slice-2.md) | Handle the SMB follow-ups left open after slice 2 | superseded by [0250](0250-smb-follow-ups-still-open-after-slice-2.md) | 2026-11-07 |
 | [0248](0248-pool-changes-apply-smb-conf.md) | The storage endpoints apply smb.conf after a pool change, so an unmounted pool's shares stop being served at once | accepted | 2026-11-07 |
