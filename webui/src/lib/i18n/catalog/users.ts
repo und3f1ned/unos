@@ -149,7 +149,8 @@ export const ru: Translation<typeof en> = {
 	'users.new.confirm': 'Подтверждение пароля',
 	'users.new.smb': 'Разрешить доступ по SMB (сетевой доступ к файлам)',
 	'users.new.smbHint': 'Используется тот же пароль. В SMB нет двухфакторной аутентификации.',
-	'users.new.roleHint': 'Новые пользователи обычные: администратором делает кнопка «Изменить».',
+	'users.new.roleHint':
+		'Новые пользователи создаются обычными: сделать пользователя администратором можно кнопкой «Изменить».',
 	'users.new.failed': 'Пользователь не создан',
 	'users.new.submit': 'Создать пользователя',
 	'users.new.done': 'Пользователь «{name}» создан',
@@ -180,7 +181,7 @@ export const ru: Translation<typeof en> = {
 	'users.edit.noChanges': 'Нет изменений',
 	'users.edit.done': 'Пользователь «{name}» изменён',
 	'users.edit.nameTitle': 'Имя',
-	'users.edit.renameHint': 'Пользователь входит под новым именем; его сеансы завершаются',
+	'users.edit.renameHint': 'Пользователь будет входить под новым именем; его сеансы будут завершены',
 	'users.edit.renameSelf': 'Вы переименовываете себя: войдите снова под новым именем',
 	'users.edit.renameSmb':
 		'SMB включён для {name}: для переименования нужен новый пароль, он станет паролем UNOS и SMB под новым именем',
@@ -196,13 +197,13 @@ export const ru: Translation<typeof en> = {
 	'users.delete.before': 'Удалить пользователя',
 	'users.delete.after': '? Это действие нельзя отменить.',
 	'users.delete.sessions': 'Все его сеансы завершаются; его API-токены и ключи безопасности удаляются.',
-	'users.delete.access': 'Его доступ к общим папкам и участие в группах удаляются.',
+	'users.delete.access': 'Его доступ к общим папкам и членство в группах удаляются.',
 	'users.delete.smb': 'Его учётная запись SMB удаляется, а её открытые подключения разрываются.',
 	'users.delete.files': 'Файлы, которые он создал в общих папках, сохраняются.',
 	'users.delete.failed': 'Пользователь не удалён',
 	'users.delete.submit': 'Удалить пользователя',
 	'users.delete.done': 'Пользователь «{name}» удалён',
 
-	'users.endSessions.done': 'Сессии пользователя «{name}» завершены: {n}',
-	'users.endSessions.failed': 'Сессии не завершены'
+	'users.endSessions.done': 'Сеансы пользователя «{name}» завершены: {n}',
+	'users.endSessions.failed': 'Сеансы не завершены'
 };

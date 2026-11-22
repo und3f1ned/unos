@@ -318,7 +318,7 @@
 					<tbody>
 						{#each currentStats.processes as proc (proc.pid)}
 							<tr class="table-row">
-								<td class="mono break-all">{proc.name}</td>
+								<td class="mono break-all min-w-[8rem]">{proc.name}</td>
 								<td class="text-right mono">{proc.pid}</td>
 								<td class="text-secondary break-all">{proc.username}</td>
 								<td class="text-right tabular">{percent(proc.cpu_percent)}</td>

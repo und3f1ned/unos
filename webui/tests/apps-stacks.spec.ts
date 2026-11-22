@@ -525,8 +525,8 @@ test.describe('Apps of several containers in Russian', () => {
     const dialog = await details(page);
     const list = containersList(dialog, 'Контейнеры и образы');
     await expect(list).toContainText(
-      'Приложение Immich работает в 4 контейнерах в собственной сети: UNOS устанавливает, запускает, останавливает ' +
-        'и удаляет их вместе. Каждый образ закреплён по дайджесту.',
+      'Приложение Immich состоит из нескольких контейнеров (4) в собственной сети: UNOS устанавливает, запускает, ' +
+        'останавливает и удаляет их вместе. Каждый образ закреплён по дайджесту.',
     );
     await expect(
       dialog.getByText(

@@ -57,10 +57,10 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'monitor.title': 'Монитор ресурсов',
 	'monitor.waiting': 'Ожидание первых данных…',
-	'monitor.cpu': 'Процессор',
+	'monitor.cpu': 'ЦП',
 	'monitor.memory': 'Память',
 	'monitor.network': 'Сеть',
-	'monitor.diskIo': 'Дисковый ввод-вывод',
+	'monitor.diskIo': 'Диски',
 	'monitor.read': 'Чтение',
 	'monitor.write': 'Запись',
 	'monitor.range': 'Период',

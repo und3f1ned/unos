@@ -97,17 +97,17 @@ export const en = {
 export const ru: Translation<typeof en> = {
 	'iscsi.title': 'Цели iSCSI',
 	'iscsi.intro':
-		'Цель даёт компьютеру собственный диск: файл в томе, к которому подключаются только разрешённые вами инициаторы, с CHAP.',
+		'Цель даёт компьютеру собственный диск: файл в томе, к которому подключаются только разрешённые вами инициаторы с проверкой CHAP.',
 	'iscsi.add': 'Добавить цель',
 	'iscsi.loadError': 'Не удалось загрузить цели iSCSI',
 	'iscsi.empty': 'Целей iSCSI пока нет',
-	'iscsi.emptyHint': 'Кнопка «Добавить цель» выше даёт компьютеру диск в томе пула.',
+	'iscsi.emptyHint': 'Нажмите «Добавить цель» выше, чтобы выдать компьютеру диск в томе пула.',
 	'iscsi.noVolumesShort': 'Сначала создайте том на странице «Хранилище»',
-	'iscsi.noKernelShort': 'В ядре хоста нет цели iSCSI',
+	'iscsi.noKernelShort': 'Ядро хоста не поддерживает цели iSCSI',
 	'iscsi.noKernel':
-		'В ядре хоста нет цели iSCSI (LIO): отсутствуют модули target_core_mod, target_core_file и iscsi_target_mod.',
-	'iscsi.portals': 'Инициаторы подключаются к: {portals}',
-	'iscsi.noPortals': 'У хоста нет адреса локальной сети, поэтому ни один инициатор не достучится до целей.',
+		'Ядро хоста не поддерживает цели iSCSI (LIO): отсутствуют модули target_core_mod, target_core_file и iscsi_target_mod.',
+	'iscsi.portals': 'Адреса для подключения инициаторов: {portals}',
+	'iscsi.noPortals': 'У хоста нет адреса в локальной сети, поэтому ни один инициатор не сможет подключиться к целям.',
 	'iscsi.portalsProblem': 'Не удалось прочитать адреса хоста',
 	'iscsi.served': 'Обслуживается',
 	'iscsi.notServed': 'Не обслуживается',
@@ -150,7 +150,7 @@ export const ru: Translation<typeof en> = {
 	'iscsi.form.chapSecret': 'Секрет CHAP',
 	'iscsi.form.chapSecretHint':
 		'От 12 до 16 символов. Оставьте пустым, и UNOS создаст его сам. Он будет показан один раз, после создания цели.',
-	'iscsi.form.mutual': 'Взаимный CHAP: цель тоже подтверждает себя инициатору',
+	'iscsi.form.mutual': 'Взаимный CHAP: цель тоже подтверждает свою подлинность инициатору',
 	'iscsi.form.mutualSecret': 'Секрет взаимного CHAP',
 	'iscsi.form.mutualSecretHint': 'Должен отличаться от секрета CHAP. Оставьте пустым, и UNOS создаст его сам.',
 	'iscsi.form.create': 'Создать',

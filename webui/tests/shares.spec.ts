@@ -1689,9 +1689,9 @@ test.describe('In Russian', () => {
     ).toBeVisible();
 
     await dialog.getByRole('button', { name: 'Исправить права', exact: true }).click();
-    const running = dialog.getByRole('region', { name: 'Исправление идёт' });
+    const running = dialog.getByRole('region', { name: 'Идёт исправление' });
     await expect(running).toContainText('Проверено: 0, изменено: 0, ошибок: 0');
-    await expect(running).toContainText('Оно идёт в фоне: этот диалог можно закрыть');
+    await expect(running).toContainText('Исправление выполняется в фоне: этот диалог можно закрыть');
     await expect(dialog.getByRole('button', { name: 'Остановить исправление', exact: true })).toBeVisible();
     await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
     await expect(shareCard(page, 'docs').locator('.badge', { hasText: /^Исправление прав$/ })).toBeVisible();
@@ -2254,7 +2254,7 @@ test.describe('Deleting several shares (fake data)', () => {
     await bar.getByRole('button', { name: 'Удалить выбранные' }).click();
     const dialog = page.getByRole('dialog', { name: 'Удаление 21 общей папки' });
     await expect(dialog).toContainText('Удалить 21 общую папку? Открытые подключения будут закрыты.');
-    await expect(dialog).toContainText('Папка каждой общей папки и файлы в ней сохранятся.');
+    await expect(dialog).toContainText('Файлы и папки на диске не удаляются.');
     await expect(dialog.getByRole('button', { name: 'Удалить 21 общую папку' })).toBeVisible();
   });
 
@@ -2278,12 +2278,12 @@ test.describe('Deleting several shares (fake data)', () => {
     const dialog = page.getByRole('dialog', { name: 'Удаление 3 общих папок' });
     await expect(dialog).toContainText('Удалить эти 3 общие папки? Открытые подключения к ним будут закрыты.');
     await expect(dialog.getByRole('list', { name: 'Удаляемые общие папки' }).getByRole('listitem')).toHaveCount(3);
-    await expect(dialog).toContainText('Папка каждой общей папки и файлы в ней сохранятся.');
+    await expect(dialog).toContainText('Файлы и папки на диске не удаляются.');
     await dialog.getByRole('button', { name: 'Удалить 3 общие папки' }).click();
 
     await expect(page.getByText('Удалены 2 общие папки: docs, media')).toBeVisible();
     await expect(page.getByRole('list', { name: '1 общая папка не удалена' }).getByRole('listitem')).toHaveText([
-      'photos: общей папки с таким именем больше нет: её удалили или переименовали',
+      'photos: общей папки с таким именем больше нет: за это время её удалили или переименовали',
     ]);
   });
 });

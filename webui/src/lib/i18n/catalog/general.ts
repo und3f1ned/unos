@@ -58,7 +58,7 @@ export const ru: Translation<typeof en> = {
 	'general.info.architecture': 'Архитектура',
 	'general.info.uptime': 'Время работы',
 	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.',
-	'general.uptime.days': '{days} д {hours} ч {minutes} мин',
-	'general.uptime.hours': '{hours} ч {minutes} мин',
-	'general.uptime.minutes': '{minutes} мин'
+	'general.uptime.days': '{days}\u00a0дн. {hours}\u00a0ч {minutes}\u00a0мин',
+	'general.uptime.hours': '{hours}\u00a0ч {minutes}\u00a0мин',
+	'general.uptime.minutes': '{minutes}\u00a0мин'
 };

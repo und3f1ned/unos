@@ -53,7 +53,7 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.pool_unmounted': 'Пул {subject} не смонтирован',
 	'problems.kind.pool_degraded': 'Пул {subject} деградирован: диска не хватает или на нём ошибки',
 	'problems.kind.pool_read_only': 'Пул {subject} перешёл в режим только для чтения после ошибки',
-	'problems.kind.pool_low_space': 'На пуле {subject} заканчивается место',
+	'problems.kind.pool_low_space': 'В пуле {subject} заканчивается место',
 	'problems.kind.disk_failed': 'Диск {subject} не проходит проверку здоровья SMART',
 	'problems.kind.disk_test_failed': 'Последний самотест SMART диска {subject} завершился ошибкой',
 	'problems.kind.task_failed': 'Последний запуск задачи {subject} завершился ошибкой',
@@ -65,9 +65,9 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.app_cpu': 'Контейнер {subject} упирается в ограничение ЦП',
 	'problems.kind.app_oom': 'Контейнеру {subject} не хватило памяти: ядро завершило его процесс',
 	'problems.kind.shutdown_scheduled':
-		'Хост выключится в {subject} по расписанию настроек питания. Выполняющиеся задания откладывают выключение.',
+		'Хост выключится в {subject} по расписанию, заданному в настройках питания. Выполняющиеся задания откладывают выключение.',
 	'problems.kind.shutdown_postponed':
-		'Выключение по расписанию в {subject} отложено: в разделе Система > Питание указано, чего оно ждёт.',
+		'Выключение по расписанию в {subject} отложено: в разделе «Система» → «Питание» указано, чего оно ждёт.',
 	'problems.kind.shutdown_idle': 'Хост простаивает и выключится примерно в {subject}, если им не воспользуются.',
 	'problems.kind.other': 'Проблема: {subject}'
 };

@@ -456,11 +456,11 @@ export const ru: Translation<typeof en> = {
 	'shares.interfaces.every': 'SMB принимает подключения на всех сетевых интерфейсах NAS.',
 	'shares.interfaces.only': 'SMB принимает подключения только на {names} и на самом NAS (loopback).',
 	'shares.interfaces.onlyLoopback': 'SMB принимает подключения только на самом NAS (loopback).',
-	'shares.interfaces.listening': 'SMB отвечает на:',
-	'shares.interfaces.listeningUnknown': 'неизвестно',
-	'shares.interfaces.listeningNone': 'ни одном адресе',
-	'shares.interfaces.everyIpv4': 'всех адресах IPv4',
-	'shares.interfaces.everyIpv6': 'всех адресах IPv6',
+	'shares.interfaces.listening': 'Адреса SMB:',
+	'shares.interfaces.listeningUnknown': 'неизвестны',
+	'shares.interfaces.listeningNone': 'нет',
+	'shares.interfaces.everyIpv4': 'все адреса IPv4',
+	'shares.interfaces.everyIpv6': 'все адреса IPv6',
 	'shares.interfaces.choose': 'Выбрать интерфейсы…',
 	'shares.interfaces.restart': 'Перезапустить SMB…',
 	'shares.interfaces.savedEvery': 'SMB снова принимает подключения на всех сетевых интерфейсах.',
@@ -478,18 +478,18 @@ export const ru: Translation<typeof en> = {
 	'shares.interfaces.noLan': 'Нет адреса локальной сети',
 	'shares.interfaces.pointToPoint': 'Точка-точка: Samba здесь не принимает подключения',
 	'shares.interfaces.loopbackNote':
-		'Сам NAS (loopback) остаётся привязанным. Интерфейсы Docker не показаны: приложения подключаются к SMB по адресу NAS.',
+		'На самом NAS (loopback) SMB принимает подключения всегда. Интерфейсы Docker не показаны: приложения подключаются к SMB по адресу NAS.',
 	'shares.interfaces.addressNote':
-		'smbd принимает подключения на адресах, которые есть у выбранных интерфейсов при его запуске. Закрепите за NAS постоянный адрес в роутере; если адрес изменится, перезапустите SMB здесь.',
+		'smbd принимает подключения на адресах, которые есть у выбранных интерфейсов при его запуске. Закрепите за NAS постоянный адрес на маршрутизаторе; если адрес изменится, перезапустите SMB здесь.',
 	'shares.interfaces.discoveryNote':
 		'Компьютеры в сетях других интерфейсов могут по-прежнему видеть NAS, но не смогут подключиться.',
 	'shares.interfaces.pickOne': 'Выберите хотя бы один интерфейс или все интерфейсы.',
 	'shares.interfaces.more': 'Как SMB принимает подключения',
 	'shares.interfaces.noChanges': 'Нет изменений для сохранения',
 	'shares.interfaces.restartWarning': {
-		one: 'Сохранение перезапустит SMB: {n} открытое подключение SMB будет закрыто, и компьютер подключится заново.',
-		few: 'Сохранение перезапустит SMB: {n} открытых подключения SMB будут закрыты, и компьютеры подключатся заново.',
-		many: 'Сохранение перезапустит SMB: {n} открытых подключений SMB будут закрыты, и компьютеры подключатся заново.'
+		one: 'Сохранение перезапустит SMB: {n} открытое подключение SMB будет закрыто, а затем установлено заново.',
+		few: 'Сохранение перезапустит SMB: {n} открытых подключения SMB будут закрыты, а затем установлены заново.',
+		many: 'Сохранение перезапустит SMB: {n} открытых подключений SMB будут закрыты, а затем установлены заново.'
 	},
 	'shares.interfaces.restartWarningNone': 'Сохранение перезапустит SMB; открытых подключений SMB сейчас нет.',
 	'shares.interfaces.restartWarningAny':
@@ -577,7 +577,7 @@ export const ru: Translation<typeof en> = {
 	'shares.form.currentFolderBefore': 'Папка сейчас:',
 	'shares.form.currentFolderAfter': '. Выберите папку, которую можно сделать общей.',
 	'shares.form.notServedGrants':
-		'Пока общая папка не раздаётся, её записи доступа и гостевой доступ не действуют. Чтобы сохранить другие изменения без новой папки, уберите их: «Нет доступа» для каждого пользователя и группы и выключенный гостевой доступ.',
+		'Пока общая папка не раздаётся, её записи доступа и гостевой доступ не действуют. Чтобы сохранить другие изменения без новой папки, уберите их: выберите «Нет» для каждого пользователя и группы и выключите гостевой доступ.',
 	'shares.form.unmanagedPools':
 		'Пулы, которые на странице «Хранилище» отмечены как не монтируемые при загрузке, не показаны: общим папкам SMB нужен пул, которым управляет UNOS.',
 	'shares.form.folderPlaceholder': 'documents',
@@ -601,7 +601,7 @@ export const ru: Translation<typeof en> = {
 	'shares.form.option.encryption': 'Требовать шифрование',
 	'shares.form.option.encryptionHint': 'Подключиться могут только клиенты с шифрованием (SMB 3); гости не могут.',
 	'shares.form.option.encryptionMore':
-		'Открыть общую папку могут только клиенты, которые шифруют подключение (SMB 3); более старым, например клиентам SMB 2, отказывается. Гостевые подключения никогда не шифруются, поэтому гостевая общая папка не может требовать шифрования.',
+		'Открыть общую папку могут только клиенты, которые шифруют подключение (SMB 3); более старым, например клиентам SMB 2, будет отказано. Гостевые подключения никогда не шифруются, поэтому гостевая общая папка не может требовать шифрования.',
 	'shares.form.option.timeMachine': 'Резервные копии Time Machine с Mac',
 	'shares.form.option.timeMachineHint':
 		'Mac сохраняют сюда резервные копии; тому, кто их делает, нужны чтение и запись.',
@@ -610,7 +610,7 @@ export const ru: Translation<typeof en> = {
 	'shares.form.option.previousVersions': 'Предыдущие версии из снимков',
 	'shares.form.option.previousVersionsHint': 'Windows показывает снимки пула или тома этой общей папки.',
 	'shares.form.option.previousVersionsMore':
-		'Windows показывает в «Предыдущих версиях» файлов и папок общей папки снимки её пула, а если она в томе, то снимки тома: сделанные на странице «Снимки» без заданного вами имени, а для пула ещё и задачами по расписанию, которые снимают только пулы. Открытые подключения получат их после переподключения; выключение разрывает их.',
+		'Windows показывает в «Предыдущих версиях» файлов и папок снимки пула общей папки, а если она находится в томе, — снимки тома: те, что сделаны на странице «Снимки» без заданного вами имени, а для пула — ещё и снимки задач по расписанию (эти задачи делают снимки только пулов). Открытые подключения увидят изменение после переподключения; выключение разрывает их.',
 	'shares.form.usersError': 'Не удалось загрузить пользователей',
 	'shares.form.notServedHint': 'Сначала исправьте папку: общей папке, которая не раздаётся, нельзя выдать доступ',
 	'shares.form.notSaved': 'Общая папка не сохранена',
@@ -621,14 +621,14 @@ export const ru: Translation<typeof en> = {
 	'shares.form.reloadFailed': 'Не удалось снова загрузить общую папку: {message}',
 	'shares.form.lower.title': 'Разорвать открытые подключения?',
 	'shares.form.lower.intro': 'При сохранении открытые подключения к {name} разрываются:',
-	'shares.form.lower.list': 'Что сохранение отнимает',
+	'shares.form.lower.list': 'Что отнимет сохранение',
 	'shares.form.lower.user': '{name}: {from} → {to}',
 	'shares.form.lower.group': 'Группа {name}: {from} → {to}',
 	'shares.form.lower.guest': 'Гостевой доступ выключен',
 	'shares.form.lower.encryption': 'Шифрование обязательно',
 	'shares.form.lower.previousVersions': 'Предыдущие версии выключены',
 	'shares.form.lower.reconnect': 'Компьютеры подключатся снова сами, уже с новым доступом.',
-	'shares.form.lower.confirm': 'Сохранить и разорвать',
+	'shares.form.lower.confirm': 'Сохранить и разорвать подключения',
 
 	'shares.access.title': 'Доступ',
 	'shares.access.who': 'Кто',
@@ -646,7 +646,7 @@ export const ru: Translation<typeof en> = {
 	'shares.access.smbOff': 'SMB выключен',
 	'shares.access.turnOnSmb': 'Включить SMB в «Пользователях» →',
 	'shares.access.smbPending': 'SMB ещё не включён',
-	'shares.access.smbPendingHint': 'доступ заработает, когда пользователь его включит',
+	'shares.access.smbPendingHint': 'доступ заработает, когда пользователь включит SMB',
 	'shares.access.smbUnavailable': 'Без SMB',
 	'shares.access.groupNoMembers': 'Группа · участников пока нет',
 	'shares.access.noUsers': 'Пользователей пока нет.',
@@ -715,10 +715,10 @@ export const ru: Translation<typeof en> = {
 	'shares.repair.lastError': 'Не удалось прочитать последний результат',
 	'shares.repair.failed': 'Права не исправлены',
 	'shares.repair.notStopped': 'Исправление не остановлено',
-	'shares.repair.progress': 'Исправление идёт',
+	'shares.repair.progress': 'Идёт исправление',
 	'shares.repair.since': 'начато {time}',
 	'shares.repair.running':
-		'Оно идёт в фоне: этот диалог можно закрыть, а страница общих папок покажет, когда оно закончится.',
+		'Исправление выполняется в фоне: этот диалог можно закрыть, а страница общих папок покажет, когда оно завершится.',
 	'shares.repair.result': 'Результат исправления',
 	'shares.repair.lastRun': 'Последний запуск',
 	'shares.repair.state.done': 'Готово',
@@ -778,9 +778,9 @@ export const ru: Translation<typeof en> = {
 	},
 	'shares.bulk.list': 'Удаляемые общие папки',
 	'shares.bulk.kept': {
-		one: 'Папка каждой общей папки и файлы в ней сохранятся.',
-		few: 'Папка каждой общей папки и файлы в ней сохранятся.',
-		many: 'Папка каждой общей папки и файлы в ней сохранятся.'
+		one: 'Файлы и папки на диске не удаляются.',
+		few: 'Файлы и папки на диске не удаляются.',
+		many: 'Файлы и папки на диске не удаляются.'
 	},
 	'shares.bulk.confirm': {
 		one: 'Удалить {n} общую папку',
@@ -803,6 +803,6 @@ export const ru: Translation<typeof en> = {
 		many: '{n} общих папок не удалено'
 	},
 	'shares.bulk.notDeletedItem': '{name}: {reason}',
-	'shares.bulk.status.notFound': 'общей папки с таким именем больше нет: её удалили или переименовали',
-	'shares.bulk.status.changed': 'её изменили, поэтому она не удалена: проверьте её и удалите снова'
+	'shares.bulk.status.notFound': 'общей папки с таким именем больше нет: за это время её удалили или переименовали',
+	'shares.bulk.status.changed': 'за это время её изменили, поэтому она не удалена: проверьте её и удалите снова'
 };

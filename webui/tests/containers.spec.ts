@@ -435,6 +435,13 @@ test.describe('Containers', () => {
     // The table is still a choice.
     await page.getByRole('button', { name: 'Table view' }).click();
     await expect(rows(page)).toHaveCount(3);
+
+    // The Images tab: a tag keeps 12rem and its table scrolls in its frame, instead of breaking the
+    // tag after every few letters.
+    await page.getByRole('tab', { name: 'Images' }).click();
+    const tag = page.getByRole('table', { name: 'Images' }).locator('tbody tr').first().locator('td').first();
+    await expect(tag).toBeVisible();
+    expect((await tag.boundingBox())?.width).toBeGreaterThanOrEqual(12 * 16);
   });
 
   test('Stop, Start and Restart act on the container', async ({ authenticatedPage: page }) => {
@@ -671,6 +678,31 @@ test.describe('In Russian', () => {
   // No seconds (webui.ux-apps).
   const RUSSIAN_DATE = /^\d{2}\.\d{2}\.\d{4}, \d{2}:\d{2}$/;
 
+  test('on a phone the four segments of the filter share one line, each name and count whole', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await fakeContainersApi(page, { containers: [WEB, DB, CACHE] });
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await page.goto('/containers');
+
+    const segments = page.getByRole('group', { name: 'Состояние' }).getByRole('button');
+    await expect(segments).toHaveText([/^\s*Все\s*3$/, /^\s*Работают\s*1$/, /^\s*Остановлены\s*1$/, /^\s*Другие\s*1$/]);
+    const boxes = await segments.evaluateAll((buttons) =>
+      buttons.map((b) => ({ ...b.getBoundingClientRect().toJSON(), cut: b.scrollWidth > b.clientWidth + 1 })),
+    );
+    // Not cut off, and each after the one before it, on the same line.
+    expect(boxes.map((box) => box.cut)).toEqual([false, false, false, false]);
+    for (let i = 1; i < boxes.length; i++) {
+      expect(boxes[i].left).toBeGreaterThanOrEqual(boxes[i - 1].right);
+      expect(boxes[i].top).toBe(boxes[0].top);
+    }
+    // The last one ends inside the filter, and the page does not scroll sideways.
+    const group = await page.getByRole('group', { name: 'Состояние' }).boundingBox();
+    expect(boxes[boxes.length - 1].right).toBeLessThanOrEqual((group?.x ?? 0) + (group?.width ?? 0));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+  });
+
   test('the page, the drawer and the Images tab come from the catalog', async ({ authenticatedPage: page }) => {
     // e2e-web publishes a TCP and a UDP port, for the drawer's Network tab.
     const ports = [
@@ -755,6 +787,10 @@ test.describe('In Russian', () => {
     // The fourth cell of a row is its date (Создан).
     await expect(table.locator('tbody tr').filter({ hasText: 'alpine:3.19' }).locator('td').nth(3)).toHaveText(
       RUSSIAN_DATE,
+    );
+    // Its size with the Russian unit and a decimal comma, as the App Store writes sizes.
+    await expect(table.locator('tbody tr').filter({ hasText: 'alpine:3.19' }).locator('td').nth(2)).toHaveText(
+      '7,44 МБ',
     );
     await expect(page.getByLabel('Образ', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Скачать' })).toBeVisible();

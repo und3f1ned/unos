@@ -276,7 +276,7 @@ export const ru: Translation<typeof en> = {
 	'account.smb.turnOff': 'Выключить SMB',
 	'account.smb.signInBefore': 'Входите как',
 	'account.smb.signInAfter':
-		'с паролем UNOS. Смена пароля UNOS меняет и пароль SMB и закрывает ваши открытые подключения по SMB.',
+		'с паролем UNOS. Смена пароля UNOS меняет также пароль SMB и закрывает ваши открытые подключения по SMB.',
 	'account.smb.notOn': 'SMB не включён',
 	'account.smb.passwordRule':
 		'Смените пароль на вкладке «Вход и безопасность» (раздел «Смена пароля»), чтобы он отвечал этому правилу, затем включите SMB.',
@@ -309,7 +309,7 @@ export const ru: Translation<typeof en> = {
 		'HTTPS-сертификаты веб-интерфейса: тот, что получают браузеры, и сохранённые на этом NAS.',
 	'account.certs.servedBy': 'HTTPS для браузеров: {source}',
 	'account.certs.servedHint':
-		'Caddy, веб-сервер UNOS, отдаёт сертификат, который его локальный центр сертификации выпускает для имени из UNOS_HOSTNAME, если вы не выбрали сохранённый сертификат. Если веб-сервер не может загрузить сохранённый сертификат, он остаётся с сертификатом локального ЦС.',
+		'Caddy, веб-сервер UNOS, отдаёт сертификат, который его локальный центр сертификации выпускает для имени из UNOS_HOSTNAME, если вы не выбрали сохранённый сертификат. Если веб-сервер не может загрузить сохранённый сертификат, он продолжает отдавать сертификат локального ЦС.',
 	'account.certs.servedUnknownHint': 'UNOS не удалось спросить у веб-сервера, какой сертификат он отдаёт.',
 	'account.certs.chosenNotServed':
 		'{domain} выбран, но веб-сервер не смог его загрузить и отдаёт другой: {source}. Выберите его ещё раз или используйте локальный ЦС Caddy.',
@@ -338,7 +338,7 @@ export const ru: Translation<typeof en> = {
 	'account.certs.notServedBadge': 'Не отдаётся',
 	'account.certs.delete': 'Удалить {domain}',
 	'account.certs.issuer': 'Издатель: {issuer}',
-	'account.certs.self': 'собственный',
+	'account.certs.self': 'сам сертификат',
 	'account.certs.until': 'До: {date}',
 	'account.certs.domainRequired': 'Укажите доменное имя',
 	'account.certs.generated': 'Сертификат создан',

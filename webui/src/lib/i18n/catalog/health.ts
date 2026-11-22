@@ -20,6 +20,11 @@ export const en = {
 	// After SMART data, for screen readers: "SMART data of /dev/sda".
 	'health.smartDataOf': 'of {device}',
 
+	// A failure prediction's recommendation, word for word as the server writes it in English.
+	'health.recommendation.replaceSoon': 'Disk showing signs of failure. Replace within 30 days.',
+	'health.recommendation.monitorClosely': 'Disk health degrading. Monitor daily and prepare replacement.',
+	'health.recommendation.watch': 'Minor issues detected. Continue monitoring.',
+	'health.recommendation.healthy': 'No concerning trends detected.',
 	// A disk's overall health (SmartInfo.health_status), as the server answers it.
 	'health.status.passed': 'Passed',
 	'health.status.failed': 'Failed',
@@ -106,6 +111,10 @@ export const ru: Translation<typeof en> = {
 	'health.smartData': 'Данные SMART',
 	'health.smartDataOf': 'диска {device}',
 
+	'health.recommendation.replaceSoon': 'Диск проявляет признаки отказа. Замените его в течение 30 дней.',
+	'health.recommendation.monitorClosely': 'Состояние диска ухудшается. Проверяйте его ежедневно и подготовьте замену.',
+	'health.recommendation.watch': 'Обнаружены незначительные проблемы. Продолжайте наблюдение.',
+	'health.recommendation.healthy': 'Тревожных тенденций не обнаружено.',
 	'health.status.passed': 'Исправен',
 	'health.status.failed': 'Неисправен',
 	'health.status.unknown': 'Неизвестно',
@@ -119,7 +128,7 @@ export const ru: Translation<typeof en> = {
 
 	'health.overall': 'Общее состояние',
 	'health.temperature': 'Температура',
-	'health.powerOnHours': 'Часы работы',
+	'health.powerOnHours': 'Отработано часов',
 	'health.powerCycles': 'Циклы включения',
 	'health.serial': 'Серийный номер',
 	'health.firmware': 'Прошивка',
@@ -139,7 +148,7 @@ export const ru: Translation<typeof en> = {
 	'health.attribute.value': 'Значение',
 	'health.attribute.worst': 'Наихудшее',
 	'health.attribute.threshold': 'Порог',
-	'health.attribute.raw': 'Raw-значение',
+	'health.attribute.raw': 'Необработанное значение',
 	'health.attribute.status': 'Состояние',
 	'health.attribute.ok': 'Норма',
 	'health.attribute.warning': 'Внимание',
@@ -147,7 +156,7 @@ export const ru: Translation<typeof en> = {
 	'health.noAttributes': 'smartctl не сообщил атрибутов SMART для этого диска.',
 	'health.asleep': 'Диск спит: данные SMART читаются, когда он работает, чтобы не раскручивать его.',
 
-	'health.nvmeLog': 'Журнал NVMe SMART/Health Information',
+	'health.nvmeLog': 'Журнал состояния NVMe (SMART/Health Information)',
 	'health.nvmeField': 'Сведения о состоянии',
 	'health.nvme.criticalWarning': 'Критическое предупреждение',
 	'health.nvme.temperature': 'Температура',
@@ -160,7 +169,7 @@ export const ru: Translation<typeof en> = {
 	'health.nvme.hostWrites': 'Команды записи от хоста',
 	'health.nvme.controllerBusyTime': 'Время занятости контроллера',
 	'health.nvme.powerCycles': 'Циклы включения',
-	'health.nvme.powerOnHours': 'Часы работы',
+	'health.nvme.powerOnHours': 'Отработано часов',
 	'health.nvme.unsafeShutdowns': 'Небезопасные выключения',
 	'health.nvme.mediaErrors': 'Ошибки носителя',
 	'health.nvme.errorLogEntries': 'Записи в журнале ошибок',

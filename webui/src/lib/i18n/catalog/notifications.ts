@@ -135,7 +135,7 @@ export const ru: Translation<typeof en> = {
 		'Добавьте канал электронной почты, Telegram, вебхука, Discord или Slack, чтобы получать уведомления',
 	'notifications.channels.list': 'Каналы уведомлений',
 	'notifications.channels.disabled': 'Выключен',
-	'notifications.channels.sendAlerts': 'Отправлять',
+	'notifications.channels.sendAlerts': 'Отправлять оповещения',
 	'notifications.channels.toggle': 'Отправлять оповещения в канал «{name}»',
 	'notifications.channels.sendTest': 'Отправить тест',
 	'notifications.channels.sendTestTo': 'в канал «{name}»',
@@ -151,7 +151,7 @@ export const ru: Translation<typeof en> = {
 
 	'notifications.history.channel': 'Канал',
 	'notifications.history.allChannels': 'Все каналы',
-	'notifications.history.status': 'Статус',
+	'notifications.history.status': 'Состояние',
 	'notifications.history.all': 'Все',
 	'notifications.history.none': 'Уведомлений пока нет',
 	'notifications.history.noMatch': 'Нет уведомлений, соответствующих фильтрам',

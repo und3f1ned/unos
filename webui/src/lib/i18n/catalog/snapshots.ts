@@ -114,7 +114,8 @@ export const ru: Translation<typeof en> = {
 	'snapshots.of': 'Снимки {name}',
 	'snapshots.loadError': 'Не удалось загрузить снимки',
 	'snapshots.empty': 'Снимков пока нет',
-	'snapshots.emptyHint': 'Кнопка «Создать снимок» сделает его сейчас; Планировщик делает снимки пулов по расписанию.',
+	'snapshots.emptyHint':
+		'Кнопка «Создать снимок» сделает снимок сейчас; Планировщик делает снимки пулов по расписанию.',
 	'snapshots.list': 'Снимки',
 	'snapshots.name': 'Имя',
 	'snapshots.created': 'Создан',
@@ -153,7 +154,8 @@ export const ru: Translation<typeof en> = {
 	'snapshots.delete.submit': 'Удалить снимок',
 
 	'snapshots.copies.of': 'Восстановленные копии в {name}',
-	'snapshots.copies.hint': 'Копии для записи, созданные восстановлением: скопируйте нужное, затем удалите их.',
+	'snapshots.copies.hint':
+		'Доступные для записи копии, созданные здесь восстановлением: скопируйте нужное, затем удалите их.',
 	'snapshots.copies.loadError': 'Не удалось загрузить восстановленные копии',
 	'snapshots.copies.empty': 'Восстановленных копий здесь нет.',
 	'snapshots.copies.list': 'Восстановленные копии',

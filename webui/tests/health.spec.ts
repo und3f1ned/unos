@@ -355,6 +355,9 @@ test.describe('Disk Health', () => {
     await expect(failing.locator('.badge')).toHaveText('Пора заменить');
     // One badge per disk: the plan to replace it, not also smartctl's overall health.
     await expect(failing.locator('.badge')).toHaveCount(1);
+    // The server's recommendation in the page's language; its reasons stay as smartctl names them.
+    await expect(failing).toContainText('Диск проявляет признаки отказа. Замените его в течение 30 дней.');
+    await expect(failing).not.toContainText('Replace within 30 days');
     await expect(failing).toContainText('34 °C');
     await expect(failing).toContainText('Reallocated_Sector_Ct increasing rapidly');
     await expect(disks.filter({ hasText: '/dev/e2e-sdb' }).locator('.badge')).toHaveText('Не прочитан');
@@ -363,11 +366,11 @@ test.describe('Disk Health', () => {
     const sata = page.getByRole('dialog', { name: 'E2E HDD 4TB (/dev/e2e-sda)' });
     await expect(field(sata, 'Общее состояние')).toHaveText('Исправен');
     await expect(field(sata, 'Ёмкость')).toHaveText('3,64 ТБ');
-    await expect(field(sata, 'Часы работы')).toHaveText('51775 (5 лет, 332 дня)');
+    await expect(field(sata, 'Отработано часов')).toHaveText('51775 (5 лет, 332 дня)');
     await expect(field(sata, 'Циклы включения')).toHaveText('120');
     await expect(field(sata, 'Последняя самопроверка')).toHaveText('Short offline: Completed without error');
     await expect(sata.getByRole('columnheader')).toHaveText([
-      'ID', 'Атрибут', 'Значение', 'Наихудшее', 'Порог', 'Raw-значение', 'Состояние',
+      'ID', 'Атрибут', 'Значение', 'Наихудшее', 'Порог', 'Необработанное значение', 'Состояние',
     ]);
     await expect(row(sata, 'Reallocated_Sector_Ct').last()).toHaveText('Норма');
     await expect(row(sata, 'Raw_Read_Error_Rate').last()).toHaveText('Внимание');

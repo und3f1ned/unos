@@ -489,18 +489,18 @@ test.describe('Dashboard', () => {
     // degrees with a space before them. Then the time of their last update on a 24-hour clock, and
     // the uptime. A regular expression of getByText meets the text with the white space of the
     // markup around it.
-    for (const label of ['Процессор', 'Память', 'Сеть', 'Дисковый ввод-вывод', 'Температура']) {
+    for (const label of ['ЦП', 'Память', 'Сеть', 'Диски', 'Температура']) {
       await expect(main.getByText(label, { exact: true })).toBeVisible();
     }
     const card = (label: string) => main.locator('.card', { has: page.getByText(label, { exact: true }) });
-    await expect(card('Процессор').locator('.stat-card-value')).toHaveText('12.5%');
+    await expect(card('ЦП').locator('.stat-card-value')).toHaveText('12.5%');
     await expect(card('Память').locator('.stat-card-sublabel')).toHaveText('768 МБ / 2 ГБ');
     await expect(card('Сеть').locator('.text-lg')).toHaveText(['1.2 МБ/с', '512 Б/с']);
-    await expect(card('Дисковый ввод-вывод').locator('.text-lg')).toHaveText(['3.5 МБ/с', '640 КБ/с']);
-    await expect(card('Дисковый ввод-вывод').getByText('Чтение', { exact: true })).toBeVisible();
-    await expect(card('Дисковый ввод-вывод').getByText('Запись', { exact: true })).toBeVisible();
+    await expect(card('Диски').locator('.text-lg')).toHaveText(['3.5 МБ/с', '640 КБ/с']);
+    await expect(card('Диски').getByText('Чтение', { exact: true })).toBeVisible();
+    await expect(card('Диски').getByText('Запись', { exact: true })).toBeVisible();
     await expect(card('Температура').locator('.stat-card-value')).toHaveText('46 °C');
-    await expect(main.getByText(/ · Время работы (\d+ дн\. \d+ ч|\d+ ч \d+ мин|\d+ мин)\s*$/)).toBeVisible();
+    await expect(main.getByText(/ · Время работы (\d+\sдн\.\s\d+\sч|\d+\sч\s\d+\sмин|\d+\sмин)\s*$/)).toBeVisible();
 
     // The pools: their health through a map, their problems counted in Russian.
     const storage = main.locator('.card', { has: page.getByRole('heading', { name: 'Пулы хранения' }) });
@@ -524,7 +524,7 @@ test.describe('Dashboard', () => {
     // The banner lists the pools' issues too, errors first: the rest is behind "Show all".
     await main.locator('#problems-banner').getByRole('button', { name: /^Показать все/ }).click();
     const replace = main.locator('#problems-banner').getByRole('listitem').filter({
-      has: page.getByRole('link', { name: 'Скоро замените диск /dev/e2e-sda (серийный номер E2E-HDD-1)', exact: true }),
+      has: page.getByRole('link', { name: 'Замените диск /dev/e2e-sda в ближайшее время (серийный номер E2E-HDD-1)', exact: true }),
     });
     await expect(replace).toContainText('Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly');
     await expect(replace.getByRole('link')).toHaveAttribute('href', '/system#health');
@@ -599,7 +599,7 @@ test.describe('Dashboard', () => {
 
       const card = (label: string) => main.locator('.card', { has: page.getByText(label, { exact: true }) });
       await expect(card('Сеть').locator('.text-lg')).toHaveText([/^[\d.]+ (Б|КБ|МБ|ГБ|ТБ)\/с$/, /^[\d.]+ (Б|КБ|МБ|ГБ|ТБ)\/с$/]);
-      await expect(card('Дисковый ввод-вывод').locator('.text-lg')).toHaveText([/\/с$/, /\/с$/]);
+      await expect(card('Диски').locator('.text-lg')).toHaveText([/\/с$/, /\/с$/]);
       await expect.poll(() => networks.length, { timeout: 15000 }).toBeGreaterThan(1);
       expect(networks.map((network) => network.interfaces)).toEqual(networks.map(() => []));
     });

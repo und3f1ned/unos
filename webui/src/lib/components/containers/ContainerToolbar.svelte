@@ -30,7 +30,9 @@
 
 <!-- One row from sm: the search grows, the filter and the view keep their width; on a phone the
      filter takes a row of its own under the search and the view, its segments sharing the row's
-     width on one line, also with Other and in Russian (webui.ux-apps). -->
+     width on one line, also with Other and in Russian (webui.ux-apps): each segment as wide as its
+     name and count, and the rest of the row shared out, so that no name runs into the next. Counts
+     of three digits that the row cannot hold wrap the filter onto a second line, never sideways. -->
 <div class="flex flex-wrap items-center gap-3">
 	<Input
 		icon={Search}
@@ -45,8 +47,8 @@
 		value={filter}
 		label={$t('containers.filter.label')}
 		onchange={(id) => (filter = id)}
-		class="order-last w-full flex-nowrap sm:order-none sm:w-auto"
-		itemClass="min-w-0 flex-1 justify-center whitespace-nowrap px-2 sm:flex-none sm:px-3"
+		class="order-last w-full sm:order-none sm:w-auto"
+		itemClass="flex-auto justify-center whitespace-nowrap px-1.5 sm:flex-none sm:px-3"
 	/>
 	<Segmented
 		options={[

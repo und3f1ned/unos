@@ -222,7 +222,7 @@ export const ru: Translation<typeof en> = {
 	'scheduler.form.commandHint':
 		'Выполняется через /bin/sh от имени root в контейнере супервизора. Каждый запуск сохраняет вывод команды (последние 16 КиБ) и её код завершения. Команда, которая выполняется дольше 24 часов, останавливается, и вместе с ней завершаются оставленные ею процессы.',
 	'scheduler.form.offsiteHint':
-		'Копирует конфигурацию и папки в хранилище, настроенное в разделе «Система» → «Резервное копирование и восстановление», «Копия вне устройства». Запуск, пока идёт прежнее копирование, пропускается.',
+		'Копирует конфигурацию и папки в хранилище, настроенное в разделе «Система» → «Резервные копии», «Копия вне устройства». Запуск, пока идёт прежнее копирование, пропускается.',
 	'scheduler.form.keepCount': 'Сколько хранить',
 	'scheduler.form.keepSnapshots': 'Число хранимых снимков',
 	'scheduler.form.keepBackups': 'Число хранимых резервных копий',
@@ -249,10 +249,10 @@ export const ru: Translation<typeof en> = {
 	'scheduler.form.minute': 'Минута',
 	'scheduler.form.time': 'Время',
 	'scheduler.form.everyHourAt': 'Каждый час в минуту',
-	'scheduler.form.passphraseWait': 'Сохранение ждёт пароля, введённого дважды одинаково.',
+	'scheduler.form.passphraseWait': 'Чтобы сохранить задачу, дважды введите одну и ту же парольную фразу.',
 	'scheduler.form.dayOfWeek': 'День недели',
 	'scheduler.form.dayOfMonth': 'День месяца',
-	'scheduler.form.onTheClock': 'По часам часового пояса NAS, {zone}.',
+	'scheduler.form.onTheClock': 'По времени часового пояса NAS: {zone}.',
 	'scheduler.form.save': 'Сохранить изменения',
 	'scheduler.form.create': 'Создать задачу',
 	'scheduler.form.saveFailed': 'Не удалось сохранить задачу',

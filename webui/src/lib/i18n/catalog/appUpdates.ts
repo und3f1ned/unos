@@ -86,7 +86,7 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.sameImage': 'Образ тот же',
 	'appUpdates.added': 'Добавляется',
 	'appUpdates.leftOut': 'Остаётся с прежней версией',
-	'appUpdates.download': 'Загрузка',
+	'appUpdates.download': 'Скачивание',
 	'appUpdates.systemDisk': 'Системный диск',
 	'appUpdates.writes': 'Около {writes} из свободных {free}',
 	'appUpdates.writesNoFree': 'Около {writes}',
@@ -94,7 +94,7 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.copy':
 		'Перед запуском новой версии папка {folder} ({size}) копируется в {copy} в пуле «{pool}», где свободно {free}.',
 	'appUpdates.kept':
-		'Сохраняются папки данных, файлы паролей, настройки, порты, ограничения и участие в группе SMB. Прежние контейнеры остаются остановленными, пока вы не откатите обновление или не удалите их.',
+		'Сохраняются папки с данными, файлы паролей, настройки, порты, ограничения и параметр «Запускать в группе unos-smb». Прежние контейнеры остаются остановленными, пока вы не откатите обновление или не удалите их.',
 	'appUpdates.failureNote':
 		'Если новая версия не запустится, UNOS вернёт приложение к прежней версии, а базу данных — к копии; если копию не удастся вернуть на место, прежняя версия останется остановленной и готовой к откату.',
 	'appUpdates.details': 'Что сохраняется и образ каждого контейнера',
@@ -110,7 +110,7 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.removeEarlier': 'Удалить прежнюю версию',
 	'appUpdates.rollbackTitle': 'Вернуть {name} к прежней версии?',
 	'appUpdates.confirmRollback':
-		'База данных вернётся к копии, сделанной перед обновлением: всё, что {name} сохранило после него, будет потеряно.',
+		'База данных вернётся к копии, сделанной перед обновлением: всё, что приложение {name} сохранило после него, будет потеряно.',
 	'appUpdates.rollbackAction': 'Откатить',
 	'appUpdates.removeTitle': 'Удалить прежнюю версию {name}?',
 	'appUpdates.confirmRemove': 'Вместе с ней удаляется копия базы данных, и откат станет невозможен.',
@@ -128,8 +128,8 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.step.copying': 'Копирование базы данных',
 	'appUpdates.step.restoring': 'Возврат к прежней версии',
 	'appUpdates.updatedNotice':
-		'{name} обновлено. Прежняя версия и копия базы данных хранятся, пока вы не откатите обновление или не удалите их.',
-	'appUpdates.rolledBackNotice': '{name} возвращено к прежней версии.',
+		'Приложение {name} обновлено. Прежняя версия и копия базы данных хранятся, пока вы не откатите обновление или не удалите их.',
+	'appUpdates.rolledBackNotice': 'Приложение {name} возвращено к прежней версии.',
 	'appUpdates.updateFailed': 'Не удалось обновить',
 	'appUpdates.rollbackFailedTitle': 'Не удалось откатить',
 	'appUpdates.cancelUpdate': 'Отменить обновление',

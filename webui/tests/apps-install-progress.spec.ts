@@ -420,9 +420,9 @@ test.describe('The progress of an install in Russian', () => {
 
     const card = page.getByRole('region', { name: 'Установка приложения Immich' });
     await expect(card.getByText('Устанавливается', { exact: true })).toBeVisible();
-    await expect(card.getByText('Загрузка образов')).toBeVisible();
+    await expect(card.getByText('Скачивание образов')).toBeVisible();
     const first = card.getByRole('listitem').filter({ hasText: shortName(images[0]) });
-    await expect(first).toContainText('Загружается');
+    await expect(first).toContainText('Скачивается');
     await expect(first).toContainText('1,5 МБ из 3 МБ');
     // No layers; the whole download in one line (webui.ux-apps).
     await expect(card.getByText(/сло(й|я|ёв)\b/)).toHaveCount(0);

@@ -52,7 +52,7 @@ export const ru: Translation<typeof en> = {
 	'palette.open': 'Открыть палитру команд',
 	'palette.trigger': 'Поиск',
 	'palette.field': 'Поиск страниц и действий',
-	'palette.placeholder': 'Введите название страницы или действия',
+	'palette.placeholder': 'Название страницы или действия',
 	'palette.list': 'Страницы и действия',
 	'palette.none': 'Ничего не найдено.',
 	'palette.count': { one: '{n} вариант', few: '{n} варианта', many: '{n} вариантов' },
@@ -71,7 +71,7 @@ export const ru: Translation<typeof en> = {
 	'palette.keywords.apps': 'приложения установка',
 	'palette.keywords.users': 'учётные записи группы',
 	'palette.keywords.general': 'общие имя хоста часовой пояс',
-	'palette.keywords.updates': 'версия',
+	'palette.keywords.updates': 'версия обновление',
 	'palette.keywords.security': 'брандмауэр сертификаты HTTPS требование двухфакторной',
 	'palette.keywords.account':
 		'вход безопасность пароль двухфакторная 2FA коды восстановления ключи безопасности API токены',

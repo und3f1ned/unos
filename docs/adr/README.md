@@ -420,7 +420,7 @@ and this index, and `make check-fast` runs it.
 | [0291](0291-the-app-store-translates-its-own-texts-and-not-the-app-catalog.md) | The App Store gives each category one label and shows the app catalog's texts as the server answers them | proposed | 2026-11-08 |
 | [0295](0295-the-network-tab-keeps-the-values-that-ip-and-ss-print-in-its-tables-as-they-come.md) | The Network tab keeps the values that ip and ss print in its tables as they come in every language | accepted | 2026-11-08 |
 | [0296](0296-a-sentence-around-a-name-a-path-or-a-link-is-translated-in-parts-and-names-on-the-disk-stay.md) | A sentence around a name, a path or a link is translated in parts, and names on the disk stay as they are | accepted | 2026-11-08 |
-| [0297](0297-the-dashboard-and-files-take-the-units-after-a-number-from-their-catalogs.md) | The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point | accepted | 2026-11-08 |
+| [0297](0297-the-dashboard-and-files-take-the-units-after-a-number-from-their-catalogs.md) | The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point | superseded by [0450](0450-the-russian-web-ui-names-each-thing-once-and-the-images-tab-writes-sizes-as-the-app-store-does.md) | 2026-11-08 |
 | [0298](0298-a-russian-audit-log-names-actions-in-russian-and-its-search-finds-english-words.md) | A Russian Audit Log page names actions and resources in Russian, and its search still finds them by their English words | proposed | 2026-11-08 |
 | [0299](0299-the-shares-page-writes-a-locations-kind-in-its-language-from-the-name-the-server-answers.md) | The Shares page writes a location's kind in its language from the name that the server answers | accepted | 2026-11-08 |
 | [0300](0300-the-storage-page-writes-its-values-in-the-pages-language-and-keeps-the-servers-reasons.md) | The Storage page writes its sizes and the start of a scrub in the page's language and keeps the server's reasons and btrfs's names | superseded by [0401](0401-every-time-of-the-api-carries-its-offset-and-stored-times-without-one-are-utc.md) | 2026-11-08 |
@@ -442,6 +442,7 @@ and this index, and `make check-fast` runs it.
 | [0436](0436-the-system-tabs-put-status-before-settings-and-keep-one-primary-action-one-time-zone-and-one-pattern-per-job.md) | The System tabs put status before settings, and keep one primary action, one time zone and one pattern per job | accepted | 2026-11-20 |
 | [0437](0437-containers-and-the-app-store-get-one-filter-quiet-actions-and-plain-states-and-an-apps-container-is-removed-only-with-its-app.md) | Containers and the App Store get one filter, quiet actions and plain states, and an app's container is removed only with its app | accepted | 2026-11-20 |
 | [0438](0438-the-design-check-keeps-no-baseline-and-fails-for-success-alerts-spinners-and-raw-details.md) | The design check keeps no baseline and fails for a success alert, a hand-made spinner and a raw details element, and no line shows the live connection | accepted | 2026-11-21 |
+| [0450](0450-the-russian-web-ui-names-each-thing-once-and-the-images-tab-writes-sizes-as-the-app-store-does.md) | The Russian web UI names each thing once, and the Images tab writes sizes as the App Store does | accepted | 2026-11-22 |
 
 ## Deploy
 

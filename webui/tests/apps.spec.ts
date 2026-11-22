@@ -715,7 +715,7 @@ test.describe('The App Store in Russian', () => {
     await chooseAction(page, 'e2e-jellyfin', 'Удалить', true);
     await answerConfirmation(page, {
       title: 'Удалить приложение e2e-jellyfin?',
-      message: 'Его контейнер будет удалён, а папки с данными останутся.',
+      message: 'Его 1 контейнер будет удалён, а папки с данными останутся.',
       cancel: 'Отмена',
     });
     await expect(jellyfin).toBeVisible();
