@@ -1804,6 +1804,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The web UI's image builds again from the whole Dockerfile (the release workflow, a riscv64
+  host's web UI image built elsewhere, the compose test stack): its lock file is written by the
+  npm of the builder's Alpine, which refused the workstation's.
 - The compose test stack no longer refuses the sign-ins of its own E2E run with 429: every spec
   reaches the supervisor from the stack network's gateway, one client of the sign-in limit, so its
   image runs the supervisor's app with that limit off, as the stand-in does, from a module that
