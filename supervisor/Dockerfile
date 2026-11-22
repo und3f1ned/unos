@@ -2,7 +2,7 @@
 # Dependabot follows the tag when it proposes a newer digest. A new digest whose linux/arm64
 # image changed makes the dev device pull the base and run apt-get and pip again, hundreds of
 # MB on its SD card (ADR-0214). supervisor/Dockerfile.test starts from the same base.
-FROM python:3.11-slim@sha256:65bd3d9f1d7fa268dd1909973ba7eb4bdf41f6dcf2cfbe76ba9528b170f3fd79
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
 WORKDIR /app
 
