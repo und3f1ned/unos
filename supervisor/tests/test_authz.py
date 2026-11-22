@@ -5,6 +5,7 @@ in USER_ALLOWED (any signed-in user), or it must depend on ``require_admin``
 (directly or through its router). A new route that does none of this fails
 ``test_every_route_has_an_explicit_authorization_decision``.
 """
+import ast
 import asyncio
 import hashlib
 import importlib
@@ -12,6 +13,7 @@ import ipaddress
 import json
 import logging
 import re
+import runpy
 import shlex
 import socket
 import subprocess
@@ -41,6 +43,7 @@ import src.host
 from src.auth import utils as auth_utils
 from src.auth.models import APIToken, TwoFactorRequirement, User
 from src.auth.router import MAX_API_TOKENS_PER_USER, TOO_MANY_API_TOKENS
+from src.auth import limits as auth_limits
 from src.auth.router import limiter as auth_limiter
 from src.auth.schemas import API_TOKEN_NAME_CHARS
 from src.auth.requirement import TWO_FACTOR_SETUP_REQUIRED
@@ -1070,6 +1073,18 @@ def _uvicorn_args(dockerfile):
     return args
 
 
+def _dockerfile_lines(dockerfile):
+    """The lines of a supervisor image's Dockerfile, without comments."""
+    text = (REPO_ROOT / "supervisor" / dockerfile).read_text()
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def _call_name(node):
+    """The name of the function that the call NODE calls: f of f(...) and of x.f(...)."""
+    func = node.func
+    return func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+
+
 def _proxy_layout(compose_file, network):
     compose = _compose(compose_file)
     supervisor, webui = compose["services"]["supervisor"], compose["services"]["webui"]
@@ -1186,7 +1201,8 @@ class TestRealClientAddress:
     ])
     def test_only_the_webui_container_may_set_the_client_address(self, dockerfile, compose_file, network):
         args = _uvicorn_args(dockerfile)
-        assert args[:2] == ["uvicorn", "src.main:app"]
+        # The test image's stack_app:app is src.main:app with the sign-in limit off (TestTestStackSignInLimit).
+        assert args[:2] == ["uvicorn", "src.main:app" if dockerfile == "Dockerfile" else "stack_app:app"]
         assert "--proxy-headers" in args
         # The image must not decide whom to trust (e.g. "*"): the compose file does.
         assert not any(arg.startswith("--forwarded-allow-ips") for arg in args)
@@ -1197,6 +1213,118 @@ class TestRealClientAddress:
         assert ipaddress.ip_address(layout.webui) in layout.subnet
         # Host processes connect from the gateway; it must never be trusted.
         assert layout.webui not in (layout.gateway, layout.supervisor)
+
+
+class TestTestStackSignInLimit:
+    """The compose test stack's supervisor runs with the sign-in limit off, and no real installation
+    can turn it off (ADR-0452).
+
+    Playwright reaches the stack's Caddy through a port that Docker publishes, so Caddy forwards
+    every spec of a run from the network's gateway: one client of the limit of ADR-0010. The app
+    of supervisor/tests/fixtures/stack_app.py, which only supervisor/Dockerfile.test runs, is the
+    app of src.main with that limiter off, as on the stand-in.
+    """
+
+    STACK_APP = REPO_ROOT / "supervisor" / "tests" / "fixtures" / "stack_app.py"
+
+    @pytest.fixture
+    def stack(self):
+        return _proxy_layout("docker-compose.test.yml", "unos-test-net")
+
+    @staticmethod
+    def _sign_in(asgi, stack, password="wrong-password"):
+        """A sign-in of a spec, as the stack's Caddy forwards it: from the web UI's address, with
+        the gateway's in X-Forwarded-For."""
+        from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+        client = TestClient(ProxyHeadersMiddleware(asgi, trusted_hosts=stack.trusted), client=(stack.webui, 40000))
+        return client.post(
+            f"{API}/auth/login",
+            json={"username": "alice", "password": password},
+            headers={"X-Forwarded-For": stack.gateway},
+        ).status_code
+
+    @pytest.fixture
+    def stack_app(self, monkeypatch):
+        # monkeypatch puts the limiter back on after the test.
+        monkeypatch.setattr(auth_limits.limiter, "enabled", True)
+        return runpy.run_path(str(self.STACK_APP))["app"]
+
+    def test_the_specs_of_a_run_are_one_client_of_the_supervisors_limit(self, authz_db, stack):
+        # The cause: the app of src.main counts every spec of the run as the gateway.
+        assert [self._sign_in(app, stack) for _ in range(6)] == [401] * 5 + [429]
+        assert self._sign_in(app, stack, PASSWORD) == 429
+
+    def test_the_stack_app_answers_every_sign_in_of_a_run(self, authz_db, stack, stack_app):
+        assert stack_app is app
+        assert [self._sign_in(stack_app, stack) for _ in range(12)] == [401] * 12
+        assert self._sign_in(stack_app, stack, PASSWORD) == 200
+
+        # The client-address rules are those of production: the gateway, not a chosen address.
+        with Session(authz_db.engine) as session:
+            ips = {a.ip_address for a in session.scalars(select(LoginAttempt))}
+        assert ips == {stack.gateway}
+
+    def test_only_the_test_image_runs_the_stack_app(self):
+        assert _uvicorn_args("Dockerfile.test")[:2] == ["uvicorn", "stack_app:app"]
+        assert _uvicorn_args("Dockerfile")[:2] == ["uvicorn", "src.main:app"]
+        assert "COPY tests/fixtures/stack_app.py ./stack_app.py" in _dockerfile_lines("Dockerfile.test")
+        # Production's image copies requirements.txt and src/ of the build context, never tests/.
+        copied = []
+        for line in _dockerfile_lines("Dockerfile"):
+            instruction, _, rest = line.partition(" ")
+            if instruction.upper() in ("COPY", "ADD"):
+                words = json.loads(rest) if rest.lstrip().startswith("[") else shlex.split(rest)
+                copied.extend(word for word in words[:-1] if not word.startswith("--"))
+        assert copied and all(source.lstrip("./") in ("requirements.txt", "src", "src/") for source in copied), copied
+
+        # Production builds supervisor/Dockerfile; only the test stack builds Dockerfile.test.
+        assert _compose("docker-compose.yml")["services"]["supervisor"]["build"].get("dockerfile", "Dockerfile") == "Dockerfile"
+        assert _compose("docker-compose.test.yml")["services"]["supervisor"]["build"]["dockerfile"] == "Dockerfile.test"
+
+        production = [REPO_ROOT / "supervisor" / "Dockerfile", *sorted((REPO_ROOT / "deploy").iterdir()),
+                      *sorted((REPO_ROOT / "supervisor" / "src").rglob("*.py"))]
+        naming = [str(path.relative_to(REPO_ROOT)) for path in production
+                  if path.is_file() and path.name != "docker-compose.test.yml" and "stack_app" in path.read_text()]
+        assert naming == []
+
+    def test_no_code_of_the_supervisor_turns_a_limiter_off(self):
+        """Every limiter of supervisor/src comes from client_limiter of src/rate_limits.py, the one
+        place that builds a slowapi Limiter, and no module turns one off: no `enabled` set other than
+        to True, no setattr on a limiter, no exempt route or request filter."""
+        found = []
+        for path in sorted((REPO_ROOT / "supervisor" / "src").rglob("*.py")):
+            where = str(path.relative_to(REPO_ROOT))
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Call) and _call_name(node) == "Limiter":
+                    keywords = {keyword.arg for keyword in node.keywords}
+                    if where != "supervisor/src/rate_limits.py" or keywords != {"key_func", "storage_uri"}:
+                        found.append(f"{where}:{node.lineno}")
+                elif isinstance(node, ast.Call) and _call_name(node) == "setattr" and "limiter" in ast.unparse(node).lower():
+                    found.append(f"{where}:{node.lineno}")
+                elif isinstance(node, ast.Attribute) and node.attr in ("exempt", "request_filter", "_auto_check") \
+                        and "limiter" in ast.unparse(node.value).lower():
+                    found.append(f"{where}:{node.lineno}")
+                elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    turned = [target for target in targets if isinstance(target, ast.Attribute)
+                              and target.attr == "enabled" and "limiter" in ast.unparse(target.value).lower()]
+                    if turned and not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                                       and node.value.value is True):
+                        found.append(f"{where}:{node.lineno}")
+        assert found == []
+
+    def test_no_environment_variable_turns_a_limiter_off_or_moves_its_counters(self, monkeypatch):
+        # slowapi reads RATELIMIT_* settings from the environment (starlette's Config).
+        from src.rate_limits import client_limiter
+
+        monkeypatch.setenv("RATELIMIT_ENABLED", "false")
+        monkeypatch.setenv("RATELIMIT_STORAGE_URL", "redis://192.0.2.1:6379")
+        built = client_limiter()
+        assert built.enabled is True
+        assert type(built._storage).__name__ == "MemoryStorage"
+        # The limiters of the modules are built by it (test_no_code_of_the_supervisor_turns_a_limiter_off).
+        assert auth_limits.limiter.enabled is True and type(auth_limits.limiter._storage).__name__ == "MemoryStorage"
 
 
 class TestHealthchecks:

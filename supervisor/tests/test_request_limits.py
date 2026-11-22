@@ -520,7 +520,8 @@ def _uvicorn_options(dockerfile: str) -> dict:
     args = json.loads(line.split(" ", 1)[1])
     if args[:2] == ["/bin/bash", "-c"]:  # Dockerfile.test: "setup && exec uvicorn ..."
         args = shlex.split(args[2].split("exec ", 1)[1])
-    assert args[:2] == ["uvicorn", "src.main:app"], args
+    # The test image's stack_app:app is src.main:app with the sign-in limit off (ADR-0452).
+    assert args[:2] == ["uvicorn", "src.main:app" if dockerfile == "Dockerfile" else "stack_app:app"], args
     given = [arg for arg in args if arg == "--ws-max-size" or arg.startswith("--ws-max-size=")]
     assert len(given) == 1, f"{dockerfile}: uvicorn must run with --ws-max-size"
     return uvicorn_command.make_context("uvicorn", args[1:]).params

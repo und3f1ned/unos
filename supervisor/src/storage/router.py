@@ -4,14 +4,13 @@ from collections.abc import Callable
 from typing import Annotated, Any, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import verify_token
 from ..openapi import BODY, RATE_LIMITED, answer, errors
+from ..rate_limits import client_limiter
 from ..security.validators import (
     sanitize_error_message,
     validate_filesystem_uuid,
@@ -47,7 +46,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # Rate limiter for storage endpoints
-limiter = Limiter(key_func=get_remote_address)
+limiter = client_limiter()
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 

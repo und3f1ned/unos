@@ -34,12 +34,16 @@ RUN mkdir -p /data /mnt/pools/testpool /etc/samba
 COPY tests/fixtures/init-test-data.sh /init-test-data.sh
 RUN chmod +x /init-test-data.sh
 
+# The app of src.main with the sign-in limit off: every spec reaches the supervisor from the
+# network's gateway, one client of the limit (ADR-0452). supervisor/Dockerfile never copies it.
+COPY tests/fixtures/stack_app.py ./stack_app.py
+
 # No .pyc files: the container's writable layer is on the system disk (SD card).
 ENV PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8080
 
 # Use entrypoint that sets up test data before starting. Trusted proxy
-# addresses come from FORWARDED_ALLOW_IPS, and --ws-max-size and
-# --ws-per-message-deflate are the same as in supervisor/Dockerfile (see there).
-ENTRYPOINT ["/bin/bash", "-c", "/init-test-data.sh && exec uvicorn src.main:app --host 0.0.0.0 --port 8080 --proxy-headers --ws-max-size 65536 --ws-per-message-deflate false --limit-concurrency 128 --timeout-graceful-shutdown 3"]
+# addresses come from FORWARDED_ALLOW_IPS, and the flags are the same as in
+# supervisor/Dockerfile (see there); stack_app:app is src.main:app (see above).
+ENTRYPOINT ["/bin/bash", "-c", "/init-test-data.sh && exec uvicorn stack_app:app --host 0.0.0.0 --port 8080 --proxy-headers --ws-max-size 65536 --ws-per-message-deflate false --limit-concurrency 128 --timeout-graceful-shutdown 3"]

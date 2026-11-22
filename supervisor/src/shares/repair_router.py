@@ -25,8 +25,6 @@ from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,13 +34,14 @@ from ..auth.models import User
 from ..auth.utils import require_admin
 from ..database import get_db
 from ..openapi import RATE_LIMITED, errors
+from ..rate_limits import client_limiter
 from ..security.validators import pools_base, sanitize_error_message
 from . import accounts, constants, models, repair, service
 
 logger = logging.getLogger(__name__)
 
 # Rate limiter for the repair endpoint
-limiter = Limiter(key_func=get_remote_address)
+limiter = client_limiter()
 
 router = APIRouter(prefix="/shares", tags=["shares"])
 

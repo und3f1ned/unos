@@ -15,8 +15,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.router import log_action
@@ -24,6 +22,7 @@ from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
 from ..database import get_db
 from ..openapi import BODY, RATE_LIMITED, answer, errors
+from ..rate_limits import client_limiter
 from ..security.validators import sanitize_error_message
 from ..storage import pools
 from . import listen, nfs, service, smb
@@ -47,7 +46,7 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 # Rate limiter for shares endpoints
-limiter = Limiter(key_func=get_remote_address)
+limiter = client_limiter()
 
 router = APIRouter(prefix="/shares", tags=["shares"])
 
