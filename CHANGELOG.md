@@ -96,6 +96,11 @@ manager, encrypted backup uploads, health checks, CI checks).
 - The CI workflow runs on GitHub again (ADR-0462, which supersedes ADR-0230): every push to `main`
   and every pull request against it runs its Unit Tests, Lint and Audit, Frontend Checks, Commit
   Messages and Secret Scan jobs; `make check` stays the gate before a change is done.
+- CI's Unit Tests job checks the rendered smb.conf with Samba's real testparm (ADR-0463): it
+  installs `samba-common-bin` from the runner's Ubuntu before `make test`, and
+  `supervisor/tests/test_smbconf_testparm.py`, which skipped there, runs against it; where `CI=true`
+  a missing testparm fails the test instead of skipping it. The summary of `make test` in CI lists
+  every skip with its place and reason besides the failures (`PYTEST_ARGS=-rfEs`).
 - The web UI writes every number, size, percentage, duration, date and time through one home,
   `webui/src/lib/format.ts` and `webui/src/lib/time.ts`, with the words of the catalog `format`, in
   the format of the interface's language (ADR-0459): the dashboard and Files write a decimal comma

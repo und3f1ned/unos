@@ -4344,9 +4344,10 @@
       "adr": [
         "ADR-0189",
         "ADR-0190",
-        "ADR-0230"
+        "ADR-0462",
+        "ADR-0463"
       ],
-      "notes": "Waits while the CI workflow is off on GitHub (ADR-0230)."
+      "notes": "Built (ADR-0463), waiting for a run on GitHub (ADR-0462). Step 1: the Unit Tests job of .github/workflows/test.yml has the step `Install Samba's testparm` before `make test`: apt-get update, apt-get install --no-install-recommends samba-common-bin, with apt's retries (Samba 4.23.6 on ubuntu-latest, Ubuntu 26.04, on 2026-11-22), sudo mkdir -p -m 0755 /run/samba and testparm --version; no condition, no continue-on-error, and make test runs after it also when it failed (test_repo_tooling.py::test_unit_tests_install_samba_testparm_before_the_tests). Step 2: tests/test_smbconf_testparm.py runs the first testparm on PATH, and where CI=true, as GitHub sets it, a missing testparm fails each test instead of skipping it (test_deploy_scripts.py::TestContinuousIntegration::test_the_testparm_check_fails_in_ci_without_testparm); `make test` runs there with PYTEST_ARGS=-rfEs, so that its summary lists every failure and every skip with its place and reason. To pass: in the Unit Tests log of a run, the install step prints the Samba version, make test is green, and its summary has no SKIPPED line and no FAILED line for tests/test_smbconf_testparm.py. The workstation (scripts/dev/bin/testparm) and the device check are unchanged."
     },
     {
       "id": "ci.python-type-check",

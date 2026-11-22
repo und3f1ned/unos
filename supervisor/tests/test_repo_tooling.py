@@ -1777,6 +1777,42 @@ def test_unit_tests_check_out_the_history_for_the_ledger_comparison():
     assert [env for env in environments if "FEATURE_LIST_BASE" in env] == []
 
 
+def test_unit_tests_install_samba_testparm_before_the_tests():
+    """tests/test_smbconf_testparm.py checks the rendered smb.conf with the runner's own testparm
+    (ADR-0463): the Unit Tests job installs samba-common-bin with apt and makes Samba's folder in
+    /run before make test, in a step whose failure fails the job, and leaves CI as GitHub sets it,
+    so that a missing testparm fails the check there instead of skipping it. make test runs also
+    when the install failed, as long as the supervisor's packages are installed (ADR-0190)."""
+    workflow = _workflow("test.yml")
+    job = workflow["jobs"]["test"]
+    steps = job["steps"]
+    runs = [step.get("run") for step in steps]
+    installs = [index for index, run in enumerate(runs) if run and "samba-common-bin" in run]
+    environments = [workflow.get("env", {}), job.get("env", {})] + [step.get("env", {}) for step in steps]
+
+    assert len(installs) == 1 and installs[0] < runs.index("make test") == len(steps) - 1
+    install = steps[installs[0]]
+    assert install["name"] == "Install Samba's testparm"
+    # The default shell of a run step on Linux is bash -e: every line must succeed.
+    assert [line.strip() for line in install["run"].splitlines() if line.strip()] == [
+        "sudo apt-get -o Acquire::Retries=3 update",
+        "sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends"
+        " samba-common-bin",
+        "sudo mkdir -p -m 0755 /run/samba",
+        "testparm --version",
+    ]
+    assert {"if", "shell", "continue-on-error"} & set(install) == set()
+    assert "defaults" not in workflow and "defaults" not in job
+    deps = [step for step in steps if step.get("id") == "deps"]
+    assert len(deps) == 1 and deps[0]["run"].startswith("pip install ") and steps.index(deps[0]) < installs[0]
+    assert steps[-1]["if"] == "${{ !cancelled() && steps.deps.outcome == 'success' }}"
+    assert "continue-on-error" not in steps[-1] and "continue-on-error" not in job
+    # make test's summary lists the failures and errors, as pytest's default -rfE does, and every
+    # skip with its place and reason: a -r of its own replaces the default.
+    assert steps[-1].get("env") == {"PYTEST_ARGS": "-rfEs"}
+    assert [env for env in environments if "CI" in env] == []
+
+
 def test_ci_jobs_run_the_targets_of_make_check():
     jobs = _workflow("test.yml")["jobs"]
     runs = {name: [step["run"] for step in job["steps"] if "run" in step] for name, job in jobs.items()}
