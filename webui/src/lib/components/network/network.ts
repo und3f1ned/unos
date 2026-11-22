@@ -8,6 +8,18 @@ export type { Translate } from '$lib/i18n';
 /** The message of an error that an API call threw. */
 export { messageOf } from '$lib/errors';
 
+// The operational states that the kernel reports for an interface (operstate), which the badges of
+// System > Network and of the SMB interfaces dialog show: keys of the catalog.
+export const LINK_STATES: Record<string, string> = {
+	UP: 'network.state.up',
+	DOWN: 'network.state.down',
+	LOWERLAYERDOWN: 'network.state.lowerLayerDown',
+	DORMANT: 'network.state.dormant',
+	TESTING: 'network.state.testing',
+	NOTPRESENT: 'network.state.notPresent',
+	UNKNOWN: 'network.state.unknown'
+};
+
 /** The text of `value`'s key in `keys`, in the language of the page; a value without one as it comes. */
 export function labelOf(t: Translate, keys: Record<string, string>, value: string | null): string {
 	return value !== null && Object.prototype.hasOwnProperty.call(keys, value) ? t(keys[value]) : (value ?? '');

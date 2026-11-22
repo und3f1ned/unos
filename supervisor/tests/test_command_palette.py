@@ -43,7 +43,7 @@ def choice(*names: str, keywords: tuple[str, ...] = ()) -> dict:
 CHOICES = [
     choice("Dashboard", "Обзор"),
     choice("Storage", "Хранилище", keywords=("pools disks volumes", "пулы диски тома")),
-    choice("App Store", "Каталог приложений"),
+    choice("App Store", "Магазин приложений"),
     choice("Audit Log", "Журнал аудита"),
     choice("System Logs", "Системные журналы"),
     choice("Disk Health", "Состояние дисков", keywords=("SMART disks", "SMART диски")),

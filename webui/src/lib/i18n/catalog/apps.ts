@@ -345,7 +345,7 @@ export const ru: Translation<typeof en> = {
 	'apps.category.ai': 'ИИ и LLM',
 	'apps.category.productivity': 'Продуктивность',
 	'apps.category.download': 'Загрузки',
-	'apps.category.backup': 'Резервное копирование',
+	'apps.category.backup': 'Резервные копии',
 	'apps.category.monitoring': 'Мониторинг',
 	'apps.category.network': 'Сеть',
 	'apps.category.documents': 'Документы',
@@ -377,14 +377,14 @@ export const ru: Translation<typeof en> = {
 	'apps.installed.uninstallTitle': 'Удалить приложение {name}?',
 	'apps.installed.busy': 'Дождитесь окончания установки, обновления или отката этого приложения.',
 	'apps.installed.confirmUninstall': {
-		one: 'Его контейнер будет удалён, а папки с данными останутся.',
+		one: 'Его {n} контейнер будет удалён, а папки с данными останутся.',
 		few: 'Его {n} контейнера будут удалены, а папки с данными останутся.',
 		many: 'Его {n} контейнеров будут удалены, а папки с данными останутся.'
 	},
 	'apps.installed.uninstallAction': 'Удалить приложение',
 	'apps.installed.loadErrorTitle': 'Docker не отвечает',
 	'apps.installed.loadError':
-		'Не удалось загрузить установленные приложения; пока Docker не ответит, приложения нельзя устанавливать, запускать и останавливать. Повторите, когда он снова заработает; его причина:',
+		'Не удалось загрузить установленные приложения; пока Docker не ответит, приложения нельзя устанавливать, запускать и останавливать. Повторите, когда он снова заработает; причина:',
 	'apps.installed.loadFailedTitle': 'Не удалось загрузить установленные приложения',
 	'apps.installed.loadFailed': 'Пока они не загружены, приложения нельзя устанавливать. Повторите; причина:',
 	'apps.installed.startFailed': 'Не удалось запустить приложение',
@@ -396,14 +396,14 @@ export const ru: Translation<typeof en> = {
 	'apps.resources.memory': 'Память',
 	'apps.resources.cpu': 'ЦП',
 	'apps.resources.hint':
-		'По последнему замеру UNOS, примерно раз в 30 секунд; при превышении лимита приходит оповещение.',
+		'По последнему замеру UNOS, примерно раз в 30 секунд; при превышении ограничения приходит оповещение.',
 	'apps.resources.memoryUse': '{used} из {limit}',
-	'apps.resources.memoryUseNoLimit': '{used}, без лимита',
-	'apps.resources.memoryLimit': 'Лимит {limit}',
+	'apps.resources.memoryUseNoLimit': '{used}, без ограничения',
+	'apps.resources.memoryLimit': 'Ограничение {limit}',
 	'apps.resources.cpuUse': '{used} из {limit} ЦП',
-	'apps.resources.cpuUseNoLimit': '{used} ЦП, без лимита',
-	'apps.resources.cpuLimit': 'Лимит {limit} ЦП',
-	'apps.resources.noLimit': 'Без лимита',
+	'apps.resources.cpuUseNoLimit': '{used} ЦП, без ограничения',
+	'apps.resources.cpuLimit': 'Ограничение {limit} ЦП',
+	'apps.resources.noLimit': 'Без ограничения',
 	'apps.resources.memoryBar': 'Память {name} относительно ограничения',
 	'apps.resources.cpuBar': 'ЦП {name} относительно ограничения',
 	'apps.resources.notRead': {
@@ -477,7 +477,7 @@ export const ru: Translation<typeof en> = {
 		many: '{n}, работают вместе'
 	},
 	'apps.detail.containersHint':
-		'Приложение {name} работает в {count} контейнерах в собственной сети: UNOS устанавливает, запускает, останавливает и удаляет их вместе. Каждый образ закреплён по дайджесту.',
+		'Приложение {name} состоит из нескольких контейнеров ({count}) в собственной сети: UNOS устанавливает, запускает, останавливает и удаляет их вместе. Каждый образ закреплён по дайджесту.',
 	'apps.detail.diskAwake':
 		'Пока {name} работает, жёсткие диски его пула не засыпают: его база данных и задания постоянно пишут на них. Чтобы они могли заснуть, остановите {name} на вкладке «Установленные».',
 	'apps.detail.imagesSize': 'Около {size} под образы',
@@ -506,7 +506,7 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.notOnPool': 'Вне пула',
 	'apps.detail.noVolumes': 'В это приложение не смонтированы папки хоста.',
 	'apps.detail.volumesPoolHint':
-		'Папки с данными создаются в выбранном пуле хранения. Папка с данными может указывать на другую папку внутри смонтированного пула, но не в снимок и не в корзину, а на общую папку — только у приложения, которое работает в группе unos-smb.',
+		'Папки с данными создаются в выбранном пуле хранения. Папка с данными может указывать на другую папку внутри смонтированного пула, но не на папку в снимке или корзине, а на общую папку — только у приложения, которое работает в группе unos-smb.',
 	'apps.detail.volumesSystemHint': 'Системные пути с пометкой «Системный» монтируются с хоста как есть.',
 	'apps.detail.insidePool': 'Путь должен быть внутри смонтированного пула хранения',
 	'apps.detail.system': 'Системный',
@@ -538,7 +538,7 @@ export const ru: Translation<typeof en> = {
 
 	'apps.detail.checking': 'Проверка пула, портов и свободного места...',
 	'apps.detail.notAvailable':
-		'{name} недоступно для {platform}: у образа приложения нет сборки для платформы этого сервера, поэтому установить его здесь нельзя.',
+		'Приложение {name} недоступно для {platform}: у одного из его образов нет сборки для платформы этого сервера, поэтому установить его здесь нельзя.',
 	'apps.detail.installRunning': 'Идёт установка приложения {name}: установите это приложение, когда она закончится.',
 	'apps.detail.dockerDown':
 		'Docker не отвечает, поэтому сейчас нельзя установить ни одно приложение. Повторите в магазине приложений, когда он снова заработает.',
@@ -549,24 +549,24 @@ export const ru: Translation<typeof en> = {
 	'apps.job.state.succeeded': 'Установлено',
 	'apps.job.state.failed': 'Ошибка',
 	'apps.job.step.checking': 'Проверка пула, портов и свободного места',
-	'apps.job.step.pulling': 'Загрузка образов',
+	'apps.job.step.pulling': 'Скачивание образов',
 	'apps.job.step.creating': 'Создание папок и контейнеров',
 	'apps.job.step.starting': 'Запуск контейнеров',
 	'apps.job.images': 'Образы',
 	'apps.job.containers': 'Контейнеры',
 	'apps.job.image.waiting': 'Ожидает',
 	'apps.job.image.present': 'Уже есть на NAS',
-	'apps.job.image.pulling': 'Загружается',
-	'apps.job.image.pulled': 'Загружен',
+	'apps.job.image.pulling': 'Скачивается',
+	'apps.job.image.pulled': 'Скачан',
 	'apps.job.image.failed': 'Ошибка',
-	'apps.job.download': 'Загрузка образа {image}',
+	'apps.job.download': 'Скачивание образа {image}',
 	'apps.job.bytes': '{done} из {total}',
 	'apps.job.imagesReady': {
 		one: 'На NAS {done} из {n} образа',
 		few: 'На NAS {done} из {n} образов',
 		many: 'На NAS {done} из {n} образов'
 	},
-	'apps.job.downloadAll': 'Загрузка образов {name}',
+	'apps.job.downloadAll': 'Скачивание образов {name}',
 	'apps.job.container.waiting': 'Ожидает',
 	'apps.job.container.created': 'Создан',
 	'apps.job.container.starting': 'Запускается',
@@ -575,11 +575,10 @@ export const ru: Translation<typeof en> = {
 	'apps.job.container.removed': 'Удалён',
 	'apps.job.dismiss': 'Скрыть',
 	'apps.job.state.cancelled': 'Отменено',
-	'apps.job.step.cleaning': 'Удаление сделанного установкой',
+	'apps.job.step.cleaning': 'Удаление созданного при установке',
 	'apps.job.cancel': 'Отменить установку',
 	'apps.job.cancelTitle': 'Отменить установку приложения {name}?',
-	'apps.job.confirmCancel':
-		'Всё, что она успела сделать, будет удалено; папки с данными и загруженные образы останутся.',
+	'apps.job.confirmCancel': 'Всё, что она успела сделать, будет удалено; папки с данными и скачанные образы останутся.',
 	'apps.job.cancelAction': 'Отменить установку',
 	'apps.job.keepGoing': 'Продолжить установку',
 	'apps.job.cancelledTitle': 'Установка отменена',

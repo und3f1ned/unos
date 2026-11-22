@@ -217,9 +217,14 @@ test.describe('The network interfaces of SMB', () => {
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
     await expect(card(page)).toContainText(`SMB принимает подключения только на ${NIC} и на самом NAS (loopback).`);
+    // The addresses smbd listens on, after a label that each of them, and "none", completes.
+    await expect(card(page)).toContainText('Адреса SMB: 127.0.0.1, 192.168.10.5');
     await card(page).getByRole('button', { name: 'Выбрать интерфейсы…' }).click();
-    await expect(page.getByRole('dialog', { name: 'Сетевые интерфейсы SMB' })).toContainText(
-      'Сохранить и перезапустить SMB',
-    );
+    const dialog = page.getByRole('dialog', { name: 'Сетевые интерфейсы SMB' });
+    await expect(dialog).toContainText('Сохранить и перезапустить SMB');
+    // An interface's state in words, not as ip writes it.
+    await expect(dialog.locator('li').filter({ hasText: NIC }).locator('.badge')).toHaveText('Работает');
+    await expect(dialog.locator('li').filter({ hasText: 'wg0' }).locator('.badge')).toHaveText('Неизвестно');
+    await expect(dialog.getByText(/^(UP|DOWN|UNKNOWN)$/)).toHaveCount(0);
   });
 });

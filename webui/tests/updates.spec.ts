@@ -454,11 +454,11 @@ test.describe('Software Updates in Russian', () => {
     await expect(page.getByRole('heading', { level: 2, name: 'Обновления', exact: true })).toBeVisible();
     const current = card(page, 'Версия UNOS');
     await expect(current.getByText('v1.2.0-3-g712fc3a', { exact: true })).toBeVisible();
-    await expect(current.getByText('разработка', { exact: true })).toBeVisible();
+    await expect(current.getByText('сборка для разработки', { exact: true })).toBeVisible();
     const latest = card(page, 'Версия UNOS');
     await expect(latest.getByText('Доступно обновление: v1.3.0', { exact: true })).toBeVisible();
     // The version that runs is the card above's alone (ADR-0431).
-    await expect(latest.getByText('Обновите UNOS с помощью сценария ниже.', { exact: true })).toBeVisible();
+    await expect(latest.getByText('Обновите UNOS с помощью скрипта ниже.', { exact: true })).toBeVisible();
     await expect(latest.getByText('UNOS v1.3.0', { exact: true })).toBeVisible();
     await expect(latest.getByText('Опубликован 01.12.2026', { exact: true })).toBeVisible();
     await expect(latest.getByRole('link', { name: 'Открыть на GitHub' })).toHaveAttribute(
@@ -476,7 +476,7 @@ test.describe('Software Updates in Russian', () => {
     await expect(page.getByText('Ядро', { exact: true })).toBeVisible();
     await expect(page.getByLabel('Имя хоста', { exact: true })).toBeVisible();
     // The uptime in Russian units: days, hours and minutes, as long as it is.
-    await expect(page.getByText(/^(?:\d+ д \d+ ч |\d+ ч )?\d+ мин$/)).toBeVisible();
+    await expect(page.getByText(/^(?:\d+\sдн\.\s\d+\sч\s|\d+\sч\s)?\d+\sмин$/)).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'General', exact: true })).toHaveCount(0);
   });
 
@@ -503,10 +503,10 @@ test.describe('Software Updates in Russian', () => {
     await page.reload();
     const currentRu = card(page, 'Версия UNOS');
     await expect(currentRu.getByText('неизвестна', { exact: true })).toBeVisible();
-    await expect(currentRu.getByText('разработка', { exact: true })).toHaveCount(0);
+    await expect(currentRu.getByText('сборка для разработки', { exact: true })).toHaveCount(0);
     const latest = card(page, 'Версия UNOS');
     await expect(latest.getByText('Доступно обновление: v1.3.0', { exact: true })).toBeVisible();
-    await expect(latest.getByText('Обновите UNOS с помощью сценария ниже.', { exact: true })).toBeVisible();
+    await expect(latest.getByText('Обновите UNOS с помощью скрипта ниже.', { exact: true })).toBeVisible();
     await expect(currentRu.getByText(/unknown/)).toHaveCount(0);
     await expect(latest.getByText(/unknown/)).toHaveCount(0);
   });

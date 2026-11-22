@@ -4,7 +4,8 @@ import type { Translate } from '$lib/i18n';
 /** The page's $t: a key's text in the language of the page. */
 export type { Translate } from '$lib/i18n';
 
-// The units of a size, by powers of 1024, as formatBytes of $lib/stores/stats writes them.
+// The units of a size, by powers of 1024: B, KB, MB, GB and TB in English. The Images tab of the
+// Containers page writes its sizes with them too.
 const SIZE_UNITS = ['apps.size.bytes', 'apps.size.kb', 'apps.size.mb', 'apps.size.gb', 'apps.size.tb'];
 
 /**

@@ -36,7 +36,7 @@ export const ru: Translation<typeof en> = {
 	'layout.nav.shares': 'Общие папки',
 	'layout.nav.files': 'Файлы',
 	'layout.nav.containers': 'Контейнеры',
-	'layout.nav.apps': 'Каталог приложений',
+	'layout.nav.apps': 'Магазин приложений',
 	'layout.nav.users': 'Пользователи',
 	'layout.nav.audit': 'Журнал аудита',
 	'layout.nav.system': 'Система',

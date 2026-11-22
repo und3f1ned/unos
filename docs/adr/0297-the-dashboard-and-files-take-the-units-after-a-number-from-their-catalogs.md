@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0453
 date: 2026-11-08
 area: webui
 decided-by: agent
@@ -8,6 +9,9 @@ decided-by: agent
 # ADR-0297: The dashboard and Files take the units they write after a number from their catalogs, and numbers keep their decimal point
 
 ## Context
+
+Superseded by ADR-0453: the Images tab writes sizes as the App Store does, and `formatBytes` of
+`webui/src/lib/stores/stats.ts` is gone; the dashboard's and Files' rules stay.
 
 ADR-0287 moves every text of the web UI into catalogs in English and Russian, but says neither how
 the units that the web UI's own code writes after a number are translated nor how the numbers are

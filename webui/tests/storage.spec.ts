@@ -2586,7 +2586,7 @@ test.describe('The Storage page in Russian', () => {
     // The sizes with a decimal comma and the Russian units; the reason a disk is in use is the
     // server's (in_use_reason) and stays in English.
     const disks = main.locator('.card').filter({ has: page.getByRole('heading', { name: 'Диски', exact: true }) });
-    await expect(disks.locator('thead th')).toHaveText(['Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Статус', 'Питание']);
+    await expect(disks.locator('thead th')).toHaveText(['Устройство', 'Модель', 'Размер', 'Тип', 'Содержимое', 'Состояние', 'Питание']);
     const cells = (path: string) =>
       disks.getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
     await expect(cells('/dev/e2e-sd0')).toHaveText([
@@ -2627,7 +2627,7 @@ test.describe('The Storage page in Russian', () => {
       item(unlabelled.uuid).getByRole('button', { name: `Импортировать… файловую систему ${unlabelled.uuid}` }),
     ).toBeEnabled();
     await expect(item(degraded.uuid)).toContainText(
-      'Не хватает 1 устройства из 2. Подключите его, чтобы импортировать файловую систему.',
+      'Не хватает 1 устройства из 2. Чтобы импортировать файловую систему, подключите все её устройства.',
     );
     await expect(item(degraded.uuid).getByRole('button', { name: /^Импортировать/ })).toBeDisabled();
 
@@ -2662,7 +2662,7 @@ test.describe('The Storage page in Russian', () => {
     await expect(media.locator('.alert-title').filter({ hasText: 'проблем' })).toHaveText('2 проблемы');
     const problems = media.locator('.alert li');
     await expect(problems.filter({ hasText: 'Не хватает 1 диска.' })).toContainText(
-      'Подключите или замените его, пока не потеряна оставшаяся избыточность.',
+      'Подключите или замените недостающее, пока не потеряна оставшаяся избыточность.',
     );
     await expect(problems.filter({ hasText: '2 ошибки дисков.' })).toContainText(
       'btrfs насчитал ошибки чтения, записи или контрольных сумм на дисках пула. Проверьте состояние SMART ' +
@@ -2795,7 +2795,7 @@ test.describe('The Storage page in Russian', () => {
     const remove = page.getByRole('dialog', { name: 'Убрать пул' });
     await expect(remove).toContainText('UNOS перестаёт использовать пул «e2e_data».');
     await expect(remove.getByRole('listitem')).toHaveText([
-      'Он отмонтируется и больше не монтируется при загрузке: /mnt/pools/e2e_data',
+      'Он будет отмонтирован и больше не будет монтироваться при загрузке: /mnt/pools/e2e_data',
       'Его данные (931,3 ГБ) остаются на дисках, диски не стираются: пул можно будет снова смонтировать. /dev/e2e-hd9',
       'Общие папки и приложения, которые его используют, перестанут работать.',
     ]);
@@ -2808,8 +2808,8 @@ test.describe('The Storage page in Russian', () => {
     await data.getByRole('button', { name: 'Тома', exact: true }).click();
     const volumes = page.getByRole('dialog', { name: 'Тома в пуле e2e_data' });
     await expect(volumes).toContainText(
-      'Том — это папка пула в /mnt/pools/e2e_data со своими снимками и квотой; её можно открыть в сеть ' +
-        'отдельно. Снимок пула её не включает, а снимки по расписанию делаются только для пулов.',
+      'Том — это папка пула в /mnt/pools/e2e_data со своими снимками и квотой; к нему можно отдельно открыть ' +
+        'общий доступ. Снимок пула его не включает, а снимки по расписанию делаются только для пулов.',
     );
     await expect(volumes.getByRole('listitem')).toContainText(['documents']);
     const quota = volumes.getByLabel('Квота в ГиБ (необязательно)');

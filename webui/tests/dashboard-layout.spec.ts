@@ -257,7 +257,7 @@ test.describe('Dashboard layout', () => {
     await page.getByRole('button', { name: 'Скрыть «Сеть»' }).click();
     await expect(page.getByRole('region', { name: 'Скрытые виджеты' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Показать «Сеть»' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Сбросить по умолчанию' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Вернуть макет по умолчанию' })).toBeEnabled();
   });
 });
 

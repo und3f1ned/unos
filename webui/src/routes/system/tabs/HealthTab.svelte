@@ -3,7 +3,14 @@
 	import { getDiskHealth, getDiskPredictions, replaceSoon, type DiskPrediction, type SmartInfo } from '$lib/api/health';
 	import { Alert, Badge, Button, EmptyState, ErrorState, Skeleton, TechDetails } from '$lib/components/ui';
 	import { SmartDataDialog } from '$lib/components/system/health';
-	import { capacityText, diskState, orUnknown, predictionOf } from '$lib/components/system/health/texts';
+	import {
+		RECOMMENDATION,
+		capacityText,
+		diskState,
+		orUnknown,
+		predictionOf,
+		textOf
+	} from '$lib/components/system/health/texts';
 	import { intlLocale, t } from '$lib/i18n';
 	import { HardDrive, Thermometer, RefreshCw } from 'lucide-svelte';
 
@@ -138,7 +145,7 @@
 					</div>
 					{#if prediction}
 						<div class="mt-2 pl-8 text-sm">
-							<p class="text-content">{prediction.recommendation}</p>
+							<p class="text-content">{textOf($t, RECOMMENDATION, prediction.recommendation)}</p>
 							<TechDetails summary={$t('health.why')}>
 								<ul class="list-disc pl-5 text-[13px] text-content-secondary">
 									{#each prediction.risk_factors as factor}

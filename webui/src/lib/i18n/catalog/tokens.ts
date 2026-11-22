@@ -114,7 +114,7 @@ export const ru: Translation<typeof en> = {
 	'tokens.createdOn': 'Создан {date}',
 	'tokens.expiresOn': 'Действует до {date}',
 	'tokens.neverExpires': 'Бессрочный',
-	'tokens.lastUsed': 'Последнее использование {date} (сохраняется не чаще раза в час)',
+	'tokens.lastUsed': 'Последнее использование: {date} (сохраняется не чаще раза в час)',
 	'tokens.neverUsed': 'Ещё не использовался',
 	'tokens.disable': 'Отключить токен',
 	'tokens.enable': 'Включить токен',

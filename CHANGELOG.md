@@ -1778,6 +1778,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   only `supervisor/Dockerfile.test` copies (ADR-0452). On a NAS, slowapi's `RATELIMIT_ENABLED` and
   `RATELIMIT_STORAGE_URL` in the supervisor's environment or a `.env` file no longer turn a rate
   limit off or move its counters out of the supervisor's memory.
+- The web UI in Russian, after a walk through every page, tab and dialog at 1440 and 375 px in
+  both themes (ADR-0287): about 125 texts whose grammar, plural form for 21, meaning or term was
+  wrong are rewritten, and each thing has one name (ADR-0453: the App Store, mounting, limits,
+  downloading images, the dashboard's layout, sessions, scripts, the router, the off-device copy,
+  scrubs, menu paths). The disk health prediction's recommendation, the link states of the SMB
+  interfaces dialog and the Images tab's sizes, now written as the App Store writes them, are no
+  longer English. Clipped or broken Russian texts fit: the dashboard's CPU and disk tiles,
+  Resource Monitor's disk card, the App Store's backup category, the Audit Log's and the command
+  palette's placeholders, the Containers filter on a phone, image tags and process names on a
+  phone, a task's schedule and the uptime's units.
 - Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
   removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
   estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.

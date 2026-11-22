@@ -870,7 +870,7 @@ test.describe('The power schedule', () => {
 
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     await page.reload();
-    await expect(banner).toContainText('Хост выключится в 23:00 (Europe/Berlin) по расписанию настроек питания.');
+    await expect(banner).toContainText('Хост выключится в 23:00 (Europe/Berlin) по расписанию, заданному в настройках питания.');
     await expect(banner).toContainText('Выключение по расписанию в 23:00 (Europe/Berlin) отложено');
     await expect(banner).toContainText('Хост простаивает и выключится примерно в 11:32 (Europe/Berlin)');
   });

@@ -944,6 +944,12 @@ test.describe('Scheduler: in Russian', () => {
     await expect(row(SNAPSHOT_TASK.name).getByText('Следующий запуск', { exact: true })).toBeVisible();
     await expect(row(SNAPSHOT_TASK.name).getByText(/^8 нояб\. 2026 г\.,? 03:00$/)).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'Scheduler', exact: true })).toHaveCount(0);
+    // On a phone the longer Russian line of a task's type and schedule wraps, and is not cut off.
+    await page.setViewportSize({ width: 375, height: 812 });
+    const monthly = row(MONTHLY_TASK.name).getByText(/Проверка целостности \(scrub\)\s+на e2e_tank\s+• Ежемесячно/);
+    await expect(monthly).toBeVisible();
+    expect(await monthly.evaluate((line) => line.scrollWidth <= line.clientWidth)).toBe(true);
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     await page.getByRole('button', { name: 'Новая задача', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Новая задача', exact: true })).toBeVisible();
@@ -963,7 +969,7 @@ test.describe('Scheduler: in Russian', () => {
       'Ежемесячно',
       'Своё расписание (cron)',
     ]);
-    await expect(field(page, 'Час')).toHaveAccessibleDescription(`По часам часового пояса NAS, ${NAS_ZONE}.`);
+    await expect(field(page, 'Час')).toHaveAccessibleDescription(`По времени часового пояса NAS: ${NAS_ZONE}.`);
     // The minimum length of a passphrase takes the plural form of its count.
     await field(page, 'Тип задачи').selectOption('backup');
     await expect(page.getByText('Обязательна, не менее 8 символов.', { exact: false })).toBeVisible();

@@ -92,7 +92,8 @@
 					<Badge variant="error" dot>{$t('scheduler.task.lastFailed')}</Badge>
 				{/if}
 			</div>
-			<p class="truncate text-xs text-content-secondary">
+			<!-- Wraps on a phone: cut off, a long type such as the Russian one hid the schedule. -->
+			<p class="break-words text-xs text-content-secondary">
 				{getTaskTypeLabel(task.task_type)}
 				{#if task.target_pool}
 					{$t('scheduler.task.on', { target: task.target_pool })}

@@ -8,7 +8,7 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import type { NetworkInterface as WSNetworkInterface } from '$lib/stores/stats';
 	import { ArrowDown, ArrowUp, Cable, ChevronDown, ChevronUp, Network, Power, PowerOff, Wifi } from 'lucide-svelte';
-	import { labelOf } from './network';
+	import { LINK_STATES, labelOf } from './network';
 
 	type Props = {
 		iface: NetworkInterface;
@@ -24,17 +24,6 @@
 
 	let { iface, wsIface, expanded, busy, ontoggle, ondisable, onenable }: Props = $props();
 
-	// The operational states that the kernel reports for an interface (operstate), which its badge
-	// shows: keys of the catalog.
-	const STATES: Record<string, string> = {
-		UP: 'network.state.up',
-		DOWN: 'network.state.down',
-		LOWERLAYERDOWN: 'network.state.lowerLayerDown',
-		DORMANT: 'network.state.dormant',
-		TESTING: 'network.state.testing',
-		NOTPRESENT: 'network.state.notPresent',
-		UNKNOWN: 'network.state.unknown'
-	};
 	// The units of a count of bytes, one for each power of 1024: keys of the catalog.
 	const BYTE_UNITS = [
 		'network.bytes.b',
@@ -88,7 +77,7 @@
 				<div class="flex items-center gap-2">
 					<span class="font-semibold text-content">{iface.name}</span>
 					<Badge variant={!iface.enabled ? 'neutral' : ifaceIsUp ? 'success' : 'warning'}>
-						{iface.enabled ? labelOf($t, STATES, iface.state) : $t('network.interface.disabled')}
+						{iface.enabled ? labelOf($t, LINK_STATES, iface.state) : $t('network.interface.disabled')}
 					</Badge>
 					{#if iface.speed}
 						<span class="text-xs text-content-secondary">{formatSpeed(iface.speed)}</span>

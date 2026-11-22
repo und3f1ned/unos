@@ -3,7 +3,7 @@
 	import { Download, Layers, Trash2 } from 'lucide-svelte';
 	import { Alert, Button, Card, EmptyState, Input, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { getImages, pullImage, removeImage, type Image } from '$lib/api/containers';
-	import { formatBytes } from '$lib/stores/stats';
+	import { formatSize } from '$lib/components/apps/size';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { NO_SECONDS } from './labels';
@@ -181,7 +181,9 @@
 					<tbody>
 						{#each images as image (image.id)}
 							<tr class="table-row align-top">
-								<td>
+								<!-- A tag breaks anywhere; at its least 12rem wide, so that a phone's frame scrolls
+								     instead of breaking it after every few letters. -->
+								<td class="min-w-[12rem]">
 									{#if image.tags.length > 0}
 										{#each image.tags as tag}
 											<p class="mono text-sm break-all">{tag}</p>
@@ -191,7 +193,7 @@
 									{/if}
 								</td>
 								<td class="mono-xs text-content-secondary">{image.id}</td>
-								<td class="num">{formatBytes(image.size)}</td>
+								<td class="num">{formatSize(image.size, $intlLocale, $t, 2)}</td>
 								<td class="whitespace-nowrap">{formatDate(image.created)}</td>
 								<td>
 									<div class="flex justify-end">

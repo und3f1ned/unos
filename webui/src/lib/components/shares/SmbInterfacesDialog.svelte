@@ -4,6 +4,7 @@
 	import { Alert, Badge, Button, Checkbox, HelpText, RadioGroup, Sheet } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { messageOf } from './errors';
+	import { LINK_STATES, labelOf } from '$lib/components/network/network';
 
 	// The choice of the interfaces that SMB listens on (ADR-0391). Mounted while open: it starts
 	// from the server's choice as reset() takes it.
@@ -103,7 +104,9 @@
 								<span class="flex flex-wrap items-center gap-2">
 									<span class="mono break-all">{entry.name}</span>
 									{#if entry.present}
-										<Badge variant={entry.state === 'UP' ? 'success' : 'neutral'}>{entry.state}</Badge>
+										<Badge variant={entry.state === 'UP' ? 'success' : 'neutral'}
+											>{labelOf($t, LINK_STATES, entry.state)}</Badge
+										>
 									{/if}
 								</span>
 							</Checkbox>

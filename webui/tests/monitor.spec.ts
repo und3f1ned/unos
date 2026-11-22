@@ -310,9 +310,9 @@ test.describe('Resource Monitor', () => {
     await send();
     const range = page.getByRole('group', { name: 'Период' });
     await expect(range.getByRole('button')).toHaveText(['5 мин', '15 мин', '1 час']);
-    const cpu = card(page, 'Процессор');
+    const cpu = card(page, 'ЦП');
     await expect(cpu.getByText('12,5 %', { exact: true })).toBeVisible();
-    await expect(cpu.getByRole('img', { name: 'Процессор за последние 5 минут' })).toBeVisible();
+    await expect(cpu.getByRole('img', { name: 'ЦП за последние 5 минут' })).toBeVisible();
     await expect(cpu.getByText('Пик 25,0 %', { exact: true })).toBeVisible();
     await expect(card(page, 'Память').getByText('31,3 %', { exact: true })).toBeVisible();
     await expect(page.getByText('2,5 ГБ / 8 ГБ', { exact: true })).toBeVisible();
@@ -320,16 +320,16 @@ test.describe('Resource Monitor', () => {
     await expect(network.getByText('↓ 1,5 КБ/с', { exact: true })).toBeVisible();
     await expect(network.getByText('↑ 1 КБ/с', { exact: true })).toBeVisible();
     await expect(network.getByText('Пик ↓ 2 КБ/с ↑ 1 КБ/с', { exact: true })).toBeVisible();
-    const disk = card(page, 'Дисковый ввод-вывод');
+    const disk = card(page, 'Диски');
     await expect(disk.getByText('Чтение 512 Б/с', { exact: true })).toBeVisible();
     await expect(disk.getByText('Запись 3,25 МБ/с', { exact: true })).toBeVisible();
     await expect(disk.getByText('Пик: чтение 1 КБ/с, запись 3,25 МБ/с', { exact: true })).toBeVisible();
 
     await range.getByRole('button', { name: '1 час', exact: true }).click();
-    await expect(cpu.getByRole('img', { name: 'Процессор за последний час' })).toBeVisible();
+    await expect(cpu.getByRole('img', { name: 'ЦП за последний час' })).toBeVisible();
     await expect(cpu.getByText('Пик 90,0 %', { exact: true })).toBeVisible();
     await range.getByRole('button', { name: '15 мин', exact: true }).click();
-    await expect(cpu.getByRole('img', { name: 'Процессор за последние 15 минут' })).toBeVisible();
+    await expect(cpu.getByRole('img', { name: 'ЦП за последние 15 минут' })).toBeVisible();
 
     await expect(page.getByRole('heading', { name: 'Ядра процессора' })).toBeVisible();
     const processes = card(page, 'Самые активные процессы');
@@ -345,5 +345,12 @@ test.describe('Resource Monitor', () => {
       await expect(page.getByText(english, { exact: true })).toHaveCount(0);
     }
     await expect(page.locator('main')).not.toContainText(/\d (B|KB|MB|GB|TB)\b|Peak/);
+
+    // On a phone the longer Russian heads leave a process's name 8rem: the table scrolls in its
+    // frame instead of breaking the name after every few letters.
+    await page.setViewportSize({ width: 375, height: 812 });
+    const name = processes.getByRole('row').filter({ hasText: 'smbd' }).getByRole('cell').first();
+    await expect(name).toHaveText('smbd');
+    expect((await name.boundingBox())?.width).toBeGreaterThanOrEqual(8 * 16);
   });
 });

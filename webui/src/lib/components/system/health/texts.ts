@@ -16,6 +16,15 @@ export const HEALTH_STATUS: Record<string, string> = {
 	STANDBY: 'health.status.standby'
 };
 
+// The recommendation of a failure prediction as the server writes it, one sentence per status
+// (_predict_failure of supervisor/src/health/router.py): keys of the catalog.
+export const RECOMMENDATION: Record<string, string> = {
+	'Disk showing signs of failure. Replace within 30 days.': 'health.recommendation.replaceSoon',
+	'Disk health degrading. Monitor daily and prepare replacement.': 'health.recommendation.monitorClosely',
+	'Minor issues detected. Continue monitoring.': 'health.recommendation.watch',
+	'No concerning trends detected.': 'health.recommendation.healthy'
+};
+
 // A disk's capacity as the server writes it, "3.64 TB" or "931.51 GB" (_format_capacity of
 // supervisor/src/health/router.py), by the unit: keys of the catalog.
 const CAPACITY_UNITS: Record<string, string> = {

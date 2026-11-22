@@ -118,9 +118,9 @@ export const en = {
 
 export const ru: Translation<typeof en> = {
 	'dashboard.osUptime': '{os} · Время работы {uptime}',
-	'dashboard.uptime.days': '{days} дн. {hours} ч',
-	'dashboard.uptime.hours': '{hours} ч {minutes} мин',
-	'dashboard.uptime.minutes': '{minutes} мин',
+	'dashboard.uptime.days': '{days}\u00a0дн. {hours}\u00a0ч',
+	'dashboard.uptime.hours': '{hours}\u00a0ч {minutes}\u00a0мин',
+	'dashboard.uptime.minutes': '{minutes}\u00a0мин',
 	'dashboard.noProblems': 'Проблем нет',
 	'dashboard.issues': { one: '{n} проблема', few: '{n} проблемы', many: '{n} проблем' },
 	'dashboard.notification': 'Уведомление',
@@ -131,7 +131,7 @@ export const ru: Translation<typeof en> = {
 	'dashboard.issue.poolUnmounted': 'Пул {name} не смонтирован',
 	'dashboard.issue.poolUnknown': 'Не удалось прочитать состояние пула {name}',
 	'dashboard.issue.poolReadOnly': 'Пул {name} смонтирован только для чтения',
-	'dashboard.issue.replaceSoon': 'Скоро замените диск {device} (серийный номер {serial})',
+	'dashboard.issue.replaceSoon': 'Замените диск {device} в ближайшее время (серийный номер {serial})',
 	'dashboard.issue.predictionsFailed': 'Не удалось проверить прогноз отказа дисков',
 	'dashboard.issue.poolsFailed': 'Не удалось прочитать пулы',
 
@@ -141,11 +141,11 @@ export const ru: Translation<typeof en> = {
 		'Сменить пароль, настроить двухфакторную аутентификацию и просмотреть историю входов можно на странице',
 	'dashboard.user.accountLink': 'Учётная запись',
 
-	'dashboard.stats.cpu': 'Процессор',
+	'dashboard.stats.cpu': 'ЦП',
 	'dashboard.stats.cores': { one: '{n} ядро', few: '{n} ядра', many: '{n} ядер' },
 	'dashboard.stats.memory': 'Память',
 	'dashboard.stats.network': 'Сеть',
-	'dashboard.stats.diskIo': 'Дисковый ввод-вывод',
+	'dashboard.stats.diskIo': 'Диски',
 	'dashboard.stats.read': 'Чтение',
 	'dashboard.stats.write': 'Запись',
 	'dashboard.stats.received': 'Принято',
@@ -167,7 +167,7 @@ export const ru: Translation<typeof en> = {
 	'dashboard.layout.customize': 'Настроить',
 	'dashboard.layout.done': 'Готово',
 	'dashboard.layout.hint':
-		'Перетащите виджет за ручку или переместите стрелками. Ненужные виджеты можно скрыть: они останутся здесь, чтобы показать их снова.',
+		'Перетащите виджет за ручку или переместите его стрелками. Ненужные виджеты можно скрыть: они останутся здесь, и их можно будет снова показать.',
 	'dashboard.layout.drag': 'Перетащить',
 	'dashboard.layout.moveUp': 'Переместить «{name}» выше',
 	'dashboard.layout.moveDown': 'Переместить «{name}» ниже',
@@ -177,13 +177,13 @@ export const ru: Translation<typeof en> = {
 	'dashboard.layout.noneHidden': 'Скрытых виджетов нет',
 	'dashboard.layout.allHidden': 'Все виджеты скрыты',
 	'dashboard.layout.allHiddenHint': 'Кнопка «Настроить» снова их покажет.',
-	'dashboard.layout.reset': 'Сбросить по умолчанию',
+	'dashboard.layout.reset': 'Вернуть макет по умолчанию',
 	'dashboard.layout.moved': 'Виджет «{name}» теперь на месте {position} из {total}',
 	'dashboard.layout.hidden': 'Виджет «{name}» скрыт',
 	'dashboard.layout.shown': 'Виджет «{name}» показан',
-	'dashboard.layout.wasReset': 'Панель возвращена к раскладке по умолчанию',
-	'dashboard.layout.saveFailed': 'Не удалось сохранить раскладку панели: {error}',
-	'dashboard.layout.loadFailed': 'Не удалось загрузить раскладку панели; показана раскладка по умолчанию',
+	'dashboard.layout.wasReset': 'Панель возвращена к макету по умолчанию',
+	'dashboard.layout.saveFailed': 'Не удалось сохранить макет панели: {error}',
+	'dashboard.layout.loadFailed': 'Не удалось загрузить макет панели; показан макет по умолчанию',
 
 	'dashboard.storage.title': 'Пулы хранения',
 	'dashboard.storage.none': 'Пулов пока нет: создайте пул на странице «Хранилище».',
@@ -217,9 +217,9 @@ export const ru: Translation<typeof en> = {
 	'dashboard.containers.none': 'Контейнеров пока нет',
 	'dashboard.containers.open': 'Открыть',
 	'dashboard.containers.shown': {
-		one: 'Показаны {shown} из {n} контейнера',
-		few: 'Показаны {shown} из {n} контейнеров',
-		many: 'Показаны {shown} из {n} контейнеров'
+		one: 'Показано {shown} из {n} контейнера',
+		few: 'Показано {shown} из {n} контейнеров',
+		many: 'Показано {shown} из {n} контейнеров'
 	},
 	'dashboard.containers.state.running': 'Работает',
 	'dashboard.containers.state.exited': 'Остановлен',

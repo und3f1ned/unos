@@ -100,12 +100,12 @@ export const ru: Translation<typeof en> = {
 	'updates.current.error': 'Не удалось прочитать текущую версию',
 	'updates.current.version': 'Установлена',
 	'updates.current.unknown': 'неизвестна',
-	'updates.current.dev': 'разработка',
+	'updates.current.dev': 'сборка для разработки',
 
 	'updates.latest.checkFailed': 'Не удалось проверить обновления',
 	'updates.latest.none': 'Выпусков пока не опубликовано.',
 	'updates.latest.available': 'Доступно обновление: {tag}',
-	'updates.latest.howTo': 'Обновите UNOS с помощью сценария ниже.',
+	'updates.latest.howTo': 'Обновите UNOS с помощью скрипта ниже.',
 	'updates.latest.upToDate': 'Установлен последний выпуск, {tag}.',
 	'updates.latest.github': 'Открыть на GitHub',
 	'updates.latest.published': 'Опубликован {date}',
@@ -114,10 +114,10 @@ export const ru: Translation<typeof en> = {
 	'updates.latest.includePrereleases': 'Учитывать предварительные выпуски',
 
 	'updates.how.title': 'Как обновить',
-	'updates.how.run': 'UNOS обновляется на хосте своим сценарием обновления. Запустите его там от имени root:',
+	'updates.how.run': 'UNOS обновляется на хосте своим скриптом обновления. Запустите его там от имени root:',
 	'updates.how.details':
-		'Сценарий создаёт резервную копию базы данных и тома данных, собирает новую версию, пока UNOS продолжает работать, и снова запускает прежнюю версию, если новая не отвечает. На этом NAS веб-интерфейс пока не устанавливает и не откатывает обновления.',
-	'updates.how.more': 'Что делает сценарий',
+		'Скрипт создаёт резервную копию базы данных и тома данных, собирает новую версию, пока UNOS продолжает работать, и снова запускает прежнюю версию, если новая не отвечает. На этом NAS веб-интерфейс пока не устанавливает и не откатывает обновления.',
+	'updates.how.more': 'Что делает скрипт',
 	'updates.how.why': 'Почему не отсюда',
 
 	'updates.install': 'Установить {tag}',
@@ -132,7 +132,7 @@ export const ru: Translation<typeof en> = {
 	'updates.latest.installHere':
 		'Установите его здесь: UNOS сначала сохранит базу данных и вернётся назад, если новая версия не ответит.',
 	'updates.timeZone': 'Время на этой вкладке — по часам NAS: {zone}.',
-	'updates.latest.stableOnly': 'Установка обновлений ставит только стабильные выпуски.',
+	'updates.latest.stableOnly': 'Устанавливаются только стабильные выпуски.',
 
 	'updates.job.title': 'Последнее обновление',
 	'updates.job.running': 'Выполняется',
@@ -176,6 +176,6 @@ export const ru: Translation<typeof en> = {
 	'updates.auto.save': 'Сохранить',
 	'updates.auto.noChanges': 'Нет изменений',
 	'updates.auto.invalid': 'Интервал — от 1 до 168 часов',
-	'updates.auto.saved': 'Автоматическая установка сохранена',
-	'updates.auto.saveFailed': 'Не удалось сохранить автоматическую установку'
+	'updates.auto.saved': 'Настройки автоматической установки сохранены',
+	'updates.auto.saveFailed': 'Не удалось сохранить настройки автоматической установки'
 };
