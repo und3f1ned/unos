@@ -1804,6 +1804,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The Trash page shows the answer of its latest list only: a list asked before Empty trash, Delete
+  for good or Restore (a Refresh) that answered after the list that follows them brought back the
+  items they had removed and enabled Empty trash again, until the next reload; a late failure showed
+  its error over the newer list. Two tests of `webui/tests/files.spec.ts` hold a Refresh's answer
+  until after the emptying.
 - The compose test stack no longer refuses the sign-ins of its own E2E run with 429: every spec
   reaches the supervisor from the stack network's gateway, one client of the sign-in limit, so its
   image runs the supervisor's app with that limit off, as the stand-in does, from a module that

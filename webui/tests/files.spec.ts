@@ -286,6 +286,75 @@ const trashRow = (page: Page, name: string) => page.getByRole('row').filter({ ha
 
 const trashToolbar = (page: Page) => page.getByRole('toolbar', { name: 'Selected items' });
 
+/** Put one.txt and two.txt into the scratch folder and move both into the trash; the folder. */
+async function trashTwoFiles(page: Page): Promise<string> {
+  const dir = scratch!.path;
+  for (const name of ['one.txt', 'two.txt']) await putFile(page, dir, name, Buffer.from(name));
+  const moved = await page.request.delete('/api/v1/files/delete', {
+    headers: auth(),
+    data: [`${dir}/one.txt`, `${dir}/two.txt`],
+  });
+  expect(moved.ok(), `move to the trash: HTTP ${moved.status()}`).toBeTruthy();
+  return dir;
+}
+
+/** Empty the trash on the Trash page, and wait for the server's answer and the dialog's close. */
+async function emptyTheTrash(page: Page) {
+  await page.getByRole('button', { name: 'Empty trash' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Empty trash', exact: true });
+  const emptied = page.waitForResponse((response) => isApi('/files/trash/empty')(response.request()));
+  await dialog.getByRole('button', { name: 'Empty trash' }).click();
+  expect((await emptied).status()).toBe(200);
+  await expect(dialog).toHaveCount(0);
+}
+
+/**
+ * Hold the page's next `count` lists of the trash, as on a slow network: each is asked of the
+ * server when the page sends it, so it lists the trash of that moment, and reaches the page when
+ * the test releases it, as the server answered it or as the failure given; later lists pass. The
+ * route stays for the page's life: one that runs out (`times`) can let the browser send a held
+ * request on before its release.
+ */
+async function holdTrashLists(page: Page, count: number) {
+  const lists = Array.from({ length: count }, () => {
+    let release: (failure?: { status: number; detail: string }) => void = () => {};
+    const released = new Promise<{ status: number; detail: string } | undefined>((resolve) => (release = resolve));
+    let asked: (request: Request) => void = () => {};
+    let failed: (error: unknown) => void = () => {};
+    const sent = new Promise<Request>((resolve, reject) => {
+      asked = resolve;
+      failed = reject;
+    });
+    return { sent, release, released, asked, failed };
+  });
+  let next = 0;
+  await page.route(
+    (url) => url.pathname === '/api/v1/files/trash',
+    async (route) => {
+      if (next === lists.length) return route.fallback();
+      const list = lists[next++];
+      let response;
+      try {
+        response = await route.fetch();
+      } catch (error) {
+        list.failed(error);
+        throw error;
+      }
+      list.asked(route.request());
+      const failure = await list.released;
+      await route.fulfill(failure ? { status: failure.status, json: { detail: failure.detail } } : { response });
+    },
+  );
+  return lists.map(({ sent, release }) => ({ sent, release }));
+}
+
+/**
+ * How long a spec gives the page to show an answer that it has received, before it checks that
+ * nothing changed: the page applies one within a task of its arrival; half a second covers a
+ * loaded machine, as in storage.spec.ts.
+ */
+const SHOWN = 500;
+
 test.describe('File Browser operations', () => {
   test.beforeEach(async ({ authenticatedPage: page }) => {
     session = await browserSession(page);
@@ -684,6 +753,69 @@ test.describe('File Browser operations', () => {
     await expect(page.getByRole('button', { name: 'Empty trash' })).toBeDisabled();
     expect(await trashItems(page)).toEqual([]);
     expect(await listNames(page, dir)).toEqual([]);
+  });
+
+  // testing.empty-trash-shows-the-empty-state: the Trash page shows the answer of its latest list
+  // only, so that a list asked before Empty trash and answered after it brings nothing back.
+  test('a list of the trash that answers after Empty trash brings back nothing it deleted', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = await trashTwoFiles(page);
+    await page.goto('/files/trash');
+    await expect(trashRow(page, 'one.txt')).toBeVisible();
+    await expect(trashRow(page, 'two.txt')).toBeVisible();
+
+    // Refresh asks for the list; its answer is held until the emptying and the list after it have answered.
+    const [refresh] = await holdTrashLists(page, 1);
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    const refreshRequest = await refresh.sent;
+    await emptyTheTrash(page);
+    await expect(page.getByText('The trash is empty')).toBeVisible();
+
+    // The late answer still lists both items: the page keeps the newer list.
+    refresh.release();
+    const late = await refreshRequest.response();
+    expect(late?.status()).toBe(200);
+    const listed = (await late!.json()).items as TrashEntry[];
+    expect(listed.filter((item) => item.original_path?.startsWith(`${dir}/`)).map((item) => item.name).sort()).toEqual([
+      'one.txt',
+      'two.txt',
+    ]);
+    await page.waitForTimeout(SHOWN);
+    await expect(page.getByText('The trash is empty')).toBeVisible();
+    await expect(trashRow(page, 'one.txt')).toHaveCount(0);
+    await expect(trashRow(page, 'two.txt')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Empty trash' })).toBeDisabled();
+    expect(await trashItems(page)).toEqual([]);
+  });
+
+  test('a list of the trash that fails while the list after Empty trash is on its way shows no error', async ({
+    authenticatedPage: page,
+  }) => {
+    await trashTwoFiles(page);
+    await page.goto('/files/trash');
+    await expect(trashRow(page, 'two.txt')).toBeVisible();
+
+    // Refresh's list fails, as the server answers a read error, while the list after the emptying
+    // is still on its way: the page shows no error of the older list and waits for the newer one.
+    const failure = 'File operation failed: Input/output error';
+    const [refresh, afterEmpty] = await holdTrashLists(page, 2);
+    const refreshButton = page.getByRole('button', { name: 'Refresh' });
+    await refreshButton.click();
+    const refreshRequest = await refresh.sent;
+    await emptyTheTrash(page);
+    await afterEmpty.sent;
+    refresh.release({ status: 500, detail: failure });
+    expect((await refreshRequest.response())?.status()).toBe(500);
+    await page.waitForTimeout(SHOWN);
+    await expect(page.getByText('Could not load the trash')).toHaveCount(0);
+    await expect(page.getByText(failure)).toHaveCount(0);
+    await expect(refreshButton).toHaveAttribute('aria-busy', 'true');
+
+    afterEmpty.release();
+    await expect(page.getByText('The trash is empty')).toBeVisible();
+    await expect(refreshButton).not.toHaveAttribute('aria-busy');
+    await expect(page.getByText('Could not load the trash')).toHaveCount(0);
   });
 
   // webui.translations (ADR-0287): what the code puts together at run time, in Russian: counts in

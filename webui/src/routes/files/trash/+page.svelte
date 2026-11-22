@@ -43,11 +43,18 @@
 
 	onMount(load);
 
+	// Each load takes the next number, and only the latest one shows its answer, its error and the
+	// end of its spinner: a list asked before Empty trash, Delete for good or Restore (a Refresh)
+	// can answer after the list that follows them, and would bring back what they removed.
+	let latestLoad = 0;
+
 	async function load() {
+		const current = ++latestLoad;
 		loading = true;
 		loadError = '';
 		try {
 			const listing = await listTrash();
+			if (current !== latestLoad) return;
 			items = listing.items;
 			retentionDays = listing.retention_days;
 			problems = listing.problems;
@@ -56,9 +63,9 @@
 			const listed = new Set(items.map((item) => item.path));
 			selected = new Set(Array.from(selected).filter((path) => listed.has(path)));
 		} catch (e) {
-			if (!signedOut(e)) loadError = messageOf(e);
+			if (current === latestLoad && !signedOut(e)) loadError = messageOf(e);
 		} finally {
-			loading = false;
+			if (current === latestLoad) loading = false;
 		}
 	}
 
