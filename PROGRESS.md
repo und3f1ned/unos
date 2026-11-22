@@ -55,7 +55,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs 202403f9 of the branch `mvp.batch-20` since 2026-11-22, deployed at the owner's word
+  runs f8a8ed58 of the branch `mvp.batch-21` since 2026-11-22, deployed at the owner's word ("yes,
+  deploy"; SD MiB, its eMMC: sync 6.023, build-supervisor 0.230, build-webui 0.148, up 0.328, check
+  0.016; check: OK). Before it 202403f9 of `mvp.batch-20` the same day, deployed at the owner's word
   ("merge everything and deploy it to the devices", in translation; SD MiB, its eMMC: sync
   6.023, build-supervisor 0.238, build-webui 0.156, up 0.344, check 0.000; check: OK; both
   images built that day). Before it 0c7b84b9 of `mvp.batch-19` since 2026-11-21, deployed at the
@@ -298,7 +300,10 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 202403f9 of the branch `mvp.batch-20` since 2026-11-22, deployed at the owner's word
+- Runs f8a8ed58 of the branch `mvp.batch-21` since 2026-11-22, deployed at the owner's word ("yes,
+  deploy", in translation). SD MiB: sync 6.773, build-supervisor 15.371, build-webui 19.492, up
+  6.168, check 0.301; total 48.105. check: OK, both containers healthy; no base image pulled.
+- Before it, 202403f9 of the branch `mvp.batch-20` since 2026-11-22, deployed at the owner's word
   ("merge everything and deploy it to the devices", in translation) after `make check` and five
   full E2E runs. SD MiB: sync 6.758, build-supervisor 16.141, build-webui 19.461 (the web UI on
   SvelteKit 3, Vite 8 and Tailwind CSS 4), up 6.266, check 0.301; total 48.945. check: OK, both
@@ -835,8 +840,17 @@ Open owner actions:
   among them; the compose stack's full `scripts/test-cycle.sh --e2e` 1171 passed, 31 skipped, 0
   failed, no 429 in the supervisor's log (29.1 min), so `testing.compose-stack-sign-in-rate-limit`
   passes.
-- Open for the owner: the push's merge into `main`, the deploy, a tag and public GHCR packages for
-  the first release, and the BPI-F3's warm reboot after fstrim's next run.
+- At the owner's word ("merge everything into main and do everything you can yourself", in
+  translation) `main` moved from 89ca9fca to f8a8ed58 (a fast-forward: batches 18 to 21), and both
+  boards run f8a8ed58 (Dev device). The lead then dispatched the Audit workflow on main (run
+  45038615417): Python, Node.js, Image vulnerabilities and Catalog image platforms passed, so
+  `ci.container-image-scanning` passes; Catalog image tags found mariadb:11.8.9 and
+  postgres:16.16-alpine pushed again and traefik:v3.7 moved on, whose pins the lead moved
+  (fd2d03a2); Bootstrap failed in make setup: "Playwright does not support chromium on
+  ubuntu26.04-x64", since ubuntu-latest is Ubuntu 26.04 and @playwright/test 1.57.0 knows it not
+  (1.65.1 does), which also fails make setup on a fresh Ubuntu 26.04 machine.
+- Open for the owner: a tag and public GHCR packages for the first release, and the BPI-F3's warm
+  reboot after fstrim's next run.
 
 ### 2026-11-22: The twentieth batch, merged on `mvp.batch-20` (ADR-0450 to ADR-0456)
 

@@ -4315,7 +4315,7 @@
         "The weekly audit workflow builds both images and scans them",
         "A fixable finding of high or critical severity fails the run and names the package (ADR-0446)"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0218",
         "ADR-0446"
@@ -4323,7 +4323,7 @@
       "verified_by": [
         "supervisor/tests/test_image_scan.py"
       ],
-      "notes": "make image-scan (scripts/image-scan.sh) and the Image vulnerabilities job of the weekly Audit workflow build both images without the cache and scan them with trivy 0.76.2, pinned by digest, offline, for fixable HIGH and CRITICAL vulnerabilities minus .trivyignore.yaml (ADR-0446). On 2026-11-21 the first local run failed with 143 findings; after a fresh build, the new caddy:2-alpine digest and setuptools 84.2.1 it passed, with 3 entries ignored until 2026-12-21 and 2027-05-21. passes stays false until the job has run on GitHub."
+      "notes": "make image-scan (scripts/image-scan.sh) and the Image vulnerabilities job of the weekly Audit workflow build both images without the cache and scan them with trivy 0.76.2, pinned by digest, offline, for fixable HIGH and CRITICAL vulnerabilities minus .trivyignore.yaml (ADR-0446). On 2026-11-21 the first local run failed with 143 findings; after a fresh build, the new caddy:2-alpine digest and setuptools 84.2.1 it passed, with 3 entries ignored until 2026-12-21 and 2027-05-21. passes stays false until the job has run on GitHub. 2026-11-22: the lead dispatched the Audit workflow on main (f8a8ed58, run 45038615417): its job Image vulnerabilities built both images on GitHub and scanned them, success (15:29:50 to 15:32:30 UTC); step 2's failure, naming the package, was shown by the local run of 2026-11-21 with the same script. The entry passes."
     },
     {
       "id": "ci.samba-in-ci",
