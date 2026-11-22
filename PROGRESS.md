@@ -55,8 +55,11 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs 0c7b84b9 of the branch `mvp.batch-19` since 2026-11-21, deployed at the owner's word ("yes,
-  all"), after the pull of the pinned `caddy:2-alpine@sha256:003a9780…` (0.773; SD MiB, its eMMC:
+  runs 202403f9 of the branch `mvp.batch-20` since 2026-11-22, deployed at the owner's word
+  ("merge everything and deploy it to the devices", in translation; SD MiB, its eMMC: sync
+  6.023, build-supervisor 0.238, build-webui 0.156, up 0.344, check 0.000; check: OK; both
+  images built that day). Before it 0c7b84b9 of `mvp.batch-19` since 2026-11-21, deployed at the
+  owner's word ("yes, all"), after the pull of the pinned `caddy:2-alpine@sha256:003a9780…` (0.773; SD MiB, its eMMC:
   sync 10.531, build-supervisor 0.445, build-webui 0.148, up 0.359, check 0.000; check: OK); its
   unos.db was brought to the baseline 0001 with no warning. Before it a64f891e of `mvp.batch-18`
   (sync 5.309, build-supervisor 0.246, build-webui 0.156, up 0.344, check 0.000), and the same
@@ -202,8 +205,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   (`storage.nvme-trim-on-k1`, ADR-0429). The ghcr.io images, the update in place and the floating
   paths pass. The owner's BPI-F3 moved to its eMMC and one M.2 NVMe drive (Log).
 - On 2026-11-22 (Log): the twentieth batch on the branch `mvp.batch-20`, from `mvp.batch-19`
-  (2a42a82b), pushed at the owner's word and not deployed: what can be decided and done without
-  the owner. Releases publish
+  (2a42a82b), pushed and deployed on the dev device and the BPI-F3 at the owner's word: what can
+  be decided and done without the owner. Releases publish
   amd64 and arm64 images to GHCR and update.sh switches to a release on the host, also for the
   in-app updater (ADR-0455, which settles ADR-0443's two choices); the web UI on SvelteKit 3,
   Vite 8 and Tailwind CSS 4 (ADR-0456; TypeScript stays at 6); the Russian web UI walked page by
@@ -287,7 +290,13 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs 0c7b84b9 of the branch `mvp.batch-19` since 2026-11-21, deployed at the owner's word ("yes,
+- Runs 202403f9 of the branch `mvp.batch-20` since 2026-11-22, deployed at the owner's word
+  ("merge everything and deploy it to the devices", in translation) after `make check` and five
+  full E2E runs. SD MiB: sync 6.758, build-supervisor 16.141, build-webui 19.461 (the web UI on
+  SvelteKit 3, Vite 8 and Tailwind CSS 4), up 6.266, check 0.301; total 48.945. check: OK, both
+  containers healthy; System > Updates answers why this host cannot install a release (a dev
+  device deployed by scripts/dev/deploy.sh). No base image was pulled.
+- Before it, 0c7b84b9 of the branch `mvp.batch-19` since 2026-11-21, deployed at the owner's word ("yes,
   all") after the owner's Open action 21, the pull of the pinned `caddy:2-alpine@sha256:003a9780…`
   (91.039 MiB on the SD card). SD MiB: sync 11.707, build-supervisor 471.352 (the pip layer and
   the new setuptools pin), build-webui 84.559 (the new Caddy base), up 6.500, check 0.133; total
@@ -824,10 +833,10 @@ Open owner actions:
   1200, and four more full runs in a row, each the same (28.6 to 28.8 min): the five that the
   keyboard upload entry's step 3 asks for, so `testing.keyboard-upload-opens-the-file-chooser`
   passes.
-- Pushed at the owner's word ("yes, push", in translation). Open for the owner: the pull
-  request; a tag and public GHCR packages for the first
-  release; the deploy (the web UI's toolchain rebuilds its image); the look at the web UI in
-  Russian on the device.
+- Pushed at the owner's word ("yes, push", in translation), then deployed on the dev device and
+  the BPI-F3 ("merge everything and deploy it to the devices"; Dev device). The merge into `main`
+  is the owner's (ADR-0208). Open for the owner: a tag and public GHCR packages for the first
+  release; the look at the web UI in Russian on the device.
 
 ### 2026-11-21: architecture.database-migrations passes on the dev device (ADR-0444)
 
