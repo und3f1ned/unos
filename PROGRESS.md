@@ -861,6 +861,10 @@ Open owner actions:
   `ci.pinned-check-tools` passes on the Audit run; a backup spec that cleared the cookie while the
   tab still loaded waits for its loads (5b00c01f). Gates on 5b00c01f: `make check` 11153 passed,
   `make e2e-local` 1188 passed, 14 skipped, 0 failed (28.0 min). `main` takes the batch again.
+- `main` moved to cf3ae7f6 at the owner's word. The Audit workflow dispatched on it (run
+  45056365778) passed all six jobs, Bootstrap (make setup) on Ubuntu 26.04 among them, so
+  `ci.bootstrap-in-ci` passes; Dependabot closed pull requests 107 and 84 and removed their
+  branches, and no pull request is open.
 - Open for the owner: a tag and public GHCR packages for the first release, and the BPI-F3's warm
   reboot after fstrim's next run.
 
