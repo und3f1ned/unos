@@ -6,6 +6,7 @@
 	// them for the app's next install.
 	import { untrack } from 'svelte';
 	import { Alert, Button, Input, Modal } from '$lib/components/ui';
+	import { formatNumber } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import {
 		getLimitBounds,
@@ -65,8 +66,9 @@
 		}
 	}
 
-	function formatNumber(value: number, digits: number): string {
-		return new Intl.NumberFormat($intlLocale, { maximumFractionDigits: digits }).format(value);
+	// A bound or a use in the language's digits, its thousands grouped (8,192 MB).
+	function amount(value: number, digits: number): string {
+		return formatNumber(value, $intlLocale, { digits, grouping: true });
 	}
 
 	// Text fields, not number fields: a browser's number field gives "" for what it cannot read
@@ -119,13 +121,13 @@
 			hint={[
 				bounds
 					? $t('apps.limits.memoryHint', {
-							min: formatNumber(bounds.memory_min / MIB, 0),
-							max: formatNumber(Math.floor(bounds.memory_max / MIB), 0)
+							min: amount(bounds.memory_min / MIB, 0),
+							max: amount(Math.floor(bounds.memory_max / MIB), 0)
 						})
 					: '',
 				// The use now, which a new limit must stay above.
 				resources?.memory_used != null
-					? $t('apps.limits.memoryNow', { used: formatNumber(Math.ceil(resources.memory_used / MIB), 0) })
+					? $t('apps.limits.memoryNow', { used: amount(Math.ceil(resources.memory_used / MIB), 0) })
 					: ''
 			]
 				.filter(Boolean)
@@ -136,9 +138,7 @@
 			label={$t('apps.limits.cpu')}
 			bind:value={cpus}
 			placeholder={$t('apps.limits.none')}
-			hint={bounds
-				? $t('apps.limits.cpuHint', { min: formatNumber(bounds.cpu_min, 2), max: formatNumber(bounds.cpu_max, 2) })
-				: ''}
+			hint={bounds ? $t('apps.limits.cpuHint', { min: amount(bounds.cpu_min, 2), max: amount(bounds.cpu_max, 2) }) : ''}
 		/>
 		{#if error}
 			<!-- Read out as it appears: the server's refusal, or a field that is no number. -->

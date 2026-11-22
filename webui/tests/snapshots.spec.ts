@@ -761,8 +761,9 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(removeCopy.getByRole('button', { name: 'Удалить копию' })).toBeVisible();
     await removeCopy.getByRole('button', { name: 'Отмена' }).click();
     await expect(removeCopy).toBeHidden();
-    // The time in the language of the page, in Moscow: the day first, on a 24-hour clock.
-    await expect(table.getByRole('row').filter({ hasText: 'nightly' })).toContainText('07.11.2026, 5:00');
+    // The time in the language of the page, in Moscow: the day first, on a 24-hour clock with the
+    // hour's zero, as every page writes it (webui.locale-formats).
+    await expect(table.getByRole('row').filter({ hasText: 'nightly' })).toContainText('07.11.2026, 05:00');
     // The title in Russian, the server's reason as it comes.
     const warning = page.locator('.alert').filter({ hasText: 'Не удалось прочитать тома пула e2e_media' });
     await expect(warning).toContainText(`${detail} Сам пул можно выбрать, но его томов нет в списке.`);

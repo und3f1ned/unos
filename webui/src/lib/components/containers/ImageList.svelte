@@ -3,10 +3,9 @@
 	import { Download, Layers, Trash2 } from 'lucide-svelte';
 	import { Alert, Button, Card, EmptyState, Input, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { getImages, pullImage, removeImage, type Image } from '$lib/api/containers';
-	import { formatSize } from '$lib/components/apps/size';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
-	import { NO_SECONDS } from './labels';
 
 	// The Images tab of the Containers page: the images Docker has, a pull by
 	// name and the removal of an image that no container uses, with all its
@@ -101,7 +100,7 @@
 
 	// It reads $intlLocale, so that the list follows a change of the language.
 	function formatDate(value: string): string {
-		return formatDateTime(value, $intlLocale, NO_SECONDS);
+		return formatDateTime(value, $intlLocale);
 	}
 </script>
 
@@ -193,7 +192,7 @@
 									{/if}
 								</td>
 								<td class="mono-xs text-content-secondary">{image.id}</td>
-								<td class="num">{formatSize(image.size, $intlLocale, $t, 2)}</td>
+								<td class="num">{formatSize(image.size, $intlLocale, $t, { digits: 2 })}</td>
 								<td class="whitespace-nowrap">{formatDate(image.created)}</td>
 								<td>
 									<div class="flex justify-end">

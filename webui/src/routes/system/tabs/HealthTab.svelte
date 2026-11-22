@@ -11,6 +11,7 @@
 		predictionOf,
 		textOf
 	} from '$lib/components/system/health/texts';
+	import { formatTemperature } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { HardDrive, Thermometer, RefreshCw } from 'lucide-svelte';
 
@@ -134,7 +135,7 @@
 							{#if disk.temperature !== null}
 								<span class="flex items-center gap-1 text-sm text-content-secondary tabular">
 									<Thermometer class="h-4 w-4" aria-hidden="true" />
-									{$t('health.celsius', { value: disk.temperature })}
+									{formatTemperature(disk.temperature, $intlLocale)}
 								</span>
 							{/if}
 							<Badge variant={mark.variant} dot={mark.variant !== 'neutral'}>{$t(mark.key)}</Badge>

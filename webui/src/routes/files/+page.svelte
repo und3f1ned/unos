@@ -56,15 +56,6 @@
 	let pending = $derived(!leftovers.loaded || (browser.loading && !browser.listing));
 
 	let breadcrumbs = $derived(getBreadcrumbs(browser.currentPath, browser.rootPath, $t('files.pools')));
-
-	// Sizes in the units of the page's language.
-	let units = $derived([
-		$t('files.unit.b'),
-		$t('files.unit.kb'),
-		$t('files.unit.mb'),
-		$t('files.unit.gb'),
-		$t('files.unit.tb')
-	]);
 </script>
 
 <!-- The page has no padding of its own beside main's (ADR-0428). On a narrow screen its buttons
@@ -100,20 +91,14 @@
 			</div>
 		</div>
 	{:else}
-		<LeftoversNotice bind:this={leftoversNotice} {leftovers} {units} onremove={() => leftoversDialog?.ask()} />
+		<LeftoversNotice bind:this={leftoversNotice} {leftovers} onremove={() => leftoversDialog?.ask()} />
 		<Breadcrumbs crumbs={breadcrumbs} onnavigate={(path) => browser.navigate(path)} />
 		<FileActions bind:this={fileActions} {browser} ondelete={() => deleteDialog?.ask()} />
 		<TransferBar {browser} />
 		<NewFolderForm {browser} />
-		<FileList {browser} {units} />
+		<FileList {browser} />
 	{/if}
 </div>
 
 <DeleteDialog bind:this={deleteDialog} {browser} onclosed={() => fileActions?.focusDelete()} />
-<LeftoversDialog
-	bind:this={leftoversDialog}
-	{browser}
-	{leftovers}
-	{units}
-	onclosed={() => leftoversNotice?.focusRemove()}
-/>
+<LeftoversDialog bind:this={leftoversDialog} {browser} {leftovers} onclosed={() => leftoversNotice?.focusRemove()} />

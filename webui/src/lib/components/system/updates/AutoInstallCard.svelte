@@ -55,7 +55,7 @@
 		{#if config.auto_install && nextCheck}
 			<p class="text-sm text-content-secondary">
 				{$t('updates.auto.next', {
-					date: formatDateTime(nextCheck, $intlLocale, { dateStyle: 'medium', timeStyle: 'short', zone })
+					date: formatDateTime(nextCheck, $intlLocale, { zone })
 				})}
 			</p>
 		{/if}

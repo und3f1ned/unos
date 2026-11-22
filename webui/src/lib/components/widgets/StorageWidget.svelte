@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { HardDrive, Database } from 'lucide-svelte';
 	import { Badge, Card, EmptyState, ErrorState, ProgressBar } from '$lib/components/ui';
-	import { t } from '$lib/i18n';
-	import { formatBytes } from './bytes';
+	import { formatPercent, formatSize, ONE_DECIMAL } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 
 	type Props = {
 		pools?: Array<{
@@ -36,6 +36,11 @@
 		error: { variant: 'error', key: 'dashboard.health.error' },
 		unknown: { variant: 'neutral', key: 'common.unknown' }
 	};
+
+	// A size in the language of the page: the markup that calls it reads $t and $intlLocale through it.
+	function size(bytes: number): string {
+		return formatSize(bytes, $intlLocale, $t);
+	}
 
 	function getUsagePercent(used: number, size: number): number {
 		return size > 0 ? (used / size) * 100 : 0;
@@ -87,7 +92,7 @@
 		<Database class="w-4 h-4 icon-storage" />
 		<span>{$t('dashboard.storage.pools', { n: pools.length })}</span>
 		<span class="text-muted">•</span>
-		<span>{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)}</span>
+		<span>{size(totalUsed)} / {size(totalSize)}</span>
 		{#if problemCount > 0}
 			<span class="text-muted">•</span>
 			<span class="text-warning">{$t('dashboard.storage.attention', { n: problemCount })}</span>
@@ -116,7 +121,7 @@
 			<div class="pb-3.5 mb-3.5 border-b border-border">
 				<p class="text-xs text-content-secondary">{$t('dashboard.storage.total')}</p>
 				<p class="mt-0.5 text-lg font-semibold tabular">
-					{formatBytes(totalUsed, $t)} / {formatBytes(totalSize, $t)} ({totalPercent.toFixed(1)}%)
+					{size(totalUsed)} / {size(totalSize)} ({formatPercent(totalPercent, $intlLocale, ONE_DECIMAL)})
 				</p>
 			</div>
 			<!-- A row per pool, the same on every screen: its name and health with its share
@@ -135,7 +140,7 @@
 							</div>
 							{#if mounted}
 								<span class="text-[13px] text-secondary tabular whitespace-nowrap"
-									>{getUsagePercent(pool.used, pool.size).toFixed(0)}%</span
+									>{formatPercent(getUsagePercent(pool.used, pool.size), $intlLocale)}</span
 								>
 							{/if}
 						</div>
@@ -157,8 +162,8 @@
 								{#if mounted}
 									<span data-field="used" class="ml-auto text-secondary tabular whitespace-nowrap"
 										>{$t('dashboard.storage.usedOf', {
-											used: formatBytes(pool.used, $t),
-											size: formatBytes(pool.size, $t)
+											used: size(pool.used),
+											size: size(pool.size)
 										})}</span
 									>
 								{/if}

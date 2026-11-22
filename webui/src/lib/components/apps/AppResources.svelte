@@ -8,7 +8,7 @@
 	import { SlidersHorizontal } from 'lucide-svelte';
 	import { Button, ProgressBar } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
-	import { formatSize as formatSizeIn } from './size';
+	import { formatNumber, formatSize } from '$lib/format';
 	import type { ContainerResources, InstalledApp } from '$lib/api/apps';
 
 	type Props = {
@@ -50,13 +50,8 @@
 	// The running containers whose use was not read yet: said once, under the rows.
 	const unread = $derived(rows.filter((row) => row.running && row.resources.memory_used === null).length);
 
-	// A size with one decimal in the language of the page (formatSize of ./size).
-	function formatSize(bytes: number): string {
-		return formatSizeIn(bytes, $intlLocale, $t, 1);
-	}
-
 	function formatCpus(cpus: number): string {
-		return new Intl.NumberFormat($intlLocale, { maximumFractionDigits: 2 }).format(cpus);
+		return formatNumber(cpus, $intlLocale, { digits: 2 });
 	}
 
 	/** The use is shown while the container runs and once it was read. */
@@ -66,11 +61,14 @@
 		const { memory_used: used, memory_limit: limit } = row.resources;
 		if (read(row, used)) {
 			return limit !== null
-				? $t('apps.resources.memoryUse', { used: formatSize(used), limit: formatSize(limit) })
-				: $t('apps.resources.memoryUseNoLimit', { used: formatSize(used) });
+				? $t('apps.resources.memoryUse', {
+						used: formatSize(used, $intlLocale, $t),
+						limit: formatSize(limit, $intlLocale, $t)
+					})
+				: $t('apps.resources.memoryUseNoLimit', { used: formatSize(used, $intlLocale, $t) });
 		}
 		return limit !== null
-			? $t('apps.resources.memoryLimit', { limit: formatSize(limit) })
+			? $t('apps.resources.memoryLimit', { limit: formatSize(limit, $intlLocale, $t) })
 			: $t('apps.resources.noLimit');
 	}
 

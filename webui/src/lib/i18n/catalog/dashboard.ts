@@ -6,9 +6,6 @@ import type { Translation } from '../translate';
 
 export const en = {
 	'dashboard.osUptime': '{os} · Uptime {uptime}',
-	'dashboard.uptime.days': '{days}d {hours}h',
-	'dashboard.uptime.hours': '{hours}h {minutes}m',
-	'dashboard.uptime.minutes': '{minutes}m',
 	'dashboard.noProblems': 'No problems',
 	'dashboard.issues': { one: '{n} issue', other: '{n} issues' },
 	'dashboard.notification': 'Notification',
@@ -39,15 +36,6 @@ export const en = {
 	'dashboard.stats.sent': 'Sent',
 	'dashboard.stats.temperature': 'Temperature',
 	'dashboard.stats.none': 'No reading',
-	'dashboard.celsius': '{value}°C',
-
-	// The units of a size, from bytes up, and of a rate (ADR-0297).
-	'dashboard.unit.b': 'B',
-	'dashboard.unit.kb': 'KB',
-	'dashboard.unit.mb': 'MB',
-	'dashboard.unit.gb': 'GB',
-	'dashboard.unit.tb': 'TB',
-	'dashboard.rate': '{size}/s',
 
 	'dashboard.manage': 'Manage →',
 
@@ -109,18 +97,11 @@ export const en = {
 
 	'dashboard.activity.title': 'Recent activity',
 	'dashboard.activity.viewAll': 'View all',
-	'dashboard.activity.none': 'No recent activity',
-	'dashboard.activity.justNow': 'just now',
-	'dashboard.activity.minutesAgo': '{n}m ago',
-	'dashboard.activity.hoursAgo': '{n}h ago',
-	'dashboard.activity.daysAgo': '{n}d ago'
+	'dashboard.activity.none': 'No recent activity'
 };
 
 export const ru: Translation<typeof en> = {
 	'dashboard.osUptime': '{os} · Время работы {uptime}',
-	'dashboard.uptime.days': '{days}\u00a0дн. {hours}\u00a0ч',
-	'dashboard.uptime.hours': '{hours}\u00a0ч {minutes}\u00a0мин',
-	'dashboard.uptime.minutes': '{minutes}\u00a0мин',
 	'dashboard.noProblems': 'Проблем нет',
 	'dashboard.issues': { one: '{n} проблема', few: '{n} проблемы', many: '{n} проблем' },
 	'dashboard.notification': 'Уведомление',
@@ -152,14 +133,6 @@ export const ru: Translation<typeof en> = {
 	'dashboard.stats.sent': 'Отправлено',
 	'dashboard.stats.temperature': 'Температура',
 	'dashboard.stats.none': 'Нет данных',
-	'dashboard.celsius': '{value} °C',
-
-	'dashboard.unit.b': 'Б',
-	'dashboard.unit.kb': 'КБ',
-	'dashboard.unit.mb': 'МБ',
-	'dashboard.unit.gb': 'ГБ',
-	'dashboard.unit.tb': 'ТБ',
-	'dashboard.rate': '{size}/с',
 
 	'dashboard.manage': 'Управление →',
 
@@ -231,9 +204,5 @@ export const ru: Translation<typeof en> = {
 
 	'dashboard.activity.title': 'Последние события',
 	'dashboard.activity.viewAll': 'Показать все',
-	'dashboard.activity.none': 'Нет недавних событий',
-	'dashboard.activity.justNow': 'только что',
-	'dashboard.activity.minutesAgo': '{n} мин назад',
-	'dashboard.activity.hoursAgo': '{n} ч назад',
-	'dashboard.activity.daysAgo': '{n} дн. назад'
+	'dashboard.activity.none': 'Нет недавних событий'
 };

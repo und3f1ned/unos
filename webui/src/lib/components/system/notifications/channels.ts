@@ -2,7 +2,6 @@ import { AlertTriangle, CheckCircle, Hash, Info, Mail, MessageCircle, MessageSqu
 import type { ChannelKind, NotificationConfig } from '$lib/api/notifications';
 import type { IconComponent } from '$lib/components/ui';
 import type { Translate } from '$lib/i18n';
-import { apiTime } from '$lib/time';
 
 // Channels of five kinds (ADR-0326): what System > Notifications shows of them. The texts are keys
 // of the catalog; the functions that give texts take the page's $t, so that the markup that calls
@@ -108,17 +107,6 @@ export function summaryOf(t: Translate, config: NotificationConfig): string {
 	}
 	const hook = config.channel === 'discord' ? config.discord_config : config.slack_config;
 	return hook ? t('notifications.summary.hook', { host: hostOf(t, hook.webhook_url) }) : '';
-}
-
-// The time of a notification sent: how long ago, within a day; else its date in the language of the page.
-export function sentWhen(t: Translate, locale: string, sentAt: string): string {
-	const date = apiTime(sentAt);
-	if (!date) return sentAt;
-	const diff = Date.now() - date.getTime();
-	if (diff < 60000) return t('notifications.history.justNow');
-	if (diff < 3600000) return t('notifications.history.minutesAgo', { minutes: Math.floor(diff / 60000) });
-	if (diff < 86400000) return t('notifications.history.hoursAgo', { hours: Math.floor(diff / 3600000) });
-	return date.toLocaleDateString(locale);
 }
 
 export function iconOf(type: string): IconComponent {

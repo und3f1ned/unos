@@ -6,9 +6,9 @@
 	import { Alert, Button, ProgressBar, StatusDot } from '$lib/components/ui';
 	import type { ScrubStatus } from '$lib/api/storage';
 	import { intlLocale, t } from '$lib/i18n';
-	import { DATE_TIME_MINUTES } from '$lib/format';
+	import { formatDuration, formatRate, ONE_DECIMAL } from '$lib/format';
 	import { formatDateTime } from '$lib/time';
-	import { formatDuration, getScrubProgress } from './pools';
+	import { getScrubProgress } from './pools';
 
 	type Props = {
 		/** The scrub that runs, or how the last one ended. */
@@ -18,12 +18,12 @@
 		/** Why the status could not be read: shown instead of the last one. */
 		error: string | undefined;
 		formatBytes: (bytes: number) => string;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 		/** Cancel was pressed: the scrub that runs is to stop. */
 		oncancel?: () => void;
 	};
 
-	let { part, mounted, status, error, formatBytes, percentFormat, oncancel }: Props = $props();
+	let { part, mounted, status, error, formatBytes, formatPercentage, oncancel }: Props = $props();
 
 	// How a scrub that did not finish ended, as btrfs names it; another value is shown as it comes.
 	const SCRUB_STOPPED: Record<string, string> = {
@@ -50,7 +50,7 @@
 
 	// When the last scrub started: the server answers it in UTC with its offset, the page shows it
 	// in the browser's time zone and the date format of the page's language (ADR-0401).
-	const scrubStarted = (value: string): string => formatDateTime(value, $intlLocale, DATE_TIME_MINUTES);
+	const scrubStarted = (value: string): string => formatDateTime(value, $intlLocale);
 
 	const scrubResultStyles = {
 		success: { icon: CheckCircle, class: 'text-success' },
@@ -80,7 +80,9 @@
 			</span>
 			<span class="flex items-center gap-3">
 				{#if status.duration}
-					<span class="text-xs text-secondary tabular">{formatDuration(status.duration)}</span>
+					<span class="text-xs text-secondary tabular"
+						>{formatDuration(status.duration, $intlLocale, $t, { smallest: 's' })}</span
+					>
 				{/if}
 				<Button variant="secondary" size="sm" onclick={() => oncancel?.()}>
 					{$t('storage.pool.cancelScrub')}
@@ -91,9 +93,9 @@
 			<ProgressBar value={getScrubProgress(status)} variant="info" label={$t('storage.scrub.progress')} />
 			<div class="flex flex-wrap justify-between gap-x-3 text-xs text-secondary tabular">
 				<span>{formatBytes(status.bytes_scrubbed)} / {formatBytes(status.total_bytes)}</span>
-				<span>{percentFormat.format(getScrubProgress(status) / 100)}</span>
+				<span>{formatPercentage(getScrubProgress(status))}</span>
 				{#if status.rate}
-					<span>{$t('storage.scrub.rate', { rate: formatBytes(status.rate) })}</span>
+					<span>{formatRate(status.rate, $intlLocale, $t, ONE_DECIMAL)}</span>
 				{/if}
 			</div>
 		{/if}

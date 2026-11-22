@@ -22,15 +22,6 @@ export const PROTOCOLS: Record<string, string> = {
 	sctp: 'containers.protocol.sctp'
 };
 
-/** A date and time without seconds, in the language of the page (webui.ux-apps). */
-export const NO_SECONDS: Intl.DateTimeFormatOptions = {
-	year: 'numeric',
-	month: '2-digit',
-	day: '2-digit',
-	hour: '2-digit',
-	minute: '2-digit'
-};
-
 /** The label of `value` in the language of the page; a value without one as it comes. */
 export function labelOf(labels: Record<string, string>, value: string, t: Translate): string {
 	return Object.prototype.hasOwnProperty.call(labels, value) ? t(labels[value]) : value;

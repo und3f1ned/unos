@@ -212,7 +212,7 @@ test.describe('Backup & Restore in Russian', () => {
     // without seconds, its size
     // in Russian units with the Russian decimal separator, and the version of its format; an
     // encrypted one is marked so.
-    await expect(row(page, FAKE_BACKUP.filename).getByText(/2 янв\. 2026( г\.)?,? 08:49(?!:)/)).toBeVisible();
+    await expect(row(page, FAKE_BACKUP.filename).getByText(/02\.01\.2026, 08:49(?!:)/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/(^|\s)2 КБ(\s|$)/)).toBeVisible();
     await expect(row(page, encrypted.filename).getByText(/(^|\s)1,46 МБ(\s|$)/)).toBeVisible();
     await expect(row(page, FAKE_BACKUP.filename).getByText(/версия 1\.0/)).toBeVisible();

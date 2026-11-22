@@ -6,7 +6,7 @@
 	import { Plus, RefreshCw } from 'lucide-svelte';
 	import { Alert, Button, Skeleton } from '$lib/components/ui';
 	import type { BalanceStatus, Disk, DiskRemovalStatus, ImportableFilesystem, Pool } from '$lib/api/storage';
-	import { scaleBytes } from '$lib/format';
+	import { formatPercent, formatSize, ONE_DECIMAL } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { stats, wsConnected } from '$lib/stores/stats';
 	import { scrubs } from '$lib/stores/scrubs';
@@ -98,29 +98,9 @@
 
 	// ---- How the page writes sizes and names (ADR-0401) ----
 
-	// The units of the sizes the page writes, by powers of 1024 (ADR-0401).
-	const SIZE_UNITS = ['storage.size.bytes', 'storage.size.kb', 'storage.size.mb', 'storage.size.gb', 'storage.size.tb'];
-	// One decimal, without grouping, as the page has always written its sizes and percentages.
-	let oneDecimal = $derived(
-		new Intl.NumberFormat($intlLocale, {
-			minimumFractionDigits: 1,
-			maximumFractionDigits: 1,
-			useGrouping: false
-		})
-	);
-	let percentFormat = $derived(
-		new Intl.NumberFormat($intlLocale, {
-			style: 'percent',
-			minimumFractionDigits: 1,
-			maximumFractionDigits: 1
-		})
-	);
-
-	/** A size in the language of the page: the number in its format, with the unit of the catalog. */
-	const formatBytes = (bytes: number): string => {
-		const { value, power } = scaleBytes(bytes, SIZE_UNITS.length);
-		return $t(SIZE_UNITS[power], { size: oneDecimal.format(value) });
-	};
+	// One decimal, always written, as the page has always written its sizes and percentages (webui.locale-formats).
+	const formatBytes = (bytes: number): string => formatSize(bytes, $intlLocale, $t, ONE_DECIMAL);
+	const formatPercentage = (percent: number): string => formatPercent(percent, $intlLocale, ONE_DECIMAL);
 
 	/** A label or a name shown on its own, in the quotes of the page's language. */
 	const quoted = (name: string): string => $t('storage.quoted', { name });
@@ -296,7 +276,7 @@
 			{freeDisks}
 			{jobs}
 			{formatBytes}
-			{percentFormat}
+			{formatPercentage}
 			{profileLabel}
 			{...poolHandlers}
 		/>
@@ -373,4 +353,4 @@
 	ondeleted={poolDeleted}
 />
 
-<VolumesDialog {volumes} {formatBytes} {percentFormat} />
+<VolumesDialog {volumes} {formatBytes} {formatPercentage} />

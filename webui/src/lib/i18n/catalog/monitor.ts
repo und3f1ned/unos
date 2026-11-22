@@ -40,18 +40,7 @@ export const en = {
 	'monitor.process.pid': 'PID',
 	'monitor.process.cpu': 'CPU',
 	'monitor.process.memory': 'Memory',
-	'monitor.process.user': 'User',
-	'monitor.percent': '{value}%',
-	// A size and a rate per second, one key for each power of 1024.
-	'monitor.size.b': '{value} B',
-	'monitor.size.kb': '{value} KB',
-	'monitor.size.mb': '{value} MB',
-	'monitor.size.gb': '{value} GB',
-	'monitor.size.tb': '{value} TB',
-	'monitor.rate.b': '{value} B/s',
-	'monitor.rate.kb': '{value} KB/s',
-	'monitor.rate.mb': '{value} MB/s',
-	'monitor.rate.gb': '{value} GB/s'
+	'monitor.process.user': 'User'
 };
 
 export const ru: Translation<typeof en> = {
@@ -88,16 +77,5 @@ export const ru: Translation<typeof en> = {
 	'monitor.process.pid': 'PID',
 	'monitor.process.cpu': 'ЦП',
 	'monitor.process.memory': 'Память',
-	'monitor.process.user': 'Пользователь',
-	// A no-break space between the number and the sign, as Intl.NumberFormat writes a Russian percentage.
-	'monitor.percent': '{value} %',
-	'monitor.size.b': '{value} Б',
-	'monitor.size.kb': '{value} КБ',
-	'monitor.size.mb': '{value} МБ',
-	'monitor.size.gb': '{value} ГБ',
-	'monitor.size.tb': '{value} ТБ',
-	'monitor.rate.b': '{value} Б/с',
-	'monitor.rate.kb': '{value} КБ/с',
-	'monitor.rate.mb': '{value} МБ/с',
-	'monitor.rate.gb': '{value} ГБ/с'
+	'monitor.process.user': 'Пользователь'
 };

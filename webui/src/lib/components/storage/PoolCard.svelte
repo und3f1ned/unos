@@ -4,6 +4,7 @@
 	import { AlertCircle, AlertTriangle } from 'lucide-svelte';
 	import { Alert, Badge, ProgressBar } from '$lib/components/ui';
 	import type { BalanceStatus, DiskRemovalStatus, Pool, ScrubStatus } from '$lib/api/storage';
+	import { formatPercent } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import BalanceProgress from './BalanceProgress.svelte';
 	import PoolActions from './PoolActions.svelte';
@@ -23,7 +24,7 @@
 		removal: DiskRemovalStatus | undefined;
 		removalError: string | undefined;
 		formatBytes: (bytes: number) => string;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 		/** A RAID profile in the language of the page. */
 		profileLabel: (profile: string) => string;
 	};
@@ -39,7 +40,7 @@
 		removal,
 		removalError,
 		formatBytes,
-		percentFormat,
+		formatPercentage,
 		profileLabel,
 		...handlers
 	}: Props = $props();
@@ -63,7 +64,6 @@
 
 	// The capacity's share in whole percent, in the language of the page: a job's progress beside it
 	// shows tenths.
-	const wholePercent = $derived(new Intl.NumberFormat($intlLocale, { style: 'percent', maximumFractionDigits: 0 }));
 
 	// i18n-ignore: a command, the same in every language
 	const RESET_COUNTERS = 'btrfs device stats -z';
@@ -139,7 +139,7 @@
 		status={scrub}
 		error={scrubError}
 		{formatBytes}
-		{percentFormat}
+		{formatPercentage}
 		oncancel={() => handlers.oncancelscrub(pool)}
 	/>
 	<BalanceProgress
@@ -148,7 +148,7 @@
 		scrubRunning={scrub?.status === 'running'}
 		status={balance}
 		error={balanceError}
-		{percentFormat}
+		{formatPercentage}
 		busy={balanceBusy}
 		onaction={(action) => handlers.onbalanceaction(pool, action)}
 	/>
@@ -158,7 +158,7 @@
 		status={removal}
 		error={removalError}
 		{formatBytes}
-		{percentFormat}
+		{formatPercentage}
 	/>
 
 	<div class="kv">
@@ -199,7 +199,7 @@
 					>{$t('storage.pool.usedOf', {
 						used: formatBytes(pool.used_size),
 						size: formatBytes(pool.total_size)
-					})}{#if used !== null}<span class="text-content-secondary">&nbsp;· {wholePercent.format(used / 100)}</span
+					})}{#if used !== null}<span class="text-content-secondary">&nbsp;· {formatPercent(used, $intlLocale)}</span
 						>{/if}</span
 				>
 			{:else}
@@ -253,16 +253,16 @@
 		status={scrub}
 		error={scrubError}
 		{formatBytes}
-		{percentFormat}
+		{formatPercentage}
 		oncancel={() => handlers.oncancelscrub(pool)}
 	/>
-	<BalanceProgress part="result" {pool} status={balance} error={balanceError} {percentFormat} />
+	<BalanceProgress part="result" {pool} status={balance} error={balanceError} {formatPercentage} />
 	<RemovalProgress
 		part="result"
 		mounted={pool.mounted}
 		status={removal}
 		error={removalError}
 		{formatBytes}
-		{percentFormat}
+		{formatPercentage}
 	/>
 </div>

@@ -4,7 +4,7 @@
 	import { ActionMenu, Badge, Button, Card } from '$lib/components/ui';
 	import { SmbStateBadge } from '$lib/components/shares';
 	import { intlLocale, t } from '$lib/i18n';
-	import { apiTime } from '$lib/time';
+	import { apiTime, formatDate, formatDateTime } from '$lib/time';
 
 	type Props = {
 		users: User[];
@@ -20,13 +20,11 @@
 	// The day a user was made, in the language of the page (ADR-0287), without the time: the
 	// exact moment is the hover text.
 	function formatDay(date: string | null): string {
-		const moment = date ? apiTime(date) : null;
-		return moment ? moment.toLocaleDateString($intlLocale, { dateStyle: 'medium' }) : $t('common.unknown');
+		return apiTime(date) ? formatDate(date, $intlLocale) : $t('common.unknown');
 	}
 
 	function formatMoment(date: string | null): string | undefined {
-		const moment = date ? apiTime(date) : null;
-		return moment ? moment.toLocaleString($intlLocale, { dateStyle: 'long', timeStyle: 'short' }) : undefined;
+		return apiTime(date) ? formatDateTime(date, $intlLocale) : undefined;
 	}
 
 	function smbHint(user: User): string {

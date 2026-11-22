@@ -71,17 +71,3 @@ export async function restoreBackup(filename: string, passphrase?: string): Prom
 export async function deleteBackup(filename: string): Promise<{ status: string }> {
 	return api.delete<{ status: string }>(`/backup/${encodeURIComponent(filename)}`);
 }
-
-/**
- * A backup's size in the largest unit that keeps it at least 1, with at most two decimals.
- * `units` are the page's texts for bytes, kilobytes, megabytes and gigabytes (each 1024 times the
- * one before), and `locale` writes the number: the page's decimal separator ($intlLocale).
- */
-export function formatBytes(bytes: number, locale: string, units: readonly string[]): string {
-	if (bytes === 0) return `0 ${units[0]}`;
-	const k = 1024;
-	// The largest unit there is, also for sizes beyond it.
-	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), units.length - 1);
-	const size = (bytes / Math.pow(k, i)).toLocaleString(locale, { maximumFractionDigits: 2, useGrouping: false });
-	return `${size} ${units[i]}`;
-}

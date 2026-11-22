@@ -1,17 +1,14 @@
 import { messageOf } from '$lib/errors';
 import { getPowerConfig, getPowerSchedule, type PowerConfig, type PowerSchedule } from '$lib/api/power';
-
-function clockTime(hour: number, minute: number): string {
-	return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-}
+import { timeFieldValue } from '$lib/time';
 
 /** The form of the stored settings. */
 function formOf(settings: PowerConfig) {
 	return {
 		autoShutdown: settings.auto_shutdown,
-		shutdownTime: clockTime(settings.shutdown_hour, settings.shutdown_minute),
+		shutdownTime: timeFieldValue(settings.shutdown_hour, settings.shutdown_minute),
 		autoWakeup: settings.auto_wakeup,
-		wakeTime: clockTime(settings.wakeup_hour, settings.wakeup_minute),
+		wakeTime: timeFieldValue(settings.wakeup_hour, settings.wakeup_minute),
 		idleShutdown: settings.idle_shutdown,
 		idleMinutes: settings.idle_timeout_minutes
 	};

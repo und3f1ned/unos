@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Bell, AlertTriangle, Info, CheckCircle } from 'lucide-svelte';
 	import { Card, EmptyState } from '$lib/components/ui';
-	import { t } from '$lib/i18n';
-	import { apiTime } from '$lib/time';
+	import { formatAgo } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 
 	type Props = {
 		notifications?: Array<{
@@ -46,20 +46,9 @@
 		}
 	}
 
-	// How long ago, in the language of the page.
+	// How long ago, in the language of the page; an older one as its date.
 	function formatTime(iso: string): string {
-		const date = apiTime(iso);
-		if (!date) return iso;
-		const now = new Date();
-		const diff = now.getTime() - date.getTime();
-		const minutes = Math.floor(diff / 60000);
-		const hours = Math.floor(diff / 3600000);
-		const days = Math.floor(diff / 86400000);
-
-		if (minutes < 1) return $t('dashboard.activity.justNow');
-		if (minutes < 60) return $t('dashboard.activity.minutesAgo', { n: minutes });
-		if (hours < 24) return $t('dashboard.activity.hoursAgo', { n: hours });
-		return $t('dashboard.activity.daysAgo', { n: days });
+		return formatAgo(iso, $intlLocale, $t);
 	}
 </script>
 

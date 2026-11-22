@@ -173,13 +173,13 @@ test.describe('Language', () => {
       await expect(main.getByText('Not served', { exact: true })).toBeVisible();
       await expect(main.getByText('Expires soon', { exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: 'Serve nas.local' })).toHaveText('Serve this certificate');
-      await expect(main.getByText('Self-signed | Issuer: nas.local | Until: 11/8/2027, 1:47:31 AM', { exact: true }))
+      await expect(main.getByText('Self-signed | Issuer: nas.local | Until: 11/8/2027, 1:47 AM', { exact: true }))
         .toBeVisible();
       // The confirmation, with the date of the end in the language of the page.
       await main.getByRole('button', { name: 'Serve nas.local' }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByRole('heading', { name: 'Serve this certificate?' })).toBeVisible();
-      await expect(dialog.getByText('This certificate expires on 11/8/2027, 1:47:31 AM: replace it in time.')).toBeVisible();
+      await expect(dialog.getByText('This certificate expires on 11/8/2027, 1:47 AM: replace it in time.')).toBeVisible();
       await dialog.getByRole('button', { name: 'Cancel' }).click();
 
       // The language is chosen on the Account page (ADR-0431); back in System > Security, the cards
@@ -201,12 +201,12 @@ test.describe('Language', () => {
       await expect(main.getByText('Не отдаётся', { exact: true })).toBeVisible();
       await expect(main.getByText('Скоро истечёт', { exact: true })).toBeVisible();
       await expect(main.getByRole('button', { name: 'Отдавать nas.local' })).toHaveText('Отдавать этот сертификат');
-      await expect(main.getByText('Самоподписанный | Издатель: nas.local | До: 08.11.2027, 01:47:31', { exact: true }))
+      await expect(main.getByText('Самоподписанный | Издатель: nas.local | До: 08.11.2027, 01:47', { exact: true }))
         .toBeVisible();
       await main.getByRole('button', { name: 'Отдавать nas.local' }).click();
       await expect(dialog.getByRole('heading', { name: 'Отдавать этот сертификат?' })).toBeVisible();
       await expect(dialog.getByText('Все браузеры увидят новый сертификат.', { exact: false })).toBeVisible();
-      await expect(dialog.getByText('Срок действия этого сертификата истекает 08.11.2027, 01:47:31: замените его вовремя.'))
+      await expect(dialog.getByText('Срок действия этого сертификата истекает 08.11.2027, 01:47: замените его вовремя.'))
         .toBeVisible();
       await expect(dialog.getByRole('button', { name: 'Отдавать', exact: true })).toBeVisible();
     });

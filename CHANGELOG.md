@@ -93,6 +93,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   `bootstrap`, ADR-0451): until now only stub tools tested the bootstrap of a new checkout.
 
 ### Changed
+- The web UI writes every number, size, percentage, duration, date and time through one home,
+  `webui/src/lib/format.ts` and `webui/src/lib/time.ts`, with the words of the catalog `format`, in
+  the format of the interface's language (ADR-0459): the dashboard and Files write a decimal comma
+  in Russian as the other pages do, a percentage is "12.5%" in English and "12,5 %" in Russian, and a
+  temperature "45°C" and "45 °C". A date and time has one format, the date in numbers and the time
+  to the minute ("11/7/2026, 5:03 AM" in an en-US browser, "07.11.2026, 05:03" in Russian), with
+  seconds only on the lines of a log and a trash checkbox's label; the Scheduler writes a schedule's
+  time on the language's clock ("Daily at 2:00 AM" in an en-US browser). Durations start at their
+  largest unit ("3d 4h", a scrub's "1m 4s", a balance's "About 2h 2m left"), and an age is "5m ago"
+  within a day and the date after. The per-area size helpers and unit keys are gone, and
+  `npm run design` fails for the usual tools of a number or a date written by hand elsewhere in
+  `webui/src` (`toFixed`, `toLocaleString`, Intl's formats, a date's getters, a percentage or a
+  unit put together after a value).
 - The web UI builds with SvelteKit 3.2, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4,
   TypeScript 6, @sveltejs/adapter-static 4 and lucide-svelte 1 (ADR-0456); TypeScript 7 waits for
   SvelteKit, svelte-check and typescript-eslint to accept it. Its configuration is in
@@ -1826,6 +1839,10 @@ manager, encrypted backup uploads, health checks, CI checks).
 - The web UI's image builds again from the whole Dockerfile (the release workflow, a riscv64
   host's web UI image built elsewhere, the compose test stack): its lock file is written by the
   npm of the builder's Alpine, which refused the workstation's.
+- System > Network's interface card fits a 375 px phone with long live rates: the compose test
+  stack's real traffic ("18,89 KB/s" and "11,31 KB/s" in the Russian units) pushed the card's chevron
+  43 px out of it. The rates now wrap below the interface's name in either language, and the chevron
+  keeps its place (`network.spec.ts`, webui.locale-formats).
 - The compose test stack no longer refuses the sign-ins of its own E2E run with 429: every spec
   reaches the supervisor from the stack network's gateway, one client of the sign-in limit, so its
   image runs the supervisor's app with that limit off, as the stand-in does, from a module that

@@ -31,13 +31,11 @@
 	import { t } from '$lib/i18n';
 
 	type Props = {
-		// The units of sizes in the language of the page (formatBytes).
-		sizeUnits: string[];
 		/** A configuration restored from a snapshot, with the file name it has in the backup list. */
 		onrestored?: (filename: string) => void;
 	};
 
-	let { sizeUnits, onrestored }: Props = $props();
+	let { onrestored }: Props = $props();
 
 	// What the server names as words, with the keys of their texts (ADR-0287).
 	const WARNINGS: Record<string, string> = { same_disk: 'offsite.warning.sameDisk' };
@@ -259,13 +257,12 @@
 				{/each}
 
 				<!-- The state: what runs, the last copy and the last restore. -->
-				<OffsiteState {status} {tasks} {sizeUnits} {starting} onrefresh={refresh} onrunnow={runNow} />
+				<OffsiteState {status} {tasks} {starting} onrefresh={refresh} onrunnow={runNow} />
 
 				<!-- The snapshots, with their restores. -->
 				<OffsiteSnapshots
 					{snapshots}
 					{snapshotsError}
-					{sizeUnits}
 					{running}
 					{restoring}
 					{filesOf}

@@ -150,15 +150,3 @@ export async function listUploadLeftovers(): Promise<UploadLeftovers> {
 export async function removeUploadLeftovers(paths: string[]): Promise<{ removed: string[] }> {
 	return api.delete('/files/upload-leftovers', paths);
 }
-
-/**
- * `bytes` in the largest unit that keeps it at 1 or more, with one decimal at most: "1.5 MB".
- * `units` names bytes, KB, MB, GB and TB in the language of the page: files.unit.* of the catalogs
- * (ADR-0297).
- */
-export function formatSize(bytes: number, units: readonly string[]): string {
-	if (bytes === 0) return `0 ${units[0]}`;
-	const k = 1024;
-	const i = Math.floor(Math.log(bytes) / Math.log(k));
-	return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + units[i];
-}

@@ -16,10 +16,10 @@
 		/** Why the status could not be read: shown instead of the last one. */
 		error: string | undefined;
 		formatBytes: (bytes: number) => string;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 	};
 
-	let { part, mounted, status, error, formatBytes, percentFormat }: Props = $props();
+	let { part, mounted, status, error, formatBytes, formatPercentage }: Props = $props();
 </script>
 
 {#if part === 'result' && mounted && error}
@@ -41,7 +41,7 @@
 						total: formatBytes(status.total)
 					})}</span
 				>
-				<span>{percentFormat.format(removalProgress(status) / 100)}</span>
+				<span>{formatPercentage(removalProgress(status))}</span>
 			</div>
 		{:else if status.left !== null}
 			<p class="text-xs text-secondary">

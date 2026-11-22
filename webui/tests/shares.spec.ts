@@ -1710,8 +1710,8 @@ test.describe('In Russian', () => {
     const result = dialog.getByRole('region', { name: 'Результат исправления' });
     await expect(result.locator('.badge')).toHaveText('Готово');
     await expect(result).toContainText('Последний запуск');
-    // The time of the run, day first on a 24-hour clock, as Russian writes it.
-    await expect(result.getByText('06.11.2026, 10:00:05', { exact: true })).toBeVisible();
+    // The time of the run, day first on a 24-hour clock, as Russian writes it, to the minute (webui.locale-formats).
+    await expect(result.getByText('06.11.2026, 10:00', { exact: true })).toBeVisible();
     await expect(result).toContainText('Проверено: 120, изменено: 37, ошибок: 1');
     await expect(result).toContainText(
       'Пропущено: другие тома и точки монтирования: 2, ссылки: 1, личные файлы и папки: 3',

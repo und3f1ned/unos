@@ -4,7 +4,7 @@
 	import type { ScheduledTask, TaskType } from '$lib/api/scheduler';
 	import { ActionMenu, Badge, Button, Switch } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
-	import { formatDateTime } from '$lib/time';
+	import { formatClock, formatDateTime } from '$lib/time';
 	import { DAYS_OF_WEEK, TASK_TYPES, getTaskTypeIcon } from './tasks';
 
 	// A task of the list (ADR-0432): its switch, type, name, target, schedule and next run on the
@@ -52,8 +52,9 @@
 			return task.cron_expression;
 		}
 
+		// design-ignore: the minute of every hour, written :05 in every language
 		const minute = String(task.minute).padStart(2, '0');
-		const time = `${String(task.hour).padStart(2, '0')}:${minute}`;
+		const time = formatClock(task.hour, task.minute, $intlLocale);
 		const weekday = DAYS_OF_WEEK.find((d) => d.value === (task.day_of_week ?? 0));
 
 		if (task.frequency === 'hourly') return $t('scheduler.schedule.hourly', { minute });
@@ -63,11 +64,7 @@
 		return task.frequency;
 	});
 
-	const nextRun = $derived(
-		task.enabled && task.next_run
-			? formatDateTime(task.next_run, $intlLocale, { dateStyle: 'medium', timeStyle: 'short', zone })
-			: ''
-	);
+	const nextRun = $derived(task.enabled && task.next_run ? formatDateTime(task.next_run, $intlLocale, { zone }) : '');
 </script>
 
 <!-- Below sm the actions wrap below the task, which keeps the row's width (ADR-0302). -->

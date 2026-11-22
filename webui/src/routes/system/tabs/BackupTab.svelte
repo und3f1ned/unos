@@ -33,16 +33,6 @@
 	let error = $state<{ title: string; message: string } | null>(null);
 	let errorBox = $state<HTMLDivElement>();
 
-	// The units of a backup's size in the language of the page, from bytes to gigabytes (formatBytes),
-	// for the list and the off-device copy.
-	let sizeUnits = $derived([
-		$t('backup.size.bytes'),
-		$t('backup.size.kilobytes'),
-		$t('backup.size.megabytes'),
-		$t('backup.size.gigabytes'),
-		$t('backup.size.terabytes')
-	]);
-
 	// A 401 has already ended the session and the sign-in page is on its way.
 	function sessionEnded(e: unknown): boolean {
 		return e instanceof ApiError && e.status === 401;
@@ -219,14 +209,13 @@
 	<BackupList
 		{backups}
 		loading={!loaded}
-		{sizeUnits}
 		onrestore={openRestoreModal}
 		ondownload={handleDownload}
 		ondelete={handleDelete}
 	/>
 
 	<!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
-	<OffsiteCopy {sizeUnits} onrestored={loadBackups} />
+	<OffsiteCopy onrestored={loadBackups} />
 </div>
 
 <!-- Restore Confirmation Modal -->

@@ -68,12 +68,13 @@ test.describe('Times with their time zone', () => {
     expect(created).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$/);
 
     // The list shows the day, and the moment in the browser's zone as the cell's tooltip.
+    // To the minute, as every page writes a date and time (webui.locale-formats).
     const shown = await page.evaluate(
-      (value) => new Date(value).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' }),
+      (value) => new Date(value).toLocaleString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }),
       created,
     );
     const asUtc = await page.evaluate(
-      (value) => new Date(value).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }),
+      (value) => new Date(value).toLocaleString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', timeZone: 'UTC' }),
       created,
     );
     expect(shown).not.toBe(asUtc); // 5:45 apart

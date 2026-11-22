@@ -13,10 +13,10 @@
 	type Props = {
 		volumes: PoolVolumes;
 		formatBytes: (bytes: number) => string;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 	};
 
-	let { volumes, formatBytes, percentFormat }: Props = $props();
+	let { volumes, formatBytes, formatPercentage }: Props = $props();
 
 	let newNameError = $derived(volumes.newName && !volumes.newNameValid ? $t('storage.nameRule') : '');
 	let newQuotaError = $derived(
@@ -85,7 +85,7 @@
 				{/if}
 				<ul class="space-y-2">
 					{#each volumes.list as volume (volume.name)}
-						<VolumeItem {volume} {volumes} {formatBytes} {percentFormat} />
+						<VolumeItem {volume} {volumes} {formatBytes} {formatPercentage} />
 					{/each}
 				</ul>
 			{/if}

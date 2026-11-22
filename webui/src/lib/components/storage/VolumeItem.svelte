@@ -14,10 +14,10 @@
 		/** The dialog's volumes, whose chart and delete buttons this volume's act on. */
 		volumes: PoolVolumes;
 		formatBytes: (bytes: number) => string;
-		percentFormat: Intl.NumberFormat;
+		formatPercentage: (percent: number) => string;
 	};
 
-	let { volume, volumes, formatBytes, percentFormat }: Props = $props();
+	let { volume, volumes, formatBytes, formatPercentage }: Props = $props();
 
 	const usedOfQuota = (volume: Volume): string =>
 		volume.used === null || volume.quota === null
@@ -25,7 +25,7 @@
 			: $t('storage.volumes.usedOfQuota', {
 					used: formatBytes(volume.used),
 					quota: formatBytes(volume.quota),
-					percent: percentFormat.format(volume.quota > 0 ? volume.used / volume.quota : 1)
+					percent: formatPercentage(volume.quota > 0 ? (volume.used / volume.quota) * 100 : 100)
 				});
 </script>
 

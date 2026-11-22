@@ -150,8 +150,9 @@ test.describe('Two-factor authentication for every account', () => {
     const me = await (await request.get('/api/v1/auth/me', { headers: await browserSession(page) })).json();
     expect(me.two_factor_required.setup_only).toBe(false);
     expect(Date.parse(me.two_factor_required.by)).toBe(Date.parse(requirement.enabled_at) + 14 * DAY_MS);
+    // A date and time to the minute, as every page writes one (webui.locale-formats).
     const by = await page.evaluate(
-      (value) => new Date(value).toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' }),
+      (value) => new Date(value).toLocaleString('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }),
       me.two_factor_required.by as string,
     );
     await expect(page.getByText(`Set it up by ${by}: after that, your account can only set it up.`)).toBeVisible();

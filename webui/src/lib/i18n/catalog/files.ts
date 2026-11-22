@@ -81,13 +81,6 @@ export const en = {
 	'files.leftovers.removeForGood': 'Remove for good',
 	'files.leftovers.failed': 'Could not remove',
 
-	// The units of a size, from bytes up (ADR-0297).
-	'files.unit.b': 'B',
-	'files.unit.kb': 'KB',
-	'files.unit.mb': 'MB',
-	'files.unit.gb': 'GB',
-	'files.unit.tb': 'TB',
-
 	'files.trash.title': 'Trash',
 	'files.trash.empty': 'Empty trash',
 	'files.trash.emptyAction': 'Empty trash…',
@@ -209,12 +202,6 @@ export const ru: Translation<typeof en> = {
 	'files.leftovers.file': '{size}, последняя запись {time}',
 	'files.leftovers.removeForGood': 'Удалить навсегда',
 	'files.leftovers.failed': 'Не удалось удалить',
-
-	'files.unit.b': 'Б',
-	'files.unit.kb': 'КБ',
-	'files.unit.mb': 'МБ',
-	'files.unit.gb': 'ГБ',
-	'files.unit.tb': 'ТБ',
 
 	'files.trash.title': 'Корзина',
 	'files.trash.empty': 'Очистить корзину',

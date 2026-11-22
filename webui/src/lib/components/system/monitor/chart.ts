@@ -37,7 +37,9 @@ export function path(series: Point[], value: Series, max: number, from: number, 
 	let previous: number | null = null;
 	const commands: string[] = [];
 	for (const point of series) {
+		// design-ignore: the coordinates of an SVG path, not a text of the page
 		const x = (((point.at - from) / span) * 100).toFixed(2);
+		// design-ignore: the same path's coordinate
 		const y = (40 - (Math.min(value(point), max) / Math.max(max, 1e-9)) * 40).toFixed(2);
 		const move = previous === null || point.at - previous > GAP_MS;
 		commands.push((move ? 'M ' : 'L ') + x + ' ' + y);

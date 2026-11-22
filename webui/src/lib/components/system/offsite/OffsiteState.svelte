@@ -1,10 +1,10 @@
 <script lang="ts">
 	// The state of the off-device copy (ADR-0337): what runs, the last copy and the last restore,
 	// with Refresh and Run now, and the task of the Scheduler that runs the copy.
-	import { formatBytes } from '$lib/api/backup';
 	import type { OffsiteStatus } from '$lib/api/offsite';
 	import type { ScheduledTask } from '$lib/api/scheduler';
 	import { Button, TechDetails } from '$lib/components/ui';
+	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { Play, RefreshCw } from 'lucide-svelte';
@@ -13,14 +13,12 @@
 		status: OffsiteStatus | null;
 		// The copy's tasks of the Scheduler.
 		tasks: ScheduledTask[];
-		// The units of sizes in the language of the page (formatBytes).
-		sizeUnits: string[];
 		starting: boolean;
 		onrefresh: () => void;
 		onrunnow: () => void;
 	};
 
-	let { status, tasks, sizeUnits, starting, onrefresh, onrunnow }: Props = $props();
+	let { status, tasks, starting, onrefresh, onrunnow }: Props = $props();
 
 	// The step at which a copy failed, as the server names it, with the keys of their texts (ADR-0287).
 	const STEPS: Record<string, string> = {
@@ -92,7 +90,7 @@
 					new: lastCopy.summary.files_new,
 					changed: lastCopy.summary.files_changed,
 					unmodified: lastCopy.summary.files_unmodified,
-					added: formatBytes(lastCopy.summary.bytes_added, $intlLocale, sizeUnits)
+					added: formatSize(lastCopy.summary.bytes_added, $intlLocale, $t, { digits: 2 })
 				})}
 			</p>
 		{/if}

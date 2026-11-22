@@ -69,14 +69,6 @@ export const en = {
 	'network.interface.none': 'No network interfaces found',
 	'network.speed.gbps': '{speed} Gb/s',
 	'network.speed.mbps': '{speed} Mb/s',
-	// The live traffic: a count of bytes in a unit of powers of 1024, and the same per second.
-	'network.bytes.b': 'B',
-	'network.bytes.kb': 'KB',
-	'network.bytes.mb': 'MB',
-	'network.bytes.gb': 'GB',
-	'network.bytes.tb': 'TB',
-	'network.bytes.size': '{value} {unit}',
-	'network.bytes.perSecond': '{size}/s',
 
 	'network.routes.destination': 'Destination',
 	'network.routes.interface': 'Interface',
@@ -168,13 +160,6 @@ export const ru: Translation<typeof en> = {
 	'network.interface.none': 'Сетевые интерфейсы не найдены',
 	'network.speed.gbps': '{speed} Гбит/с',
 	'network.speed.mbps': '{speed} Мбит/с',
-	'network.bytes.b': 'Б',
-	'network.bytes.kb': 'КБ',
-	'network.bytes.mb': 'МБ',
-	'network.bytes.gb': 'ГБ',
-	'network.bytes.tb': 'ТБ',
-	'network.bytes.size': '{value} {unit}',
-	'network.bytes.perSecond': '{size}/с',
 
 	'network.routes.destination': 'Назначение',
 	'network.routes.interface': 'Интерфейс',

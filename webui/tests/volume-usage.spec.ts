@@ -107,7 +107,7 @@ test.describe('The use of the volumes\' quotas', () => {
     await expect(graph).toBeVisible();
     // The first and last time and use, and the quota, written out for every reader.
     await expect(graph).toHaveText(
-      /^\s*2\.0 GB used on Nov 1, 10:00\sAM, 8\.0 GB on Nov 17, 11:15\sAM\.\s+Quota: 10\.0 GB\.\s*$/,
+      /^\s*2\.0 GB used on 11\/1\/2026, 10:00\sAM, 8\.0 GB on 11\/17\/2026, 11:15\sAM\.\s+Quota: 10\.0 GB\.\s*$/,
     );
     // The line of the use through its three points, and the quota's dashed line at the top.
     const lines = graph.locator('svg path');
@@ -223,7 +223,7 @@ test.describe('Alerts at the levels of a volume\'s quota', () => {
     await page.goto('/');
 
     await expect(page.getByRole('region', { name: '1 проблема требует внимания' }).getByRole('listitem')).toHaveText(
-      'Том e2e_media/photos заполнен на 90% квоты',
+      'Том e2e_media/photos заполнен на 90\u00a0% квоты',
     );
   });
 });
@@ -250,7 +250,7 @@ test.describe('The use of the volumes\' quotas in Russian', () => {
     await row(dialog, 'documents').getByRole('button', { name: 'Заполнение тома documents во времени' }).click();
     await expect(row(dialog, 'documents').getByText('Заполнение во времени', { exact: true })).toBeVisible();
     await expect(row(dialog, 'documents').getByRole('figure')).toHaveText(
-      /^\s*Занято 2,0 ГБ на 1 нояб\., 10:00 и 8,0 ГБ на 17 нояб\., 11:15\.\s+Квота: 10,0 ГБ\.\s*$/,
+      /^\s*Занято 2,0 ГБ на 01\.11\.2026, 10:00 и 8,0 ГБ на 17\.11\.2026, 11:15\.\s+Квота: 10,0 ГБ\.\s*$/,
     );
     await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
 

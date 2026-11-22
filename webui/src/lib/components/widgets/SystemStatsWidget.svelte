@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { Cpu, HardDrive, MemoryStick, Network, Thermometer } from 'lucide-svelte';
 	import { Card, ProgressBar } from '$lib/components/ui';
-	import { t } from '$lib/i18n';
+	import { formatPercent, formatRate, formatSize, formatTemperature, ONE_DECIMAL } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 	import { isAdmin } from '$lib/stores/auth';
-	import { formatBytes } from './bytes';
 
 	type Props = {
 		cpuPercent?: number;
@@ -38,9 +38,13 @@
 		only = 'cpu'
 	}: Props = $props();
 
-	// The functions that read $t do it where the markup calls them: the texts follow the language.
-	function formatRate(bytes: number): string {
-		return $t('dashboard.rate', { size: formatBytes(bytes, $t) });
+	// The functions that read $t and $intlLocale do it where the markup calls them: the texts follow the
+	// language.
+	function rate(bytes: number): string {
+		return formatRate(bytes, $intlLocale, $t);
+	}
+	function size(bytes: number): string {
+		return formatSize(bytes, $intlLocale, $t);
 	}
 
 	function getPercentColor(percent: number): string {
@@ -60,16 +64,16 @@
 	<div class="flex items-center gap-4 text-sm">
 		<div class="flex items-center gap-1">
 			<Cpu class="w-4 h-4 icon-cpu" />
-			<span class={getPercentColor(cpuPercent)}>{cpuPercent.toFixed(0)}%</span>
+			<span class={getPercentColor(cpuPercent)}>{formatPercent(cpuPercent, $intlLocale)}</span>
 		</div>
 		<div class="flex items-center gap-1">
 			<MemoryStick class="w-4 h-4 icon-memory" />
-			<span class={getPercentColor(memoryPercent)}>{memoryPercent.toFixed(0)}%</span>
+			<span class={getPercentColor(memoryPercent)}>{formatPercent(memoryPercent, $intlLocale)}</span>
 		</div>
 		{#if temperature !== null}
 			<div class="flex items-center gap-1">
 				<Thermometer class="w-4 h-4 icon-temperature" />
-				<span class={getTempColor(temperature)}>{$t('dashboard.celsius', { value: temperature })}</span>
+				<span class={getTempColor(temperature)}>{formatTemperature(temperature, $intlLocale)}</span>
 			</div>
 		{/if}
 	</div>
@@ -101,7 +105,9 @@
 					$t('dashboard.stats.cpu'),
 					cpuCores > 0 ? $t('dashboard.stats.cores', { n: cpuCores }) : ''
 				)}
-				<p class="stat-card-value {getPercentColor(cpuPercent)}">{cpuPercent.toFixed(1)}%</p>
+				<p class="stat-card-value {getPercentColor(cpuPercent)}">
+					{formatPercent(cpuPercent, $intlLocale, ONE_DECIMAL)}
+				</p>
 				<ProgressBar value={cpuPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.cpu')} />
 			</Card>
 		{/if}
@@ -110,9 +116,11 @@
 		{#if only === 'memory'}
 			<Card padding="sm" class="stat-card">
 				{@render header(MemoryStick, 'chip-memory', $t('dashboard.stats.memory'), '')}
-				<p class="stat-card-value {getPercentColor(memoryPercent)}">{memoryPercent.toFixed(1)}%</p>
+				<p class="stat-card-value {getPercentColor(memoryPercent)}">
+					{formatPercent(memoryPercent, $intlLocale, ONE_DECIMAL)}
+				</p>
 				<ProgressBar value={memoryPercent} size="sm" class="mt-auto pt-1" label={$t('dashboard.stats.memory')} />
-				<p class="stat-card-sublabel">{formatBytes(memoryUsed, $t)} / {formatBytes(memoryTotal, $t)}</p>
+				<p class="stat-card-sublabel">{size(memoryUsed)} / {size(memoryTotal)}</p>
 			</Card>
 		{/if}
 
@@ -122,11 +130,11 @@
 				{@render header(Network, 'chip-network', $t('dashboard.stats.network'), '')}
 				<p class="flex flex-wrap items-baseline gap-x-2">
 					<span class="stat-card-sublabel">{$t('dashboard.stats.received')}</span>
-					<span class="text-lg font-semibold tabular">{formatRate(networkDown)}</span>
+					<span class="text-lg font-semibold tabular">{rate(networkDown)}</span>
 				</p>
 				<p class="flex flex-wrap items-baseline gap-x-2">
 					<span class="stat-card-sublabel">{$t('dashboard.stats.sent')}</span>
-					<span class="text-lg font-semibold tabular">{formatRate(networkUp)}</span>
+					<span class="text-lg font-semibold tabular">{rate(networkUp)}</span>
 				</p>
 			</Card>
 		{/if}
@@ -137,11 +145,11 @@
 				{@render header(HardDrive, 'chip-storage', $t('dashboard.stats.diskIo'), '')}
 				<p class="flex flex-wrap items-baseline gap-x-2">
 					<span class="stat-card-sublabel">{$t('dashboard.stats.read')}</span>
-					<span class="text-lg font-semibold tabular">{formatRate(diskRead)}</span>
+					<span class="text-lg font-semibold tabular">{rate(diskRead)}</span>
 				</p>
 				<p class="flex flex-wrap items-baseline gap-x-2">
 					<span class="stat-card-sublabel">{$t('dashboard.stats.write')}</span>
-					<span class="text-lg font-semibold tabular">{formatRate(diskWrite)}</span>
+					<span class="text-lg font-semibold tabular">{rate(diskWrite)}</span>
 				</p>
 			</Card>
 		{/if}
@@ -151,7 +159,7 @@
 			<Card padding="sm" class="stat-card">
 				{@render header(Thermometer, 'chip-temperature', $t('dashboard.stats.temperature'), '', '')}
 				{#if temperature !== null}
-					<p class="stat-card-value {getTempColor(temperature)}">{$t('dashboard.celsius', { value: temperature })}</p>
+					<p class="stat-card-value {getTempColor(temperature)}">{formatTemperature(temperature, $intlLocale)}</p>
 					<ProgressBar
 						value={temperature}
 						max={90}
@@ -159,7 +167,7 @@
 						variant={temperature < 50 ? 'success' : temperature < 70 ? 'warning' : 'error'}
 						class="mt-auto pt-1"
 						label={$t('dashboard.stats.temperature')}
-						valueText={$t('dashboard.celsius', { value: temperature })}
+						valueText={formatTemperature(temperature, $intlLocale)}
 					/>
 				{:else}
 					<!-- No sensor answered: a quiet line, not a big grey value. -->

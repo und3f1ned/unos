@@ -2,11 +2,11 @@
 	import { Check, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
 	import type { SystemInfo } from '$lib/api/system';
 	import { Badge, Button, Skeleton } from '$lib/components/ui';
-	import { t } from '$lib/i18n';
+	import { formatDuration, secondsSince } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 	import { isAdmin } from '$lib/stores/auth';
 	import { problemsKnown } from '$lib/stores/problems';
 	import { wsConnected } from '$lib/stores/stats';
-	import { apiTime } from '$lib/time';
 
 	// The head of the dashboard: the host's name, system and uptime, for an administrator a chip with
 	// the number of issues that the banner below lists, linked to it, or "No problems" once that is
@@ -52,16 +52,9 @@
 	// The functions that read $t or $intlLocale do it where the markup calls them: the texts follow
 	// the language.
 	function formatUptime(bootTime: string): string {
-		// bootTime is when the host booted, ISO 8601 with its offset (ADR-0401)
-		const booted = apiTime(bootTime);
-		if (!booted) return bootTime;
-		const seconds = Math.floor((Date.now() - booted.getTime()) / 1000);
-		const days = Math.floor(seconds / 86400);
-		const hours = Math.floor((seconds % 86400) / 3600);
-		const minutes = Math.floor((seconds % 3600) / 60);
-		if (days > 0) return $t('dashboard.uptime.days', { days, hours });
-		if (hours > 0) return $t('dashboard.uptime.hours', { hours, minutes });
-		return $t('dashboard.uptime.minutes', { minutes });
+		// bootTime is when the host booted, ISO 8601 with its offset (ADR-0401): its two largest units.
+		const seconds = secondsSince(bootTime);
+		return seconds === null ? bootTime : formatDuration(seconds, $intlLocale, $t);
 	}
 </script>
 

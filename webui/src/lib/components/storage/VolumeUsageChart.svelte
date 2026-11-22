@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { VolumeUsagePoint } from '$lib/api/storage';
 	import { intlLocale, t } from '$lib/i18n';
-	import { apiTime } from '$lib/time';
+	import { apiTime, formatDateTime } from '$lib/time';
 
 	// A volume's use over time in the Volumes dialog of the Storage page: one point per
 	// hour of the last 30 days that the supervisor kept, the current reading last, drawn as a line
@@ -36,6 +36,7 @@
 				return;
 			}
 			// i18n-ignore: the commands of an SVG path
+			// design-ignore: the coordinates of an SVG path, not a text of the page
 			drawn += (joined ? ' L ' : ' M ') + at(index).toFixed(1) + ' ' + height(value).toFixed(1);
 			joined = true;
 		});
@@ -57,14 +58,6 @@
 		)
 	);
 	let quota = $derived(points[points.length - 1]?.quota ?? null);
-	let dateFormat = $derived(
-		new Intl.DateTimeFormat($intlLocale, {
-			day: 'numeric',
-			month: 'short',
-			hour: '2-digit',
-			minute: '2-digit'
-		})
-	);
 </script>
 
 {#if points.length < 2}
@@ -91,8 +84,8 @@
 		</svg>
 		<figcaption class="text-xs text-secondary break-words">
 			{$t('storage.volumes.chartSummary', {
-				from: dateFormat.format(first),
-				to: dateFormat.format(last),
+				from: formatDateTime(points[0].time, $intlLocale),
+				to: formatDateTime(points[points.length - 1].time, $intlLocale),
 				start: formatBytes(points[0].used),
 				end: formatBytes(points[points.length - 1].used)
 			})}

@@ -6,7 +6,7 @@
 	import { UNOS_SMB_IDS, type AppTemplate } from '$lib/api/apps';
 	import { intlLocale, t } from '$lib/i18n';
 	import type { PoolChoice } from './pools.svelte';
-	import { formatSize } from './size';
+	import { formatSize } from '$lib/format';
 
 	type Props = {
 		app: AppTemplate;
@@ -26,8 +26,8 @@
 			value: pool.name,
 			label: $t('apps.detail.poolOption', {
 				name: pool.name,
-				free: formatSize(pool.free_bytes, $intlLocale, $t, 2),
-				total: formatSize(pool.total_bytes, $intlLocale, $t, 2)
+				free: formatSize(pool.free_bytes, $intlLocale, $t, { digits: 2 }),
+				total: formatSize(pool.total_bytes, $intlLocale, $t, { digits: 2 })
 			})
 		}))
 	);

@@ -14,7 +14,6 @@
 		type Subvolume
 	} from '$lib/api/snapshots';
 	import { intlLocale, t } from '$lib/i18n';
-	import { DATE_TIME_MINUTES } from '$lib/format';
 	import { formatDateTime } from '$lib/time';
 	import { CreateSnapshotDialog, DeleteDialog, RestoreSnapshotDialog, SnapshotTable } from '$lib/components/snapshots';
 	import { SnapshotLists } from '$lib/components/snapshots/lists.svelte';
@@ -38,7 +37,7 @@
 
 	// The server gives UTC times with their offset; the browser shows them in its own time zone,
 	// in the language of the page (ADR-0287).
-	const formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale, DATE_TIME_MINUTES) : '-');
+	const formatDate = (value: string): string => (value ? formatDateTime(value, $intlLocale) : '-');
 
 	let options = $derived(lists.subvolumes.map((sv) => ({ value: sv.path, label: label(sv) })));
 

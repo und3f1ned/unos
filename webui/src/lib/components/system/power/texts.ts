@@ -53,17 +53,3 @@ export function grouped(findings: PowerFinding[]): { finding: PowerFinding; coun
 	}
 	return [...seen.values()];
 }
-
-/**
- * `zone` when this browser knows it, so that the tab shows its times on the NAS's clock, the one
- * the settings are on; undefined (the browser's zone) for a zone it does not know or none.
- */
-export function knownZone(zone: string | null | undefined): string | undefined {
-	if (!zone) return undefined;
-	try {
-		new Intl.DateTimeFormat('en-US', { timeZone: zone });
-		return zone;
-	} catch {
-		return undefined;
-	}
-}

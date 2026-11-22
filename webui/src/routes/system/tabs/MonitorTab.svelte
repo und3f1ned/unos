@@ -18,7 +18,7 @@
 		type Point,
 		type Series
 	} from '$lib/components/system/monitor/chart';
-	import { formatNumber, scaleBytes } from '$lib/format';
+	import { formatPercent, formatRate, formatSize, ONE_DECIMAL } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 
 	// System > Resource Monitor (ADR-0399): the history that the supervisor keeps for an hour, read
@@ -103,25 +103,16 @@
 	let networkMax = $derived(Math.max(recvPeak, sentPeak));
 	let diskMax = $derived(Math.max(readPeak, writePeak));
 
-	// The units of a size and of a rate, one for each power of 1024: keys of the catalog.
-	const SIZE_UNITS = ['monitor.size.b', 'monitor.size.kb', 'monitor.size.mb', 'monitor.size.gb', 'monitor.size.tb'];
-	const RATE_UNITS = ['monitor.rate.b', 'monitor.rate.kb', 'monitor.rate.mb', 'monitor.rate.gb'];
-
-	// The numbers in the format of the page and the units of the catalog (webui/AGENTS.md, Data):
-	// a size or a rate in the largest unit that keeps it at 1 or more, with up to two decimals; a
-	// percentage with one decimal.
-	function amount(bytes: number, units: string[]): string {
-		const { value, power } = scaleBytes(bytes, units.length);
-		return $t(units[power], { value: formatNumber(value, $intlLocale, 2) });
+	// The numbers in the format of the page and the units of the catalog (webui.locale-formats): a size or a rate
+	// in the largest unit that keeps it at 1 or more, with up to two decimals; a percentage with one.
+	function size(bytes: number): string {
+		return formatSize(bytes, $intlLocale, $t, { digits: 2 });
+	}
+	function perSecond(bytes: number): string {
+		return formatRate(bytes, $intlLocale, $t, { digits: 2 });
 	}
 	function percent(value: number): string {
-		return $t('monitor.percent', {
-			value: value.toLocaleString($intlLocale, {
-				minimumFractionDigits: 1,
-				maximumFractionDigits: 1,
-				useGrouping: false
-			})
-		});
+		return formatPercent(value, $intlLocale, ONE_DECIMAL);
 	}
 	function chartName(metric: string): string {
 		return $t('monitor.chart', { metric: $t(metric), span: $t(range.span) });
@@ -244,7 +235,7 @@
 				</div>
 				<p class="stat-card-value">{percent(currentStats.memory.percent)}</p>
 				<p class="stat-card-sublabel">
-					{amount(currentStats.memory.used, SIZE_UNITS)} / {amount(currentStats.memory.total, SIZE_UNITS)}
+					{size(currentStats.memory.used)} / {size(currentStats.memory.total)}
 				</p>
 				{@render chart('monitor.memory', 'icon-memory', 100, percent(100), [{ value: memoryOf }])}
 				<p class="stat-card-sublabel">{$t('monitor.peak', { value: percent(memoryPeak) })}</p>
@@ -255,14 +246,14 @@
 					<Network class="w-5 h-5 icon-network" />
 					<h3 class="stat-card-label">{$t('monitor.network')}</h3>
 				</div>
-				{@render rate('text-brand', '↓', amount(currentStats.network.bytes_recv_rate, RATE_UNITS))}
-				{@render rate('text-content-muted', '↑', amount(currentStats.network.bytes_sent_rate, RATE_UNITS))}
-				{@render chart('monitor.network', '', networkMax, amount(networkMax, RATE_UNITS), [
+				{@render rate('text-brand', '↓', perSecond(currentStats.network.bytes_recv_rate))}
+				{@render rate('text-content-muted', '↑', perSecond(currentStats.network.bytes_sent_rate))}
+				{@render chart('monitor.network', '', networkMax, perSecond(networkMax), [
 					{ cls: 'text-brand', value: recvOf },
 					{ cls: 'text-content-muted', value: sentOf }
 				])}
 				<p class="stat-card-sublabel">
-					{$t('monitor.peak.network', { recv: amount(recvPeak, RATE_UNITS), sent: amount(sentPeak, RATE_UNITS) })}
+					{$t('monitor.peak.network', { recv: perSecond(recvPeak), sent: perSecond(sentPeak) })}
 				</p>
 			</Card>
 
@@ -271,14 +262,14 @@
 					<HardDrive class="w-5 h-5 icon-storage" />
 					<h3 class="stat-card-label">{$t('monitor.diskIo')}</h3>
 				</div>
-				{@render rate('text-brand', $t('monitor.read'), amount(currentStats.disk_io.read_rate, RATE_UNITS))}
-				{@render rate('text-content-muted', $t('monitor.write'), amount(currentStats.disk_io.write_rate, RATE_UNITS))}
-				{@render chart('monitor.diskIo', '', diskMax, amount(diskMax, RATE_UNITS), [
+				{@render rate('text-brand', $t('monitor.read'), perSecond(currentStats.disk_io.read_rate))}
+				{@render rate('text-content-muted', $t('monitor.write'), perSecond(currentStats.disk_io.write_rate))}
+				{@render chart('monitor.diskIo', '', diskMax, perSecond(diskMax), [
 					{ cls: 'text-brand', value: readOf },
 					{ cls: 'text-content-muted', value: writeOf }
 				])}
 				<p class="stat-card-sublabel">
-					{$t('monitor.peak.disk', { read: amount(readPeak, RATE_UNITS), write: amount(writePeak, RATE_UNITS) })}
+					{$t('monitor.peak.disk', { read: perSecond(readPeak), write: perSecond(writePeak) })}
 				</p>
 			</Card>
 		</div>
@@ -322,7 +313,7 @@
 								<td class="text-right mono">{proc.pid}</td>
 								<td class="text-secondary break-all">{proc.username}</td>
 								<td class="text-right tabular">{percent(proc.cpu_percent)}</td>
-								<td class="text-right whitespace-nowrap">{amount(proc.memory_bytes, SIZE_UNITS)}</td>
+								<td class="text-right whitespace-nowrap">{size(proc.memory_bytes)}</td>
 							</tr>
 						{/each}
 					</tbody>

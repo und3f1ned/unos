@@ -15,7 +15,6 @@ export const en = {
 	'health.unmatched':
 		'No disk in the list reports the serial number of these disks now: smartctl could not read the disk this time, or another disk took its place.',
 	'health.serialOf': 'serial {serial}',
-	'health.celsius': '{value} °C',
 	'health.smartData': 'SMART data',
 	// After SMART data, for screen readers: "SMART data of /dev/sda".
 	'health.smartDataOf': 'of {device}',
@@ -45,9 +44,6 @@ export const en = {
 	'health.serial': 'Serial',
 	'health.firmware': 'Firmware',
 	'health.capacity': 'Capacity',
-	// A capacity by its unit, as the server writes it: {size} is the number.
-	'health.size.gb': '{size} GB',
-	'health.size.tb': '{size} TB',
 	'health.lastSelfTest': 'Last self-test',
 	'health.notReported': 'Not reported',
 	'health.noSelfTest': 'None recorded',
@@ -107,7 +103,6 @@ export const ru: Translation<typeof en> = {
 	'health.unmatched':
 		'Ни один диск в списке сейчас не сообщает серийный номер этих дисков: smartctl не смог прочитать диск в этот раз, или на его месте теперь другой диск.',
 	'health.serialOf': 'серийный номер {serial}',
-	'health.celsius': '{value} °C',
 	'health.smartData': 'Данные SMART',
 	'health.smartDataOf': 'диска {device}',
 
@@ -133,8 +128,6 @@ export const ru: Translation<typeof en> = {
 	'health.serial': 'Серийный номер',
 	'health.firmware': 'Прошивка',
 	'health.capacity': 'Ёмкость',
-	'health.size.gb': '{size} ГБ',
-	'health.size.tb': '{size} ТБ',
 	'health.lastSelfTest': 'Последняя самопроверка',
 	'health.notReported': 'Нет данных',
 	'health.noSelfTest': 'Не проводилась',

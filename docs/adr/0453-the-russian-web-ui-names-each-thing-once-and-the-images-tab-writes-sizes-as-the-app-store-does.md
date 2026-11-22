@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0459
 date: 2026-11-22
 area: webui
 decided-by: agent
@@ -9,6 +10,8 @@ supersedes: [ADR-0297]
 # ADR-0453: The Russian web UI names each thing once, and the Images tab writes sizes as the App Store does
 
 ## Context
+
+Superseded by ADR-0459: only in part, its rule that ADR-0297's other rules stay (the dashboard and Files take their units from their own catalogs and keep a decimal point) and that the Images tab writes sizes with `webui/src/lib/components/apps/size.ts`; every page now writes its numbers and dates through `webui/src/lib/format.ts` and `webui/src/lib/time.ts`. Every other rule here stays in force.
 
 ADR-0287 asks for a walk through every page in Russian before the translation passes. The walk
 (recorded in the notes of `webui.redesign` and `webui.loading-without-flicker` in

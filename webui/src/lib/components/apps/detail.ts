@@ -14,7 +14,7 @@ import {
 	type PortMapping,
 	type VolumeMapping
 } from '$lib/api/apps';
-import type { Translate } from './size';
+import type { Translate } from '$lib/i18n';
 
 export type DetailTab = 'overview' | 'ports' | 'volumes' | 'environment';
 

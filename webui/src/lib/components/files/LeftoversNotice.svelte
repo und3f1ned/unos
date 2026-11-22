@@ -1,19 +1,17 @@
 <script lang="ts">
 	import { Trash2 } from 'lucide-svelte';
-	import { formatSize } from '$lib/api/files';
 	import { Alert, Button } from '$lib/components/ui';
-	import { t } from '$lib/i18n';
+	import { formatSize } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
 	import type { UploadLeftovers } from './leftovers.svelte';
 
 	type Props = {
 		leftovers: UploadLeftovers;
-		// Sizes in the units of the page's language.
-		units: readonly string[];
 		// Remove was chosen: the page asks in its dialog.
 		onremove: () => void;
 	};
 
-	let { leftovers, units, onremove }: Props = $props();
+	let { leftovers, onremove }: Props = $props();
 
 	// The notice's Remove button, which takes the keyboard focus back when the dialog closes (state:
 	// it comes and goes with the notice, and the compiler wants it reactive there).
@@ -28,7 +26,9 @@
 	<!-- A region named by its title, which screen readers can go to. -->
 	<section aria-label={$t('files.leftovers.title')} class="mb-4">
 		<Alert variant="warning" title={$t('files.leftovers.title')}>
-			<p>{$t('files.leftovers.found', { n: leftovers.files.length, size: formatSize(leftovers.size, units) })}</p>
+			<p>
+				{$t('files.leftovers.found', { n: leftovers.files.length, size: formatSize(leftovers.size, $intlLocale, $t) })}
+			</p>
 			<p class="mt-1">{$t('files.leftovers.hint')}</p>
 			<div class="mt-2 flex flex-wrap gap-2">
 				<span bind:this={leftoversButtonSlot} class="contents">

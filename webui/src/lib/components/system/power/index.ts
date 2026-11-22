@@ -5,4 +5,3 @@ export { default as WakeOnLanCard } from './WakeOnLanCard.svelte';
 export { ACTIONS, REQUESTED, type Action, type ActionTexts } from './actions';
 export { PowerPlan } from './plan.svelte';
 export { WakeOnLan } from './wol.svelte';
-export { knownZone } from './texts';

@@ -561,6 +561,38 @@ test.describe('System > Network', () => {
     }
   });
 
+  // Long rates in Russian on a phone (webui.locale-formats): the compose test stack's real traffic
+  // wrote "18,89 КБ/с" and "11,31 КБ/с" in the header of eth0, which pushed its chevron 43 px out of
+  // the card. The rates wrap below the name instead, and nothing of a card is cut off.
+  test('at 375 px in Russian, long live rates wrap inside the interface cards', async ({ authenticatedPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+    await fakeNetworkApi(page);
+    const KIB = 1024;
+    await fakeLiveTraffic(page, {
+      eth0: { ...TRAFFIC, bytes_recv_rate: 18.89 * KIB, bytes_sent_rate: 11.31 * KIB },
+      eth1: { ...TRAFFIC, bytes_recv_rate: 1023.99 * KIB * KIB, bytes_sent_rate: 999.99 * KIB * KIB },
+    });
+    await page.goto('/system#network');
+    const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
+    const eth1 = page.getByRole('region', { name: 'Интерфейс eth1' });
+    await expect(eth0).toContainText('18,89 КБ/с');
+    await expect(eth0).toContainText('11,31 КБ/с');
+    await expect(eth1).toContainText('1023,99 МБ/с');
+    for (const card of [eth0, eth1]) {
+      // Every part of the card, its chevron included, inside the card's box, which cuts off the rest.
+      const outside = await card.evaluate((section) => {
+        const box = section.getBoundingClientRect();
+        return [...section.querySelectorAll('*')]
+          .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+          .filter(({ rect }) => rect.width > 0 && (rect.right > box.right + 0.5 || rect.left < box.left - 0.5))
+          .map(({ element, rect }) => `${element.tagName.toLowerCase()} ${Math.round(rect.right - box.right)} px`);
+      });
+      expect(outside).toEqual([]);
+      expect(await card.evaluate((section) => section.scrollWidth - section.clientWidth)).toBe(0);
+    }
+  });
+
   test('what could not be loaded is shown with the server\'s message', async ({ authenticatedPage: page }) => {
     await fakeNetworkApi(page, {
       failures: {

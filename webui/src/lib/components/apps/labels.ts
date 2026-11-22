@@ -1,6 +1,6 @@
 // The badges of an app of the App Store, on its card and in its details, and the names of the
 // categories.
-import type { Translate } from './size';
+import type { Translate } from '$lib/i18n';
 
 // One label per category (AppCategory of supervisor/src/apps/schemas.py), the category list's,
 // also on the cards and in the details (ADR-0291); '' is every app.

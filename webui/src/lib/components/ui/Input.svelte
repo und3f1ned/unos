@@ -125,6 +125,7 @@
 		if (min !== undefined) next = Math.max(min, next);
 		if (max !== undefined) next = Math.min(max, next);
 		// No float noise: 0.1 + 0.2 shows as 0.3.
+		// design-ignore: a number field's value, which the browser reads with a decimal point in every language
 		value = String(Number(next.toFixed(6)));
 	}
 	const LeadingIcon = $derived(icon);
