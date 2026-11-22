@@ -76,3 +76,6 @@ if [ "$published" -gt "$failed" ]; then
     failed=$published
 fi
 exit "$failed"
+
+# Throwaway, never merged: a shellcheck finding (SC2086) for CI's red check.
+red_check() { echo $1; }

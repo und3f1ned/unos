@@ -4281,7 +4281,7 @@
     {
       "id": "ci.branch-protection",
       "category": "ci",
-      "description": "main takes changes only through pull requests whose required checks passed",
+      "description": "main takes changes only through pull requests whose required checks passed (reworded without an ADR, for the red check)",
       "steps": [
         "Branch protection on main requires a pull request and the Unit Tests, Lint, Frontend and commits checks",
         "Force pushes to main and its deletion are refused"
