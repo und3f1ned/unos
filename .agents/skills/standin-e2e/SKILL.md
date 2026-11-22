@@ -24,7 +24,9 @@ here: `webui/package.json` has no test scripts, and a bare
 ## Steps
 
 1. **Check the prerequisites.** `make setup` has made `supervisor/.venv` and
-   `webui/node_modules` with Playwright's Chromium. Another Python with the
+   `webui/node_modules` with Playwright's Chromium and WebKit (WebKit runs
+   `tests/form-fields.spec.ts`; `--project=chromium` leaves it out on a
+   machine without it). Another Python with the
    supervisor's packages: set `PYTHON`. A machine that cannot download
    Chromium: set `E2E_CHROMIUM_PATH` to an installed Chromium headless shell
    binary (for example under `~/Library/Caches/ms-playwright/`).

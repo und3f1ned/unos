@@ -212,22 +212,23 @@
 			</div>
 		{/if}
 
-		<!-- Keep Count (for snapshot/backup) -->
+		<!-- Keep Count (for snapshot/backup): a count that steps by one, with Input's steppers
+		     (ADR-0432). Input's value is the text typed; the task's a number, or none. -->
 		{#if formData.task_type === 'snapshot' || formData.task_type === 'backup'}
-			<div>
-				<label for="task-keep-count" class="form-label">{$t('scheduler.form.keepCount')}</label>
-				<input
-					id="task-keep-count"
-					type="number"
-					bind:value={formData.keep_count}
-					min="1"
-					max="100"
-					class="form-input w-28 tabular"
-				/>
-				<p class="text-xs text-content-muted mt-1">
-					{formData.task_type === 'backup' ? $t('scheduler.form.keepBackups') : $t('scheduler.form.keepSnapshots')}
-				</p>
-			</div>
+			<Input
+				id="task-keep-count"
+				type="number"
+				label={$t('scheduler.form.keepCount')}
+				bind:value={
+					() => String(formData.keep_count ?? ''),
+					(typed) => (formData.keep_count = typed === '' ? undefined : Number(typed))
+				}
+				min={1}
+				max={100}
+				width="sm"
+				steppers
+				hint={formData.task_type === 'backup' ? $t('scheduler.form.keepBackups') : $t('scheduler.form.keepSnapshots')}
+			/>
 		{/if}
 
 		<!-- Passphrase (for backup): the backups are encrypted with it -->

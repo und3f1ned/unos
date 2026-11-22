@@ -106,6 +106,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `npm run design` fails for the usual tools of a number or a date written by hand elsewhere in
   `webui/src` (`toFixed`, `toLocaleString`, Intl's formats, a date's getters, a percentage or a
   unit put together after a value).
+- In Safari the web UI's fields look and measure as in Chromium (ADR-0460): a select is the
+  design's 36 px field with Select's chevron, not macOS's short pop-up button; no number field
+  shows the browser's spin buttons in any browser, and the Scheduler's Copies to keep steps with
+  its own up and down buttons; a date or time field is 36 px in Safari too, and Select and a field
+  with a unit or steppers are 36 px, not 38, everywhere. The design check also fails for a select
+  without `form-select`, another field without `form-input`, and a class or style that sets a
+  field's appearance (it found the off-device restore's pool select). `make e2e-local` runs
+  `webui/tests/form-fields.spec.ts` in WebKit as well as in Chromium, and `make setup` installs
+  WebKit beside Chromium.
 - The web UI builds with SvelteKit 3.2, @sveltejs/vite-plugin-svelte 7, Vite 8, Tailwind CSS 4,
   TypeScript 6, @sveltejs/adapter-static 4 and lucide-svelte 1 (ADR-0456); TypeScript 7 waits for
   SvelteKit, svelte-check and typescript-eslint to accept it. Its configuration is in

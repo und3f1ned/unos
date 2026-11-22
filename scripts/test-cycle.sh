@@ -203,10 +203,11 @@ run_e2e_tests() {
         npm ci
     fi
 
-    # Install Playwright browsers if needed. Playwright runs from node_modules/.bin, the version of
+    # Install Playwright browsers if needed: Chromium, and WebKit for tests/form-fields.spec.ts
+    # (playwright.config.ts). Playwright runs from node_modules/.bin, the version of
     # package-lock.json, not through npx, which would download a missing one from the registry
     # (ADR-0423).
-    ./node_modules/.bin/playwright install chromium --with-deps 2>/dev/null || true
+    ./node_modules/.bin/playwright install chromium webkit --with-deps 2>/dev/null || true
 
     # Run tests. HTTP_URL is the plain-HTTP port for the redirect and health
     # checks in tests/https.spec.ts. E2E_STAND_IN=1: like the stand-in, the test

@@ -114,7 +114,7 @@
 							<label for="offsite-restore-pool-{snapshot.short_id}" class="form-label"
 								>{$t('offsite.snapshots.pool')}</label
 							>
-							<select id="offsite-restore-pool-{snapshot.short_id}" class="form-input" bind:value={restorePool}>
+							<select id="offsite-restore-pool-{snapshot.short_id}" class="form-select" bind:value={restorePool}>
 								{#each restorePools as pool}
 									<option value={pool}>{pool}</option>
 								{/each}

@@ -1489,11 +1489,15 @@ STUBS = {
     "playwright": r"""
         echo "playwright $*" >> "$STUB_LOG"
         if [ "$1 $2" = "install --dry-run" ]; then
-            echo "browser: chromium version 1"
-            echo "  Install location:    $STUB_DIR/browsers/chromium"
+            shift 2
+            for browser; do
+                echo "browser: $browser version 1"
+                echo "  Install location:    $STUB_DIR/browsers/$browser"
+            done
         elif [ "$1" = install ]; then
-            [ "${STUB_FAILING_STEP:-}" = chromium ] && exit 1
-            mkdir -p "$STUB_DIR/browsers/chromium"
+            [ "${STUB_FAILING_STEP:-}" = browsers ] && exit 1
+            shift
+            for browser; do mkdir -p "$STUB_DIR/browsers/$browser"; done
         fi""",
     "make": r"""
         echo "make $*" >> "$STUB_LOG"
@@ -1510,7 +1514,7 @@ FAKE_SECRET = "fake-secret-of-the-setup-test"
 def installs(calls):
     """The calls of the stubs that install something (the network steps) or run the baseline."""
     return [call for call in calls if "-m venv" in call or "-m pip" in call or call.startswith("npm ci")
-            or call == "playwright install chromium" or call in ("make check-fast", "make smoke")]
+            or call == "playwright install chromium webkit" or call in ("make check-fast", "make smoke")]
 
 
 @pytest.fixture
@@ -1571,7 +1575,8 @@ def test_setup_bootstraps_a_checkout_and_a_rerun_changes_nothing(sandbox):
     assert ".venv-lint/bin/python -m pip install --disable-pip-version-check -q --only-binary=:all: " \
            "--require-hashes -r .github/lint-requirements.txt" in calls
     assert "npm ci --no-audit --no-fund" in calls
-    assert "playwright install chromium" in calls
+    # WebKit beside Chromium: tests/form-fields.spec.ts runs in both (webui.fields-in-safari).
+    assert "playwright install chromium webkit" in calls
     assert calls[-2:] == ["make check-fast", "make smoke"]  # the baseline comes last
     assert first.stdout.rstrip().endswith("setup.sh: baseline green. make help lists the targets.")
     hooks = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=repo, capture_output=True, text=True,
@@ -1607,6 +1612,24 @@ def test_setup_installs_again_when_a_requirement_file_changes(sandbox):
     ]
 
 
+def test_setup_installs_webkit_where_only_chromium_is(sandbox):
+    """A checkout set up before WebKit joined the E2E specs: --check names it, and setup installs the
+    two browsers again, which leaves the Chromium that is there as it is."""
+    _, run, stubs, _ = sandbox
+    assert run()[0].returncode == 0
+    shutil.rmtree(stubs / "browsers" / "webkit")
+
+    checked, _ = run("--check")
+    result, calls = run()
+
+    assert checked.returncode == 1
+    assert "missing  Chromium and WebKit for Playwright: make setup installs them" in checked.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert [call for call in calls if call.startswith("playwright install ")] == [
+        "playwright install --dry-run chromium webkit", "playwright install chromium webkit"]
+    assert (stubs / "browsers" / "webkit").is_dir()
+
+
 @pytest.mark.parametrize("target, calls", [("check-fast", ["make check-fast"]),
                                            ("smoke", ["make check-fast", "make smoke"])])
 def test_a_red_baseline_is_named(sandbox, target, calls):
@@ -1622,7 +1645,7 @@ def test_a_red_baseline_is_named(sandbox, target, calls):
 @pytest.mark.parametrize("step, message", [
     ("pip", "pip install for supervisor/.venv failed"),
     ("npm-ci", "npm ci failed"),
-    ("chromium", "installing Chromium failed"),
+    ("browsers", "installing Chromium and WebKit failed"),
 ])
 def test_a_failed_install_fails_the_setup_before_the_baseline(sandbox, step, message):
     """A network step that fails stops make setup with status 1, before the baseline: what fails the

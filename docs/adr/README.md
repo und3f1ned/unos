@@ -447,6 +447,7 @@ and this index, and `make check-fast` runs it.
 | [0453](0453-the-russian-web-ui-names-each-thing-once-and-the-images-tab-writes-sizes-as-the-app-store-does.md) | The Russian web UI names each thing once, and the Images tab writes sizes as the App Store does | superseded by [0459](0459-the-web-ui-writes-every-number-and-date-through-one-home-in-the-format-of-its-language.md) | 2026-11-22 |
 | [0456](0456-the-web-ui-builds-with-sveltekit-3-vite-8-tailwind-css-4-and-typescript-6-and-a-riscv64-host-takes-its-web-ui-image-from-another-machine.md) | The web UI builds with SvelteKit 3, Vite 8, Tailwind CSS 4 and TypeScript 6, keeps its look, and a riscv64 or ARMv7 host takes its web UI image from another machine | superseded by [0458](0458-releases-also-publish-riscv64-images-whose-supervisor-installs-wheels-built-once-per-requirements-and-kept-on-ghcr.md) | 2026-11-22 |
 | [0459](0459-the-web-ui-writes-every-number-and-date-through-one-home-in-the-format-of-its-language.md) | The web UI writes every number, size, percentage, duration, date and time through one home, in the format of its language | accepted | 2026-11-22 |
+| [0460](0460-the-web-uis-fields-are-drawn-by-the-design-in-webkit-as-in-chromium-and-a-webkit-project-checks-the-form-fields.md) | The web UI's fields are drawn by the design in WebKit as in Chromium, and a WebKit project of the E2E specs checks the form fields | accepted | 2026-11-22 |
 
 ## Deploy
 

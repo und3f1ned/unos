@@ -118,7 +118,7 @@ help: ## List the targets and the variables
 	@echo "           PIP_AUDIT=$(PIP_AUDIT) NPM=$(NPM)"
 	@echo "           TESTS=$(TESTS) PYTEST_ARGS=$(PYTEST_ARGS) TEST_WORKERS=$(TEST_WORKERS) E2E_ARGS=$(E2E_ARGS)"
 
-setup: ## Bootstrap this checkout: venvs, npm ci, Chromium, git hooks, dev.env (needs the network)
+setup: ## Bootstrap this checkout: venvs, npm ci, Chromium and WebKit, git hooks, dev.env (needs the network)
 	scripts/setup.sh
 
 check: ## The quality gate: lint, test and frontend, as CI runs them, without the audits

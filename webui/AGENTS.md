@@ -102,8 +102,9 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `surface-hover`, `surface-inverse` (a tooltip, under `content-inverse`), `border-strong`, `content-soft`,
   `content-on-brand`, `content-link` and `status-neutral` cover the rest; a dialog's backdrop is the class `scrim`. `npm run design` (`scripts/design-check.mjs`,
   run by `make frontend`, tested by `supervisor/tests/test_webui_design_system.py`) fails for a
-  raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without a
-  `form-*` class, and a raw palette class in a class attribute, a `class:` directive or a string
+  raw `<button>`, a raw `<a>` styled as a button, a raw text field, select or textarea without the
+  `form-*` class of its kind (`form-select` for a select, `form-input` for the others) or with a
+  class or style that sets its `appearance` (ADR-0460: Safari would draw it its own way), and a raw palette class in a class attribute, a `class:` directive or a string
   literal, outside `src/lib/components/ui`, and names the token to use (ADR-0400; the mapping is
   in the ADR). It also fails for `window.confirm`, `alert` and `prompt` (also in a `.ts` module),
   the class `uppercase`, a raw checkbox or radio and a filled primary `Button` in a card's header or
@@ -136,7 +137,8 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   most edit and delete as icons, in a `table-actions` cell that never wraps, and the rest in an
   `ActionMenu`; a table that must read on a phone takes `table-stack` and a `data-label` per cell.
   A selection's actions are a `BulkBar`. A disabled button says why (`disabledReason`).
-- A number field has its unit (`suffix`), bounds (`min`, `max`) and a width; related fields are a
+- A number field has its unit (`suffix`), bounds (`min`, `max`) and a width, and no browser's spin
+  buttons (`app.css`); a count to keep steps with Input's `steppers` (ADR-0460); related fields are a
   `FieldGroup`; an on/off setting is a `Switch` or a `SwitchRow`, an item to select a `Checkbox`,
   one of several a `RadioGroup`; a page section a `Tabs`, a filter a `Segmented`. A dialog takes a
   `Modal` `size`; more than six fields or a list is a `Sheet`. A badge is sentence case and readable
@@ -288,6 +290,10 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   Playwright turns the interception on with the first listener without waiting for the browser,
   so a raw `page.keyboard.press('Enter')` right after `waitForEvent('filechooser')` can open a
   chooser that no event reports (ADR-0454).
+- The specs run in Chromium; `tests/form-fields.spec.ts` runs in WebKit too, the project `webkit` of
+  `playwright.config.ts`, and checks that the fields of a form are one height, a select is the
+  design's and no number field shows spin buttons (ADR-0460). A form with a select, a number, date
+  or time field that the other forms do not show joins it.
 - Every feature's user flow has a spec (ADR-0186).
 - A change runs the specs of its area: those of the pages and APIs it changes, plus every spec
   citing a test id, label or catalog key it changed (`git grep` in `tests/`). A change to
