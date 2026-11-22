@@ -519,6 +519,7 @@ and this index, and `make check-fast` runs it.
 | [0433](0433-a-feature-runs-the-e2e-specs-of-its-area-and-the-full-suite-runs-once-per-batch.md) | A feature runs the E2E specs of its area, and the full suite runs once per batch | accepted | 2026-11-20 |
 | [0439](0439-each-worktree-runs-a-compose-test-stack-of-its-own-with-a-project-ports-and-a-subnet-derived-from-its-path.md) | Each worktree runs a compose test stack of its own, with a project, ports and a subnet derived from its path | accepted | 2026-11-21 |
 | [0442](0442-the-backend-tests-measure-their-line-coverage-and-fail-below-a-floor-that-only-rises.md) | The backend tests measure their line coverage and fail below a floor that only rises | accepted | 2026-11-21 |
+| [0450](0450-a-spec-listens-for-the-file-chooser-before-the-page-can-open-it.md) | A spec listens for the file chooser before the page can open it, not just before the key press | accepted | 2026-11-22 |
 
 ## CI
 

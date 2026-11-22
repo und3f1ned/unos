@@ -1768,6 +1768,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The E2E test that uploads files from the keyboard (`webui/tests/files.spec.ts`) listens for file
+  choosers from before it opens the Files page: it added its listener just before Enter, which
+  under load could reach the page before Playwright intercepted choosers, and then waited in vain
+  for the chooser (ADR-0450).
 - Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
   removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
   estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.

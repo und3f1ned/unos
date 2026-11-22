@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, utimesSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Locator, Page, Request } from '@playwright/test';
+import type { FileChooser, Locator, Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { browserSession } from './session';
 
@@ -896,6 +896,13 @@ test.describe('File Browser operations', () => {
   });
 
   test('uploads files from the keyboard', async ({ authenticatedPage: page }) => {
+    // The file choosers that the page opens. Playwright reports them only while a listener is
+    // registered, and turns that on with the first listener without waiting for the browser:
+    // added just before the key press, it can come after Enter, which clicks on its keypress,
+    // within the key-down command, and the page then opens a chooser that no event reports
+    // (ADR-0450). Registered before the page opens, and kept, it is on long before the first key.
+    const choosers: FileChooser[] = [];
+    page.on('filechooser', (chooser) => choosers.push(chooser));
     await openScratch(page);
     // Upload is a button: Enter or Space opens the file chooser.
     const upload = page.getByRole('button', { name: 'Upload', exact: true });
@@ -905,15 +912,16 @@ test.describe('File Browser operations', () => {
       ['Space', 'space.txt'],
     ] as const) {
       await expect(upload).toBeFocused();
-      const chooserOpened = page.waitForEvent('filechooser');
       await page.keyboard.press(key);
-      const chooser = await chooserOpened;
+      await expect.poll(() => choosers.length, { message: `one file chooser after ${key}` }).toBe(1);
+      const chooser = choosers.shift()!;
       expect(chooser.isMultiple()).toBe(true);
       const answered = page.waitForResponse((response) => isApi('/files/upload')(response.request()));
       await chooser.setFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(key) });
       expect((await answered).status()).toBe(200);
       await expect(row(page, name)).toBeVisible();
     }
+    expect(choosers, 'no second chooser for a key').toEqual([]);
     expect(await listNames(page, scratch!.path)).toEqual(['enter.txt', 'space.txt']);
   });
 

@@ -256,6 +256,11 @@ adapter, strict TypeScript and TailwindCSS (ADR-0012). Caddy serves the built fi
   and Python, with which `scripts/standin/emergency.py` runs the supervisor's emergency command
   line against the stand-in's data (`tests/emergency-reset.spec.ts`). Restore specs run only on a
   local target or with `E2E_ALLOW_RESTORE=1` (`tests/backup-restore.spec.ts`).
+- A spec that waits for a file chooser registers `page.on('filechooser')` before it opens the
+  page and takes the choosers its listener collects, as 'uploads files from the keyboard' does:
+  Playwright turns the interception on with the first listener without waiting for the browser,
+  so a raw `page.keyboard.press('Enter')` right after `waitForEvent('filechooser')` can open a
+  chooser that no event reports (ADR-0450).
 - Every feature's user flow has a spec (ADR-0186).
 - A change runs the specs of its area: those of the pages and APIs it changes, plus every spec
   citing a test id, label or catalog key it changed (`git grep` in `tests/`). A change to
