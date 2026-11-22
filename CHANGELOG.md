@@ -1843,6 +1843,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   stack's real traffic ("18,89 KB/s" and "11,31 KB/s" in the Russian units) pushed the card's chevron
   43 px out of it. The rates now wrap below the interface's name in either language, and the chevron
   keeps its place (`network.spec.ts`, webui.locale-formats).
+- The Trash page shows the answer of its latest list only: a list asked before Empty trash, Delete
+  for good or Restore (a Refresh) that answered after the list that follows them brought back the
+  items they had removed and enabled Empty trash again, until the next reload; a late failure showed
+  its error over the newer list. Two tests of `webui/tests/files.spec.ts` hold a Refresh's answer
+  until after the emptying.
 - The compose test stack no longer refuses the sign-ins of its own E2E run with 429: every spec
   reaches the supervisor from the stack network's gateway, one client of the sign-in limit, so its
   image runs the supervisor's app with that limit off, as the stand-in does, from a module that
