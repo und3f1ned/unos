@@ -51,19 +51,46 @@ class FakeContainer:
     aliases: list[str] = field(default_factory=list)  # names of legacy links: /<other>/<alias>
 
 
+def _familiar_name(reference: str) -> str:
+    """A reference's name without its tag or digest, as Docker's FamiliarName gives it."""
+    name = reference.split("@")[0]
+    return name.rsplit(":", 1)[0] if ":" in name.rsplit("/", 1)[-1] else name
+
+
 class FakeDockerApi(requests.adapters.BaseAdapter):
     """Docker's HTTP API behind a real docker-py client: GET /containers/json (all; the filter id
     as Docker's index of IDs looks it up: an ID or a prefix that names one container, anything
     else none), /containers/{id}/json, /images/json, /images/{id}/json and POST
     /containers/{id}/stop. Each request is recorded in ``requests`` as (method, path without the
-    API version)."""
+    API version).
 
-    def __init__(self, containers: list[FakeContainer], images: dict[str, list[str]]) -> None:
+    GET /images/json answers as ``store`` does: ``containerd`` (Docker's containerd image store)
+    lists an image pulled by its digest with that digest form (name@sha256:...) among its RepoTags,
+    ``classic`` (the overlay2 store) among its RepoDigests. Both take the filters reference (any of its values, each a repository or a
+    reference without wildcards, matched against each name of an image, which then lists only the
+    names that match) and dangling (an image without any name)."""
+
+    def __init__(self, containers: list[FakeContainer], images: dict[str, list[str]], store: str) -> None:
         super().__init__()
         self.containers = containers
-        self.images = images  # image ID -> RepoTags
+        self.images = images  # image ID -> its names: tags and digest forms
+        self.store = store
         self.requests: list[tuple[str, str]] = []
         self.queries: list[dict[str, list[str]]] = []
+
+    def image_list(self, filters: dict[str, list[str]]) -> list[dict]:
+        listed = []
+        for image_id, names in self.images.items():
+            if "dangling" in filters and filters["dangling"] != [str(not names).lower()]:
+                continue
+            if "reference" in filters:
+                names = [n for n in names if any(v in (n, _familiar_name(n)) for v in filters["reference"])]
+                if not names:
+                    continue
+            tags = [n for n in names if self.store == "containerd" or "@" not in n]
+            listed.append({"Id": image_id, "RepoTags": tags, "RepoDigests": [n for n in names if "@" in n],
+                           "Size": 1})
+        return listed
 
     def summary(self, c: FakeContainer) -> dict:
         # Docker shows the reference while it still names the container's image, else the image's ID.
@@ -114,10 +141,7 @@ class FakeDockerApi(requests.adapters.BaseAdapter):
                 listed = [c for c in listed if c.id in named]
             status, body = 200, [self.summary(c) for c in listed]
         elif path == "/images/json":
-            # With the containerd image store an image pulled by its digest holds that digest form
-            # (name@sha256:...) among its RepoTags.
-            status, body = 200, [{"Id": image_id, "RepoTags": tags or None, "RepoDigests": [], "Size": 1}
-                                 for image_id, tags in self.images.items()]
+            status, body = 200, self.image_list(json.loads(query.get("filters", ["{}"])[0]))
         elif request.method == "POST" and (match := re.fullmatch(r"/containers/([^/]+)/stop", path)):
             found = self._find(match[1])
             if found is not None:
@@ -152,6 +176,7 @@ NEW_TRANSMISSION_IMAGE = f"sha256:{_hex('new-transmission')}"
 SUPERVISOR_IMAGE = f"sha256:{_hex('supervisor')}"
 IMMICH_IMAGE = f"sha256:{_hex('immich-image')}"
 TRANSMISSION_IMAGE = f"sha256:{_hex('transmission-image')}"
+PROXY_IMAGE = f"sha256:{_hex('proxy-image')}"
 # The app catalog creates an app's containers from their images' digests (name@sha256:...).
 IMMICH_DIGEST = f"ghcr.io/immich-app/immich-server@{IMMICH_IMAGE}"
 TRANSMISSION_DIGEST = f"ghcr.io/linuxserver/transmission@{TRANSMISSION_IMAGE}"
@@ -204,7 +229,20 @@ IMAGES = {
     OLD_TRANSMISSION_IMAGE: [],
     NEW_TRANSMISSION_IMAGE: ["lscr.io/linuxserver/transmission:latest"],
     SUPERVISOR_IMAGE: ["deploy-supervisor:latest"],
+    # What no container runs: an image of another app, and untagged leftovers of builds (104 of
+    # the 117 images on the BPI-W3, 2026-11-23).
+    f"sha256:{_hex('nextcloud')}": ["nextcloud:31"],
+    f"sha256:{_hex('leftover-1')}": [],
+    f"sha256:{_hex('leftover-2')}": [],
+    # Tagged in two repositories; its container was created from the second.
+    PROXY_IMAGE: ["a.example/proxy:1", "b.example/proxy:1"],
 }
+# The containers that name their images: created from a tag or a digest that still names it.
+NAMED = [c for c in CONTAINERS if c.name in {"jellyfin", "immich", "transmission", "unos-supervisor"}]
+PROXY_CONTAINER = FakeContainer(
+    id=_hex("proxy"), name="proxy", image_ref="b.example/proxy:1", image_id=PROXY_IMAGE, state="running",
+    created=1763575781, created_text="2025-11-19T18:09:41Z", ports={},
+)
 
 JELLYFIN = {
     # Its image's first tag, not the one it was created from.
@@ -241,9 +279,16 @@ TRANSMISSION = {  # its image has no tag but the digest form: the reference it w
 
 
 @pytest.fixture
-def docker_api(monkeypatch, tmp_path):
-    """A real docker-py client whose requests reach FakeDockerApi; the routes' get_client gives it."""
-    fake = FakeDockerApi(copy.deepcopy(CONTAINERS), IMAGES)
+def containers() -> list[FakeContainer]:
+    """The containers that Docker has: a test's parameter ``containers`` takes this fixture's place."""
+    return CONTAINERS
+
+
+@pytest.fixture(params=["containerd", "classic"])
+def docker_api(request, containers, monkeypatch, tmp_path):
+    """A real docker-py client whose requests reach FakeDockerApi, with each image store; the
+    routes' get_client gives it."""
+    fake = FakeDockerApi(copy.deepcopy(containers), IMAGES, request.param)
     monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
     client = docker.DockerClient(base_url="unix:///nonexistent/docker.sock", version="1.47", timeout=5)
     client.api.mount("http+docker://", fake)
@@ -260,16 +305,66 @@ def docker_api(monkeypatch, tmp_path):
             app.dependency_overrides[verify_token] = previous
 
 
+def _image_filters(fake: FakeDockerApi) -> list[dict]:
+    """The filters of each GET /images/json that ``fake`` answered."""
+    return [json.loads(query.get("filters", ["{}"])[0])
+            for (_, path), query in zip(fake.requests, fake.queries) if path == "/images/json"]
+
+
 class TestContainerList:
-    def test_the_list_is_two_docker_requests(self, docker_api):
-        """Docker's list of containers and its list of images: not an inspect of each container and
-        of its image (12 requests here; on the dev device an image's inspect took about 40 ms,
-        2026-11-23)."""
+    @pytest.mark.parametrize("containers", [NAMED])
+    def test_the_list_asks_for_the_images_of_its_containers_repositories_only(self, docker_api):
+        """Docker's list of containers, then its list of images filtered by the repositories that
+        the containers name (UNOS's own left out): not every image, whose sizes the containerd
+        store computes (700 to 750 ms for 117 images on the BPI-W3, against 101 ms filtered,
+        2026-11-23), nor an inspect of each container and of its image."""
+        response = docker_api.client.get("/api/v1/containers?all=true")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == [JELLYFIN, IMMICH, TRANSMISSION]
+        assert docker_api.fake.requests == [("GET", "/containers/json"), ("GET", "/images/json")]
+        assert docker_api.fake.queries[0]["all"] == ["1"]
+        assert _image_filters(docker_api.fake) == [{"reference": [
+            "ghcr.io/immich-app/immich-server", "ghcr.io/linuxserver/transmission", "jellyfin/jellyfin"]}]
+
+    @pytest.mark.parametrize("containers", [[*NAMED, PROXY_CONTAINER], [*CONTAINERS, PROXY_CONTAINER]],
+                             ids=["by-reference", "with-one-by-id"])
+    def test_an_image_tagged_in_several_repositories_shows_the_tag_of_the_containers_own(self, docker_api):
+        """The same tag whichever other containers the list holds, and in a single answer."""
+        listed = {c["name"]: c["image"] for c in docker_api.client.get("/api/v1/containers?all=true").json()}
+
+        assert listed["proxy"] == "b.example/proxy:1"
+        assert docker_api.client.get("/api/v1/containers/proxy").json()["image"] == "b.example/proxy:1"
+
+    @pytest.mark.parametrize(("reference", "repository"), [
+        ("ghcr.io/immich-app/immich-server@sha256:" + "a" * 64, "ghcr.io/immich-app/immich-server"),
+        ("ghcr.io/immich-app/immich-server:v3.4.1@sha256:" + "a" * 64, "ghcr.io/immich-app/immich-server"),
+        ("localhost:5000/tools/app:1.0", "localhost:5000/tools/app"),
+        ("localhost:5000/tools/app", "localhost:5000/tools/app"),
+        ("docker.io/library/nginx:1.27", "nginx"),
+        ("docker.io/linuxserver/transmission:latest", "linuxserver/transmission"),
+    ])
+    def test_the_filter_names_each_repository_as_docker_matches_it(self, reference, repository):
+        """Docker's reference filter matches an image's familiar name (without docker.io/ and
+        library/) in both stores."""
+        assert docker_module._repository(reference) == repository
+
+    def test_a_container_named_by_its_images_id_asks_for_the_tagged_images(self, docker_api):
+        """A container whose reference no longer names its image, or that was created by an ID,
+        names no repository: Docker's list of the images that have a name, without the untagged
+        leftovers (151 ms on the BPI-W3)."""
         response = docker_api.client.get("/api/v1/containers?all=true")
 
         assert response.status_code == 200, response.text
         assert docker_api.fake.requests == [("GET", "/containers/json"), ("GET", "/images/json")]
-        assert docker_api.fake.queries[0]["all"] == ["1"]
+        assert _image_filters(docker_api.fake) == [{"dangling": ["false"]}]
+
+    @pytest.mark.parametrize("containers", [[c for c in CONTAINERS if c.name == "unos-supervisor"]])
+    def test_no_image_request_without_a_container_to_show(self, docker_api):
+        response = docker_api.client.get("/api/v1/containers?all=true")
+
+        assert response.json() == []
+        assert docker_api.fake.requests == [("GET", "/containers/json")]
 
     def test_the_list_answers_what_docker_lists(self, docker_api):
         response = docker_api.client.get("/api/v1/containers?all=true")
@@ -301,6 +396,13 @@ class TestContainerList:
         assert docker_api.fake.requests == [
             ("GET", f"/containers/{key}/json"), ("GET", "/containers/json"), ("GET", "/images/json")]
         assert json.loads(docker_api.fake.queries[1]["filters"][0]) == {"id": [_hex("jellyfin")]}
+        assert _image_filters(docker_api.fake) == [{"reference": ["jellyfin/jellyfin"]}]
+
+    def test_one_container_named_by_its_images_id_answers_its_images_tag(self, docker_api):
+        response = docker_api.client.get("/api/v1/containers/leaving")
+
+        assert response.json() == LEAVING
+        assert _image_filters(docker_api.fake) == [{"dangling": ["false"]}]
 
     def test_a_stop_answers_the_container_as_the_list_does(self, docker_api):
         response = docker_api.client.post("/api/v1/containers/jellyfin/stop")

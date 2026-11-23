@@ -1637,8 +1637,8 @@ containers (`unos-supervisor`, `unos-webui`) and images are not listed.
 
 The **Containers** tab lists every container with its name, image, state
 (**Running**, **Stopped**, **Paused**, **Restarting** and so on) and the ports it
-publishes. The image is the first tag of the container's image, such as
-`ghcr.io/immich-app/immich-server:v3.4.1`. An image without a tag shows the name
+publishes. The image is the first tag of the container's image in the repository
+it was created from, such as `ghcr.io/immich-app/immich-server:v3.4.1`. An image without a tag shows the name
 the container was created from, as `docker ps` shows it (an app's image as
 `name@sha256:` and its digest), or else the image's short id (`sha256:` and 12
 characters), as after an update of the app. The filter above the list, **All**, **Running**, **Stopped** and
