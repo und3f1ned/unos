@@ -92,12 +92,18 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   refused only with a status of smbd's, not one that says the connection, the session or the tree
   connect broke, and only while the same session lists the file afterwards; the Snapshots
   page names a snapshot to the second of the device's clock and refuses a second one of that name;
-* the scrub and balance checks hold on the fake on a clock of its own (TimedNas, ADR-0473) with the
+* the scrub and balance checks hold on the fake on a clock of its own (TimedNas, ADR-0481) with the
   times measured on the BPI-F3's NVMe pool and the BPI-W3's hard disk: the scrub step takes the
   progress that it sees, two looks, one or none after btrfs recorded the scrub, with the end's
-  total, and still asks a scrub seen running many times to move; the balance check sizes its
-  chunks by a trial balance, keeps 12 on the hard disk, refuses to make more than the pool has
-  room for, and names the balance's state when a refusal it asks for does not come;
+  total, and still asks a scrub seen running many times to move; the balance check pauses its
+  balance with the request right after its start, and on faster disks a step whose request the
+  balance's end beat is a SKIP that names the end, never a failure, while a balance still there
+  beside a scrub, progress that did not grow and a cancel that did not act fail; only a disk that
+  balances the 24 chunks within one call fails, at the pause;
+* the offsite check is a SKIP, before it makes anything, on a board whose pools are all on the
+  disk of the supervisor's data volume (the BPI-F3, ADR-0372), fails naming a pool that is off it,
+  and its helper on the device finds the whole disks of the root filesystem, the data volume and
+  the pools as the supervisor does;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
   it deletes, or gives them to smbpasswd -r on its standard input;
@@ -634,6 +640,17 @@ class FakeNas:
         self.balances = 0
         self.relocated = 0  # the chunks that the last balance which finished moved
         self.pause_takes = 0.0
+        # The output of the pool's unit unos-balance-data (balances.LOG in /run): emptied when btrfs
+        # starts in the unit (a start or a resume), with the line btrfs prints at its end, and the
+        # writes to it, its time of change.
+        self.balance_text: str | None = None
+        self.balance_writes = 0
+        # The board: the disks of the root filesystem and of the supervisor's data volume, which is on
+        # the pool's disk DISK when Docker's data root is on the pool, as on the BPI-F3 (ADR-0372);
+        # other pools mounted read-write with UNOS's fstab entry, with their disks.
+        self.root_disks = {"mmcblk1"}
+        self.data_disks = {"mmcblk1"}
+        self.other_pools: dict[str, str] = {}
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
         self.task_keys: dict[str, str] = {}  # the backup tasks' passphrases (scheduled_backup_keys.json)
@@ -1034,7 +1051,10 @@ class FakeNas:
         if parts == ["pools"]:
             return [{"name": "data", "mountpoint": ROOT, "mounted": True, "persistent": True, "read_only": False,
                      "devices": ["/dev/sda"], "total_size": self.pool_used + self.pool_free,
-                     "used_size": self.pool_used}]
+                     "used_size": self.pool_used},
+                    *({"name": other, "mountpoint": f"/mnt/pools/{other}", "mounted": True, "persistent": True,
+                       "read_only": False, "devices": [f"/dev/{disk}"], "total_size": 1, "used_size": 0}
+                      for other, disk in self.other_pools.items())]
         if parts == ["disks"]:
             return [{"name": DISK, "path": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "size": 640, "rotational": True,
                      "type": "disk", "partitions": [], "is_system": False, **self.power()}, *self.cards()]
@@ -1244,10 +1264,28 @@ class FakeNas:
                     **({"completed": self.relocated, "considered": self.relocated + 4}
                        if self.balance_result == "finished" else {})}
         left = None
-        if b["status"] == "running" and b["completed"] and "no-time-left" not in self.bugs:
-            left = 2 * (self.BALANCE_EXPECTED - b["completed"])
-        return {**answer, "status": b["status"], "completed": b["completed"], "expected": self.BALANCE_EXPECTED,
-                "considered": b["completed"], "seconds_left": left}
+        completed = 0 if "balance-progress-stuck" in self.bugs else b["completed"]
+        if b["status"] == "running" and completed and "no-time-left" not in self.bugs:
+            left = 2 * (self.BALANCE_EXPECTED - completed)
+        return {**answer, "status": b["status"], "completed": completed, "expected": self.BALANCE_EXPECTED,
+                "considered": completed, "seconds_left": left}
+
+    def balance_in_unit(self, outside: str) -> dict:
+        """A balance that btrfs runs from its start (or resume) in the unit, which empties the unit's
+        output first, unless the defect OUTSIDE runs it elsewhere."""
+        unit = outside not in self.bugs
+        if unit:
+            self.balance_text, self.balance_writes = "", self.balance_writes + 1
+        return {"status": "running", "completed": 0, "unit": unit}
+
+    def balance_ends(self, b: dict, line: str) -> None:
+        """btrfs's line at the end of the balance B, in the unit's output when it ran there."""
+        if b.get("unit", True):
+            self.balance_text, self.balance_writes = (self.balance_text or "") + line, self.balance_writes + 1
+
+    def balance_finishes(self, b: dict) -> None:
+        self.balance_ends(b, f"Done, had to relocate {b['completed']} out of {b['completed'] + 4} chunks\n")
+        self.balance, self.balance_result, self.relocated = None, "finished", b["completed"]
 
     def ballast_kept(self) -> int:
         """The check's files on the pool, in the chunks that a balance with a low usage limit moves."""
@@ -1268,7 +1306,7 @@ class FakeNas:
             if b is not None and b["status"] == "running":  # each request is a moment later
                 b["completed"] += 1
                 if b["completed"] >= self.BALANCE_EXPECTED:
-                    self.balance, self.balance_result, self.relocated = None, "finished", b["completed"]
+                    self.balance_finishes(b)
             return answer
         if method == "POST" and rest == []:
             assert body == {"usage": scenario.BALANCE_USAGE}, body
@@ -1282,12 +1320,13 @@ class FakeNas:
             if not self.ballast_kept():  # no chunk below the limit: it ends at once
                 self.balance_result, self.relocated = "finished", 0
                 return self.balance_answer()
-            self.balance, self.balance_result = {"status": "running", "completed": 0}, None
+            self.balance, self.balance_result = self.balance_in_unit("balance-in-container"), None
             answer = self.balance_answer()
             return {**answer, "status": "idle"} if "balance-start-answers-idle" in self.bugs else answer
         if method == "POST" and rest == ["pause"]:
             if b is not None and b["status"] == "running" and "pause-keeps-running" not in self.bugs:
                 b["status"], b["paused_at"] = "pausing", time.monotonic() + self.pause_takes
+                self.balance_ends(b, "balance paused by user\n")
                 if not self.pause_takes:
                     b["status"] = "paused"
             return self.balance_answer()
@@ -1295,13 +1334,15 @@ class FakeNas:
             if b is None or b["status"] != "paused":
                 raise Refused(409, "No balance of pool data is paused")
             # btrfs balance resume runs in the unit again, unless resumed some other way.
-            self.balance = {"status": "running", "completed": 0, "unit": "resume-outside-unit" not in self.bugs}
+            self.balance = self.balance_in_unit("resume-outside-unit")
             return self.balance_answer()
         if method == "DELETE" and rest == []:
             if b is not None and b["status"] == "pausing":
                 raise Refused(409, "A pause of the balance of pool data waits for the chunk being moved: cancel the "
                                    "balance once it is paused")
             if b is not None and not (b["status"] == "running" and "cancel-keeps-balancing" in self.bugs):
+                if b["status"] == "running":
+                    self.balance_ends(b, "balance canceled by user\n")
                 self.balance, self.balance_result = None, "cancelled"
             return self.balance_answer()
         raise AssertionError(f"the fake does not know {method} /storage/pools/{name}/balance/{'/'.join(rest)}")
@@ -2157,6 +2198,10 @@ class FakeNas:
             target, sources = body["path"], body["sources"]
             if not target.startswith("/mnt/") or os.path.dirname(target) not in self.fs:
                 raise Refused(400, f"{os.path.dirname(target)} does not exist")
+            if (self.root_disks | self.data_disks) & {DISK} and target.startswith(ROOT + "/"):  # offsite/service.py
+                raise Refused(400, f"{target} is on the system disk (the filesystem of /mnt or of the data volume): "
+                                   "a copy there does not leave the device, and a disk that is not mounted leaves "
+                                   "only its empty mount point. Mount the disk below /mnt and choose a folder on it")
             for source in sources:
                 if source not in self.fs:
                     raise Refused(400, f"{source} does not exist")
@@ -2341,6 +2386,15 @@ class FakeNas:
 
     def system_disk(self):
         return "mmcblk1"
+
+    def disks(self, paths):
+        """REMOTE_DISKS: the whole disks of the root filesystem and of the supervisor's data volume,
+        and of each of PATHS, the pools' mountpoints."""
+        self.device_call("disks")
+        found = {"root": set(self.root_disks), "data": set(self.data_disks)}
+        for path in paths:
+            found[path] = {DISK} if path == ROOT else {self.other_pools[path.rsplit("/", 1)[1]]}
+        return found
 
     def now(self):
         self.device_call("now")
@@ -2570,13 +2624,20 @@ class FakeNas:
         self.remove(path)
         return "removed"
 
+    def balance_output(self, pool):
+        """REMOTE_BALANCE_OUTPUT: the unit's output, with its time of change (its writes)."""
+        self.device_call("balance_output")
+        assert pool == "data", pool
+        if self.balance_text is None:
+            return None, ""
+        return f"2026-11-23 10:00:{self.balance_writes:02d}.000000000 +0000", self.balance_text
+
     def balance_unit(self, pool):
         """systemctl is-active unos-balance-<pool>: active while the balance's btrfs runs in it."""
         self.device_call("balance_unit")
         assert pool == "data", pool
         b = self.balance or {}
-        runs = b.get("status") == "running" and b.get("unit", True)
-        return "active" if runs and "balance-in-container" not in self.bugs else "inactive"
+        return "active" if b.get("status") == "running" and b.get("unit", True) else "inactive"
 
     def restart_supervisor(self):
         """docker restart unos-supervisor: the copy's problem goes with the process, and the API
@@ -2597,10 +2658,10 @@ class TimedNas(FakeNas):
     GiB in ``scrub_s`` seconds, and btrfs records it RECORDED_S seconds after its start (ADR-0313);
     with ``old_record``, btrfs shows the earlier scrub's record, start and bytes, as running until it
     records the new one; its balance moves a chunk in ``chunk_s`` seconds, the chunks below the usage limit being one for
-    each of the check's files that no balance has moved yet (the trial's included), and its time
-    left is the supervisor's estimate (``balances._estimate``: the chunks left at the rate since it
-    first saw the balance run, again from a resume). A pause takes effect at once; a resume runs
-    the chunks left again, counted from 0, as the kernel does."""
+    each of the check's files that no balance has moved yet, and its time left is the supervisor's
+    estimate (``balances._estimate``: the chunks left at the rate since it first saw the balance
+    run, again from a resume). A pause takes effect at once; a resume runs the chunks left again,
+    counted from 0, as the kernel does."""
 
     RECORDED_S = 5
 
@@ -2651,7 +2712,7 @@ class TimedNas(FakeNas):
             b["completed"] = min(b["expected"], int((self.now - b["at"]) / self.chunk_s))
             if b["completed"] >= b["expected"]:
                 self.moved += b["completed"]
-                self.balance, self.balance_result, self.relocated = None, "finished", b["completed"]
+                self.balance_finishes(b)
 
     # the scrub
 
@@ -2696,14 +2757,14 @@ class TimedNas(FakeNas):
                 return {**answer, "completed": self.relocated, "considered": self.relocated + 4}
             return answer
         left = None
+        completed = 0 if "balance-progress-stuck" in self.bugs else b["completed"]
         if b["status"] == "running":
-            if self.since is None or b["completed"] < self.since[1]:
-                self.since = (self.now, b["completed"])
-            elif b["completed"] > self.since[1]:
-                left = math.ceil((b["expected"] - b["completed"]) * (self.now - self.since[0])
-                                 / (b["completed"] - self.since[1]))
-        return {**answer, "status": b["status"], "result": None, "completed": b["completed"],
-                "expected": b["expected"], "considered": b["completed"], "seconds_left": left}
+            if self.since is None or completed < self.since[1]:
+                self.since = (self.now, completed)
+            elif completed > self.since[1] and "no-time-left" not in self.bugs:
+                left = math.ceil((b["expected"] - completed) * (self.now - self.since[0]) / (completed - self.since[1]))
+        return {**answer, "status": b["status"], "result": None, "completed": completed,
+                "expected": b["expected"], "considered": completed, "seconds_left": left}
 
     def api_balance(self, method, name, rest, body):
         b = self.balance
@@ -2722,20 +2783,23 @@ class TimedNas(FakeNas):
             if chunks <= 0:  # no chunk below the limit: it ends at once
                 self.balance_result, self.relocated = "finished", 0
                 return self.balance_answer()
-            self.balance, self.balance_result = {"status": "running", "completed": 0, "expected": chunks,
-                                                 "at": self.now}, None
+            self.balance = {**self.balance_in_unit("balance-in-container"), "expected": chunks, "at": self.now}
+            self.balance_result = None
         elif rest == ["pause"]:
             if b is not None and b["status"] == "running":
                 self.moved += b["completed"]
                 b["status"] = "paused"
+                self.balance_ends(b, "balance paused by user\n")
         elif rest == ["resume"]:
             if b is None or b["status"] != "paused":
                 raise Refused(409, "No balance of pool data is paused")
-            self.balance = {"status": "running", "completed": 0, "expected": b["expected"] - b["completed"],
+            self.balance = {**self.balance_in_unit("resume-outside-unit"), "expected": b["expected"] - b["completed"],
                             "at": self.now}
-        elif method == "DELETE" and b is not None:
+        elif method == "DELETE" and b is not None and not (b["status"] == "running"
+                                                            and "cancel-keeps-balancing" in self.bugs):
             if b["status"] == "running":
                 self.moved += b["completed"]
+                self.balance_ends(b, "balance canceled by user\n")
             self.balance, self.balance_result = None, "cancelled"
         return self.balance_answer()
 
@@ -3539,7 +3603,9 @@ def test_a_check_refuses_to_start_beside_leftovers_of_an_earlier_one(nas, area):
     before = nas.snapshot()
     status, output = run_check(area, nas)
     assert status == 1
-    assert re.search(r"^FAIL  2\. the device holds nothing of an earlier check: .*unoscheck0a1b2c", output, re.M), output
+    step = 3 if area == "offsite" else 2  # the offsite check first looks at the pool's disk
+    assert re.search(rf"^FAIL  {step}\. the device holds nothing of an earlier check: .*unoscheck0a1b2c", output,
+                     re.M), output
     assert nas.snapshot() == before
     assert not [c for c in nas.calls if c[0] != "GET"]
 
@@ -3709,7 +3775,7 @@ def test_the_fake_catalog_has_the_catalog_s_profiles_and_images():
 
 
 def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(nas):
-    """ADR-0473 (after ADR-0314): the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
+    """ADR-0481 (after ADR-0473 and ADR-0314): the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
     hand on 2026-11-09, with Start Scrub's answer of ADR-0313."""
     status, output = run_check("scrub", nas)
     assert status == 0, output
@@ -3726,22 +3792,156 @@ def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(n
         "Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c", "Scrub started"]
 
 
-def test_the_balance_check_starts_pauses_resumes_and_cancels_a_balance_with_a_low_usage_limit(nas):
-    """ADR-0379: the steps of storage.pool-balance on the fake NAS, whose balance moves the check's
-    chunks one at each request."""
+def test_the_balance_check_pauses_its_balance_right_after_its_start_and_refuses_beside_it(nas):
+    """ADR-0379 and ADR-0481: the steps of storage.pool-balance on the fake NAS, whose balance moves
+    a chunk at each read of its status: the pause is the request right after the start, the paused
+    balance's status and the second balance's refusal, the resume with the scrub refused right after
+    it, the time left, the cancel, and btrfs's output in the unit for the start and the resume."""
     status, output = run_check("balance", nas)
     assert status == 0, output
-    for words in ("'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'", "kept 12 files",
-                  "with the usage limit of 20% answers running", "running, then running, the unit active",
-                  "'A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub'; "
-                  "'A balance of pool data runs already'", "s left", "paused, then paused", "the unit inactive",
-                  "running, the unit active", "idle, then idle, cancelled"):
+    steps = [re.sub(r"^PASS  \d+\. |  \[SD .*", "", line).split(":")[0] for line in step_lines(output)]
+    assert steps == [
+        "a pool is mounted read-write and managed by UNOS, no balance or scrub of it runs, and it has room for the "
+        "check's chunks",
+        "the device holds nothing of an earlier check",
+        "a balance of /mnt/pools/unoscheck1a2b3c, a folder with nothing mounted on it, is refused with 409",
+        "/mnt/pools/data/unoscheck1a2b3c gets 192 files of 128 MiB, of which every 8th stays",
+        "Start Balance of data with the usage limit of 20% answers running, and Pause Balance, the next request, pauses "
+        "it",
+        "the paused balance's status shows the chunks it balanced, and a second balance is refused with 409 because it "
+        "is paused",
+        "Resume Balance runs it again, and a scrub of data, the next request, is refused with 409 because the balance "
+        "runs",
+        "the status of the resumed balance shows its chunks balanced growing, and the time left",
+        "Cancel Balance ends it, and the status says that it was cancelled",
+        "btrfs ran the resumed balance in the host's unit unos-balance-data, whose output says how it ended",
+        "the device is as the check found it",
+    ], output
+    for words in ("'Pool unoscheck1a2b3c is not mounted at /mnt/pools/unoscheck1a2b3c'", "kept 24 files",
+                  "running, then paused at 0 of about 12 chunks, the unit inactive, its output 'balance paused by "
+                  "user'", "0 of about 12 chunks; 'A balance of pool data is paused: resume or cancel it'",
+                  "running; 'A balance of pool data runs: wait for its end, or pause or cancel it, then start the "
+                  "scrub'", "1 of about 12 chunks, 22 s left (2 looks)", "idle, then idle, cancelled",
+                  "the unit inactive, its output 'balance canceled by user'"):
         assert words in output, (words, output)
-    assert nas.balances == 2 and nas.balance is None and nas.balance_result == "cancelled"
-    assert re.search(r"1.75 s a chunk \(the supervisor's time left at 8 chunks\), [\d.]+ s an API call, [\d.]+ s a "
-                     r"device call: the check's balance gets 12 chunks", output), output
-    assert "kept 24 files" in output and "kept 12 files" in output, output
-    assert not nas.ballast_kept()
+    assert nas.balances == 1 and nas.balance is None and nas.balance_result == "cancelled"
+    assert not nas.ballast_kept() and nas.scrub["status"] != "running"
+
+
+@pytest.mark.parametrize("disk", [NVME, HARD_DISK], ids=["nvme", "hard-disk"])
+def test_on_the_f3_s_nvme_pool_and_a_hard_disk_the_balance_check_proves_every_step(monkeypatch, disk):
+    """The BPI-F3's NVMe pool (0.83 s a chunk, 2.4 s an API call) and the BPI-W3's hard disk: the
+    pause, one call after the start, finds the balance running, and so do the scrub after the
+    resume, the looks until the time left shows and the cancel."""
+    nas = timed(monkeypatch, disk)
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 0, output
+    lines = step_lines(output)
+    assert len(lines) == 11 and all(line.startswith("PASS  ") for line in lines), output
+    assert re.search(r"running, then paused at \d+ of about 24 chunks", output), output
+    assert re.search(r"\d+ of about \d+ chunks, \d+ s left \(\d+ looks?\)", output), output
+    assert "idle, then idle, cancelled" in output and "its output 'balance canceled by user'" in output, output
+    assert nas.balances == 1 and nas.balance is None and nas.balance_result == "cancelled"
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("chunk_s, skipped", [
+    (0.5, ["Cancel Balance ends it"]),
+    (0.25, ["the status of the resumed balance", "Cancel Balance ends it"]),
+    (0.15, ["Resume Balance runs it again", "the status of the resumed balance", "Cancel Balance ends it"]),
+])
+def test_no_step_of_the_balance_check_races_the_end_of_its_balance(monkeypatch, chunk_s, skipped):
+    """A balance that ends while the check still has steps for it (the BPI-F3's run of 2026-11-23
+    saw one end before its pause): the pause comes right after the start, and a step whose request
+    the balance's end beat says so from the balance's own state, a SKIP, not a failure. A scrub that
+    the ended balance let start is cancelled by the clean-up, and btrfs's output in the unit says
+    that the resumed balance finished."""
+    nas = timed(monkeypatch, {**NVME, "chunk_s": chunk_s})
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 0, output
+    lines = step_lines(output)
+    assert not [line for line in lines if line.startswith("FAIL  ")], output
+    skips = [line for line in lines if line.startswith("SKIP  ")]
+    assert [next(words for words in skipped if words in line) for line in skips] == skipped, output
+    assert all(re.search(r"it had ended finished after \d+ chunks (before|when)", line) for line in skips), output
+    assert re.search(r"^PASS  5\. .*: running, then paused at \d+ of about 24 chunks", output, re.M), output
+    assert "its output 'Done, had to relocate" in output and f", {len(skipped)} skipped" in output, output
+    assert nas.balance is None and nas.balance_result == "finished"
+    assert nas.scrub["status"] != "running" and nas.snapshot() == before, output
+
+
+def test_a_balance_that_ends_before_its_pause_fails_the_check_with_the_reason(monkeypatch):
+    """A disk that balances the check's 24 chunks within one API call leaves no balance to pause:
+    the step says so, and the check cannot prove the steps of a paused balance."""
+    nas = timed(monkeypatch, {**NVME, "chunk_s": 0.08})
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and failed[0].startswith("FAIL  5. ") and (
+        "the balance ended finished after 24 chunks before the pause, the request right after its start: the disk "
+        "balances the check's 24 chunks within one API call") in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("bug, words", [
+    ("balance-progress-stuck", "with no chunk balanced since the resume: its chunks balanced did not grow"),
+    ("no-time-left", "the status shows no time left"),
+    ("scrub-beside-balance", "the scrub started (running) while the balance is running"),
+    ("cancel-keeps-balancing", "the cancel answered running, and the balance ended finished"),
+])
+def test_on_the_f3_s_nvme_pool_the_balance_check_still_fails_on_its_defects(monkeypatch, bug, words):
+    """At the BPI-F3's times, where steps may be skipped once the balance has ended, a defect is
+    no SKIP: the progress that does not grow over the looks, no time left, a scrub beside a balance
+    that is still there, a cancel that does not act."""
+    nas = timed(monkeypatch, NVME)
+    nas.bugs.add(bug)
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and words in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+def test_the_balance_check_takes_no_unit_output_of_an_earlier_balance_for_its_own(nas):
+    """A clean-up that cancels a paused balance leaves the unit's output of its pause: a start that
+    runs btrfs outside the unit, which neither empties nor writes it, still fails."""
+    nas.balance_text, nas.balance_writes = "balance paused by user\n", 7
+    nas.bugs.add("balance-in-container")
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and failed[0].startswith("FAIL  5. ") and (
+        "its output /run/unos-balance-data.log was not written since the start") in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+def test_the_balance_output_helper_reads_only_a_balance_unit_s_output(monkeypatch):
+    for path in ("/run/unos-balance-data.log; true", "/run/unos-balance-../x.log", "/etc/shadow", ""):
+        found = subprocess.run(["bash", "-s", "--", path], input=scenario.REMOTE_BALANCE_OUTPUT, capture_output=True,
+                               text=True)
+        assert found.returncode == 2 and "not the output of a balance unit" in found.stderr, path
+    found = subprocess.run(["bash", "-s", "--", "/run/unos-balance-unoscheckzz.log"],
+                           input=scenario.REMOTE_BALANCE_OUTPUT, capture_output=True, text=True)
+    assert (found.returncode, found.stdout) == (0, "missing\n"), found.stderr
+    device = scenario.Device()
+    replies = iter(["time 2026-11-23 10:00:01.123456789 +0000\n" + scenario.b64text("balance paused by user\n") + "\n",
+                    "missing\n"])
+    monkeypatch.setattr(device, "run", lambda script, *args, **kw: (
+        script == scenario.REMOTE_BALANCE_OUTPUT and args == ("/run/unos-balance-data.log",)) and next(replies))
+    assert device.balance_output("data") == ("2026-11-23 10:00:01.123456789 +0000", "balance paused by user\n")
+    assert device.balance_output("data") == (None, "")
+
+
+def test_the_balance_check_reads_btrfs_s_output_where_the_supervisor_has_it_written():
+    from src.storage import balances
+
+    assert scenario.BALANCE_OUTPUT == balances.LOG
+    assert balances.UNIT.format("data") == "unos-balance-data"
 
 
 @pytest.mark.parametrize("seconds, seen", [(18, r"[\d.]+ to [\d.]+ GiB scrubbed while it ran \(3 looks\)"),
@@ -3807,60 +4007,6 @@ def test_on_a_hard_disk_bytes_scrubbed_that_do_not_move_fail_the_scrub_check(mon
     assert nas.snapshot() == before, output
 
 
-def test_on_a_fast_disk_the_balance_check_gets_the_chunks_that_keep_its_balance_running(monkeypatch):
-    """The BPI-F3's NVMe pool balances a chunk in 0.83 s and the relay takes 2.4 s a call: 12 chunks
-    ended before the scrub's start that the balance should refuse. A trial balance measures both,
-    and the check's balance gets as many chunks as its steps need while it runs, with a margin."""
-    nas = timed(monkeypatch, NVME)
-    before = nas.snapshot()
-    status, output = run_check("balance", nas)
-    assert status == 0, output
-    trial = next(line for line in step_lines(output) if "a trial balance of data" in line)
-    chunks = int(re.search(r"the check's balance gets (\d+) chunks", trial).group(1))
-    assert chunks > scenario.BALLAST_CHUNKS and f"kept {chunks} files" in output, output
-    assert re.search(r": 0.8\d s a chunk", trial), trial  # the disk's 0.83 s, measured
-    for words in ("'A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub'; "
-                  "'A balance of pool data runs already'", "s left", "paused, then paused", "idle, then idle, cancelled"):
-        assert words in output, (words, output)
-    assert nas.balances == 2 and nas.balance is None and nas.balance_result == "cancelled"
-    assert nas.snapshot() == before, output
-
-
-def test_on_a_hard_disk_the_balance_check_keeps_its_twelve_chunks(monkeypatch):
-    nas = timed(monkeypatch, HARD_DISK)
-    status, output = run_check("balance", nas)
-    assert status == 0, output
-    assert re.search(r"the check's balance gets 12 chunks", output) and "kept 12 files" in output, output
-
-
-def test_the_balance_check_does_not_make_more_chunks_than_the_pool_has_room_for(monkeypatch):
-    nas = timed(monkeypatch, NVME)
-    nas.pool_free = 60 * scenario.GIB  # room for the trial's 24 chunks, not for what the disk needs
-    before = nas.snapshot()
-    status, output = run_check("balance", nas)
-    assert status == 1, output
-    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
-    assert len(failed) == 1 and re.search(r"the check's balance needs \d+ chunks, \d+ GiB free, and data has 60.0 GiB",
-                                          failed[0]), output
-    assert nas.snapshot() == before, output
-
-
-@pytest.mark.parametrize("chunk_s, started", [(0.6, "scrub answered running"), (0.85, "balance answered idle")])
-def test_a_balance_that_ends_before_the_refusals_fails_the_check_with_the_reason(monkeypatch, chunk_s, started):
-    """Too few chunks for the disk (the margin made tiny): the scrub or the second balance that the
-    balance should refuse starts, the check says that the balance had ended, and the clean-up
-    cancels the scrub."""
-    nas = timed(monkeypatch, {**NVME, "chunk_s": chunk_s})
-    monkeypatch.setattr(scenario, "BALANCE_MARGIN", 0.01)
-    before = nas.snapshot()
-    status, output = run_check("balance", nas)
-    assert status == 1, output
-    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
-    assert len(failed) == 1 and "are refused with 409: POST /storage/pools/data/" + started + ", not 409, and the " \
-        "balance is idle (finished)" in failed[0], output
-    assert nas.scrub["status"] != "running" and nas.snapshot() == before, output
-
-
 def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its_step(nas, monkeypatch):
     """A pause waits for the chunk being moved, and the supervisor refuses a cancel meanwhile (409),
     since the kernel would pause the balance all the same: the clean-up waits for the pause, then
@@ -3874,7 +4020,8 @@ def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its
     status, output = run_check("balance", nas)
     assert status == 1, output
     failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
-    assert len(failed) == 1 and "Pause Balance pauses it" in failed[0] and "the balance is pausing" in failed[0], output
+    assert len(failed) == 1 and "Pause Balance, the next request, pauses it" in failed[0] and "the balance is pausing" in \
+        failed[0], output
     assert nas.balance is None and nas.balance_result == "cancelled", output
     assert nas.snapshot() == before, output
 
@@ -3978,7 +4125,7 @@ def test_the_scrub_check_does_not_start_beside_a_scrub_that_runs(nas):
 ])
 def test_the_pool_folder_helper_touches_only_a_scenario_check_s_folder(tmp_path, action, name, code):
     """REMOTE_POOL_FOLDER, which runs without the read-only namespace: it makes and removes only a
-    folder named unoscheck and six hex digits right below the pools' base (ADR-0473)."""
+    folder named unoscheck and six hex digits right below the pools' base (ADR-0481)."""
     base = tmp_path / "pools"
     (base / "data").mkdir(parents=True)
     env = {"PATH": "/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}
@@ -4090,13 +4237,14 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("scrub", "cancel-keeps-running", "the scrub ended finished"),
     ("scrub", "runs-go-with-the-task", "its run is gone"),
     ("balance", "balance-no-mount-check", "is refused with 409"),
-    ("balance", "balance-in-container", "btrfs runs it in the host's unit unos-balance-data"),
-    ("balance", "scrub-beside-balance", "a scrub of data and a second balance are refused with 409"),
-    ("balance", "no-time-left", "before the supervisor showed a time left"),
-    ("balance", "pause-keeps-running", "Pause Balance pauses it"),
-    ("balance", "balance-start-answers-idle", "with the usage limit of 20% answers running"),
-    ("balance", "resume-outside-unit", "Resume Balance runs it again in the unit unos-balance-data"),
-    ("balance", "cancel-keeps-balancing", "Cancel Balance ends it"),
+    ("balance", "balance-in-container", "its output /run/unos-balance-data.log was not written since the start"),
+    ("balance", "scrub-beside-balance", "the scrub started (running) while the balance is running"),
+    ("balance", "no-time-left", "the status shows no time left"),
+    ("balance", "balance-progress-stuck", "its chunks balanced did not grow"),
+    ("balance", "pause-keeps-running", "the pause answered running, and the balance is idle (finished)"),
+    ("balance", "balance-start-answers-idle", "Start Balance answered idle"),
+    ("balance", "resume-outside-unit", "its output /run/unos-balance-data.log was not written since the resume"),
+    ("balance", "cancel-keeps-balancing", "the cancel answered running, and the balance ended finished"),
     ("offsite", "offsite-check-fails", "the copy failed at check"),
     ("offsite", "offsite-restore-differs", "the restored files hold other bytes"),
     ("offsite", "log-offsite-password", "no password of the check"),
@@ -5205,6 +5353,9 @@ def test_the_offsite_check_covers_the_copy_its_snapshots_and_both_restores(nas):
     for words in ("no off-device copy is set up", "700 root:root", "on the disk it copies", "Run now", "restore",
                   "offsite_20261111_030001.tar.gz", "restored-", "byte for byte", "no password", "Forget this target"):
         assert words in text, words
+    assert re.search(r"^PASS  2\. data is off the disks of the root filesystem and of the supervisor's data volume, "
+                     r"where ADR-0337 refuses a copy's folder: data on sda; the root filesystem on mmcblk1, the data "
+                     r"volume on mmcblk1  \[", text, re.M), text
     done = [(method, path) for method, path, _, _ in nas.calls]
     for call in [("PUT", "/offsite/settings"), ("POST", "/offsite/run"), ("GET", "/offsite/snapshots"),
                  ("POST", "/offsite/restore-configuration"), ("POST", "/offsite/restore-files"),
@@ -5231,10 +5382,115 @@ def test_the_offsite_check_does_not_start_beside_a_task_that_copies(nas):
     before = nas.snapshot()
     status, output = run_check("offsite", nas)
     assert status == 1
-    assert re.search(r"^FAIL  3\. no off-device copy is set up.*: the Scheduler has a task that copies: "
+    assert re.search(r"^FAIL  4\. no off-device copy is set up.*: the Scheduler has a task that copies: "
                      r"Nightly off-device copy", output, re.M), output
     assert nas.snapshot() == before
     assert not [c for c in nas.calls if c[0] != "GET"]
+
+
+def test_the_offsite_check_is_skipped_where_no_pool_is_off_the_disk_of_the_data_volume(nas):
+    """The BPI-F3 keeps Docker's data root, and so the supervisor's data volume, on its pool's disk
+    (ADR-0372), and ADR-0337 refuses a copy's folder there: no folder of a pool can be the target.
+    The check finds it before it makes anything, and says so in a SKIP: neither a pass nor a
+    failure."""
+    nas.data_disks = {DISK}
+    before = nas.snapshot()
+    status, output = run_check("offsite", nas)
+    assert status == 0, output
+    lines = step_lines(output)
+    assert len(lines) == 2 and lines[0].startswith("PASS  1. a pool is mounted read-write and managed by UNOS"), output
+    assert lines[1].startswith(
+        "SKIP  2. data is off the disks of the root filesystem and of the supervisor's data volume, where ADR-0337 "
+        "refuses a copy's folder: data is on sda, which holds the supervisor's data volume too (the root filesystem is "
+        "on mmcblk1, the data volume on sda), and no pool is off those disks: no folder of a pool can take the "
+        "copy"), output
+    assert re.search(r"^scenario offsite: OK, 1 steps passed, 1 skipped$", output, re.M), output
+    assert nas.snapshot() == before and not [c for c in nas.calls if c[0] != "GET"]
+
+
+def test_the_offsite_check_is_skipped_where_the_pool_shares_the_disk_of_the_root_filesystem(nas):
+    nas.root_disks = {DISK}
+    status, output = run_check("offsite", nas)
+    assert status == 0, output
+    assert re.search(r"^SKIP  2\. .*: data is on sda, which holds the root filesystem too \(the root filesystem is on "
+                     r"sda, the data volume on mmcblk1\), and no pool is off those disks", output, re.M), output
+
+
+def test_the_offsite_check_names_the_pool_that_is_off_the_disk_of_the_data_volume(nas):
+    nas.data_disks = {DISK}
+    nas.other_pools = {"usb": "sdb"}
+    before = nas.snapshot()
+    status, output = run_check("offsite", nas, pool="data")
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and failed[0].startswith("FAIL  2. ") and (
+        "data is on sda, which holds the supervisor's data volume too; usb is off those disks: name it with --pool"
+        in failed[0]), output
+    assert nas.snapshot() == before and not [c for c in nas.calls if c[0] != "GET"]
+
+
+@pytest.mark.parametrize("data, root_disks, data_disks, sysfs", [
+    ("/var/lib/docker/volumes/unos-data/_data", "mmcblk0", "mmcblk0", True),
+    ("/mnt/pools/data/.docker/volumes/unos-data/_data", "mmcblk0", "nvme0n1 sdb", True),
+    # Without the filesystem's devices in sysfs, a btrfs filesystem is on its mount's source, without
+    # the subvolume that findmnt appends to it.
+    ("/mnt/pools/data/.docker/volumes/unos-data/_data", "mmcblk0", "nvme0n1", False),
+])
+def test_the_disks_helper_finds_the_whole_disks_of_the_system_and_of_the_pools(tmp_path, data, root_disks, data_disks,
+                                                                                sysfs):
+    """REMOTE_DISKS, run here on stand-ins of findmnt, lsblk, docker and sysfs: the data volume is the
+    supervisor's mount of /data (docker inspect, no new container, ADR-0183); a btrfs filesystem is
+    on all of its devices (/sys/fs/btrfs/<uuid>/devices), another on its source; each device's whole
+    disks are the disks that lsblk lists below it."""
+    sys_root = tmp_path / "sys"
+    sys_root.mkdir()
+    for name in ("nvme0n1p2", "dm-0") if sysfs else ():
+        (sys_root / "fs/btrfs/f00d/devices" / name).mkdir(parents=True)
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$*" >> "{tmp_path}/docker.log"\n'
+        f'echo "{data}"\n')
+    (stubs / "findmnt").write_text(
+        "#!/usr/bin/env bash\n"
+        '[ "$1 $2 $4" = "-n -o -T" ] || exit 9\n'
+        'case $5 in\n'
+        '    /mnt/pools/*) set -- "$3" btrfs f00d "/dev/nvme0n1p2[/@]" ;;\n'
+        '    *) set -- "$3" ext4 beef /dev/mmcblk0p2 ;;\n'
+        'esac\n'
+        'case $1 in FSTYPE) echo "$2" ;; UUID) echo "$3" ;; SOURCE) echo "$4" ;; *) exit 9 ;; esac\n')
+    (stubs / "lsblk").write_text(
+        "#!/usr/bin/env bash\n"
+        '[ "$1 $2 $3" = "-nrso NAME,TYPE --" ] || exit 9\n'
+        'case $4 in\n'
+        '    /dev/mmcblk0p2) printf "mmcblk0p2 part\\nmmcblk0 disk\\n" ;;\n'
+        '    /dev/nvme0n1p2) printf "nvme0n1p2 part\\nnvme0n1 disk\\n" ;;\n'
+        '    /dev/dm-0) printf "dm-0 crypt\\nsdb1 part\\nsdb disk\\n" ;;\n'
+        '    *) exit 32 ;;\n'
+        'esac\n')
+    for stub in ("docker", "findmnt", "lsblk"):
+        (stubs / stub).chmod(0o755)
+    found = subprocess.run(["bash", "-s", "--", "/mnt/pools/data"], input=scenario.REMOTE_DISKS,
+                           env={"PATH": f"{stubs}:/usr/bin:/bin", "UNOS_DEV_SYSFS": str(sys_root)},
+                           capture_output=True, text=True)
+    assert found.returncode == 0, found.stderr
+    pool = "nvme0n1 sdb" if sysfs else "nvme0n1"
+    assert found.stdout.splitlines() == [f"root\t{root_disks}", f"data\t{data_disks}", f"/mnt/pools/data\t{pool}"]
+    assert (tmp_path / "docker.log").read_text().splitlines() == [
+        'inspect -f {{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}} unos-supervisor']
+    assert scenario.parse_disks(found.stdout) == {"root": {"mmcblk0"}, "data": set(data_disks.split()),
+                                                 "/mnt/pools/data": set(pool.split())}
+
+
+def test_the_disks_helper_fails_without_the_supervisor_s_data_volume(tmp_path):
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    (stubs / "docker").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (stubs / "docker").chmod(0o755)
+    found = subprocess.run(["bash", "-s", "--", "/mnt/pools/data"], input=scenario.REMOTE_DISKS,
+                           env={"PATH": f"{stubs}:/usr/bin:/bin"}, capture_output=True, text=True)
+    assert found.returncode == 1 and "the supervisor's data volume was not found" in found.stderr
 
 
 def test_the_offsite_check_does_not_start_beside_a_copy_that_is_set_up(nas):
@@ -5243,7 +5499,7 @@ def test_the_offsite_check_does_not_start_beside_a_copy_that_is_set_up(nas):
     before = nas.snapshot()
     status, output = run_check("offsite", nas)
     assert status == 1
-    assert re.search(r"^FAIL  3\. no off-device copy is set up, which the check would replace: one is set up", output,
+    assert re.search(r"^FAIL  4\. no off-device copy is set up, which the check would replace: one is set up", output,
                      re.M), output
     assert nas.snapshot() == before
     assert not [c for c in nas.calls if c[0] != "GET"]

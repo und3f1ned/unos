@@ -115,7 +115,7 @@ SD writes of each check (ADR-0214). The areas:
            reported), and the Delete of that last guest share, after which signing is mandatory
            again (where the device has other guest shares, that step says so instead); no
            password of the check in an answer or a log; and the user's Delete.
-  scrub    Scrubs of the pool (ADR-0473): its last scrub as found (none after a restart of the
+  scrub    Scrubs of the pool (ADR-0481): its last scrub as found (none after a restart of the
            supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted on
            it refused with 409, and a scheduled scrub of that folder failing with the same text
            (ADR-0311); Start Scrub answered running, and so the status right after it (ADR-0313);
@@ -128,19 +128,26 @@ SD writes of each check (ADR-0214). The areas:
            pool's last scrub result is the check's afterwards.
   balance  A balance of the pool (ADR-0379): one of a folder below the pools' base with nothing
            mounted on it refused with 409; a folder of the pool with 24 chunks about 12% full, made
-           of files that fallocate allocates and of which most are deleted again, for a trial
-           balance that measures the seconds a chunk and an API call take; in their place as many
-           such chunks as keep the check's balance running through its steps, 12 at least
-           (ADR-0473); Start Balance with the usage limit of 20% answered running, and so the status
-           right after it, its btrfs in the host's unit unos-balance-<pool>; a scrub and a second
-           balance refused with 409 while it runs, because it runs; its chunks balanced growing,
-           with the time left; Pause Balance, after which the status says paused and the unit has
-           ended; Resume Balance, which runs it in the unit again; Cancel Balance, after which the
-           status says that it was cancelled. The clean-up cancels a balance that still runs or is
-           paused, once a pause that waits for the chunk being moved has paused it, and removes the
-           folder. The pool's last balance result is the check's, cancelled, until the host
-           restarts.
-  offsite  The off-device copy (ADR-0337), on a device where none is set up: a folder of the
+           of files that fallocate allocates and of which most are deleted again; Start Balance
+           with the usage limit of 20% answered running, and Pause Balance, the next request, which
+           pauses it: the status says paused, the host's unit unos-balance-<pool> has ended, and its
+           output says that the pause stopped btrfs there; the paused balance's chunks balanced, and
+           a second balance refused with 409 because it is paused; Resume Balance answered running,
+           and a scrub, the next request, refused with 409 because the balance runs; the resumed
+           balance's chunks balanced growing, with the time left; Cancel Balance, after which the
+           status says that it was cancelled; and the unit's output, which says how the resumed
+           btrfs ended there. No step needs the balance to run longer than one request after an
+           answer that showed it running (ADR-0481): a step whose request the balance's end beat
+           (the scrub, the look for the time left, the cancel) is a SKIP that says so. The clean-up
+           cancels a balance that still runs or is paused, once a pause that waits for the chunk
+           being moved has paused it, cancels a scrub that the balance did not refuse, and removes
+           the folder. The pool's last balance result is the check's, cancelled (finished when it
+           ended before the cancel), until the host restarts, and the cancel of a scrub that the
+           ended balance let start leaves the pool's last scrub result aborted.
+  offsite  The off-device copy (ADR-0337), on a device where none is set up: the pool's disks
+           off those of the root filesystem and of the supervisor's data volume, where ADR-0337
+           refuses a copy's folder (a SKIP, and the check ends, when no pool is off them, as on the
+           BPI-F3, whose pool holds Docker's data root: ADR-0372, ADR-0481); a folder of the
            pool with two files as the source and another as the disk target; Save and test, which
            makes the copy repository there (700 root:root) and says that it lies on the disk it
            copies; Run now, whose copy, check and restore test pass; the snapshots of the
@@ -196,7 +203,8 @@ SIGTERM, SIGHUP; signals wait while the clean-up runs), and compares the device 
 baseline: a difference is a FAIL. Each clean-up is registered before the call that makes its
 thing and finds the thing by its name, so a call whose answer was lost is undone as well; only a
 backup whose answer was lost is named and left, since a backup made by hand meanwhile would look
-the same. Exit status: 0 when every step passed, 1 when one failed, 2 for a usage error, a run
+the same. Exit status: 0 when no step failed (a SKIP says why the device did not let a step be
+judged), 1 when one failed, 2 for a usage error, a run
 without the lock of scenario.sh or a dev.env that cannot be read, 130 after an interruption.
 
 The API is called through api.py's relay (ADR-0222). The commands on the device run through ssh.sh,
@@ -205,10 +213,12 @@ in a private mount namespace with the root filesystem read-only (ADR-0221), with
 testparm, Samba's log sizes, smbclient and the smb check's smbpasswd -r with a client
 configuration of their own in RAM, the scan for passwords, the shares check's entries on the
 pool (which the namespace leaves writable), the balance check's files on the pool and its look
-at its unit's state (systemctl is-active), and getfacl; only pdbedit runs without that namespace,
+at its unit's state (systemctl is-active) and output (in /run), the offsite check's look at the
+disks of the root filesystem, the supervisor's data volume (docker inspect) and the pools (findmnt,
+lsblk, sysfs), and getfacl; only pdbedit runs without that namespace,
 since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
 of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub and balance checks' folder below the pools'
-base, on the root filesystem (ADR-0473), and the restore check's removal of the copies of the
+base, on the root filesystem (ADR-0481), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
 a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
 checks after up do, ADR-0183), which reads the backup in memory and writes nothing. The passwords of
@@ -231,7 +241,6 @@ import base64
 import contextlib
 import hashlib
 import json
-import math
 import os
 import re
 import secrets
@@ -930,11 +939,61 @@ case $action in
     *) echo "not an action: $action" >&2; exit 2 ;;
 esac'''
 
+# The whole disks of the system and of folders (the offsite check, ADR-0481), as offsite/service.py
+# finds them for the rule of ADR-0337: the root filesystem's (that of /mnt, the pools' base), the
+# supervisor's data volume's (its mount of /data, which docker inspect names: no new container,
+# ADR-0183), then each of $@. A btrfs filesystem is on all of its devices (/sys/fs/btrfs/<uuid>/
+# devices), another on the source of its mount; a device's whole disks are those below it (lsblk
+# --inverse: a partition's disk, the disks under device mapper and md). Prints "root\t<disks>",
+# "data\t<disks>" and "<path>\t<disks>", the disks space-separated, none when they are not known.
+# UNOS_DEV_SYSFS names another sysfs (the tests run it here).
+REMOTE_DISKS = r'''
+set -uo pipefail
+sys=${UNOS_DEV_SYSFS:-/sys}
+data=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' unos-supervisor \
+    2> /dev/null) || data=
+if [ -z "$data" ]; then echo "the supervisor's data volume was not found" >&2; exit 1; fi
+disks() {
+    local fstype uuid source d devices=
+    fstype=$(findmnt -n -o FSTYPE -T "$1" 2> /dev/null) || return 0
+    uuid=$(findmnt -n -o UUID -T "$1" 2> /dev/null) || uuid=
+    source=$(findmnt -n -o SOURCE -T "$1" 2> /dev/null) || source=
+    if [ "$fstype" = btrfs ] && [ -n "$uuid" ] && [ -d "$sys/fs/btrfs/$uuid/devices" ]; then
+        for d in "$sys/fs/btrfs/$uuid/devices"/*; do
+            if [ -e "$d" ]; then devices="$devices /dev/${d##*/}"; fi
+        done
+    elif [[ $source == /dev/* ]]; then
+        devices=${source%%\[*}
+    fi
+    # Device names have no blanks: the list splits at them.
+    for d in $devices; do
+        lsblk -nrso NAME,TYPE -- "$d" 2> /dev/null | awk '$2 == "disk" || $2 == "loop" {print $1}'
+    done | sort -u | tr "\n" " " | sed "s/ $//"
+}
+printf "root\t%s\n" "$(disks /mnt)"
+printf "data\t%s\n" "$(disks "$data")"
+for p in "$@"; do printf "%s\t%s\n" "$p" "$(disks "$p")"; done'''
+
 # The state of a pool's balance unit on the host (ADR-0379): active while its btrfs runs.
 REMOTE_BALANCE_UNIT = r'''
 set -uo pipefail
 if ! [[ ${1:-} =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then echo "not a pool name: ${1:-}" >&2; exit 2; fi
 systemctl is-active "unos-balance-$1.service" || true'''
+
+# The output of a pool's balance unit (ADR-0379, ADR-0481): $1, a file /run/unos-balance-<pool>.log.
+# Prints "time <its time of change, to the nanosecond>" and its bytes in base64 on the next line, or
+# "missing": the unit's start empties it, so a time that changed says that the unit wrote it again.
+REMOTE_BALANCE_OUTPUT = r'''
+set -uo pipefail
+if ! [[ ${1:-} =~ ^/run/unos-balance-[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.log$ ]]; then
+    echo "not the output of a balance unit: ${1:-}" >&2
+    exit 2
+fi
+if [ -f "$1" ]; then
+    echo "time $(stat -c %y -- "$1")" && base64 < "$1" | tr -d "\n" && echo
+else
+    echo missing
+fi'''
 
 # The supervisor's restart (ADR-0309): Docker restarts the container that runs (no new one,
 # ADR-0183); prints "healthy <seconds>" once its health check passes again.
@@ -1458,6 +1517,19 @@ class Device:
         """REMOTE_BALLAST: the files kept in PATH ("kept <n>"), or "removed"."""
         return self.run(REMOTE_BALLAST, action, path, str(files), str(mib), str(keep)).strip()
 
+    def disks(self, paths: list[str]) -> dict[str, set[str]]:
+        """REMOTE_DISKS: the whole disks of the root filesystem ("root"), of the supervisor's data
+        volume ("data") and of each of PATHS."""
+        return parse_disks(self.run(REMOTE_DISKS, *paths))
+
+    def balance_output(self, pool: str) -> tuple[str | None, str]:
+        """REMOTE_BALANCE_OUTPUT of the pool's unit: the time its output last changed, or None when
+        there is none, and its text."""
+        out = self.run(REMOTE_BALANCE_OUTPUT, BALANCE_OUTPUT.format(pool)).splitlines()
+        if not out or not out[0].startswith("time "):
+            return None, ""
+        return out[0][5:], unb64(out[1]) if len(out) > 1 else ""
+
     def balance_unit(self, pool: str) -> str:
         """The state of the unit unos-balance-<pool> on the host: active, inactive, failed."""
         return self.run(REMOTE_BALANCE_UNIT, pool).strip()
@@ -1783,11 +1855,16 @@ class Check:
 
     # the baseline and the end
 
+    @staticmethod
+    def usable(pools: list[dict]) -> list[dict]:
+        """The POOLS that are mounted read-write with UNOS's fstab entry."""
+        return [p for p in pools if p.get("mounted") and p.get("persistent") and not p.get("read_only")
+                and p.get("mountpoint")]
+
     def pick_pool(self) -> dict:
         """The pool of --pool, else the one pool that is mounted read-write and managed."""
         pools = self.get("/storage/pools")
-        usable = [p for p in pools if p.get("mounted") and p.get("persistent") and not p.get("read_only")
-                  and p.get("mountpoint")]
+        usable = self.usable(pools)
         if self.pool_name:
             found = [p for p in pools if p.get("name") == self.pool_name]
             self.expect(found, f"there is no pool {self.pool_name}")
@@ -3833,7 +3910,7 @@ SCRUB_POLL = 2
 SCRUB_TO_THE_END = 32 * GIB
 # A scrub that the check saw running this many times has run long enough for btrfs to record it
 # (about 5 s after its start, ADR-0313) at two of them at least: each look is an API call and a
-# pause of SCRUB_POLL seconds (ADR-0473).
+# pause of SCRUB_POLL seconds (ADR-0481, after ADR-0473).
 SCRUB_LOOKS = 5
 
 
@@ -3940,7 +4017,7 @@ def scrub_check(c: Check) -> None:
     if to_the_end:
         with c.step(f"btrfs reports the scrub of {name}, its progress moving, until it ends, finished without "
                     "errors") as s:
-            # What a look can see (ADR-0473): the bytes scrubbed of each answer that said running once
+            # What a look can see (ADR-0481): the bytes scrubbed of each answer that said running once
             # btrfs had recorded this scrub (its start time), and the end's counters. A fast disk ends
             # the scrub after one such look or none; a scrub seen running SCRUB_LOOKS times was
             # recorded at two of them.
@@ -4033,28 +4110,27 @@ BALANCE_POLL = 1
 BALANCE_USAGE = 20
 # The check's chunks with little in them: files of BALLAST_MIB MiB, of which every BALLAST_KEEP-th
 # stays, leave the data chunks (1 GiB on a pool of more than 50 GiB) that held them about 12% full,
-# one kept file in each. The pool needs twice the space of the files free.
+# one kept file in each: BALLAST_CHUNKS of them. The pool needs twice the space of the files free.
+# No step needs the balance to run longer than one API call after an answer that showed it running
+# (ADR-0481): the pause is the request right after the start, and a step whose request the
+# balance's end beat says so from the balance's state. 24 chunks keep the BPI-F3's NVMe drive
+# (0.83 s a chunk, 2.4 s a call) running through the steps after the resume as well.
 BALLAST_MIB = 128
 BALLAST_KEEP = 8
-# A trial balance of BALLAST_TRIAL_CHUNKS of them (some seconds each on a hard disk) measures how
-# long the pool's disk takes for a chunk, and the relay for an API call and ssh.sh for a device
-# call (ADR-0473). It asks until the supervisor's time left rests on BALANCE_TRIAL_MOVED chunks
-# balanced since its first look, or it ends, and cancels it: that estimate is off by an eighth of a
-# chunk's time at most, and with as many chunks left its rounding up to the second by little. The
-# check's balance then gets enough chunks to run through the API and the device calls that its
-# steps make while it runs (BALANCE_RUNNING_API_CALLS: the halves of the start, the pause, the
-# resume and the cancel, the status right after the start, the two refused requests and the time
-# left; BALANCE_RUNNING_DEVICE_CALLS: the unit's state twice and the SD card's counter at the end
-# of four steps), with the waits of the step of the time left, by BALANCE_MARGIN, and
-# BALLAST_CHUNKS at least: some seconds a chunk on a hard disk need no more, the BPI-F3's NVMe
-# drive (0.83 s a chunk, 2.4 s a call) about 55.
-BALLAST_CHUNKS = 12
-BALLAST_TRIAL_CHUNKS = 24
-BALLAST_FILES = BALLAST_TRIAL_CHUNKS * BALLAST_KEEP
-BALANCE_TRIAL_MOVED = 8
-BALANCE_RUNNING_API_CALLS = 6
-BALANCE_RUNNING_DEVICE_CALLS = 6
-BALANCE_MARGIN = 1.5
+BALLAST_CHUNKS = 24
+BALLAST_FILES = BALLAST_CHUNKS * BALLAST_KEEP
+# A resumed balance seen running at BALANCE_LOOKS looks or more must have shown a chunk balanced
+# since the resume: one that ends before, after so many looks, did not report its progress. Each
+# look is an API call and a pause of BALANCE_POLL; the 20 or so chunks left cannot all be balanced
+# between two looks on a disk that balanced none during the two before.
+BALANCE_LOOKS = 2
+# The output of the pool's unit unos-balance-<pool> (balances.LOG of the supervisor, in /run): the
+# start and the resume empty it, and btrfs, run there, writes how it ended.
+BALANCE_OUTPUT = "/run/unos-balance-{}.log"
+# What btrfs writes there when a pause or a cancel stopped it, or when it finished.
+BALANCE_PAUSED = "balance paused by user"
+BALANCE_CANCELLED = "balance canceled by user"
+BALANCE_DONE = "Done, had to relocate"
 
 
 def balance_of(c: Check, pool: str) -> dict:
@@ -4074,51 +4150,28 @@ def balance_until(c: Check, pool: str, done: Callable[[dict], bool], what: str) 
         time.sleep(BALANCE_POLL)
 
 
-def balance_trial(c: Check, pool: str) -> tuple[float, float, float, str]:
-    """A balance of the trial's chunks, ended: the seconds a chunk took, an API call and a device
-    call took, and what the first rests on (ADR-0473). The seconds a chunk come from the time left
-    that the supervisor estimates (ADR-0379: the chunks left at the rate since it first saw the
-    balance run), less the second that it rounds up, over the chunks left: its last estimate, which
-    rests on BALANCE_TRIAL_MOVED chunks or more when the trial ran that long. A trial that ends
-    before the supervisor showed a time left fails: the disk is too fast for its chunks."""
-    calls: list[float] = []
+def finished(status: dict) -> bool:
+    return status.get("status") == "idle" and status.get("result") == "finished"
 
-    def timed(method: str, body: Any = None) -> dict:
-        at = time.monotonic()
-        answer = c.call(method, f"/storage/pools/{pool}/balance", body)
-        calls.append(time.monotonic() - at)
-        return answer
 
-    deadline = time.monotonic() + BALANCE_WAIT
-    timed("POST", {"usage": BALANCE_USAGE})
-    at = time.monotonic()
-    c.device.balance_unit(pool)  # a device call, timed: the steps make as many as API calls
-    per_device = time.monotonic() - at
-    first: int | None = None  # the chunks balanced at the first read that saw it run
-    estimate: tuple[float, int] | None = None  # the seconds a chunk, and the chunks balanced then
-    while True:
-        found = timed("GET")
-        if found.get("status") != "running":
-            break
-        done = found.get("completed") or 0
-        first = done if first is None else first
-        left = (found.get("expected") or 0) - done
-        if (found.get("seconds_left") or 0) > 1 and left > 0:
-            estimate = ((found["seconds_left"] - 1) / left, done)
-        if estimate is not None and done - first >= BALANCE_TRIAL_MOVED:
-            break
-        c.expect(time.monotonic() < deadline, f"the trial balance did not balance {BALANCE_TRIAL_MOVED} chunks "
-                                              f"within {BALANCE_WAIT} s: it is {found.get('status')} at {done} chunks")
-        time.sleep(BALANCE_POLL)
-    if found.get("status") == "running":
-        timed("DELETE")
-        balance_until(c, pool, lambda b: b.get("status") == "idle", "the cancel of the trial balance")
-    c.expect(estimate is not None, f"the trial balance ended {found.get('result')} after {found.get('completed')} "
-                                   "chunks before the supervisor showed a time left: the disk balances too fast for a "
-                                   f"trial of {BALLAST_TRIAL_CHUNKS} chunks")
-    assert estimate is not None
-    basis = f"the supervisor's time left at {estimate[1]} chunks"
-    return estimate[0], sum(calls) / len(calls), per_device, basis
+def ended_first(status: dict, when: str) -> Skipped:
+    """The SKIP of a step whose request the balance's end beat: what it shows of itself then."""
+    return Skipped(f"it had ended finished after {status.get('completed')} chunks {when}")
+
+
+def unit_output(c: Check, pool: str, since: str | None, want: str, what: str) -> tuple[str, str | None]:
+    """The state of the unit unos-balance-<pool>, which has ended, and the line of its output that
+    says WANT, an output written since its time SINCE (a start or a resume empties it): btrfs, run
+    in the unit, wrote it there (ADR-0379). The text of the step, and the output's time."""
+    unit = c.device.balance_unit(pool)
+    changed, output = c.device.balance_output(pool)
+    path = BALANCE_OUTPUT.format(pool)
+    line = next((x.strip() for x in output.splitlines() if want in x), None)
+    c.expect(unit != "active", f"the unit unos-balance-{pool} is still {unit}")
+    c.expect(changed is not None and changed != since, f"its output {path} was not written since "
+                                                       f"{'the start' if want == BALANCE_PAUSED else 'the resume'}")
+    c.expect(line is not None, f"its output {path} says {tail(output, 200)!r}, not that {what}")
+    return f"the unit {unit}, its output {line!r}", changed
 
 
 def balance_check(c: Check) -> None:
@@ -4137,6 +4190,7 @@ def balance_check(c: Check) -> None:
         s.text += f": {name} at {root}, {free / GIB:.0f} GiB free, its last balance {found.get('result') or 'not known'}"
     folder = f"{root}/{c.run}"
     outside = f"{base}/{c.run}"
+    path = f"/storage/pools/{name}/balance"
 
     def state() -> dict:
         return {"the pool's top folder": sorted(i["name"] for i in c.get("/files/list", params={"path": root})["items"]),
@@ -4147,7 +4201,7 @@ def balance_check(c: Check) -> None:
         when none does. A pause that waits for the chunk being moved refuses a cancel (409): the
         kernel would pause the balance all the same, so the clean-up waits for it first."""
         balance_until(c, name, lambda b: b.get("status") != "pausing", "the pause before the clean-up's cancel")
-        c.call("DELETE", f"/storage/pools/{name}/balance")
+        c.call("DELETE", path)
         balance_until(c, name, lambda b: b.get("status") == "idle", "the cancel of the clean-up")
 
     with c.step("the device holds nothing of an earlier check"):
@@ -4163,97 +4217,113 @@ def balance_check(c: Check) -> None:
         s.text += f": {want!r}"
 
     with c.step(f"{folder} gets {BALLAST_FILES} files of {BALLAST_MIB} MiB, of which every {BALLAST_KEEP}th stays: "
-                f"chunks about {100 // BALLAST_KEEP}% full, for a trial balance") as s:
+                f"chunks about {100 // BALLAST_KEEP}% full") as s:
         c.on_cleanup(f"remove {folder}", lambda: c.expect(c.device.ballast("remove", folder) == "removed",
                                                           f"{folder} was not removed"))
         kept = c.device.ballast("make", folder, BALLAST_FILES, BALLAST_MIB, BALLAST_KEEP)
-        c.expect(kept == f"kept {BALLAST_TRIAL_CHUNKS}", f"the device answered {kept!r}")
+        c.expect(kept == f"kept {BALLAST_CHUNKS}", f"the device answered {kept!r}")
         s.text += f": {kept} files"
 
-    with c.step(f"a trial balance of {name} with the usage limit of {BALANCE_USAGE}% measures how long the disk takes "
-                "for a chunk and the relay for a call, and the check's balance gets the chunks for its steps") as s:
+    with c.step(f"Start Balance of {name} with the usage limit of {BALANCE_USAGE}% answers running, and Pause Balance, "
+                f"the next request, pauses it: the status says paused, and btrfs has ended in the host's unit "
+                f"unos-balance-{name}, whose output says that the pause stopped it") as s:
         c.on_cleanup(f"cancel a balance of {name} that still runs or is paused", cancel)
-        per_chunk, per_call, per_device, basis = balance_trial(c, name)
-        window = (BALANCE_RUNNING_API_CALLS * per_call + BALANCE_RUNNING_DEVICE_CALLS * per_device
-                  + 2 * BALANCE_POLL)
-        chunks = max(BALLAST_CHUNKS, math.ceil(BALANCE_MARGIN * window / max(per_chunk, 0.01)))
-        s.text += (f": {per_chunk:.2f} s a chunk ({basis}), {per_call:.1f} s an API call, {per_device:.1f} s a "
-                   f"device call: the check's balance gets {chunks} chunks")
-
-    with c.step(f"{folder} gets, in place of the trial's files, {chunks * BALLAST_KEEP} files of {BALLAST_MIB} MiB, of "
-                f"which every {BALLAST_KEEP}th stays: chunks about {100 // BALLAST_KEEP}% full") as s:
-        need = 2 * chunks * BALLAST_KEEP * BALLAST_MIB << 20
-        c.expect(free >= need, f"the check's balance needs {chunks} chunks, {need / GIB:.0f} GiB free, and {name} "
-                               f"has {free / GIB:.1f} GiB")
-        c.expect(c.device.ballast("remove", folder) == "removed", f"{folder} was not removed")
-        kept = c.device.ballast("make", folder, chunks * BALLAST_KEEP, BALLAST_MIB, BALLAST_KEEP)
-        c.expect(kept == f"kept {chunks}", f"the device answered {kept!r}")
-        s.text += f": {kept} files"
-
-    with c.step(f"Start Balance of {name} with the usage limit of {BALANCE_USAGE}% answers running, and so does the "
-                f"status right after it; btrfs runs it in the host's unit unos-balance-{name}") as s:
-        started = c.post(f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE})
-        right_after = balance_of(c, name)
-        unit = c.device.balance_unit(name)
+        written, _ = c.device.balance_output(name)  # an earlier balance's, which the start empties
+        started = c.post(path, {"usage": BALANCE_USAGE})
+        answer = c.post(f"{path}/pause")  # nothing between: the one request that must find it running
+        paused = balance_until(c, name, lambda b: b.get("status") not in ("running", "pausing"), "the pause")
         c.expect(started.get("status") == "running", f"Start Balance answered {started.get('status')} "
                                                      f"({started.get('result')})")
-        c.expect(right_after.get("status") == "running", f"the status right after the start is "
-                                                         f"{right_after.get('status')} ({right_after.get('result')})")
-        c.expect(unit == "active", f"the unit unos-balance-{name} is {unit or 'unknown'}")
-        s.text += f": {started.get('status')}, then {right_after.get('status')}, the unit {unit}"
-
-    with c.step(f"while it runs, a scrub of {name} and a second balance are refused with 409") as s:
-        c.on_cleanup(f"cancel a scrub of {name} that the balance did not refuse", lambda: (
-            c.call("DELETE", f"/storage/pools/{name}/scrub"), scrub_until_it_ends(c, name)))
-
-        def refused(path: str, body: Any = None) -> str:
-            """The refusal's reason. A request that was not refused names the balance's state: one
-            that had ended makes the refusals prove nothing, and the trial measured the disk too
-            slow (ADR-0473)."""
-            answer = c.call("POST", path, body, expect=(409, 200))
-            if "detail" not in answer:
-                now = balance_of(c, name)
-                c.expect(False, f"POST {path} answered {answer.get('status')}, not 409, and the balance is "
-                                f"{now.get('status')} ({now.get('result')})")
-            return answer["detail"]
-
-        scrub = refused(f"/storage/pools/{name}/scrub")
-        second = refused(f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE})
-        for detail, want in ((scrub, f"A balance of pool {name} runs: "), (second, f"A balance of pool {name} runs already")):
-            c.expect(detail.startswith(want), f"the refusal says {detail!r}, not that the balance runs")
-        s.text += f": {scrub!r}; {second!r}"
-
-    with c.step(f"the status of {name}'s balance shows the chunks balanced growing, and the time left") as s:
-        moving = balance_until(c, name, lambda b: b.get("status") != "running" or ((b.get("completed") or 0) >= 1
-                               and b.get("seconds_left") is not None), "the time left")
-        c.expect(moving.get("status") == "running", f"it ended {moving.get('status')} ({moving.get('result')}) first")
-        s.text += (f": {moving.get('completed')} of about {moving.get('expected')} chunks, "
-                   f"{moving.get('seconds_left')} s left")
-
-    with c.step(f"Pause Balance pauses it: the status says paused, and the unit unos-balance-{name} has ended") as s:
-        answer = c.post(f"/storage/pools/{name}/balance/pause")
-        paused = balance_until(c, name, lambda b: b.get("status") not in ("running", "pausing"), "the pause")
-        unit = c.device.balance_unit(name)
+        if finished(answer):
+            c.expect(False, f"the balance ended finished after {paused.get('completed')} chunks before the pause, the "
+                            f"request right after its start: the disk balances the check's {BALLAST_CHUNKS} chunks "
+                            "within one API call")
         c.expect(paused.get("status") == "paused", f"the pause answered {answer.get('status')}, and the balance is "
                                                    f"{paused.get('status')} ({paused.get('result')})")
-        c.expect(unit != "active", f"the unit unos-balance-{name} is still {unit}")
-        s.text += (f": {answer.get('status')}, then {paused.get('status')} at {paused.get('completed')} of about "
-                   f"{paused.get('expected')} chunks, the unit {unit}")
+        unit, written = unit_output(c, name, written, BALANCE_PAUSED, "the pause stopped btrfs there")
+        s.text += (f": {started.get('status')}, then {paused.get('status')} at {paused.get('completed')} of about "
+                   f"{paused.get('expected')} chunks, {unit}")
 
-    with c.step(f"Resume Balance runs it again in the unit unos-balance-{name}") as s:
-        resumed = c.post(f"/storage/pools/{name}/balance/resume")
-        unit = c.device.balance_unit(name)
-        c.expect(resumed.get("status") == "running", f"Resume Balance answered {resumed.get('status')} "
-                                                     f"({resumed.get('result')})")
-        c.expect(unit == "active", f"the unit unos-balance-{name} is {unit or 'unknown'}")
-        s.text += f": {resumed.get('status')}, the unit {unit}"
+    with c.step("the paused balance's status shows the chunks it balanced, and a second balance is refused with 409 "
+                "because it is paused") as s:
+        found = balance_of(c, name)
+        c.expect(found.get("status") == "paused", f"the balance is {found.get('status')} ({found.get('result')})")
+        done, expected = found.get("completed"), found.get("expected")
+        c.expect(isinstance(done, int) and isinstance(expected, int) and 0 <= done <= expected and expected > 0,
+                 f"its chunks balanced are {done} of about {expected}")
+        second = c.call("POST", path, {"usage": BALANCE_USAGE}, expect=409).get("detail") or ""
+        c.expect(second.startswith(f"A balance of pool {name} is paused"), f"the refusal says {second!r}, not that "
+                                                                           "the balance is paused")
+        s.text += f": {found.get('completed')} of about {found.get('expected')} chunks; {second!r}"
+
+    with c.step(f"Resume Balance runs it again, and a scrub of {name}, the next request, is refused with 409 because "
+                "the balance runs") as s:
+        c.on_cleanup(f"cancel a scrub of {name} that the balance did not refuse", lambda: (
+            c.call("DELETE", f"/storage/pools/{name}/scrub"), scrub_until_it_ends(c, name)))
+        resumed = c.post(f"{path}/resume")
+        scrub = c.call("POST", f"/storage/pools/{name}/scrub", expect=(409, 200))
+        c.expect(resumed.get("status") == "running" or finished(resumed),
+                 f"Resume Balance answered {resumed.get('status')} ({resumed.get('result')})")
+        if "detail" not in scrub:
+            # The scrub started: a balance that still runs (or stopped and is there still) did not
+            # refuse it; one that ended let it start, and the refusal could not be seen.
+            now = balance_of(c, name)
+            c.expect(finished(now), f"the scrub started ({scrub.get('status')}) while the balance is "
+                                    f"{now.get('status')} ({now.get('result')})")
+            raise ended_first(now, "when the look after the scrub found it: the scrub, the request right after the "
+                                   "resume, started, and whether the balance had ended before it cannot be seen (the "
+                                   "clean-up cancels the scrub)")
+        want = f"A balance of pool {name} runs: "
+        c.expect(scrub["detail"].startswith(want), f"the refusal says {scrub['detail']!r}, not that the balance runs")
+        s.text += f": {resumed.get('status')}; {scrub['detail']!r}"
+
+    with c.step("the status of the resumed balance shows its chunks balanced growing, and the time left") as s:
+        # The supervisor estimates the time left from the chunks balanced since it saw the balance
+        # run again (ADR-0379): each look that found one balanced since the resume must show it.
+        first = resumed.get("completed") or 0
+        looks = 0
+        deadline = time.monotonic() + BALANCE_WAIT
+        while True:
+            look = balance_of(c, name)
+            if look.get("status") != "running":
+                break
+            looks += 1
+            if (look.get("completed") or 0) > first:
+                break
+            c.expect(time.monotonic() < deadline, f"no chunk balanced since the resume within {BALANCE_WAIT} s, at "
+                                                  f"{look.get('completed')} of about {look.get('expected')} chunks")
+            time.sleep(BALANCE_POLL)
+        if look.get("status") != "running":
+            c.expect(finished(look) and looks < BALANCE_LOOKS,
+                     f"it ended {look.get('status')} ({look.get('result')}) after {looks} looks that saw it running "
+                     "with no chunk balanced since the resume: its chunks balanced did not grow")
+            raise ended_first(look, f"before a look found a chunk balanced since the resume ({looks} "
+                                    f"look{'s' if looks != 1 else ''}): the time left could not be seen")
+        c.expect(look.get("seconds_left") is not None,
+                 f"at {look.get('completed')} of about {look.get('expected')} chunks, "
+                 f"{(look.get('completed') or 0) - first} balanced since the resume, the status shows no time left")
+        s.text += (f": {look.get('completed')} of about {look.get('expected')} chunks, {look.get('seconds_left')} s "
+                   f"left ({looks} look{'s' if looks != 1 else ''})")
 
     with c.step("Cancel Balance ends it, and the status says that it was cancelled") as s:
-        answer = c.call("DELETE", f"/storage/pools/{name}/balance")
+        answer = c.call("DELETE", path)
+        if finished(answer):
+            raise ended_first(answer, "before the cancel: the cancel of a running balance could not be seen")
         ended = balance_until(c, name, lambda b: b.get("status") == "idle", "the cancel")
         c.expect(ended.get("result") == "cancelled", f"the cancel answered {answer.get('status')}, and the balance "
                                                       f"ended {ended.get('result')}")
         s.text += f": {answer.get('status')}, then {ended.get('status')}, {ended.get('result')}"
+
+    with c.step(f"btrfs ran the resumed balance in the host's unit unos-balance-{name}, whose output says how it "
+                "ended") as s:
+        ended = balance_of(c, name)
+        c.expect(ended.get("status") == "idle" and ended.get("result") in ("cancelled", "finished"),
+                 f"the balance is {ended.get('status')} ({ended.get('result')})")
+        if ended.get("result") == "cancelled":
+            unit, _ = unit_output(c, name, written, BALANCE_CANCELLED, "the resumed balance was cancelled there")
+        else:
+            unit, _ = unit_output(c, name, written, BALANCE_DONE, "the resumed balance finished there")
+        s.text += f": {unit}"
 
 
 # --- the off-device copy ------------------------------------------------------------------------
@@ -4273,6 +4343,19 @@ def offsite_idle(c: Check) -> dict:
             return status
         c.expect(time.monotonic() < deadline, f"the {status['running'].get('kind')} still runs after {OFFSITE_WAIT} s")
         time.sleep(OFFSITE_POLL)
+
+
+def parse_disks(out: str) -> dict[str, set[str]]:
+    """REMOTE_DISKS's output: the whole disks of each name that it prints."""
+    found: dict[str, set[str]] = {}
+    for line in out.splitlines():
+        key, _, disks = line.partition("\t")
+        found[key] = set(disks.split())
+    return found
+
+
+def disk_words(disks: set[str]) -> str:
+    return " and ".join(sorted(disks)) or "no known disk"
 
 
 def utc_stamp(text: str) -> str:
@@ -4297,6 +4380,35 @@ def offsite_check(c: Check) -> None:
         pool = c.pick_pool()
         name, root = pool["name"], pool["mountpoint"]
         s.text += f": {name} at {root}"
+
+    off_the_system_disk = False
+    with c.step(f"{name} is off the disks of the root filesystem and of the supervisor's data volume, where "
+                "ADR-0337 refuses a copy's folder") as s:
+        # The check's copy goes to a folder of the pool: on a board whose pool's disk also holds the
+        # data volume (Docker's data root on the pool, as on the BPI-F3, ADR-0372) the supervisor
+        # refuses every folder of it, and no step of the check could run (ADR-0481).
+        pools = {p["name"]: p["mountpoint"] for p in c.usable(c.get("/storage/pools"))}
+        disks = c.device.disks(sorted(set(pools.values()) | {root}))
+        unknown = [what for what, key in (("the root filesystem", "root"), ("the data volume", "data"), (name, root))
+                   if not disks.get(key)]
+        c.expect(not unknown, f"the disks of {' and of '.join(unknown)} are not known")
+        system = disks["root"] | disks["data"]
+        mine = disks[root]
+        if mine & system:
+            holds = [what for what, key in (("the root filesystem", "root"), ("the supervisor's data volume", "data"))
+                     if mine & disks[key]]
+            on = f"{name} is on {disk_words(mine)}, which holds {' and '.join(holds)} too"
+            off = sorted(other for other, folder in pools.items() if disks.get(folder) and not disks[folder] & system)
+            c.expect(not off, f"{on}; {' and '.join(off)} {'is' if len(off) == 1 else 'are'} off those disks: name "
+                              f"{'it' if len(off) == 1 else 'one'} with --pool")
+            raise Skipped(f"{on} (the root filesystem is on {disk_words(disks['root'])}, the data volume on "
+                          f"{disk_words(disks['data'])}), and no pool is off those disks: no folder of a pool can "
+                          "take the copy")
+        off_the_system_disk = True
+        s.text += (f": {name} on {disk_words(mine)}; the root filesystem on {disk_words(disks['root'])}, the data "
+                   f"volume on {disk_words(disks['data'])}")
+    if not off_the_system_disk:
+        return
     source = f"{root}/{c.run}"
     target = f"{root}/{c.run}t"
 

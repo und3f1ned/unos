@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-23
 area: device
 decided-by: agent
 supersedes: [ADR-0314]
+superseded-by: ADR-0481
 ---
 
 # ADR-0473: The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial
 
 ## Context
+
+Superseded by ADR-0481: the balance check pauses its balance right after its start, with no trial, and the offsite check needs a pool off the data volume's disk.
 
 On the BPI-F3's NVMe pool (device checks of 2026-11-23) `scripts/dev/scenario.sh scrub` and
 `balance` failed although UNOS behaved right. A scrub of 11.2 GiB took 18 s, and an API call

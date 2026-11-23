@@ -11,19 +11,20 @@
 # share, a volume, a Scheduler task and folders whose names start with "unoscheck", and two
 # backups; smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; shares
 # makes entries of other owners and modes on the pool over ssh, signs in as its user and turns
-# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0473; balance balances it with a
-# usage limit, pauses, resumes and cancels the balance, ADR-0379 and ADR-0473; offsite sets up an off-device
-# copy to a folder of the pool and forgets it again, ADR-0337; restore restores a backup it made
+# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0481; balance balances it with a
+# usage limit, pauses, resumes and cancels the balance, ADR-0379 and ADR-0481; offsite sets up an off-device
+# copy to a folder of the pool and forgets it again, ADR-0337, and is skipped where no pool is off the
+# system disk (the disks of the root filesystem and of the supervisor's data volume), ADR-0481; restore restores a backup it made
 # moments before, twice, which puts the device's database back as it was then, ADR-0341;
 # hardware only reads what the App Store offers of the host's SoC and the nodes the host has
 # for it, ADR-0382), prints
-# PASS or FAIL for every step with the MiB written to the system disk meanwhile, removes what it made,
+# PASS, FAIL or SKIP for every step with the MiB written to the system disk meanwhile, removes what it made,
 # also after a FAIL or Ctrl-C, and compares the device with how it found it. The checks change the
 # device: run them when the owner asks for a check of the device (ADR-0016), for example the
 # re-check after a reboot (ADR-0018). The feature-pass skill names the check of each host-level entry.
 #
 # Holds the device lock for the whole run (ADR-0210) and reports the SD writes of each check
-# (ADR-0214). Exit status: 0 when every check passed, 1 when one failed, 2 for a usage error.
+# (ADR-0214). Exit status: 0 when no check failed, 1 when one failed, 2 for a usage error.
 # Settings: dev.env (see env.sh); UNOS_DEV_PYTHON (python3) runs scenario.py.
 set -euo pipefail
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
