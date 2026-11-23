@@ -1112,7 +1112,10 @@ async def raid_monitor_loop():
     the mounted pools that reached a level of their quota (storage.volume_usage); for the pools the
     loop alerts new device errors, unless the pool's new pool_degraded or pool_read_only problem of
     the same check names them, and a state that could not be read. For the other pools it alerts new
-    errors, a filesystem forced read-only, and a status that turned from healthy.
+    errors, a filesystem forced read-only, and a status that turned from healthy, but not to not
+    mounted for a pool that UNOS managed at the previous check (``managed`` in the status) and whose
+    entry the host's fstab, read, no longer has: the administrator removed or unmounted it, and its
+    disks keep it (ADR-0476).
     """
     while _raid_monitor_running:
         read = None
@@ -1121,6 +1124,12 @@ async def raid_monitor_loop():
             # The same read of the pools for the quotas of their volumes, after the RAID alerts.
             read = _pools_read
             managed, alerted = await _update_pool_problems()
+            # The pools that UNOS manages (their entries in the host's fstab); None when the fstab could
+            # not be read, or the check read no pools: each keeps what the status kept then.
+            fstab_managed = (
+                None if read is None or read.managed is None
+                else {info.name for info in read.pools if info.persistent}
+            )
             previous_status = load_previous_raid_status()
             current_status = {}
 
@@ -1130,11 +1139,15 @@ async def raid_monitor_loop():
                     "status": pool_health.status,
                     "total_errors": pool_health.total_errors,
                     "forced_read_only": pool_health.forced_read_only,
-                    "last_checked": pool_health.last_checked
+                    "last_checked": pool_health.last_checked,
                 }
 
                 # Check if this is a new issue
                 prev = previous_status.get(pool_name, {})
+                was_managed = bool(prev.get("managed", False))
+                current_status[pool_name]["managed"] = (
+                    was_managed if fstab_managed is None else pool_name in fstab_managed
+                )
                 prev_errors = prev.get("total_errors", 0)
 
                 # Alert if new errors detected, if btrfs has just made the
@@ -1144,6 +1157,8 @@ async def raid_monitor_loop():
                 # anything else. A managed pool's problems alert the last two, but for a state that
                 # cannot be read: its problems stay as they were found before.
                 new_errors = pool_health.total_errors > prev_errors
+                # Managed at the previous check, and its fstab entry is gone: Remove Pool or Unmount.
+                removed = was_managed and fstab_managed is not None and pool_name not in fstab_managed
                 if pool_name in managed:
                     alert = (new_errors and pool_name not in alerted) or (
                         pool_health.status == "unknown" and prev.get("status", "healthy") == "healthy"
@@ -1152,7 +1167,8 @@ async def raid_monitor_loop():
                     alert = (
                         new_errors
                         or (pool_health.forced_read_only and not prev.get("forced_read_only", False))
-                        or (pool_health.status != "healthy" and prev.get("status", "healthy") == "healthy")
+                        or (pool_health.status != "healthy" and prev.get("status", "healthy") == "healthy"
+                            and not (removed and pool_health.status == "unmounted"))
                     )
                 if alert:
                     # Build error details
@@ -1738,11 +1754,12 @@ def _answered_raid_status(status: dict) -> dict:
     responses=answer(
         {"running": True, "check_interval_seconds": RAID_CHECK_INTERVAL, "last_status": {"data": {
             "status": "healthy", "total_errors": 0, "forced_read_only": False,
-            "last_checked": "2026-11-19T08:15:03.481207Z",
+            "last_checked": "2026-11-19T08:15:03.481207Z", "managed": True,
         }}},
         "running: whether the RAID monitor runs; check_interval_seconds: the seconds between its checks; "
         "last_status: the state of each pool by name, from its latest check (status, total_errors, "
-        "forced_read_only, and last_checked in UTC), or the state it last kept on disk; {} before any check.",
+        "forced_read_only, last_checked in UTC, and managed: whether the host's fstab had UNOS's entry of "
+        "it, as last read), or the state it last kept on disk; {} before any check.",
     ),
 )
 async def get_raid_monitor_status(_: dict = Depends(verify_token)):

@@ -3793,7 +3793,10 @@ started or last saved. The RAID monitor also alerts each rise of a pool's device
 counts, unless the problem that the rise causes is alerted at the same check,
 and once when it cannot read the state of a managed pool. For a pool that UNOS
 does not manage, it alerts the changes of its health instead: a status that is
-no longer healthy, a filesystem made read-only.
+no longer healthy, a filesystem made read-only. A pool you removed with
+**Remove pool…** or **Unmount…** is not alerted as not mounted: its disks keep
+it, unmounted, and UNOS no longer manages it (unless `/etc/fstab` could not be
+read at that check).
 
 The use of the volumes' quotas is read from the kernel's own counters, which
 reads no disk; the volumes are listed again only after something wrote to the

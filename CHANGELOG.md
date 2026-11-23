@@ -1958,6 +1958,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   took 700 to 750 ms and the container list 836 ms instead of 77. The answers are the same, but
   for an image tagged in several repositories, which shows the first tag of the repository its
   container was created from, in the list and in a single container's answer alike.
+- Removing or unmounting a pool no longer alerts that it is not mounted (ADR-0476, which supersedes
+  ADR-0332): after **Remove pool**, whose disks keep the pool, the RAID monitor sent "RAID Pool
+  '<name>' UNMOUNTED", a change from healthy of a pool that UNOS no longer manages. The RAID status
+  now keeps whether UNOS managed each pool (`managed`, also in `GET /health/raid-monitor/status`),
+  and a pool managed at the previous check whose fstab entry is gone is not alerted as not mounted.
+  A managed pool that falls off is alerted once, as before, and a pool that turns to not mounted
+  while the fstab cannot be read is alerted.
 - `install.sh` starts the `unos` unit as it enables it (`systemctl enable --now`): it stayed
   inactive until the first reboot, so `systemctl stop unos` did nothing and the first shutdown
   ran no `docker compose down`. The manual installation of `docs/INSTALL.md` does the same.
