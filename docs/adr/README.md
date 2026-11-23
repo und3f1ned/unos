@@ -521,6 +521,7 @@ and this index, and `make check-fast` runs it.
 | [0394](0394-the-smart-check-skips-the-disk-s-sleep-while-apps-containers-use-the-pool.md) | The smart check skips the disk's sleep while the containers of apps use it, and names them | accepted | 2026-11-17 |
 | [0470](0470-the-dev-device-runs-from-its-emmc-and-its-sd-card-is-wiped.md) | The dev device runs from its eMMC, which also holds Docker's data root, and its SD card is wiped | accepted | 2026-11-23 |
 | [0473](0473-the-scrub-and-balance-checks-prove-what-a-fast-disk-lets-them-see-and-size-the-balance-by-a-trial.md) | The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial | accepted | 2026-11-23 |
+| [0476](0476-the-dev-scripts-share-one-ssh-connection-per-device-through-a-private-socket.md) | The dev scripts share one SSH connection per device, through a private socket that ssh.sh --close stops | accepted | 2026-11-23 |
 
 ## Testing
 

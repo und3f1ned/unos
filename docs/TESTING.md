@@ -598,7 +598,12 @@ through `scripts/dev/`, which reads its settings and secrets from the git-ignore
 device lock, so that one agent at a time deploys or tests there (ADR-0210), and keep their scratch
 data in RAM. `deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh` (install, remove), `scenario.sh`,
 `check.sh` and `sd.sh` print the SD writes of their run; `ssh.sh`, `api.py` and `bin/testparm`
-take no lock and print no SD writes, so a check made with them runs under `sd.sh measure`. The
+take no lock and print no SD writes, so a check made with them runs under `sd.sh measure`. Every
+script that reaches the device goes through `ssh.sh`, which shares one SSH connection per device
+host and user (ADR-0476): the first call opens a master that the next ones use until 300 s after
+its last session, so a call costs no new login (on the BPI-F3, 0.10 s instead of 1.6 s), and
+proves none either; `scripts/dev/ssh.sh --close` stops it before a check of a new login, a reboot
+of the device or a change of dev.env's SSH settings (the device-checks skill). The
 deploy-device and device-checks skills (`.agents/skills/`) give the steps and what to report.
 Neither runs E2E specs on the device.
 
