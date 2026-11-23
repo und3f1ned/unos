@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-22
 area: ci
 decided-by: owner
+superseded-by: ADR-0467
 supersedes: [ADR-0230]
 ---
 
 # ADR-0462: The CI workflow runs on GitHub again
 
 ## Context
+
+Superseded by ADR-0467: only in part, its first rule: a run no longer runs every job, but those that the changed files need, and a push to `main` that merges a pull request whose run tested the same tree runs none of Unit Tests, Lint, Frontend and Docs and Ledger; every other rule here stays in force.
 
 ADR-0230 turned the workflow CI (`.github/workflows/test.yml`) off on GitHub on 2026-11-07 and
 made `make check` on the workstation the only gate. Since then the workflow's jobs have been kept

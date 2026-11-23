@@ -24,10 +24,59 @@ concurrency:
 # The Unit Tests, Lint and Frontend jobs run the targets of the Makefile that make check runs on a
 # workstation (ADR-0216), so a local run and CI check the same things. docs/TESTING.md describes
 # them; supervisor/tests/test_deploy_scripts.py and test_repo_tooling.py keep them in step.
+#
+# Which of them a run needs, the job Changed paths decides from the files that changed (ADR-0467):
+# Unit Tests unless only documents and the ledger changed, Lint unless only those and webui/, Frontend
+# unless nothing below webui/ nor the Makefile changed, Build Check on main unless nothing that the
+# images build from changed, and Docs and Ledger for documents alone. A push to main that merges a pull
+# request whose run tested the same parents and tree runs none of Unit Tests, Lint, Frontend and Docs
+# and Ledger, and a push skips nothing when the run of main before it did not pass. A job runs unless
+# the output that skips it says so, so a failed Changed paths runs them all. Commit Messages and
+# Secret Scan run whatever changed. The jobs are skipped by their if, never by a path filter on the
+# trigger: GitHub reports a skipped job as passed, and a workflow that never starts reports nothing.
 jobs:
+  # scripts/ci/changed_areas.py: on a push, first the one step with the job's token, which may read the
+  # workflow's runs and their logs (actions: read) and nothing else; then the list of the changed files
+  # and their areas, and on a pull request the record of the commits that this run tests.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      docs_only: ${{ steps.areas.outputs.docs_only }}
+      lint: ${{ steps.areas.outputs.lint }}
+      webui: ${{ steps.areas.outputs.webui }}
+      images: ${{ steps.areas.outputs.images }}
+      tested: ${{ steps.runs.outputs.tested }}
+
+    steps:
+      # The whole history: the merge base of a pull request, the before of a push.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Look up the runs that checked main and this merge
+        id: runs
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/changed_areas.py runs
+
+      - name: Find what this run checks
+        id: areas
+        env:
+          BEFORE_PASSED: ${{ steps.runs.outputs.passed }}
+        run: python3 scripts/ci/changed_areas.py areas
+
   # The backend tests: make test (pytest over supervisor/tests), with Samba's testparm (ADR-0463).
   test:
     name: Unit Tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.tested != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -91,6 +140,8 @@ jobs:
   # audit, never into the tools' Python, and make lint takes it as PYTHON.
   lint:
     name: Lint and Audit (Python)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.lint != 'false' && needs.changes.outputs.tested != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -144,6 +195,8 @@ jobs:
   # e2e-local runs on a workstation (docs/TESTING.md).
   frontend:
     name: Frontend Checks
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.webui != 'false' && needs.changes.outputs.tested != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -179,6 +232,49 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: webui
         run: npm audit --omit=dev --audit-level=high
+
+  # A change of documents and the ledger alone: make test-fast (the ADRs, the ledger, the guard, the
+  # repository's tooling and its secret scan) and the backend tests outside it whose code names a
+  # document of the repository, each also when the other failed. The whole history, for the ledger's
+  # comparison with origin/main. test_repo_tooling.py fails for a test file that names a document and
+  # is missing here.
+  docs:
+    name: Docs and Ledger
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true' && needs.changes.outputs.tested != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: |
+            supervisor/requirements.txt
+            supervisor/requirements-dev.txt
+
+      - name: Install dependencies
+        id: deps
+        run: 'pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt'
+
+      - name: Run the convention tests
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        env:
+          PYTEST_ARGS: -rfEs
+        run: make test-fast
+
+      - name: Run the tests that read documents
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        env:
+          PYTEST_ARGS: -rfEs
+        run: make test TESTS='tests/test_ci_changed_areas.py tests/test_deploy_scripts.py tests/test_emergency.py tests/test_image_scan.py tests/test_prune_merged_branches.py tests/test_secret_scan.py tests/test_ws_stats.py'
 
   # The messages of the pull request's commits follow the commit convention
   # (ADR-0209): scripts/check-commit-msg.py, the script of the commit-msg hook.
@@ -220,12 +316,13 @@ jobs:
       - name: Scan every commit for secrets
         run: make secret-scan
 
-  # Build check - only on main branch to save costs
+  # The images' build, on main only, when what they build from changed, and not after failed Unit Tests;
+  # also when Unit Tests were skipped, since no pull request runs it.
   build:
     name: Build Check
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: test
+    needs: [changes, test]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.changes.outputs.images != 'false' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     timeout-minutes: 30
 
     steps:

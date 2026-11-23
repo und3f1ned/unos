@@ -603,18 +603,22 @@ Neither runs E2E specs on the device.
 
 The workflow CI was off on GitHub from 2026-11-07 (ADR-0230) and runs again since 2026-11-22
 (ADR-0462). GitHub Actions (`.github/workflows/test.yml`) runs on every push to `main` and on every pull
-request against `main`; a new push to a pull request cancels the run for the previous one.
+request against `main`; a new push to a pull request cancels the run for the previous one. Which of its
+jobs a run needs depends on the files that changed (ADR-0467, [Which Jobs Run](#which-jobs-run)).
 
 ### Workflow Jobs
 
-1. **Unit Tests** (`test`): a checkout with the whole history (`fetch-depth: 0`), so that
+1. **Changed paths** (`changes`): a checkout with the whole history, then
+   `scripts/ci/changed_areas.py`, which lists the changed files and writes the outputs that the
+   other jobs read (below).
+2. **Unit Tests** (`test`): a checkout with the whole history (`fetch-depth: 0`), so that
    `tests/test_feature_list.py` can compare the ledger with the one at the merge base with
    `origin/main` (it skips while main has no `feature-list.json`), then
    `pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt` on
    Python 3.11, Samba's `testparm` (`samba-common-bin` with apt, `/run/samba` and
    `testparm --version`, [Samba's testparm](#sambas-testparm)) and `make test` with
    `PYTEST_ARGS=-rfEs`, with its coverage floor ([Coverage](#coverage)).
-2. **Lint and Audit (Python)** (`lint`):
+3. **Lint and Audit (Python)** (`lint`):
    - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff,
      mypy, shellcheck and pip-audit, and every package they depend on, with their hashes
    - `scripts/audit-python.sh`: known vulnerabilities in the runtime dependencies of the
@@ -628,7 +632,7 @@ request against `main`; a new push to a pull request cancels the run for the pre
      another one failed. The step's environment sets `SHELLCHECK` to the pinned shellcheck in
      setup-python's folder (`${{ env.pythonLocation }}/bin/shellcheck`): the runner has another
      one on `PATH`
-3. **Frontend Checks** (`frontend`), on Node.js 22:
+4. **Frontend Checks** (`frontend`), on Node.js 22:
    - `npm ci` in `webui/`
    - `make frontend`: `npm run check` (`svelte-kit sync`, then `svelte-check --threshold
      error`), `npm run runes` (every component in runes mode, ADR-0427), `npm run i18n` (the web UI's texts, ADR-0287), `npm run design` (the design system, ADR-0400), `npm run build`, `npm run lint` (ESLint) and `npm run format-check` (Prettier's check, ADR-0449), each also when
@@ -641,12 +645,62 @@ request against `main`; a new push to a pull request cancels the run for the pre
    - no E2E spec: they need the stand-in or the compose test stack and Playwright's Chromium
      and WebKit (WebKit for `tests/form-fields.spec.ts`), which `make e2e-local` and
      `scripts/test-cycle.sh` bring (above and below)
-4. **Commit Messages** (`commits`), on pull requests: `scripts/check-commit-msg.py --range` from
+5. **Docs and Ledger** (`docs`), for a change of documents and the ledger alone: a checkout with
+   the whole history, the supervisor's packages as in Unit Tests, then `make test-fast` and
+   `make test TESTS='...'` over the backend test files outside `make test-fast` whose code names a
+   document of the repository (an `.md` file, `feature-list.json`, `LICENSE` or `docs/` below the
+   repository's root): `test_ci_changed_areas.py`, `test_deploy_scripts.py`, `test_emergency.py`,
+   `test_image_scan.py`, `test_prune_merged_branches.py`, `test_secret_scan.py` and
+   `test_ws_stats.py`, each with
+   `PYTEST_ARGS=-rfEs` and also when the other failed. `supervisor/tests/test_repo_tooling.py`
+   fails for a test file that names a document and is missing from the list.
+6. **Commit Messages** (`commits`), on pull requests: `scripts/check-commit-msg.py --range` from
    the base to the head of the pull request.
-5. **Build Check** (`build`): the Docker builds of both images (pushes to `main` only, after the
-   unit tests).
-6. **Secret Scan** (`secrets`): a checkout with the whole history, then `make secret-scan`
+7. **Build Check** (`build`): the Docker builds of both images (pushes to `main` only, when what
+   the images build from changed, and not after failed unit tests).
+8. **Secret Scan** (`secrets`): a checkout with the whole history, then `make secret-scan`
    (above, ADR-0445).
+
+### Which Jobs Run
+
+`scripts/ci/changed_areas.py` lists the files that changed: on a pull request
+`git diff --name-only --no-renames <base>...<head>` (the pull request's own changes since its merge
+base with `main`), on a push `git diff --name-only --no-renames <before> <sha>`; a rename names both
+paths. A missing or zero `before`, a force push, a `before` that is no ancestor of the pushed commit,
+a failed diff or an empty list count as "everything changed", and so does a change of
+`.github/workflows/test.yml` or of the script itself. The files set these outputs:
+
+| Output | True when | Job |
+| --- | --- | --- |
+| `docs_only` | every file is documentation or the ledger: `*.md` anywhere, `docs/**`, `feature-list.json`, `LICENSE` | Docs and Ledger runs when true; Unit Tests run unless it is true |
+| `lint` | a file that is no document and not below `webui/` (what `make lint` and the audit read) | Lint and Audit (Python) runs unless it is false |
+| `webui` | a file below `webui/`, or the `Makefile` | Frontend Checks run unless it is false |
+| `images` | a file below `webui/`, `deploy/docker-compose.yml`, `supervisor/Dockerfile`, `supervisor/requirements.txt` or `supervisor/.dockerignore` | Build Check runs on `main` unless it is false |
+
+Each job is skipped only by the output that says so: when Changed paths fails, every job runs
+(Docs and Ledger excepted, whose checks Unit Tests run). Commit Messages (on pull requests) and Secret
+Scan run whatever changed. GitHub shows a job skipped by its `if` as skipped, and a required status
+check counts it as passed; `main` has no branch protection (ADR-0229). The workflow has no path filter
+on its trigger, which would leave a required check waiting for a run that never starts.
+
+On a push to `main`, the step "Look up the runs that checked main and this merge" asks GitHub's API,
+with the job's token and `actions: read`, about the newest run of this workflow for the push of
+`before`. Unless it passed, the push runs every job, so that a change of documents alone does not turn
+a red `main` green. When it passed and the pushed commit is a merge of exactly two parents, the first
+of them `before`, the push may be the merge of a pull request that its run already checked: a run of a
+pull request checks out GitHub's merge of the pull request into its base, and its Changed paths prints
+`tested base=<first parent> head=<second parent> tree=<tree>` for that commit. The step reads the log
+of Changed paths of the `pull_request` runs whose head is the merge's second parent, newest first;
+the newest one whose log holds exactly the record of this merge's two parents and tree decides, and
+when it passed, Unit Tests, Lint, Frontend and Docs and Ledger do not run (output `tested`; Build
+Check still runs when `images` is true, since no pull request builds the images). Anything else, an
+error of the API included, is doubt. A squash or rebase merge, a merge onto a `main` that moved on
+after the pull request's last run, or a merge commit with changes of its own therefore runs everything.
+The step's log says what it found and names the run.
+
+`supervisor/tests/test_ci_changed_areas.py` checks the classification on file lists and real git
+repositories and the API questions against a fake of GitHub's API; `test_repo_tooling.py` checks each
+job's `if`, `needs` and permissions.
 
 Every check fails the run when it finds something (ADR-0190). In the lint and frontend jobs the
 audit runs even when the other step has failed, and inside `make lint` and `make frontend` every

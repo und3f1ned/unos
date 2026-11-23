@@ -1823,6 +1823,118 @@ def test_ci_jobs_run_the_targets_of_make_check():
     assert "lint test frontend" in MAKEFILE.read_text().split("\ncheck:", 1)[1].split("\n", 2)[1]
 
 
+# The jobs of the CI workflow, and the outputs of Changed paths that skip them (ADR-0467): a job is
+# skipped only when an output says so, so that a failed or missing classification runs it, and none of
+# Unit Tests, Lint, Frontend and Docs and Ledger runs for the merge of a tested pull request.
+CI_JOBS = ["changes", "test", "lint", "frontend", "docs", "commits", "secrets", "build"]
+SKIPPED_BY = {"test": "needs.changes.outputs.docs_only != 'true'", "lint": "needs.changes.outputs.lint != 'false'",
+              "frontend": "needs.changes.outputs.webui != 'false'"}
+NOT_TESTED = "needs.changes.outputs.tested != 'true'"
+# The backend tests outside make test-fast whose code names a document of the repository: an .md file
+# (a glob or a name made in an f-string included), feature-list.json, LICENSE, or the docs/ folder
+# joined to the repository's root or to a parent of the test's file.
+DOCUMENT_NAMED = re.compile(r"""["'][\w./*{}-]*\.md["']|["'](?:feature-list\.json|LICENSE)["']"""
+                            r"""|(?:\b\w*(?:ROOT|REPO|root|repo)\w*|parents\[\d+\])\s*/\s*["']docs(?:/[^"']*)?["']""")
+
+
+def test_ci_classifies_the_changed_paths_in_a_first_job():
+    """The job Changed paths runs scripts/ci/changed_areas.py on every run: on a push, first the step that
+    asks GitHub whether the run of main before the push passed and whether a pull request's run tested
+    this merge, the one step that gets the job's token, read-only for the runs and their logs; then the
+    classification, whose outputs the other jobs read."""
+    workflow = _workflow("test.yml")
+    job = workflow["jobs"]["changes"]
+    checkout, runs, classify = job["steps"]
+
+    assert list(workflow["jobs"]) == CI_JOBS
+    assert job["name"] == "Changed paths"
+    assert not {"needs", "if", "continue-on-error", "env", "defaults"} & set(job)
+    assert job["runs-on"] == "ubuntu-latest" and 0 < job["timeout-minutes"] <= 10
+    # Only this job widens the token, and only to read the workflow's runs.
+    assert job["permissions"] == {"contents": "read", "actions": "read"}
+    assert [name for name, spec in workflow["jobs"].items() if "permissions" in spec] == ["changes"]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    assert runs == {"name": "Look up the runs that checked main and this merge", "id": "runs",
+                    "if": "github.event_name == 'push'", "env": {"GH_TOKEN": "${{ github.token }}"},
+                    "run": "python3 scripts/ci/changed_areas.py runs"}
+    assert classify == {"name": "Find what this run checks", "id": "areas",
+                        "env": {"BEFORE_PASSED": "${{ steps.runs.outputs.passed }}"},
+                        "run": "python3 scripts/ci/changed_areas.py areas"}
+    assert job["outputs"] == {**{name: f"${{{{ steps.areas.outputs.{name} }}}}"
+                                 for name in ("docs_only", "lint", "webui", "images")},
+                              "tested": "${{ steps.runs.outputs.tested }}"}
+    # The token appears nowhere else, nor does any secret.
+    text = (WORKFLOWS / "test.yml").read_text()
+    assert text.count("github.token") == 1 and "secrets." not in text and "GITHUB_TOKEN" not in text
+
+
+def test_ci_jobs_run_by_the_changed_paths():
+    """Unit Tests run unless only documents changed, Lint unless only documents and webui/, Frontend unless
+    nothing below webui/ nor the Makefile, none of them for a tested merge, each also when Changed paths
+    failed; Docs and Ledger only for documents alone; Commit Messages and Secret Scan whatever changed;
+    Build Check on main when what the images build from changed, after Unit Tests passed or were
+    skipped. No path filter on the trigger: a skipped job reports as passed, a workflow that does not
+    start reports nothing (ADR-0467)."""
+    workflow = _workflow("test.yml")
+    jobs = workflow["jobs"]
+
+    assert _on(workflow) == {"push": {"branches": ["main"]}, "pull_request": {"branches": ["main"]}}
+    for name, condition in SKIPPED_BY.items():
+        assert jobs[name]["needs"] == "changes", name
+        assert jobs[name]["if"] == f"${{{{ !cancelled() && {condition} && {NOT_TESTED} }}}}", name
+    assert jobs["docs"]["needs"] == "changes"
+    assert jobs["docs"]["if"] == f"needs.changes.outputs.docs_only == 'true' && {NOT_TESTED}"
+    assert jobs["commits"]["if"] == "github.event_name == 'pull_request'" and "needs" not in jobs["commits"]
+    assert not {"if", "needs"} & set(jobs["secrets"])
+    assert jobs["build"]["needs"] == ["changes", "test"]
+    assert jobs["build"]["if"] == ("${{ !cancelled() && github.ref == 'refs/heads/main' && "
+                                   "needs.changes.outputs.images != 'false' && "
+                                   "(needs.test.result == 'success' || needs.test.result == 'skipped') }}")
+    # Every check the workflow had runs its same steps when it runs.
+    assert [step["run"] for step in jobs["test"]["steps"] if "run" in step][-1] == "make test"
+
+
+def test_the_docs_job_runs_test_fast_and_every_test_that_reads_the_documents():
+    """Docs and Ledger, for a change of documents and the ledger alone: on the supervisor's packages, with
+    the whole history for the ledger's comparison with main, make test-fast and make test over the test
+    files outside it that name a document of the repository, each also when the other failed. A new test
+    file that reads a document fails here until the job runs it."""
+    job = _workflow("test.yml")["jobs"]["docs"]
+    checkout, python, deps, fast, documents = job["steps"]
+    named = sorted(f"tests/{path.name}" for path in (REPO_ROOT / "supervisor" / "tests").rglob("*.py")
+                   if f"tests/{path.name}" not in TEST_FAST and DOCUMENT_NAMED.search(path.read_text()))
+
+    assert job["name"] == "Docs and Ledger" and job["runs-on"] == "ubuntu-latest"
+    assert 0 < job["timeout-minutes"] <= 30
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    assert python["uses"].startswith("actions/setup-python@") and python["with"]["python-version"] == "3.11"
+    assert deps["id"] == "deps"
+    assert deps["run"] == "pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt"
+    assert fast["run"] == "make test-fast"
+    assert documents["run"] == f"make test TESTS='{' '.join(named)}'"
+    # test_ci_changed_areas.py names documents in the file lists it classifies, and
+    # test_prune_merged_branches.py those of its scratch repositories: they run here too.
+    assert named == ["tests/test_ci_changed_areas.py", "tests/test_deploy_scripts.py", "tests/test_emergency.py",
+                     "tests/test_image_scan.py", "tests/test_prune_merged_branches.py", "tests/test_secret_scan.py",
+                     "tests/test_ws_stats.py"]
+    for step in (fast, documents):
+        assert step["if"] == "${{ !cancelled() && steps.deps.outcome == 'success' }}"
+        assert step["env"] == {"PYTEST_ARGS": "-rfEs"}
+
+
+def test_the_document_search_finds_what_a_test_reads():
+    for text in ('(REPO_ROOT / "README.md").read_text()', "REPO / 'docs' / 'INSTALL.md'", '"docs/TESTING.md"',
+                 'path.suffix in (".md", ".py")', 'ROOT / "feature-list.json"', '(root / "LICENSE")',
+                 'repo_root / "docs" / "adr"', 'ADR_DIR.glob("*.md")', 'f"{name}.md"', 'ROOT / "docs/adr"',
+                 'Path(__file__).resolve().parents[2] / "docs"'):
+        assert DOCUMENT_NAMED.search(text), text
+    # A share or pool folder named docs is no document.
+    for text in ('env.pool / "docs"', 'api.pool / "docs" / "a.txt"', '"docs/a.txt"', '"README.markdown"'):
+        assert not DOCUMENT_NAMED.search(text), text
+
+
 @pytest.mark.parametrize("name", ["test.yml", "audit.yml", "btrfs.yml"])
 def test_workflows_read_only_with_timeouts(name):
     workflow = _workflow(name)
@@ -2224,6 +2336,9 @@ ALLOWED_SECRET_VALUES = {
     # A webhook's credential header, which the notification senders keep off curl's command line
     # and out of their errors (ADR-0336).
     "s3cr3t-api-key": {"supervisor/tests/test_notifications.py"},
+    # The job token that scripts/ci/changed_areas.py sends to GitHub's API alone, never along a redirect
+    # (ADR-0467).
+    "the-token": {"supervisor/tests/test_ci_changed_areas.py"},
 }
 # The passwords that CLAUDE.md once published, the dev device's SSH password and the UNOS
 # administrator's, by their SHA-256: rotated, they stay in git history (ADR-0226) and must never
