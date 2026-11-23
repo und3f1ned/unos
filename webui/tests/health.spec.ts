@@ -226,7 +226,7 @@ test.describe('Disk Health', () => {
   // storage.free-mmc-as-data-disk: an SD card or eMMC has no SMART.
   test('an SD card is listed without SMART, and its dialog says why', async ({ authenticatedPage: page }) => {
     await fakeHealthApi(page, { disks: () => ({ json: { disks: [...FAKE_SMART_DISKS, SD_CARD_DISK] } }) });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await expect(disk(page, '/dev/mmcblk1').locator('.badge')).toHaveText('No SMART');
     await expect(disk(page, '/dev/mmcblk1').locator('.badge')).toHaveClass(/badge-neutral/);
     await disk(page, '/dev/mmcblk1').getByRole('button', { name: 'SMART data of /dev/mmcblk1' }).click();
