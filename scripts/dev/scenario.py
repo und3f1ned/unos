@@ -115,7 +115,7 @@ SD writes of each check (ADR-0214). The areas:
            reported), and the Delete of that last guest share, after which signing is mandatory
            again (where the device has other guest shares, that step says so instead); no
            password of the check in an answer or a log; and the user's Delete.
-  scrub    Scrubs of the pool (ADR-0481): its last scrub as found (none after a restart of the
+  scrub    Scrubs of the pool (ADR-0485): its last scrub as found (none after a restart of the
            supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted on
            it refused with 409, and a scheduled scrub of that folder failing with the same text
            (ADR-0311); Start Scrub answered running, and so the status right after it (ADR-0313);
@@ -137,7 +137,7 @@ SD writes of each check (ADR-0214). The areas:
            balance's chunks balanced growing, with the time left; Cancel Balance, after which the
            status says that it was cancelled; and the unit's output, which says how the resumed
            btrfs ended there. No step needs the balance to run longer than one request after an
-           answer that showed it running (ADR-0481): a step whose request the balance's end beat
+           answer that showed it running (ADR-0485): a step whose request the balance's end beat
            (the scrub, the look for the time left, the cancel) is a SKIP that says so. The clean-up
            cancels a balance that still runs or is paused, once a pause that waits for the chunk
            being moved has paused it, cancels a scrub that the balance did not refuse, and removes
@@ -147,7 +147,7 @@ SD writes of each check (ADR-0214). The areas:
   offsite  The off-device copy (ADR-0337), on a device where none is set up: the pool's disks
            off those of the root filesystem and of the supervisor's data volume, where ADR-0337
            refuses a copy's folder (a SKIP, and the check ends, when no pool is off them, as on the
-           BPI-F3, whose pool holds Docker's data root: ADR-0372, ADR-0481); a folder of the
+           BPI-F3, whose pool holds Docker's data root: ADR-0372, ADR-0485); a folder of the
            pool with two files as the source and another as the disk target; Save and test, which
            makes the copy repository there (700 root:root) and says that it lies on the disk it
            copies; Run now, whose copy, check and restore test pass; the snapshots of the
@@ -218,7 +218,7 @@ disks of the root filesystem, the supervisor's data volume (docker inspect) and 
 lsblk, sysfs), and getfacl; only pdbedit runs without that namespace,
 since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
 of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub and balance checks' folder below the pools'
-base, on the root filesystem (ADR-0481), and the restore check's removal of the copies of the
+base, on the root filesystem (ADR-0485), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
 a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
 checks after up do, ADR-0183), which reads the backup in memory and writes nothing. The passwords of
@@ -939,7 +939,7 @@ case $action in
     *) echo "not an action: $action" >&2; exit 2 ;;
 esac'''
 
-# The whole disks of the system and of folders (the offsite check, ADR-0481), as offsite/service.py
+# The whole disks of the system and of folders (the offsite check, ADR-0485), as offsite/service.py
 # finds them for the rule of ADR-0337: the root filesystem's (that of /mnt, the pools' base), the
 # supervisor's data volume's (its mount of /data, which docker inspect names: no new container,
 # ADR-0183), then each of $@. A btrfs filesystem is on all of its devices (/sys/fs/btrfs/<uuid>/
@@ -980,7 +980,7 @@ set -uo pipefail
 if ! [[ ${1:-} =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then echo "not a pool name: ${1:-}" >&2; exit 2; fi
 systemctl is-active "unos-balance-$1.service" || true'''
 
-# The output of a pool's balance unit (ADR-0379, ADR-0481): $1, a file /run/unos-balance-<pool>.log.
+# The output of a pool's balance unit (ADR-0379, ADR-0485): $1, a file /run/unos-balance-<pool>.log.
 # Prints "time <its time of change, to the nanosecond>" and its bytes in base64 on the next line, or
 # "missing": the unit's start empties it, so a time that changed says that the unit wrote it again.
 REMOTE_BALANCE_OUTPUT = r'''
@@ -3910,7 +3910,7 @@ SCRUB_POLL = 2
 SCRUB_TO_THE_END = 32 * GIB
 # A scrub that the check saw running this many times has run long enough for btrfs to record it
 # (about 5 s after its start, ADR-0313) at two of them at least: each look is an API call and a
-# pause of SCRUB_POLL seconds (ADR-0481, after ADR-0473).
+# pause of SCRUB_POLL seconds (ADR-0485, after ADR-0473).
 SCRUB_LOOKS = 5
 
 
@@ -4017,7 +4017,7 @@ def scrub_check(c: Check) -> None:
     if to_the_end:
         with c.step(f"btrfs reports the scrub of {name}, its progress moving, until it ends, finished without "
                     "errors") as s:
-            # What a look can see (ADR-0481): the bytes scrubbed of each answer that said running once
+            # What a look can see (ADR-0485): the bytes scrubbed of each answer that said running once
             # btrfs had recorded this scrub (its start time), and the end's counters. A fast disk ends
             # the scrub after one such look or none; a scrub seen running SCRUB_LOOKS times was
             # recorded at two of them.
@@ -4112,7 +4112,7 @@ BALANCE_USAGE = 20
 # stays, leave the data chunks (1 GiB on a pool of more than 50 GiB) that held them about 12% full,
 # one kept file in each: BALLAST_CHUNKS of them. The pool needs twice the space of the files free.
 # No step needs the balance to run longer than one API call after an answer that showed it running
-# (ADR-0481): the pause is the request right after the start, and a step whose request the
+# (ADR-0485): the pause is the request right after the start, and a step whose request the
 # balance's end beat says so from the balance's state. 24 chunks keep the BPI-F3's NVMe drive
 # (0.83 s a chunk, 2.4 s a call) running through the steps after the resume as well.
 BALLAST_MIB = 128
@@ -4386,7 +4386,7 @@ def offsite_check(c: Check) -> None:
                 "ADR-0337 refuses a copy's folder") as s:
         # The check's copy goes to a folder of the pool: on a board whose pool's disk also holds the
         # data volume (Docker's data root on the pool, as on the BPI-F3, ADR-0372) the supervisor
-        # refuses every folder of it, and no step of the check could run (ADR-0481).
+        # refuses every folder of it, and no step of the check could run (ADR-0485).
         pools = {p["name"]: p["mountpoint"] for p in c.usable(c.get("/storage/pools"))}
         disks = c.device.disks(sorted(set(pools.values()) | {root}))
         unknown = [what for what, key in (("the root filesystem", "root"), ("the data volume", "data"), (name, root))

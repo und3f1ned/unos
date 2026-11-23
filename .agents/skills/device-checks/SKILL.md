@@ -75,16 +75,16 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    (ADR-0309), `shares` makes entries of other owners and modes on the pool over ssh, signs in as
    its user and turns guest access on for its share, which lowers signing for the whole server
    while it runs (ADR-0100, ADR-0340), `scrub` scrubs the pool, three times on a small pool, and leaves its last
-   scrub result (ADR-0481), `balance` writes 24 GiB of allocated space (fallocate) into a folder of the
+   scrub result (ADR-0485), `balance` writes 24 GiB of allocated space (fallocate) into a folder of the
    pool (which needs twice that free), deletes most of it again and balances, pauses right after the
    start, resumes and cancels the chunks it left about 12% full, which moves up to 128 MiB of each on
    the pool's disk, and leaves its last balance result, cancelled (finished when it ended first),
    until the host restarts; a step whose request the balance's end beat is a SKIP that says so, and
    a scrub that the ended balance let start is cancelled, which leaves the last scrub result aborted
-   (ADR-0379, ADR-0481), `offsite` sets
+   (ADR-0379, ADR-0485), `offsite` sets
    up an off-device copy to a folder of the pool and forgets it again (ADR-0337); it refuses to start
    on a device that has one set up, and is a SKIP where no pool is off the disks of the root
-   filesystem and of the supervisor's data volume, as on the BPI-F3 (ADR-0481), and
+   filesystem and of the supervisor's data volume, as on the BPI-F3 (ADR-0485), and
    `restore` restores a backup it made moments before, twice, which puts the device's database
    back as it was then and ends the web sessions but the relay's (ADR-0341); it refuses to start
    beside a share that is not served and has access, which a restore removes, or beside more than

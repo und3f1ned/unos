@@ -2061,7 +2061,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   references with it. A reference that an earlier removal took is passed over; the image is not
   found only when nothing was removed, also when another removed it after UNOS read it.
 - `scripts/dev/scenario.sh scrub` and `balance` hold on a fast disk such as the BPI-F3's NVMe pool
-  (ADR-0481, after ADR-0473). The scrub step takes the progress it can see: its looks after btrfs
+  (ADR-0485, after ADR-0473). The scrub step takes the progress it can see: its looks after btrfs
   recorded that scrub, and the bytes scrubbed by its end's rate and duration. A scrub seen running
   many times must still move. The balance check no longer races its balance's end: it pauses the
   balance with the request right after its start, checks the paused balance's chunks and the
@@ -2071,7 +2071,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   chunks need 48 GiB free, without the trial balance of before.
 - `scripts/dev/scenario.sh offsite` is a SKIP, before it makes anything, on a board whose pool's
   disk also holds the root filesystem or the supervisor's data volume, such as the BPI-F3 with
-  Docker's data root on its pool: UNOS refuses a copy's folder there (ADR-0481). `scenario.sh all`
+  Docker's data root on its pool: UNOS refuses a copy's folder there (ADR-0485). `scenario.sh all`
   can pass on such a board.
 - `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
   bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip

@@ -583,11 +583,11 @@ through `scripts/dev/`, which reads its settings and secrets from the git-ignore
   `unoscheck<6 hex digits>` and two backups (smbconf also edits smb.conf by hand and restarts the
   supervisor, ADR-0309; shares makes entries of other owners and modes on the pool over ssh, signs
   in as its user with a token of its own in the device's RAM and turns guest access on for its
-  share, ADR-0340; scrub scrubs the pool, ADR-0481; balance balances 24 chunks of the pool that it
+  share, ADR-0340; scrub scrubs the pool, ADR-0485; balance balances 24 chunks of the pool that it
   leaves about 12% full, pauses the balance right after its start, resumes and cancels it, a step
-  whose request its end beat being a SKIP, ADR-0379 and ADR-0481; offsite sets up an off-device copy
+  whose request its end beat being a SKIP, ADR-0379 and ADR-0485; offsite sets up an off-device copy
   to a folder of the pool, with its restores, and forgets it, ADR-0337, and is a SKIP where no pool
-  is off the disks of the root filesystem and of the supervisor's data volume, ADR-0481; restore restores a backup it made
+  is off the disks of the root filesystem and of the supervisor's data volume, ADR-0485; restore restores a backup it made
   moments before, twice, ADR-0341; hardware only reads what the App Store offers of the host's SoC
   to each container of an app, the device nodes the host has and the RKNPU driver's version,
   ADR-0382), prints PASS, FAIL or SKIP and the SD MiB of each step, removes what it made, also

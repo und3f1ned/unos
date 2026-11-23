@@ -92,7 +92,7 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   refused only with a status of smbd's, not one that says the connection, the session or the tree
   connect broke, and only while the same session lists the file afterwards; the Snapshots
   page names a snapshot to the second of the device's clock and refuses a second one of that name;
-* the scrub and balance checks hold on the fake on a clock of its own (TimedNas, ADR-0481) with the
+* the scrub and balance checks hold on the fake on a clock of its own (TimedNas, ADR-0485) with the
   times measured on the BPI-F3's NVMe pool and the BPI-W3's hard disk: the scrub step takes the
   progress that it sees, two looks, one or none after btrfs recorded the scrub, with the end's
   total, and still asks a scrub seen running many times to move; the balance check pauses its
@@ -3775,7 +3775,7 @@ def test_the_fake_catalog_has_the_catalog_s_profiles_and_images():
 
 
 def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(nas):
-    """ADR-0481 (after ADR-0473 and ADR-0314): the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
+    """ADR-0485 (after ADR-0473 and ADR-0314): the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
     hand on 2026-11-09, with Start Scrub's answer of ADR-0313."""
     status, output = run_check("scrub", nas)
     assert status == 0, output
@@ -3793,7 +3793,7 @@ def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(n
 
 
 def test_the_balance_check_pauses_its_balance_right_after_its_start_and_refuses_beside_it(nas):
-    """ADR-0379 and ADR-0481: the steps of storage.pool-balance on the fake NAS, whose balance moves
+    """ADR-0379 and ADR-0485: the steps of storage.pool-balance on the fake NAS, whose balance moves
     a chunk at each read of its status: the pause is the request right after the start, the paused
     balance's status and the second balance's refusal, the resume with the scrub refused right after
     it, the time left, the cancel, and btrfs's output in the unit for the start and the resume."""
@@ -4125,7 +4125,7 @@ def test_the_scrub_check_does_not_start_beside_a_scrub_that_runs(nas):
 ])
 def test_the_pool_folder_helper_touches_only_a_scenario_check_s_folder(tmp_path, action, name, code):
     """REMOTE_POOL_FOLDER, which runs without the read-only namespace: it makes and removes only a
-    folder named unoscheck and six hex digits right below the pools' base (ADR-0481)."""
+    folder named unoscheck and six hex digits right below the pools' base (ADR-0485)."""
     base = tmp_path / "pools"
     (base / "data").mkdir(parents=True)
     env = {"PATH": "/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}

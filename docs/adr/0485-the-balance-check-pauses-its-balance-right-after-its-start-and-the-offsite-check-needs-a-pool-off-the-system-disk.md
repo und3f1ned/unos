@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0473]
 ---
 
-# ADR-0481: The balance check pauses its balance right after its start, and the offsite check needs a pool off the system disk
+# ADR-0485: The balance check pauses its balance right after its start, and the offsite check needs a pool off the system disk
 
 ## Context
 
