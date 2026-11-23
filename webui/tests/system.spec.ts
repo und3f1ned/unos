@@ -136,7 +136,7 @@ test.describe('System Settings', () => {
   });
 });
 
-// Each tab of System is a page of its own, /system (General) and /system/<tab> (ADR-0470): its tab
+// Each tab of System is a page of its own, /system (General) and /system/<tab> (ADR-0474): its tab
 // is a link marked as the current page, and Back and Forward go from tab to tab.
 test.describe('System tabs and the URL', () => {
   test('a tab is a link to its own address, marked as the current page', async ({ authenticatedPage: page }) => {
@@ -185,7 +185,7 @@ test.describe('System tabs and the URL', () => {
   });
 });
 
-// webui.navigation-without-skeletons (ADR-0469, ADR-0470): each tab reads its data in its own load.
+// webui.navigation-without-skeletons (ADR-0469, ADR-0474): each tab reads its data in its own load.
 // A switch of tabs is a navigation: the open tab stays until the next one has its data, with no
 // skeleton; a tab visited before appears at once with its last data, which a fresh read replaces; a
 // change forgets what the tabs of its area read; only Notifications, which reads the database

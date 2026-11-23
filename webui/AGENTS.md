@@ -213,7 +213,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
    its reader and load (`system:<tab>`), and the tabs are the links of the page's `+layout.svelte`
    (`PageTabs` with an `href` per tab, which preload as the sidebar's): a switch of tabs is then a
    navigation that keeps the open tab, and Back goes from tab to tab. System does so
-   (`routes/system/`, General at `/system`, ADR-0470). A card that read in `onMount` takes the
+   (`routes/system/`, General at `/system`, ADR-0474). A card that read in `onMount` takes the
    load's value as a prop or through its class's `apply`, at once and for the fresh read, and keeps
    a form's typed values and its own reads after its changes.
 

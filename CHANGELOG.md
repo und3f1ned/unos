@@ -35,7 +35,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   listing found it free. Every card stays hidden while the mount table or the kernel's command
   line cannot be read. GET /storage/disks gains `mmc_type`, and `scripts/dev/scenario.sh smart`
   expects NO_SMART and a refused self-test of a listed card.
-- The tabs of System read their data the same way (ADR-0470): each is a page of its own, General at
+- The tabs of System read their data the same way (ADR-0474): each is a page of its own, General at
   `/system` and the others at `/system/<tab>` (`/system/network`, `/system/power`), in place of
   `/system#<tab>`. A switch of tabs keeps the open tab until the next one has its data, a tab
   visited before appears at once, and Back and Forward go from tab to tab. Updates' check for the

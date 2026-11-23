@@ -1,5 +1,5 @@
 // The tab of a page with tabs that the URL's hash names, the Account page's (ADR-0431); System's tabs are
-// pages of their own (ADR-0470).
+// pages of their own (ADR-0474).
 
 /**
  * The tab to show for the URL's hash `rawHash` (with its `#`): the one it names among `available`;

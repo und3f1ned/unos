@@ -22,7 +22,7 @@ const SYSTEM_GROUPS = {
   Maintenance: ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management'],
 };
 
-// System's tabs are links (ADR-0470), the Account page's buttons.
+// System's tabs are links (ADR-0474), the Account page's buttons.
 const tabs = (page: Page) => page.locator('main nav').locator('a, button');
 // A card's title: its h3 (card-title, or section-title for the API tokens' card).
 const cardTitles = (page: Page) => page.locator('main h3.card-title, main h3.section-title');

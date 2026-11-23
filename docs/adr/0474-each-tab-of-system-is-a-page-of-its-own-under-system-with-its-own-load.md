@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0470: Each tab of System is a page of its own under /system, with its own load
+# ADR-0474: Each tab of System is a page of its own under /system, with its own load
 
 ## Context
 

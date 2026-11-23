@@ -140,7 +140,7 @@ test.describe('System > General: the name and time zone of the NAS', () => {
   });
 });
 
-// webui.navigation-without-skeletons (ADR-0469, ADR-0470): a change forgets what the pages of its
+// webui.navigation-without-skeletons (ADR-0469, ADR-0474): a change forgets what the pages of its
 // area read. The host name is the network's (PUT /network/hostname): General, Network and the
 // Dashboard, whose header names the host, read it again on their next visit instead of showing the
 // name from before.

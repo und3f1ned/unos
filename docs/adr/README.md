@@ -454,7 +454,7 @@ and this index, and `make check-fast` runs it.
 | [0460](0460-the-web-uis-fields-are-drawn-by-the-design-in-webkit-as-in-chromium-and-a-webkit-project-checks-the-form-fields.md) | The web UI's fields are drawn by the design in WebKit as in Chromium, and a WebKit project of the E2E specs checks the form fields | accepted | 2026-11-22 |
 | [0466](0466-a-shared-component-that-no-page-uses-is-removed-and-card-header-links-and-empty-states-next-steps-use-cardaction-and-emptystates-action.md) | A shared component that no page uses is removed, and card headers' links and empty states' next steps use CardAction and EmptyState's action | accepted | 2026-11-23 |
 | [0469](0469-the-web-uis-pages-read-their-data-in-load-functions-and-a-navigation-keeps-the-open-page-until-the-next-has-its-data.md) | The web UI's pages read their data in load functions, and a navigation keeps the open page until the next one has its data | accepted | 2026-11-23 |
-| [0470](0470-each-tab-of-system-is-a-page-of-its-own-under-system-with-its-own-load.md) | Each tab of System is a page of its own under /system, with its own load | accepted | 2026-11-23 |
+| [0474](0474-each-tab-of-system-is-a-page-of-its-own-under-system-with-its-own-load.md) | Each tab of System is a page of its own under /system, with its own load | accepted | 2026-11-23 |
 
 ## Deploy
 

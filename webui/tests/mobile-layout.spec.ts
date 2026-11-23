@@ -2267,7 +2267,7 @@ test.describe('The menu on a phone', () => {
     await expect(navLink(page, '/system')).toBeHidden();
 
     // Back between two tabs of System, here from Scheduler to Backup & Restore (each a page of its
-    // own, ADR-0470): the menu stays closed. The off-device copy's link to the Scheduler is such a
+    // own, ADR-0474): the menu stays closed. The off-device copy's link to the Scheduler is such a
     // link (General's Check for Updates is gone, ADR-0431).
     await page.goto('/system/backup');
     const toScheduler = page.locator('main').getByRole('link', { name: 'Add a task of the type Off-device copy in the Scheduler.' });

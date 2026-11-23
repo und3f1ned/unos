@@ -7,7 +7,7 @@
 /**
  * The pages whose loads may run when the pointer rests on a link to them: those that read only
  * UNOS's own records on the system disk (the accounts, the groups, the audit log, and System >
- * Notifications, which reads the database alone: ADR-0470), never a data disk.
+ * Notifications, which reads the database alone: ADR-0474), never a data disk.
  */
 export const HOVER_PAGES: readonly string[] = ['/users', '/audit', '/account', '/system/notifications'];
 

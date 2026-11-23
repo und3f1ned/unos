@@ -6,7 +6,7 @@
 	// the groups are a 220 px column beside the tab, below it labelled rows of chips above it. A
 	// group's label shows only when the page has more than one group. A tab with `href` is a page of
 	// its own, a link that preloads its data as the sidebar's do (System's `/system/network`,
-	// ADR-0470); one without has a hash of its own (`/account#appearance`), which the page follows
+	// ADR-0474); one without has a hash of its own (`/account#appearance`), which the page follows
 	// (tabs.ts) when `onselect` tells it.
 
 	type PageTab = { id: string; icon: IconComponent; label: string; href?: string };

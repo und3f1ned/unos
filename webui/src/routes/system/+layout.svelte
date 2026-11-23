@@ -27,7 +27,7 @@
 	// The System page's tabs (ADR-0428, ADR-0431), the NAS's and an administrator's only, in three
 	// groups: Settings, what the NAS is set to; Monitoring, what it does; Maintenance, what is done
 	// to it. The command palette lists them in this order (palette/choices.ts). Each tab is a page of
-	// its own with its load (ADR-0470): General is /system, the others /system/<id>, so that a switch
+	// its own with its load (ADR-0474): General is /system, the others /system/<id>, so that a switch
 	// of tabs keeps the open tab until the next one has its data. `form`: a tab of forms, which keeps
 	// to a readable width. Reactive: the labels follow the language of the page.
 	let tabs = $derived(
