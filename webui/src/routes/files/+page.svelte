@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import {
 		Breadcrumbs,
 		DeleteDialog,
@@ -16,6 +15,12 @@
 	import { getBreadcrumbs } from '$lib/components/files/paths';
 	import { Alert, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { filesReader } from '$lib/pages/files';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// The page's words for what failed; the server's reason follows them.
 	function failed(failure: FileFailure): string {
@@ -45,14 +50,33 @@
 	let deleteDialog: ReturnType<typeof DeleteDialog> | undefined;
 	let leftoversDialog: ReturnType<typeof LeftoversDialog> | undefined;
 
-	onMount(() => {
-		browser.load();
-		leftovers.load();
-	});
+	// The pools folder and the uploads' leftovers come from the page's load ($lib/pages/files): shown
+	// before the page is drawn, and replaced by a fresh read when the load gave the last visit's. The
+	// folders opened after it and the reloads after a change are the page's own reads.
+	followPage(
+		() => data,
+		(snapshot) => {
+			browser.apply(snapshot.listing);
+			leftovers.apply(snapshot.leftovers);
+		}
+	);
 
-	// The first folder and the uploads' leftovers load at once; until both have answered the page is
-	// their skeleton, so that the notice above the list pushes nothing down (ADR-0430). A refresh
-	// keeps what is shown.
+	// Refresh: the page's load again; a folder open other than the pools folder is read again.
+	let refreshing = $state(false);
+	async function refresh() {
+		browser.expectSnapshot();
+		leftovers.expectSnapshot();
+		refreshing = true;
+		try {
+			await refreshPage(filesReader.key);
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	// Until the load has answered, only on the tab's first page when it takes a while, the page is
+	// the skeleton of the list and of the notice above it, so that the notice pushes nothing down. A
+	// refresh keeps what is shown.
 	let pending = $derived(!leftovers.loaded || (browser.loading && !browser.listing));
 
 	let breadcrumbs = $derived(getBreadcrumbs(browser.currentPath, browser.rootPath, $t('files.pools')));
@@ -63,7 +87,7 @@
      scrolls it as a whole. From md the list fills the rest of the window and scrolls inside it
      (ADR-0302). -->
 <div class="md:h-full flex flex-col mx-auto w-full max-w-[1440px]">
-	<FilesHeader {browser} />
+	<FilesHeader {browser} onrefresh={refresh} {refreshing} />
 
 	{#if browser.error}
 		<!-- role="alert": screen readers announce the message when it appears. -->

@@ -1221,6 +1221,122 @@ test.describe('File Browser operations', () => {
     await expect(crumb(page, 'sub')).toBeVisible();
   });
 
+  // webui.navigation-without-skeletons (ADR-0469): Files reads the pools folder and the uploads'
+  // leftovers in its load, the trash its list. A revisit shows what each read last at once while the
+  // fresh read is on its way; after a change on a page the next visit waits for a fresh read.
+  test('a revisit shows the pools folder at once, and a folder made on the page waits for a fresh read', async ({
+    authenticatedPage: page,
+  }) => {
+    const { pool, name } = scratch!;
+    const heading = page.getByRole('heading', { level: 1, name: 'Files' });
+    /** The next list of the pools folder waits until the returned function is called; `extra` is added to it. */
+    async function holdPools(extra?: string): Promise<() => void> {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let first = true;
+      await page.route(
+        (url) => url.pathname === '/api/v1/files/list' && !url.searchParams.has('path'),
+        async (route) => {
+          if (route.request().method() !== 'GET' || !first) return route.fallback();
+          first = false;
+          const response = await route.fetch();
+          const listing = await response.json();
+          await held;
+          if (extra) listing.items.push({ ...listing.items[0], name: extra, path: `${listing.path}/${extra}` });
+          await route.fulfill({ response, json: listing }).catch(() => undefined);
+        },
+      );
+      return release;
+    }
+
+    await page.goto('/files');
+    await expect(row(page, pool.name)).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    let release = await holdPools('e2e-fresh-pool');
+    await page.locator('aside nav a[href="/files"]').click();
+    await expect(heading).toBeVisible({ timeout: 1000 });
+    await expect(row(page, pool.name)).toBeVisible();
+    await expect(row(page, 'e2e-fresh-pool')).toHaveCount(0);
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    release();
+    await expect(row(page, 'e2e-fresh-pool')).toBeVisible();
+
+    // A folder opened before the fresh read answers stays open.
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    release = await holdPools('e2e-late-pool');
+    await page.locator('aside nav a[href="/files"]').click();
+    await openFolder(page, pool.name);
+    await expect(row(page, name)).toBeVisible();
+    release();
+    await page.waitForTimeout(SHOWN);
+    await expect(row(page, name)).toBeVisible();
+    await expect(row(page, 'e2e-late-pool')).toHaveCount(0);
+
+    // Refresh runs the page's load again; the folder open stays, and is read again.
+    await openFolder(page, name);
+    await putFile(page, scratch!.path, 'put-elsewhere.txt', Buffer.from('x'));
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(row(page, 'put-elsewhere.txt')).toBeVisible();
+    await expect(crumb(page, name)).toBeVisible();
+
+    // A folder made on the page: the next visit waits for a fresh read, the dashboard staying.
+    await page.getByRole('button', { name: 'New folder', exact: true }).click();
+    await page.getByPlaceholder('Folder name').fill('made-here');
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(row(page, 'made-here')).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    release = await holdPools();
+    await page.locator('aside nav a[href="/files"]').click();
+    await page.waitForTimeout(SHOWN);
+    await expect(page).toHaveURL('/');
+    await expect(heading).toHaveCount(0);
+    release();
+    await expect(row(page, pool.name)).toBeVisible();
+  });
+
+  test('the trash: a revisit shows the last list at once, and a deletion in Files waits for a fresh read', async ({
+    authenticatedPage: page,
+  }) => {
+    const dir = await trashTwoFiles(page);
+    const heading = page.getByRole('heading', { level: 1, name: 'Trash' });
+    await page.goto('/files/trash');
+    await expect(trashRow(page, 'one.txt')).toBeVisible();
+    await page.locator('aside nav a[href="/files"]').click();
+    await expect(row(page, scratch!.pool.name)).toBeVisible();
+
+    // Restored elsewhere meanwhile; the next list waits.
+    const one = await trashed(page, `${dir}/one.txt`);
+    const restored = await page.request.post('/api/v1/files/trash/restore', { headers: auth(), data: [one.path] });
+    expect(restored.ok(), `restore: HTTP ${restored.status()}`).toBeTruthy();
+    let [held] = await holdTrashLists(page, 1);
+    await page.locator('aside nav a[href="/files/trash"]').click();
+    await expect(heading).toBeVisible({ timeout: 1000 });
+    await expect(trashRow(page, 'one.txt')).toBeVisible();
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    await held.sent;
+    held.release();
+    await expect(trashRow(page, 'one.txt')).toHaveCount(0);
+    await expect(trashRow(page, 'two.txt')).toBeVisible();
+
+    // Deleted in Files: the next visit waits for a fresh list, Files staying until then.
+    await page.locator('aside nav a[href="/files"]').click();
+    await openFolder(page, scratch!.pool.name);
+    await openFolder(page, scratch!.name);
+    await moveToTrash(page, 'one.txt');
+    [held] = await holdTrashLists(page, 1);
+    await page.locator('aside nav a[href="/files/trash"]').click();
+    await held.sent;
+    await page.waitForTimeout(SHOWN);
+    await expect(page).toHaveURL('/files');
+    await expect(heading).toHaveCount(0);
+    held.release();
+    await expect(trashRow(page, 'one.txt')).toBeVisible();
+    await expect(trashRow(page, 'two.txt')).toBeVisible();
+  });
+
   test('creates a folder in the open folder', async ({ authenticatedPage: page }) => {
     await openScratch(page);
     await page.getByRole('button', { name: 'New folder', exact: true }).click();

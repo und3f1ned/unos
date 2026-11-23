@@ -2,8 +2,14 @@
 	// The trash of every pool and volume (ADR-0259): what Delete in Files moved
 	// there, until it is restored, deleted for good, or deleted for good by the
 	// daily expiry.
-	import { onMount } from 'svelte';
-	import { deleteFromTrash, emptyTrash, listTrash, restoreFromTrash, type TrashItem } from '$lib/api/files';
+	import {
+		deleteFromTrash,
+		emptyTrash,
+		listTrash,
+		restoreFromTrash,
+		type TrashItem,
+		type TrashListing
+	} from '$lib/api/files';
 	import { TrashTable } from '$lib/components/files';
 	import { messageOf, signedOut } from '$lib/components/files/errors';
 	import { toggled } from '$lib/components/files/selection';
@@ -20,6 +26,12 @@
 	} from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import { RefreshCw, RotateCcw, Trash, Trash2 } from 'lucide-svelte';
+	import { trashReader } from '$lib/pages/files';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	let items = $state.raw<TrashItem[]>([]);
 	let retentionDays: number | null = $state(null);
@@ -41,12 +53,48 @@
 	let confirming: 'selected' | 'everything' | null = $state(null);
 	let dialogError = $state('');
 
-	onMount(load);
-
 	// Each load takes the next number, and only the latest one shows its answer, its error and the
 	// end of its spinner: a list asked before Empty trash, Delete for good or Restore (a Refresh)
 	// can answer after the list that follows them, and would bring back what they removed.
 	let latestLoad = 0;
+	// latestLoad when the last snapshot of the page's load was shown.
+	let appliedAt = 0;
+
+	// The list comes from the page's load ($lib/pages/files): shown before the page is drawn, and
+	// replaced by a fresh read when the load gave the last visit's or Refresh's, unless a load of the
+	// page's own (the list after a change) started since: it read later.
+	followPage(
+		() => data,
+		({ trash }) => {
+			if (latestLoad !== appliedAt) return;
+			if (trash.ok) show(trash.value);
+			else loadError = trash.error;
+			loading = false;
+		}
+	);
+
+	// Refresh: the page's load again.
+	let refreshing = $state(false);
+	async function refresh() {
+		appliedAt = latestLoad;
+		refreshing = true;
+		try {
+			await refreshPage(trashReader.key);
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	function show(listing: TrashListing) {
+		items = listing.items;
+		retentionDays = listing.retention_days;
+		problems = listing.problems;
+		loaded = true;
+		loadError = '';
+		// What is no longer listed is no longer selected.
+		const listed = new Set(items.map((item) => item.path));
+		selected = new Set(Array.from(selected).filter((path) => listed.has(path)));
+	}
 
 	async function load() {
 		const current = ++latestLoad;
@@ -55,13 +103,7 @@
 		try {
 			const listing = await listTrash();
 			if (current !== latestLoad) return;
-			items = listing.items;
-			retentionDays = listing.retention_days;
-			problems = listing.problems;
-			loaded = true;
-			// What is no longer listed is no longer selected.
-			const listed = new Set(items.map((item) => item.path));
-			selected = new Set(Array.from(selected).filter((path) => listed.has(path)));
+			show(listing);
 		} catch (e) {
 			if (current === latestLoad && !signedOut(e)) loadError = messageOf(e);
 		} finally {
@@ -137,7 +179,14 @@
 			</p>
 		</div>
 		<div class="page-actions">
-			<Button variant="secondary" size="icon" icon={RefreshCw} {loading} title={$t('common.refresh')} onclick={load}>
+			<Button
+				variant="secondary"
+				size="icon"
+				icon={RefreshCw}
+				loading={loading || refreshing}
+				title={$t('common.refresh')}
+				onclick={refresh}
+			>
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
 			<!-- Not a solid red button: the red one is the confirmation's. -->

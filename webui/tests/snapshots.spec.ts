@@ -137,13 +137,19 @@ interface FakeSnapshotsOptions {
   };
 }
 
-/** Serve the snapshots API from memory; returns every request the page sent, in order. */
-async function fakeSnapshotsApi(page: Page, options: FakeSnapshotsOptions = {}): Promise<SnapshotRequest[]> {
+/**
+ * Serve the snapshots API from memory; returns every request the page sent, in order, with the
+ * fake's snapshots, which a test may change, as `snapshots`.
+ */
+async function fakeSnapshotsApi(
+  page: Page,
+  options: FakeSnapshotsOptions = {},
+): Promise<SnapshotRequest[] & { snapshots: FakeSnapshot[] }> {
   const subvolumes = options.subvolumes ?? SUBVOLUMES;
   const snapshots = [...(options.snapshots ?? [])];
   const copies = [...(options.copies ?? [])];
   const responses = options.responses ?? {};
-  const requests: SnapshotRequest[] = [];
+  const requests = Object.assign([] as SnapshotRequest[], { snapshots });
   await page.route(
     (url) => url.pathname === '/api/v1/snapshots' || url.pathname.startsWith('/api/v1/snapshots/'),
     async (route: Route) => {
@@ -840,5 +846,100 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     await expect(page.getByText('Снимки делаются со смонтированного пула или тома.', { exact: true })).toBeVisible();
     await expectNextStep(page, 'link', 'Перейти в «Хранилище»', '/storage');
     await expect(page.getByRole('button', { name: 'Создать снимок' })).toBeDisabled();
+  });
+});
+
+// webui.navigation-without-skeletons (ADR-0469): the page reads the pools and the first one's lists
+// in its load. A revisit shows the last lists at once while the fresh read is on its way, a choice
+// made meanwhile stays, and after a snapshot taken on the page the next visit waits for a fresh read.
+test.describe('Snapshots from its load (fake data)', () => {
+  const rows = (page: Page) => page.getByRole('table', { name: 'Snapshots' }).getByRole('row');
+  const row = (page: Page, name: string) => rows(page).filter({ hasText: name });
+  const heading = (page: Page) => page.getByRole('heading', { level: 1, name: 'Snapshots' });
+
+  /** The next GET of the snapshots of `subvolume` waits until the returned function is called. */
+  async function holdList(page: Page, subvolume: string): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    await page.route(
+      (url) => url.pathname === '/api/v1/snapshots/' && url.searchParams.get('subvolume') === subvolume,
+      async (route) => {
+        if (route.request().method() === 'GET' && first) {
+          first = false;
+          await held;
+        }
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    return release;
+  }
+
+  test('a revisit shows the last lists at once, and a snapshot taken on the page waits for a fresh read', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSnapshotsApi(page, {
+      snapshots: [
+        snapshot(DATA.path, 'auto_20261106_020000', '2026-11-06T02:00:00+00:00'),
+        snapshot(DOCUMENTS.path, 'before-edit', '2026-11-07T08:15:00+00:00'),
+      ],
+    });
+    await page.goto('/snapshots');
+    await expect(row(page, 'auto_20261106_020000')).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+
+    // Taken by the scheduler meanwhile; the next read of the pool's snapshots waits.
+    fake.snapshots.push(snapshot(DATA.path, 'auto_20261107_020000', '2026-11-07T02:00:00+00:00'));
+    let release = await holdList(page, DATA.path);
+    await page.locator('aside nav a[href="/snapshots"]').click();
+    await expect(heading(page)).toBeVisible({ timeout: 1000 });
+    await expect(row(page, 'auto_20261106_020000')).toBeVisible();
+    await expect(row(page, 'auto_20261107_020000')).toHaveCount(0);
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    release();
+    await expect(row(page, 'auto_20261107_020000')).toBeVisible();
+
+    // A volume chosen before the fresh read answers stays chosen, with its own list.
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    release = await holdList(page, DATA.path);
+    await page.locator('aside nav a[href="/snapshots"]').click();
+    await expect(row(page, 'auto_20261107_020000')).toBeVisible({ timeout: 1000 });
+    const picker = page.getByRole('combobox', { name: 'Pool or volume' });
+    await picker.click();
+    await page.getByRole('option', { name: 'e2e_data/documents (Volume)', exact: true }).click();
+    await expect(row(page, 'before-edit')).toBeVisible();
+    release();
+    await page.waitForTimeout(500);
+    await expect(picker).toHaveText('e2e_data/documents (Volume)');
+    await expect(row(page, 'before-edit')).toBeVisible();
+    await expect(row(page, 'auto_20261107_020000')).toHaveCount(0);
+
+    // Refresh runs the page's load again; the volume chosen stays, with its list read again.
+    fake.snapshots.push(snapshot(DOCUMENTS.path, 'after-edit', '2026-11-07T09:15:00+00:00'));
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(row(page, 'after-edit')).toBeVisible();
+    await expect(picker).toHaveText('e2e_data/documents (Volume)');
+    await expect(row(page, 'auto_20261107_020000')).toHaveCount(0);
+
+    // A snapshot taken on the page: the next visit is not shown without it. The dashboard stays
+    // until the fresh read has answered.
+    await page.getByRole('button', { name: 'Create snapshot' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create snapshot' });
+    await dialog.getByLabel('Snapshot name (optional)').fill('e2e-on-the-page');
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    fake.snapshots.push(snapshot(DATA.path, 'e2e-elsewhere', '2026-11-07T11:00:00+00:00'));
+    release = await holdList(page, DATA.path);
+    await page.locator('aside nav a[href="/snapshots"]').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/');
+    await expect(heading(page)).toHaveCount(0);
+    release();
+    await expect(row(page, 'e2e-elsewhere')).toBeVisible();
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
   });
 });

@@ -9,6 +9,7 @@ import {
 	type DirectoryListing,
 	type FileInfo
 } from '$lib/api/files';
+import type { Settled } from '$lib/pages/read';
 import { messageOf, signedOut } from './errors';
 import { toggled } from './selection';
 
@@ -70,20 +71,60 @@ export class FileBrowser {
 		this.#texts = texts;
 	}
 
+	// The page's own loads so far (a folder opened, a reload after a change or of the open folder), and
+	// their count when the last snapshot of its load was shown.
+	#loads = 0;
+	#appliedAt = 0;
+
 	async load(path?: string) {
+		this.#loads += 1;
 		this.loading = true;
 		try {
-			const result = await listDirectory(path);
-			this.listing = result;
-			this.currentPath = result.path;
-			if (result.parent === null) this.rootPath = result.path;
-			// A name field goes with its item: in another folder, or once the item is gone.
-			if (this.renaming !== null && !result.items.some((item) => item.path === this.renaming)) this.renaming = null;
+			this.#show(await listDirectory(path));
 		} catch (e) {
 			this.showError({ action: 'open' }, e);
 		} finally {
 			this.loading = false;
 		}
+	}
+
+	#show(result: DirectoryListing) {
+		this.listing = result;
+		this.currentPath = result.path;
+		if (result.parent === null) this.rootPath = result.path;
+		// A name field goes with its item: in another folder, or once the item is gone.
+		if (this.renaming !== null && !result.items.some((item) => item.path === this.renaming)) this.renaming = null;
+	}
+
+	/**
+	 * The pools folder as the page's load read it ($lib/pages/files), as a load of it that has
+	 * answered. Not after a load of the page's own started since the last one (another folder, a
+	 * reload after a change): it read later. Another folder open than the pools folder stays open,
+	 * and is read again (Refresh).
+	 */
+	apply(listing: Settled<DirectoryListing>) {
+		if (this.#loads !== this.#appliedAt) return;
+		if (this.currentPath !== null && this.currentPath !== this.rootPath) {
+			void this.refresh();
+			this.#appliedAt = this.#loads;
+			return;
+		}
+		if (listing.ok) {
+			this.#show(listing.value);
+			// The failure of an earlier snapshot (the last visit's) is over.
+			if (this.error === this.#applyError) this.error = '';
+		} else {
+			this.error = this.#applyError = `${this.#texts.failed({ action: 'open' })}: ${listing.error}`;
+		}
+		this.loading = false;
+	}
+
+	// The error that a snapshot of the page's load showed.
+	#applyError = '';
+
+	/** The next snapshot of the page's load (its Refresh) is newer than the loads of its own so far. */
+	expectSnapshot() {
+		this.#appliedAt = this.#loads;
 	}
 
 	refresh() {

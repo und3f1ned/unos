@@ -6,9 +6,12 @@
 
 	type Props = {
 		browser: FileBrowser;
+		/** Refresh: the page's load again, which reads the open folder again too. */
+		onrefresh: () => void;
+		refreshing?: boolean;
 	};
 
-	let { browser }: Props = $props();
+	let { browser, onrefresh, refreshing = false }: Props = $props();
 
 	// The file chooser of Upload. It is hidden: the Upload button opens it, also
 	// from the keyboard.
@@ -32,8 +35,8 @@
 			variant="secondary"
 			size="icon"
 			icon={RefreshCw}
-			loading={browser.loading}
-			onclick={() => browser.refresh()}
+			loading={browser.loading || refreshing}
+			onclick={onrefresh}
 			title={$t('common.refresh')}
 		>
 			<span class="sr-only">{$t('common.refresh')}</span>

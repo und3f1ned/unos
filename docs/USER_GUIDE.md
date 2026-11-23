@@ -108,19 +108,24 @@ come, grey shapes stand where its cards, tables and values will be, and the
 data take their places without moving the page. **Refresh** keeps what is
 shown while it reads the data again.
 
-Going from one page to another, the **Dashboard**, **Storage**, **Shares**,
-**Users**, **Audit Log** and **Account** pages wait until their data have
-come: the page you are on stays, with its link still marked, and when that
-takes a moment a thin bar runs across the top of the window; then the next
-page shows with its data, without grey shapes. A page you opened before in the
-same tab shows at once with what it showed last, and changes to what the NAS
-answers now a moment later. After a change, such as a share saved or the
-dashboard arranged, a page that shows it waits for its new data instead. Grey
-shapes still stand in for the data when the first page of a tab takes longer
-than a moment, and on the pages not built this way yet. The tabs of **System**
-work the same way: each has an address of its own (General is `/system`, the
-others `/system/network`, `/system/power` and so on), the tab you are on stays
-until the next one has its data, and Back returns to the tab you came from.
+Going from one page to another, every page but the sign-in waits until its data
+have come: the **Dashboard**, **Storage**, **Snapshots**, **Shares**, **Files**
+with its **Trash**, **Containers**, the **App Store**, **Users**, the **Audit
+Log**, **Account** and the tabs of **System**. The page you are on stays, with
+its link still marked, and when that takes a moment a thin bar runs across the
+top of the window; then the next page shows with its data, without grey shapes.
+A page you opened before in the same tab shows at once with what it showed
+last, and changes to what the NAS answers now a moment later. After a change,
+such as a share saved or the dashboard arranged, a page that shows it waits
+for its new data instead. Grey shapes stand in for the data only when the first
+page of a tab takes longer than a moment. The tabs of **System** each have an
+address of their own (General is `/system`, the others `/system/network`,
+`/system/power` and so on), the tab you are on stays until the next one has its
+data, and Back returns to the tab you came from. The **App Store** waits a
+second at most for Docker's list of the installed apps: when Docker takes
+longer, the catalog shows first and the installed apps follow. **Files** still
+opens at the pools folder and **Snapshots** at the first pool, whichever folder
+or pool was open when you left them.
 Pointing at a link reads no data from the NAS, so that it wakes no sleeping
 disk; pressing it starts reading the next page's data. Only the links of
 **Users**, **Audit Log**, **Account** and **System** > **Notifications** read

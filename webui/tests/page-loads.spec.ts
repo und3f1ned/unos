@@ -61,7 +61,7 @@ async function watchFrames(page: Page) {
       if (main) {
         const bones = [...main.querySelectorAll('[data-skeleton]')].filter((el) => !el.closest('[data-containers-pending]'));
         if (bones.length > 0) seen.skeletons += 1;
-        if (!main.querySelector('.page-container h1, .page-container [data-widget]')) seen.empty += 1;
+        if (!main.querySelector('.page-container h1, .page-container [data-widget], .page-header h1')) seen.empty += 1;
       }
       const bar = document.querySelector('[data-navigation-progress]');
       if (bar && Number(getComputedStyle(bar).opacity) > 0) seen.bar += 1;
@@ -295,6 +295,54 @@ test.describe('Navigation without skeletons', () => {
     const seen = await frames(page);
     expect(seen.skeletons, 'frames with a skeleton').toBe(0);
     expect(seen.empty, 'frames without a page').toBe(0);
+  });
+});
+
+test.describe('Navigation without skeletons: Snapshots, Files, Containers and the App Store', () => {
+  const TITLES: Record<string, string> = {
+    '/snapshots': 'Snapshots',
+    '/files': 'Files',
+    '/files/trash': 'Trash',
+    '/containers': 'Containers',
+    '/apps': 'App Store',
+  };
+
+  /** The page has its data: its title, nothing in it busy, no skeleton. */
+  async function expectPage(page: Page, path: string) {
+    await expect(page).toHaveURL(path);
+    await expect(title(page, TITLES[path])).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0, { timeout: 15000 });
+    await expect(page.locator('main')).not.toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+  }
+
+  test('a navigation between them keeps the open page until the next one has its data', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/snapshots');
+    await expectPage(page, '/snapshots');
+    await slowReads(page);
+    await watchFrames(page);
+
+    const route = ['/snapshots', '/files', '/files/trash', '/containers', '/apps', '/snapshots'];
+    for (let i = 1; i < route.length; i++) {
+      const [from, to] = [route[i - 1], route[i]];
+      await sidebarLink(page, to).click();
+      // Midway: the open page is still there, its link still marked, and the page's place is busy;
+      // Snapshots, visited before, comes from the cache at once.
+      await page.waitForTimeout(DELAY / 2);
+      if (to !== route[0]) {
+        await expect(page).toHaveURL(from);
+        await expect(title(page, TITLES[from])).toBeVisible();
+        await expect(sidebarLink(page, from)).toHaveAttribute('aria-current', 'page');
+        await expect(page.locator('main')).toHaveAttribute('aria-busy', 'true');
+      }
+      await expectPage(page, to);
+    }
+    const seen = await frames(page);
+    expect(seen.skeletons, 'frames with a skeleton').toBe(0);
+    expect(seen.empty, 'frames without a page').toBe(0);
+    expect(seen.bar, 'frames with the navigation bar').toBeGreaterThan(0);
   });
 });
 

@@ -167,7 +167,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `tests/loading.spec.ts` checks the main pages with the API slowed: no "Loading", no empty frame,
   the navigation drawn once, a layout shift below 0.05; `tests/page-loads.spec.ts` the navigations.
 
-### Page loads: the recipe for a page (Dashboard, Storage, Shares, Users, Audit Log, Account and System are done)
+### Page loads: the recipe for a page (every page but the sign-in reads in a load; a new page follows it)
 
 1. **The reader**, `src/lib/pages/<page>.ts`: the page's API reads through `$lib/api`, as one
    snapshot type that holds each read's value or its failure (`settle` of `$lib/pages/read`, the
