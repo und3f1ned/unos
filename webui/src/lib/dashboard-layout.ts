@@ -15,7 +15,7 @@ export interface WidgetDef {
 }
 
 /**
- * The grid of the widgets and the columns a widget of each size takes in it (ADR-0395, ADR-0476),
+ * The grid of the widgets and the columns a widget of each size takes in it (ADR-0395, ADR-0483),
  * for the page and its skeleton alike. Small cards are two to a row on a phone, three from `md`
  * and five from `xl`; wide ones fill the row below `xl`, are two to a row from it and three from
  * `2xl` (1536 px), where the grid's 15 columns take five small cards (3 each) or three wide ones

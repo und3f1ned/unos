@@ -5,7 +5,7 @@ area: webui
 decided-by: agent
 ---
 
-# ADR-0476: From 1536 px the dashboard's wide widgets are three to a row
+# ADR-0483: From 1536 px the dashboard's wide widgets are three to a row
 
 ## Context
 

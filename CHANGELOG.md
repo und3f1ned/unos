@@ -194,7 +194,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   700, or a TMPDIR that is not a short, plain absolute path, makes every call connect on its own,
   as before.
 - On a screen 1536 pixels wide or more the dashboard shows **Storage pools**, **Containers** and
-  **Recent activity** three to a row, so that they fill one row of a wide screen (ADR-0476); a
+  **Recent activity** three to a row, so that they fill one row of a wide screen (ADR-0483); a
   1440-pixel laptop, a tablet and a phone keep their columns, and arranging works the same.
 - The reads that the pages wait for answer faster (ADR-0468): the container list asks Docker for its
   list of containers and its list of images (and its version, as every client does), instead of an

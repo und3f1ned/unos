@@ -261,7 +261,7 @@ test.describe('Dashboard layout', () => {
   });
 });
 
-// webui.dashboard-three-columns (ADR-0476): from 1536 px (2xl) the wide widgets are three to a row,
+// webui.dashboard-three-columns (ADR-0483): from 1536 px (2xl) the wide widgets are three to a row,
 // so that Storage pools, Containers and Recent activity fill one row of a wide screen; below it the
 // widgets keep the columns of ADR-0395.
 const SMALL = DEFAULT_ORDER.slice(0, 5);

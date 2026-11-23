@@ -332,7 +332,7 @@
 		{/if}
 
 		<!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row and three from
-         2xl (WIDGET_SPAN, ADR-0395, ADR-0476). While they are arranged each has a dashed outline and its
+         2xl (WIDGET_SPAN, ADR-0395, ADR-0483). While they are arranged each has a dashed outline and its
          toolbar in room of its own at the top right, so that it covers nothing of the widget. -->
 		<div class={WIDGET_GRID} data-widget-grid aria-busy={waitingForStats ? 'true' : undefined}>
 			{#each shown as entry, index (entry.id)}

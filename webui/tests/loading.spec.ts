@@ -364,7 +364,7 @@ test.describe('Loading without flicker on a phone', () => {
   });
 });
 
-// webui.dashboard-three-columns (ADR-0476): on a wide screen the dashboard's skeleton has the three
+// webui.dashboard-three-columns (ADR-0483): on a wide screen the dashboard's skeleton has the three
 // columns of its wide widgets, so that the data arriving put each card in the column of its skeleton.
 test.describe('Loading without flicker on a wide screen', () => {
   test('the dashboard: the skeleton in three columns, each card in its place, and no layout shift', async ({
