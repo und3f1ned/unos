@@ -809,6 +809,27 @@ Open owner actions:
   private (GitHub's API answers 404).
 - `process.prune-merged-branches` passes: pull request 113 (ADR-0465) merged as a44d5377, and its
   script removed its own worktree and branch.
+- v0.1.1 (240ec09f, the runtime of v0.1.0) was tagged and released, so that the VM could check
+  update.sh: the rollback of an interrupted update with the backup's database, the update to
+  v0.1.1 and its reboot, a second run refused, uninstall.sh with Samba's restore before and after
+  a reboot, and an install on an emulated amd64 VM all passed. `deploy.install-script` (fixed in
+  pull request 114: the unit starts with the install), `deploy.uninstall-script`,
+  `deploy.uninstall-samba-restore` and `deploy.no-legacy-network-recreate` pass. The VM's network
+  needed Lima allowed in the workstation's network filter, by the owner.
+- Pull request 115 (ADR-0466): CardAction links and EmptyState's action wired, StatusSummary
+  removed; `webui.design-foundations` waits for its feature pass. TypeScript 7 cannot be the
+  web UI's typescript yet (its API comes with 7.1); the side-by-side check was not merged.
+- At the owner's word ("add the filter, maximum savings") pull request 116 (ADR-0467) runs only
+  the jobs that the changed files need, and the merge push of a tested pull request skips the
+  heavy ones, which its own merge showed.
+- The owner (in translation): "I took SvelteKit to have a minimum of preloaders; now the interface
+  works as if server-side rendering did not exist, hence constant skeletons." A spike measured both
+  boards (branch spike.rendering): universal `load` with preloading and a cache keeps the old page
+  until the data is in and shows a revisited page in about 31 ms, at no cost on the boards;
+  server-side rendering with Node takes 66 to 100 MiB per board, renders signed out (ADR-0397)
+  and is 5.5 times slower on the K1, where it did not crash in a 30-minute soak. The owner chose
+  the first for all pages ("yes, all pages"); its builders and those of the supervisor's six
+  slowest page reads are at work, each with an entry of its own.
 
 ### 2026-11-22 to 2026-11-23: CI on GitHub again, v0.1.0, Samba in CI
 
