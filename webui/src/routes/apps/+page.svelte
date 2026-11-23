@@ -30,6 +30,13 @@
 	import { t } from '$lib/i18n';
 	import { ApiError } from '$lib/api/client';
 	import { appInstalls } from '$lib/stores/appInstalls';
+	import { appsReader } from '$lib/pages/apps';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import type { PageProps } from './$types';
+
+	// What the page's load read ($lib/pages/apps); `data` is the lists'.
+	let { data: pageData }: PageProps = $props();
 
 	// The catalog and the installed apps, each with its load (AppsData). `error` is for the
 	// actions on an app.
@@ -148,22 +155,41 @@
 		}
 	}
 
-	// The first load draws the page once (ADR-0430): the catalog with the installed apps' answer, when
-	// it comes within a moment of the catalog's; a Docker that takes longer does not hold the catalog
-	// (ADR-0327), which is then listed alone. Until then the page is its skeleton.
-	const INSTALLED_GRACE_MS = 1000;
+	// The page's load draws it once: the catalog with the installed apps' answer when it comes within
+	// a moment of the catalog's (ADR-0430); a Docker that takes longer does not hold the catalog
+	// (ADR-0327), which is then listed alone and the installed apps when they come. Until the load
+	// has answered, only on the tab's first page when it takes a while, the page is its skeleton.
 	let drawn = $state(false);
 
-	onMount(async () => {
+	// Shown before the page is drawn, and replaced by a fresh read when the load gave the last visit's.
+	followPage(
+		() => pageData,
+		(snapshot) => {
+			data.apply(snapshot);
+			drawn = true;
+		}
+	);
+
+	onMount(() => {
 		// The Containers page links an app's container to its card here (webui.ux-apps).
 		if (window.location.hash === '#installed') activeTab = 'installed';
-		const installed = data.loadInstalled();
-		await data.loadCatalog();
-		await Promise.race([installed, new Promise((resolve) => setTimeout(resolve, INSTALLED_GRACE_MS))]);
-		drawn = true;
 	});
 
+	// Refresh: the page's load again.
+	let refreshing = $state(false);
 	async function refresh() {
+		error = '';
+		data.expectSnapshot();
+		refreshing = true;
+		try {
+			await refreshPage(appsReader.key);
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	// Both lists again, after an action on an app.
+	async function reload() {
 		error = '';
 		await Promise.all([data.loadCatalog(), data.loadInstalled()]);
 	}
@@ -182,7 +208,7 @@
 	async function act(call: (containerId: string) => Promise<void>, app: InstalledApp, failedKey: string) {
 		try {
 			await call(app.container_id);
-			await refresh();
+			await reload();
 		} catch (e) {
 			error = (e as Error).message || $t(failedKey);
 		}
@@ -225,7 +251,7 @@
 			size="icon"
 			icon={RefreshCw}
 			onclick={refresh}
-			loading={data.loading}
+			loading={data.loading || refreshing}
 			title={$t('common.refresh')}
 		>
 			<span class="sr-only">{$t('common.refresh')}</span>

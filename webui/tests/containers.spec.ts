@@ -1032,3 +1032,72 @@ test.describe('Several containers at once', () => {
     ).toHaveText(['e2e-web: не перезапущен: контейнер не работает']);
   });
 });
+
+// webui.navigation-without-skeletons (ADR-0469): the page reads the containers in its load. A
+// revisit shows the last list at once while the fresh read is on its way, Refresh runs the load
+// again also after a reload of the page's own, and after an action on the page the next visit waits
+// for a fresh read.
+test.describe('Containers from its load (fake data)', () => {
+  const heading = (page: Page) => page.getByRole('heading', { level: 1, name: 'Containers' });
+
+  /** The next GET of the list waits until the returned function is called. */
+  async function holdList(page: Page): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    await page.route(
+      (url) => url.pathname === '/api/v1/containers',
+      async (route) => {
+        if (route.request().method() === 'GET' && first) {
+          first = false;
+          await held;
+        }
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    return release;
+  }
+
+  test('a revisit shows the last list at once, and a start on the page waits for a fresh read', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeContainersApi(page);
+    await page.goto('/containers');
+    await expect(rowOf(page, 'e2e-web')).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+
+    // Made elsewhere meanwhile; the next read waits.
+    fake.containers.push(container('4d5e6f708192', 'e2e-fresh', 'alpine:3.20', 'running'));
+    let release = await holdList(page);
+    await page.locator('aside nav a[href="/containers"]').click();
+    await expect(heading(page)).toBeVisible({ timeout: 1000 });
+    await expect(rowOf(page, 'e2e-web')).toBeVisible();
+    await expect(rowOf(page, 'e2e-fresh')).toHaveCount(0);
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    release();
+    await expect(rowOf(page, 'e2e-fresh')).toBeVisible();
+
+    // A stop reloads the list itself; Refresh after it runs the page's load again.
+    await rowOf(page, 'e2e-web').getByRole('button', { name: 'Stop' }).click();
+    await expect(rowOf(page, 'e2e-web').getByText('Stopped', { exact: true })).toBeVisible();
+    fake.containers.push(container('5e6f708192a3', 'e2e-later', 'alpine:3.20', 'exited'));
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(rowOf(page, 'e2e-later')).toBeVisible();
+
+    // A start on the page: the next visit is not shown with the container stopped. The dashboard
+    // stays until the fresh read has answered.
+    await rowOf(page, 'e2e-web').getByRole('button', { name: 'Start' }).click();
+    await expect(rowOf(page, 'e2e-web').getByText('Running', { exact: true })).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    release = await holdList(page);
+    await page.locator('aside nav a[href="/containers"]').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/');
+    await expect(heading(page)).toHaveCount(0);
+    release();
+    await expect(rowOf(page, 'e2e-web').getByText('Running', { exact: true })).toBeVisible();
+    await expect(rowOf(page, 'e2e-later')).toBeVisible();
+  });
+});

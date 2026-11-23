@@ -91,11 +91,22 @@ def test_only_pages_whose_loads_read_no_data_disk_preload_on_hover():
 
 @pytest.mark.parametrize(
     ("page", "unsafe"),
-    [("/", {"storage", "containers", "health"}), ("/storage", {"storage"}), ("/shares", {"shares"})],
+    [
+        ("/", {"storage", "containers", "health"}),
+        ("/storage", {"storage"}),
+        ("/shares", {"shares"}),
+        ("/snapshots", {"snapshots"}),
+        ("/files", {"files"}),
+        ("/files/trash", {"files"}),
+        ("/containers", {"containers"}),
+        ("/apps", {"apps", "containers"}),
+    ],
 )
 def test_the_pages_that_read_the_disks_could_not_preload_on_hover(page: str, unsafe: set[str]):
     # The dashboard reads the pools (btrfs scans every disk) and waits for Docker; Storage reads the
     # disks; Shares the volumes of the mounted pools, smbd's status and the network's interfaces.
+    # Snapshots lists the mounted pools' subvolumes and snapshots, Files and its trash read the
+    # pools' folders; Containers and the App Store's installed apps wait for Docker.
     asked = api_modules(SRC, route_file(SRC, page))
     assert unsafe <= asked and not asked <= HOVER_SAFE_API
 

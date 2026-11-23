@@ -3,7 +3,6 @@
 	// made in it, with the dialogs that take, restore and delete them. Its lists are SnapshotLists.
 	// The pool or volume is chosen in the header; each card names its folder once, and the rules
 	// that the About card listed are where they apply.
-	import { onMount } from 'svelte';
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
 	import { Alert, Button, Card, CardAction, EmptyState, ErrorState, Select, Skeleton } from '$lib/components/ui';
 	import {
@@ -18,6 +17,12 @@
 	import { CreateSnapshotDialog, DeleteDialog, RestoreSnapshotDialog, SnapshotTable } from '$lib/components/snapshots';
 	import { SnapshotLists } from '$lib/components/snapshots/lists.svelte';
 	import { SNAPSHOTS_FOLDER } from '$lib/components/snapshots/names';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import { snapshotsReader } from '$lib/pages/snapshots';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	const lists = new SnapshotLists();
 
@@ -41,7 +46,25 @@
 
 	let options = $derived(lists.subvolumes.map((sv) => ({ value: sv.path, label: label(sv) })));
 
-	onMount(() => lists.refresh());
+	// The pools and the first one's lists come from the page's load ($lib/pages/snapshots): shown
+	// before the page is drawn, and replaced by a fresh read when the load gave the last visit's.
+	// A choice and a change read the page's own lists, of the pool or volume chosen.
+	followPage(
+		() => data,
+		(snapshot) => lists.apply(snapshot)
+	);
+
+	// Refresh: the page's load again; a pool or volume chosen other than the first reads its lists.
+	let refreshing = $state(false);
+	async function refresh() {
+		lists.expectSnapshot();
+		refreshing = true;
+		try {
+			await refreshPage(snapshotsReader.key);
+		} finally {
+			refreshing = false;
+		}
+	}
 
 	function choose(path: string) {
 		lists.selectedPath = path;
@@ -95,7 +118,8 @@
 					class="w-64 max-w-full"
 				/>
 			{:else if lists.subvolumesLoading}
-				<!-- The picker's label and field, in their place until the pools answer (ADR-0430). -->
+				<!-- The picker's label and field, in their place until the pools answer: only on the tab's
+				     first page, when its data take longer than a moment. -->
 				<div class="w-64 max-w-full" aria-hidden="true" data-skeleton>
 					<Skeleton class="w-28 mb-1.5" />
 					<Skeleton shape="block" class="h-9 w-full" />
@@ -105,9 +129,9 @@
 				variant="secondary"
 				size="icon"
 				icon={RefreshCw}
-				loading={lists.busy}
+				loading={lists.busy || refreshing}
 				title={$t('common.refresh')}
-				onclick={() => lists.refresh()}
+				onclick={refresh}
 			>
 				<span class="sr-only">{$t('common.refresh')}</span>
 			</Button>
@@ -139,6 +163,8 @@
 	{/each}
 
 	{#if lists.subvolumes.length === 0 && lists.subvolumesLoading}
+		<!-- The tab's first page, when its data take longer than a moment: the table and the card under
+		     it. A navigation keeps the page before until they are in. -->
 		<div class="space-y-6" aria-busy="true">
 			<Skeleton shape="table" columns={3} count={3} />
 			<Skeleton shape="card" />

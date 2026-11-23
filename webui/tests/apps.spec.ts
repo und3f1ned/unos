@@ -265,6 +265,111 @@ test.describe('Installed apps', () => {
   });
 });
 
+// webui.navigation-without-skeletons (ADR-0469): the page reads the catalog and the installed apps in
+// its load. Refresh runs it again, also after a reload of the page's own; after an uninstall on the
+// page the next visit waits for a fresh read; a revisit without a change shows the last lists at
+// once, and Docker's fresh answer replaces them.
+test.describe('The App Store from its load', () => {
+  /** The next GET of `path` waits until the returned function is called; `json` answers it instead. */
+  async function holdNext(page: Page, path: string, json?: unknown): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    await page.route(
+      (url) => url.pathname === path,
+      async (route) => {
+        if (route.request().method() === 'GET' && first) {
+          first = false;
+          await held;
+          if (json !== undefined) return route.fulfill({ json }).catch(() => undefined);
+        }
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    return release;
+  }
+
+  test('Refresh, an uninstall on the page and a revisit read the lists afresh, and a revisit shows the last ones at once', async ({
+    authenticatedPage: page,
+  }) => {
+    const app = (name: string, templateId: string) => ({
+      id: `${name}-id`,
+      template_id: templateId,
+      name,
+      container_id: `${name}-id`,
+      status: 'running',
+      web_port: null,
+      created_at: '2026-11-01T10:00:00Z',
+      pool: 'e2e_media',
+      volumes: [],
+      data_outside_pools: [],
+      runs_in_unos_smb: false,
+      devices: [],
+      health: null,
+      companions: [],
+      missing: [],
+    });
+    const apps = [app('e2e-jellyfin', 'jellyfin'), app('e2e-transmission', 'transmission')];
+    await page.route(
+      (url) => url.pathname === '/api/v1/apps/installed' || url.pathname.startsWith('/api/v1/apps/installed/'),
+      (route) => {
+        const { pathname } = new URL(route.request().url());
+        if (route.request().method() === 'GET' && pathname === '/api/v1/apps/installed') return route.fulfill({ json: apps });
+        const index = apps.findIndex((a) => pathname === `/api/v1/apps/installed/${a.container_id}`);
+        if (route.request().method() !== 'DELETE' || index === -1) return route.abort();
+        const [gone] = apps.splice(index, 1);
+        return route.fulfill({ json: { status: 'removed', id: gone.container_id } });
+      },
+    );
+    const heading = page.getByRole('heading', { level: 1, name: 'App Store' });
+    const installedTab = (count: number) => page.getByRole('tab', { name: `Installed (${count})`, exact: true });
+    async function uninstall(name: string) {
+      await chooseAction(page, name, 'Uninstall');
+      await answerConfirmation(page, {
+        title: `Uninstall ${name}?`,
+        message: 'Its container is removed; its data folders are kept.',
+        action: 'Uninstall app',
+      });
+    }
+    await page.goto('/apps');
+    await expect(installedTab(2)).toBeVisible();
+
+    // An uninstall reads the lists itself; Refresh after it runs the page's load again.
+    await installedTab(2).click();
+    await uninstall('e2e-jellyfin');
+    await expect(installedTab(1)).toBeVisible();
+    apps.push(app('e2e-sonarr', 'sonarr'));
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(installedTab(2)).toBeVisible();
+
+    // An uninstall on the page, then to the dashboard and back: the lists read before it are not
+    // shown; the dashboard stays until the fresh read has answered (the catalog's, held here).
+    await uninstall('e2e-sonarr');
+    await expect(installedTab(1)).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    let release = await holdNext(page, '/api/v1/apps/catalog');
+    await page.locator('aside nav a[href="/apps"]').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/');
+    await expect(heading).toHaveCount(0);
+    release();
+    await expect(installedTab(1)).toBeVisible();
+
+    // Once more without a change: the page and its count at once, then Docker's fresh answer.
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    release = await holdNext(page, '/api/v1/apps/installed', []);
+    await page.locator('aside nav a[href="/apps"]').click();
+    await expect(heading).toBeVisible({ timeout: 1000 });
+    await expect(installedTab(1)).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Jellyfin' }).first()).toBeVisible();
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    release();
+    await expect(installedTab(0)).toBeVisible();
+  });
+});
+
 // Install > Run in the group unos-smb (ADR-0274). The stand-in has no Docker
 // and no mounted pool, so the pools, the installed list and the install are
 // answered here; the catalog is the stand-in's own. The refusal is the

@@ -20,6 +20,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   without waiting for its containers, whose card waits in its place. Links preload a page's data
   on the press of the pointer, not on hover, so that no hover wakes a sleeping disk.
   `webui/AGENTS.md` has the recipe for the other pages.
+- Snapshots, Files and its Trash, Containers and the App Store read their data in load functions
+  too (ADR-0469), with no skeleton between pages. Files and Snapshots read the pools folder and
+  the first pool or volume; the folder opened and the pool chosen stay the page's own reads. The
+  App Store waits at most a second for the installed apps after its catalog, as before.
 - `scripts/prune-merged-branches.py` (ADR-0465), for the end of a batch: after `git fetch --prune`
   it removes the clean worktrees of branches merged into `origin/main` and deletes those local
   branches with `git branch -d`, as a dry run unless `--apply`. It keeps the main checkout, detached,

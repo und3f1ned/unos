@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { MediaQuery } from 'svelte/reactivity';
 	import { getContainers, createContainer, type Container } from '$lib/api/containers';
 	import { Plus, RefreshCw } from 'lucide-svelte';
@@ -21,6 +21,12 @@
 	import { countByGroup, groupOf, type QuickAction, type StateFilter } from '$lib/components/containers/labels';
 	import { t } from '$lib/i18n';
 	import { ApiError } from '$lib/api/client';
+	import { containersReader } from '$lib/pages/containers';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	let activeTab = $state<TabId>('containers');
 	// The Images tab loads its list when it is first shown, and keeps it (and a
@@ -30,9 +36,11 @@
 
 	let containers = $state<Container[]>([]);
 	let loading = $state(true);
-	// The first load has answered: until then the tab is its skeleton, and a reload keeps what is
-	// shown (ADR-0430).
+	// The page's load has answered: until then, only on the tab's first page when it takes a while,
+	// the tab is its skeleton; a reload keeps what is shown.
 	let loaded = $state(false);
+	// Refresh: the page's load again.
+	let refreshing = $state(false);
 	let error = $state('');
 	// Why the list could not be loaded. The tab then shows this error alone: no counts, search or
 	// empty list, and no Create button. The actions' and the Create dialog's errors are `error`.
@@ -114,19 +122,42 @@
 		await loadData();
 	}
 
-	onMount(async () => {
-		await loadData();
-	});
+	// The page's own loads so far (Retry, the reloads after an action), and their count when the last
+	// snapshot of its load was shown: a snapshot comes second to a load of the page's that started
+	// after it.
+	let ownLoads = 0;
+	let appliedAt = 0;
+
+	// The list comes from the page's load ($lib/pages/containers): shown before the page is drawn, and
+	// replaced by a fresh read when the load gave the last visit's.
+	followPage(
+		() => data,
+		({ containers: read }) => {
+			if (ownLoads !== appliedAt) return;
+			if (read.ok) show(read.value);
+			else {
+				loadError = read.error;
+				dockerDown = read.dockerDown;
+			}
+			loading = false;
+			loaded = true;
+		}
+	);
+
+	function show(list: Container[]) {
+		containers = Array.isArray(list) ? list : [];
+		// The error stays until a load succeeds: a reload does not blank it (ADR-0430).
+		loadError = '';
+		const listed = new Set(containers.map((c) => c.id));
+		selection.set([...selection.ids].filter((id) => listed.has(id)));
+	}
 
 	async function loadData() {
+		ownLoads += 1;
 		loading = true;
 		error = '';
 		try {
-			containers = await getContainers();
-			// The error stays until a load succeeds: a reload does not blank it (ADR-0430).
-			loadError = '';
-			const listed = new Set(containers.map((c) => c.id));
-			selection.set([...selection.ids].filter((id) => listed.has(id)));
+			show(await getContainers());
 		} catch (e) {
 			loadError = (e as Error).message;
 			dockerDown = e instanceof ApiError && e.status === 503;
@@ -136,9 +167,20 @@
 		}
 	}
 
-	function refresh() {
-		if (activeTab === 'images') imageList?.refresh();
-		else loadData();
+	async function refresh() {
+		if (activeTab === 'images') {
+			imageList?.refresh();
+			return;
+		}
+		// Its snapshot is newer than the page's own loads so far.
+		appliedAt = ownLoads;
+		refreshing = true;
+		error = '';
+		try {
+			await refreshPage(containersReader.key);
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	function showTab(id: TabId) {
@@ -218,7 +260,7 @@
 				size="icon"
 				icon={RefreshCw}
 				onclick={refresh}
-				loading={activeTab === 'containers' && loading}
+				loading={activeTab === 'containers' && (loading || refreshing)}
 				title={$t('common.refresh')}
 			>
 				<span class="sr-only">{$t('common.refresh')}</span>
@@ -238,7 +280,7 @@
 		hidden={activeTab !== 'containers'}
 		class="space-y-6"
 	>
-		<!-- The first load's skeleton (ADR-0430), then a failed load alone, with what it means, the
+		<!-- The skeleton of the tab's first page, then a failed load alone, with what it means, the
 		     server's reason and Retry: no counts, list or Create (webui.ux-apps). "Docker is not
 		     answering" only for Docker's own 503 (ADR-0323). -->
 		<LoadState
