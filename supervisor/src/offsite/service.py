@@ -92,6 +92,8 @@ STATUS_FILE = str(paths.OFFSITE_STATUS)
 # refused (on_system_disk).
 DATA_DIR = str(paths.DATA_DIR)
 MOUNTS_BASE = get_settings().mounts_base_path
+# The SD card standby's mounts below MOUNTS_BASE (ADR-0471), never a target.
+STANDBY_FOLDER = ".unos-standby"
 # Where the disks under a filesystem are found: the block devices by number, the devices of each btrfs
 # filesystem, and the mounts of this process (a filesystem without a device number of its own, FUSE).
 SYS_DEV_BLOCK = "/sys/dev/block"
@@ -1007,6 +1009,9 @@ def _target_path(path: object) -> str:
     base = _base_parts()
     if parts[: len(base)] != base or len(parts) <= len(base):
         raise _bad(f"{what} must be below {MOUNTS_BASE}, on a disk mounted there")
+    if STANDBY_FOLDER in parts:
+        raise _bad(f"{what} must not be on the SD card standby ({MOUNTS_BASE}/{STANDBY_FOLDER}), which holds a copy of "
+                   "the system, not data")
     return "/" + "/".join(parts)
 
 

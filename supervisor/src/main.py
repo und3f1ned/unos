@@ -96,6 +96,8 @@ from .scheduler.router import start_scheduler, stop_scheduler
 from .health.router import start_health_monitors, stop_health_monitors
 from .power.router import reapply_wol_settings, start_ups_monitor, stop_ups_monitor
 from .power.schedule import start_power_schedule, stop_power_schedule
+from .standby import service as standby_service
+from .standby.router import router as standby_router
 from .storage import pools as storage_pools
 from .storage.pools import reconcile_pools_on_startup
 from .shares.service import reconcile_smb_on_startup
@@ -214,10 +216,13 @@ async def lifespan(app: FastAPI):
         # Applies the iSCSI targets again when the host's LAN addresses changed, every 5 minutes
         # while a target exists (ADR-0418).
         await iscsi.start_follow()
+        # The SD card standby (ADR-0471): its state, its syncs and its problems, a pass a minute.
+        standby_service.start()
     try:
         yield
     finally:
         if run_background:
+            await standby_service.stop()
             await iscsi.stop_follow()
             await stop_automatic_install()
             await stop_history()
@@ -355,6 +360,7 @@ for _router in (
     backup_router,
     offsite_router,
     updates_router,
+    standby_router,
 ):
     # Their 401 and 403 in the API documentation (ADR-0417).
     app.include_router(_router, prefix="/api/v1", dependencies=_ADMIN_ONLY, responses=errors(ADMIN))

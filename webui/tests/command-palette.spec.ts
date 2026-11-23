@@ -124,7 +124,7 @@ async function focusInPalette(page: Page): Promise<boolean> {
 const SYSTEM_TABS = [
   'General', 'Network', 'Remote Access', 'Security', 'Notifications',
   'Resource Monitor', 'System Logs', 'Disk Health',
-  'Updates', 'Backup & Restore', 'Scheduler', 'Power Management',
+  'Updates', 'Backup & Restore', 'Scheduler', 'Power Management', 'SD Standby',
 ];
 // The Account page of the sidebar's account block, which opens Sign-in and security, and its other
 // tab of an administrator.

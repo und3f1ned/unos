@@ -118,6 +118,26 @@ with 0x0B past it, and the pre-EOL state of its reserve blocks (normal, warning,
 it with `mmc extcsd read` once a day, or as of boot from sysfs (ADR-0471, ADR-0475). Avoid: health
 (the SMART word), lifetime.
 
+**SD standby**: An SD card that holds a copy of an eMMC system disk's system and boots it by itself
+when the eMMC fails: its own loader, a FAT partition `UNOS-BOOT` with the chooser and the boot
+folders, and a btrfs partition `UNOS-STANDBY` with the generations (ADR-0471, ADR-0476). "Set up"
+makes a free card one, "Remove" wipes it. Avoid: backup (it sits in the same device), spare disk
+(a card that serves the storage checks), failover card.
+
+**Chooser**: The SD standby's `boot.scr`, which the card's loader runs first at every boot: it boots
+the eMMC's own boot script, or the card's root when the eMMC is marked failed, its boots were
+counted three times, or its script cannot be read, and puts `unos.chooser=card`, `unos.root` and
+`unos.reason` on the kernel's command line (ADR-0471). Avoid: boot menu.
+
+**Generation**: One complete copy of the system on the SD standby, the btrfs subvolume `@sys-<n>`
+with its boot folder `unos/boot-<n>/`; `unos/current.txt` names the one the chooser boots and
+`previous.txt` the one before, and a sync makes a new one current only once it is complete
+(ADR-0471). Avoid: snapshot (a pool's), version.
+
+**Drill**: A switch to the SD standby on purpose, to prove it: the eMMC marked failed, its partition
+or its root made missing for the chooser or the kernel, then a reboot; Return to the eMMC ends it
+(ADR-0471). Avoid: test, failover.
+
 **Supervisor log**: What `unos-supervisor` writes to Docker's container log (`docker logs
 unos-supervisor`): one JSON object per line with `time`, `level`, `logger` and `message`, set up in
 `supervisor/src/logging_setup.py` at the level of `UNOS_LOG_LEVEL` (INFO by default) and silent

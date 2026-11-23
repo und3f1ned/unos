@@ -155,6 +155,14 @@ export const en = {
 	'audit.action.networkInterfaceCreated': 'Network interface created',
 	'audit.action.networkInterfaceDeleted': 'Network interface deleted',
 	'audit.action.networkChangeKept': 'Network change kept',
+	'audit.action.standbyArmed': 'Standby armed',
+	'audit.action.standbyRemoved': 'Standby removed',
+	'audit.action.standbySynced': 'Standby synced',
+	'audit.action.standbySettingsChanged': 'Standby settings changed',
+	'audit.action.standbyDrill': 'Standby drill',
+	'audit.action.standbyReturned': 'Standby returned',
+	'audit.action.standbyDiscarded': 'Standby discarded',
+	'audit.action.standbySwitched': 'Standby switched',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records, in words, never as its identifiers.
@@ -195,7 +203,8 @@ export const en = {
 	'audit.resource.remotePeer': 'remote peer',
 	'audit.resource.appName': 'app name',
 	'audit.resource.release': 'release',
-	'audit.resource.automaticInstall': 'automatic install'
+	'audit.resource.automaticInstall': 'automatic install',
+	'audit.resource.standby': 'standby'
 };
 
 export const ru: Translation<typeof en> = {
@@ -343,6 +352,14 @@ export const ru: Translation<typeof en> = {
 	'audit.action.networkInterfaceCreated': 'Сетевой интерфейс создан',
 	'audit.action.networkInterfaceDeleted': 'Сетевой интерфейс удалён',
 	'audit.action.networkChangeKept': 'Изменение сети сохранено',
+	'audit.action.standbyArmed': 'Резерв на SD настроен',
+	'audit.action.standbyRemoved': 'Резерв на SD удалён',
+	'audit.action.standbySynced': 'Резерв на SD синхронизирован',
+	'audit.action.standbySettingsChanged': 'Настройки резерва на SD изменены',
+	'audit.action.standbyDrill': 'Учение резерва на SD начато',
+	'audit.action.standbyReturned': 'Возврат с резерва на SD',
+	'audit.action.standbyDiscarded': 'Изменения резерва на SD отброшены',
+	'audit.action.standbySwitched': 'Переключение на резерв на SD',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',
@@ -382,5 +399,6 @@ export const ru: Translation<typeof en> = {
 	'audit.resource.remotePeer': 'узел удалённого доступа',
 	'audit.resource.appName': 'имя приложения',
 	'audit.resource.release': 'выпуск',
-	'audit.resource.automaticInstall': 'автоматическая установка'
+	'audit.resource.automaticInstall': 'автоматическая установка',
+	'audit.resource.standby': 'резерв на SD'
 };

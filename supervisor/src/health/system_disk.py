@@ -39,6 +39,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import problems
 from .. import host
+# Imported at the start, with the switch's code: nothing of it is read from the eMMC at the switch.
+from ..standby import service as standby_service
 from ..times import utc_now, utc_text
 
 logger = logging.getLogger(__name__)
@@ -513,9 +515,15 @@ def _found(state: _State) -> dict[str, problems.Problem]:
 
 
 async def monitor_pass() -> None:
-    """One pass: read (in a worker thread), then report the problems."""
+    """One pass: read (in a worker thread), then report the problems. A failed system disk first
+    switches to the SD card standby when one is ready (ADR-0471, standby.service)."""
     await asyncio.to_thread(check)
-    await problems.update(SOURCE, _found(_state))
+    found = _found(_state)
+    failed = [problem for problem in found.values() if problem.kind == "system_disk_failed"]
+    if failed:
+        # Before the alerts, which may wait on the failing disk: the switch goes on in its own thread.
+        standby_service.on_system_disk_failed(failed[0].detail)
+    await problems.update(SOURCE, found)
 
 
 # The pass runs in a loop of its own beside the RAID monitor, at its interval (ADR-0475): on a failing

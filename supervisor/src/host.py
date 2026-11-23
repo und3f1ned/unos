@@ -44,6 +44,7 @@ import signal
 import stat
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import IO, Any
@@ -119,6 +120,10 @@ HOST_TOOLS: dict[str, str] = {
     "journalctl": "systemd",
     "curl": "curl",
     "mmc": "mmc-utils",
+    # The SD card standby (ADR-0471): its copies, its FAT partition and its partitions.
+    "rsync": "rsync",
+    "mkfs.vfat": "dosfstools",
+    "sfdisk": "fdisk",
 }
 
 # Programs of host services that deploy/install.sh does not install, with their
@@ -705,6 +710,47 @@ def write_host_file_atomic(
         check=True,
         errors=errors,
     )
+
+
+def write_mounted_file(path: str, data: bytes) -> None:
+    """Write and fsync a file of a host filesystem mounted below /mnt, which the container sees at the
+    same path through its bind of /mnt (rshared), and fsync its folder: no program of the host runs.
+    For the switch to the SD card standby, when the host's programs live on a failing eMMC (ADR-0471).
+    Raises OSError."""
+    if not path.startswith("/mnt/"):
+        raise ValueError("write_mounted_file takes a path below /mnt")
+    tmp = f"{path}.unos-tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+    directory = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+# Between the sysrq's sync and its reboot (ADR-0471): the time for the card's writes to reach it.
+SYSRQ_SYNC_SECONDS = 5
+SYSRQ_TRIGGER = "/proc/sysrq-trigger"
+
+
+def reboot_at_once() -> None:
+    """Reboot the host at once through the kernel's magic SysRq: an emergency sync ("s"), then 5 s later
+    a reboot ("b") without shutting anything down. For the switch to the SD card standby, where an
+    orderly shutdown could hang on the failing eMMC (ADR-0471). Never on a supervisor that runs outside
+    its container (UNOS_HOST_EXEC=local): RuntimeError. Blocking."""
+    if runs_locally():
+        raise RuntimeError("No reboot of the machine that runs a supervisor outside its container")
+    with open(SYSRQ_TRIGGER, "w", encoding="ascii") as trigger:
+        trigger.write("s")
+    time.sleep(SYSRQ_SYNC_SECONDS)
+    with open(SYSRQ_TRIGGER, "w", encoding="ascii") as trigger:
+        trigger.write("b")
 
 
 def sync_host_path(path: str, *, timeout: float = 60) -> bool:

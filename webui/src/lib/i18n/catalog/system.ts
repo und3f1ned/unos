@@ -18,7 +18,8 @@ export const en = {
 	'system.tabs.scheduler': 'Scheduler',
 	'system.tabs.notifications': 'Notifications',
 	'system.tabs.network': 'Network',
-	'system.tabs.power': 'Power Management'
+	'system.tabs.power': 'Power Management',
+	'system.tabs.standby': 'SD Standby'
 };
 
 export const ru: Translation<typeof en> = {
@@ -37,5 +38,6 @@ export const ru: Translation<typeof en> = {
 	'system.tabs.scheduler': 'Планировщик',
 	'system.tabs.notifications': 'Уведомления',
 	'system.tabs.network': 'Сеть',
-	'system.tabs.power': 'Питание'
+	'system.tabs.power': 'Питание',
+	'system.tabs.standby': 'Резерв на SD'
 };

@@ -146,6 +146,17 @@ class AuditAction(str, Enum):
     NETWORK_INTERFACE_CREATED = "network_interface_created"
     NETWORK_INTERFACE_DELETED = "network_interface_deleted"
     NETWORK_CHANGE_KEPT = "network_change_kept"
+    # The SD card standby (ADR-0471): set up, removed, a sync or the daily time by an administrator,
+    # a drill or the return (each reboots), the discard of a standby's changes, and the automatic
+    # switch from a failing eMMC by the system
+    STANDBY_ARMED = "standby_armed"
+    STANDBY_REMOVED = "standby_removed"
+    STANDBY_SYNCED = "standby_synced"
+    STANDBY_SETTINGS_CHANGED = "standby_settings_changed"
+    STANDBY_DRILL = "standby_drill"
+    STANDBY_RETURNED = "standby_returned"
+    STANDBY_DISCARDED = "standby_discarded"
+    STANDBY_SWITCHED = "standby_switched"
 
     # Generic
     OTHER = "other"

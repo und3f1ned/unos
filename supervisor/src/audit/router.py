@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
@@ -350,6 +350,29 @@ def _clear(before_date: str | None) -> int:
     return removed
 
 
+# Who follows the audited actions once written: the SD card standby syncs 10 minutes after the last
+# change (ADR-0471). A listener is called in the event loop and must not block.
+_change_listeners: list[Callable[[AuditAction], None]] = []
+
+
+def add_change_listener(listener: Callable[[AuditAction], None]) -> None:
+    if listener not in _change_listeners:
+        _change_listeners.append(listener)
+
+
+def remove_change_listener(listener: Callable[[AuditAction], None]) -> None:
+    if listener in _change_listeners:
+        _change_listeners.remove(listener)
+
+
+def _tell_listeners(action: AuditAction) -> None:
+    for listener in list(_change_listeners):
+        try:
+            listener(action)
+        except Exception:
+            logger.exception("A follower of the audit log failed")
+
+
 async def log_action(
     action: AuditAction,
     request: Request | None = None,
@@ -401,10 +424,13 @@ async def log_action(
 
     line = entry.model_dump_json()
     try:
-        return await asyncio.to_thread(_append_line, line + "\n")
+        written = await asyncio.to_thread(_append_line, line + "\n")
     except OSError as exc:
         logger.error("Could not write this audit entry to the audit log: %s (%s)", line, exc)
+        _tell_listeners(action)
         raise
+    _tell_listeners(action)
+    return written
 
 
 # ==================== Filters (ADR-0401) ====================

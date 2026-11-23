@@ -39,7 +39,7 @@ SMOKE = tests/test_lifespan.py tests/test_auth.py::TestFirstRunSetup \
 # Arguments for scripts/standin/e2e.sh: make e2e-local E2E_ARGS='tests/auth.spec.ts'.
 E2E_ARGS ?=
 
-SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks
+SHELL_SCRIPT_DIRS = deploy scripts .claude/hooks supervisor/src/standby/host
 # The shell scripts of SHELL_SCRIPT_DIRS, which make lint checks with bash -n and shellcheck (ADR-0448): a
 # command that prints the files named *.sh and those whose first line runs sh, bash, dash or ksh, sorted.
 shell_scripts = find $(SHELL_SCRIPT_DIRS) -type f 2> /dev/null | sort | while read -r f; do \

@@ -31,6 +31,8 @@ MODULES = sorted(
         SRC / "shares" / "iscsi_router.py",
         *(SRC / "network").glob("*.py"),
         *(SRC / "power").glob("*.py"),
+        # The SD card standby (ADR-0471), which acts on the host's disks, files and boot.
+        *(SRC / "standby").glob("*.py"),
     ]
 )
 

@@ -41,17 +41,24 @@
 		shutdown_idle: 'problems.kind.shutdown_idle',
 		emmc_worn: 'problems.kind.emmc_worn',
 		system_disk_errors: 'problems.kind.system_disk_errors',
-		system_disk_failed: 'problems.kind.system_disk_failed'
+		system_disk_failed: 'problems.kind.system_disk_failed',
+		standby_sync_failed: 'problems.kind.standby_sync_failed',
+		standby_copy_old: 'problems.kind.standby_copy_old',
+		standby_card_missing: 'problems.kind.standby_card_missing',
+		standby_not_in_boot_path: 'problems.kind.standby_not_in_boot_path',
+		standby_has_changes: 'problems.kind.standby_has_changes',
+		running_on_standby: 'problems.kind.running_on_standby'
 	};
 
 	// Where each kind of problem is dealt with: its pool, disk (the system disk's card too), task, volume,
-	// container or the power settings. A kind this web UI does not know links nowhere.
+	// container, the power settings or the SD card standby. A kind this web UI does not know links nowhere.
 	const PLACES: [RegExp, string][] = [
 		[/^(pool_|volume_quota_)/, '/storage'],
 		[/^(disk_|emmc_|system_disk_)/, '/system/health'],
 		[/^task_/, '/system/scheduler'],
 		[/^app_/, '/containers'],
-		[/^shutdown_/, '/system/power']
+		[/^shutdown_/, '/system/power'],
+		[/^(standby_|running_on_standby$)/, '/system/standby']
 	];
 
 	const placeOf = (kind: string): string | undefined => PLACES.find(([pattern]) => pattern.test(kind))?.[1];

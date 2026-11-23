@@ -4,6 +4,7 @@ What to do when the NAS does not boot, or when no administrator can sign in.
 
 1. [Reach a Pool from Another Linux Machine](#reach-a-pool-from-another-linux-machine)
 2. [Reset an Administrator's Password and Two-Factor Authentication](#reset-an-administrators-password-and-two-factor-authentication)
+3. [Boot the SD Standby by Hand](#boot-the-sd-standby-by-hand)
 
 ---
 
@@ -259,3 +260,20 @@ stays after the reset. Then, in this order:
 5. The audit log does not record everything yet ([Audit Log](USER_GUIDE.md#audit-log)): look
    through the scheduled tasks, the apps and containers, the shares and their access, and the
    notification channels too.
+
+---
+
+## Boot the SD Standby by Hand
+
+When a NAS with an SD standby (System → SD Standby, ADR-0471) hangs on a failing eMMC without
+switching by itself (a hang that still serves the hardware watchdog, a board without one, or a
+failure that stopped UNOS first), mark the eMMC failed from any computer:
+
+1. Shut the NAS down (hold its power button), take out the SD card and put it into a computer.
+2. Open its small partition labelled `UNOS-BOOT`, which every computer reads, and create in its
+   folder `unos` an empty file named `emmc-failed` (no extension).
+3. Eject the card, put it back into the NAS and start it: the card's chooser now boots the card's
+   copy at every boot. System → SD Standby offers **Return to the eMMC**: use it once the eMMC
+   works again.
+
+Changes made since the card's last sync are not on it.

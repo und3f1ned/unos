@@ -1683,7 +1683,8 @@ class TestInstallScript:
             assert unused not in packages
         # What the code and the scripts do run on the host, or the scripts of install.sh itself.
         assert {"btrfs-progs", "smartmontools", "samba", "samba-common-bin", "samba-vfs-modules",
-                "hdparm", "ethtool", "iproute2", "curl", "git", "gnupg", "lsb-release", "mmc-utils"} <= set(packages)
+                "hdparm", "ethtool", "iproute2", "curl", "git", "gnupg", "lsb-release", "mmc-utils", "rsync",
+                "dosfstools", "fdisk"} <= set(packages)
 
     def test_every_tool_the_supervisor_needs_on_the_host_comes_from_a_package_installed(self, tmp_path):
         # HOST_TOOLS names the package of each program that the supervisor runs on the host:

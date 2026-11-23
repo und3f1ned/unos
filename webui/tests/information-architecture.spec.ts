@@ -19,7 +19,7 @@ const APPEARANCE = ['Theme', 'Language'];
 const SYSTEM_GROUPS = {
   Settings: ['General', 'Network', 'Remote Access', 'Security', 'Notifications'],
   Monitoring: ['Resource Monitor', 'System Logs', 'Disk Health'],
-  Maintenance: ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management'],
+  Maintenance: ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management', 'SD Standby'],
 };
 
 // System's tabs are links (ADR-0474), the Account page's buttons.

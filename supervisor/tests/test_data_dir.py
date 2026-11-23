@@ -63,6 +63,9 @@ DATA_PATHS = {
     "src.security.router.CERTS_DIR": "certs",
     "src.storage.volume_usage.HISTORY_FILE": "volume_usage.json",
     "src.updates.updater.DB_FILE": "unos.db",
+    # The SD card standby copies the database into its generations, and its switch a last time (ADR-0471).
+    "src.standby.generation.DATABASE": "unos.db",
+    "src.standby.switch.DATABASE": "unos.db",
     "src.updates.updater.UPDATE_STATE_FILE": "update_state.json",
     "src.updates.updater.UPDATE_HISTORY_FILE": "update_history.json",
     "src.updates.updater.UPDATE_CONFIG_FILE": "update_config.json",
