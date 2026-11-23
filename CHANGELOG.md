@@ -1968,7 +1968,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   references with it. A reference that an earlier removal took is passed over; the image is not
   found only when nothing was removed, also when another removed it after UNOS read it.
 - `scripts/dev/scenario.sh scrub` and `balance` hold on a fast disk such as the BPI-F3's NVMe pool
-  (ADR-0470). The scrub step takes the progress it can see: its looks after btrfs recorded that
+  (ADR-0473). The scrub step takes the progress it can see: its looks after btrfs recorded that
   scrub, and the bytes scrubbed by its end's rate and duration. A scrub seen running many times
   must still move. The balance check runs a trial balance that measures the seconds a chunk, an
   API call and a device call take, then gets enough chunks to keep its balance running through its

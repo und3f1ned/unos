@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0314]
 ---
 
-# ADR-0470: The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial
+# ADR-0473: The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial
 
 ## Context
 

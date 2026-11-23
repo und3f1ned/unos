@@ -68,12 +68,12 @@ use the main checkout's. Output shows secrets as `<redacted>`.
    (ADR-0309), `shares` makes entries of other owners and modes on the pool over ssh, signs in as
    its user and turns guest access on for its share, which lowers signing for the whole server
    while it runs (ADR-0100, ADR-0340), `scrub` scrubs the pool, three times on a small pool, and leaves its last
-   scrub result (ADR-0470), `balance` writes 24 GiB of allocated space (fallocate) into a folder of the
+   scrub result (ADR-0473), `balance` writes 24 GiB of allocated space (fallocate) into a folder of the
    pool for a trial balance, then as many GiB as the disk's measured speed needs (12 on a hard disk,
    about 55 on the BPI-F3's NVMe drive; the pool needs twice that free), deletes most of it again each
    time and balances, pauses, resumes and cancels the chunks it left about 12% full, which moves up
    to 128 MiB of each on the pool's disk, and leaves its last balance result, cancelled, until
-   the host restarts (ADR-0379, ADR-0470), `offsite` sets up an off-device copy to a folder of the pool and
+   the host restarts (ADR-0379, ADR-0473), `offsite` sets up an off-device copy to a folder of the pool and
    forgets it again (ADR-0337); it refuses to start on a device that has one set up, and
    `restore` restores a backup it made moments before, twice, which puts the device's database
    back as it was then and ends the web sessions but the relay's (ADR-0341); it refuses to start

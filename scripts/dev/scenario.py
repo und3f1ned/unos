@@ -115,7 +115,7 @@ SD writes of each check (ADR-0214). The areas:
            reported), and the Delete of that last guest share, after which signing is mandatory
            again (where the device has other guest shares, that step says so instead); no
            password of the check in an answer or a log; and the user's Delete.
-  scrub    Scrubs of the pool (ADR-0470): its last scrub as found (none after a restart of the
+  scrub    Scrubs of the pool (ADR-0473): its last scrub as found (none after a restart of the
            supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted on
            it refused with 409, and a scheduled scrub of that folder failing with the same text
            (ADR-0311); Start Scrub answered running, and so the status right after it (ADR-0313);
@@ -131,7 +131,7 @@ SD writes of each check (ADR-0214). The areas:
            of files that fallocate allocates and of which most are deleted again, for a trial
            balance that measures the seconds a chunk and an API call take; in their place as many
            such chunks as keep the check's balance running through its steps, 12 at least
-           (ADR-0470); Start Balance with the usage limit of 20% answered running, and so the status
+           (ADR-0473); Start Balance with the usage limit of 20% answered running, and so the status
            right after it, its btrfs in the host's unit unos-balance-<pool>; a scrub and a second
            balance refused with 409 while it runs, because it runs; its chunks balanced growing,
            with the time left; Pause Balance, after which the status says paused and the unit has
@@ -208,7 +208,7 @@ pool (which the namespace leaves writable), the balance check's files on the poo
 at its unit's state (systemctl is-active), and getfacl; only pdbedit runs without that namespace,
 since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
 of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub and balance checks' folder below the pools'
-base, on the root filesystem (ADR-0470), and the restore check's removal of the copies of the
+base, on the root filesystem (ADR-0473), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
 a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
 checks after up do, ADR-0183), which reads the backup in memory and writes nothing. The passwords of
@@ -3833,7 +3833,7 @@ SCRUB_POLL = 2
 SCRUB_TO_THE_END = 32 * GIB
 # A scrub that the check saw running this many times has run long enough for btrfs to record it
 # (about 5 s after its start, ADR-0313) at two of them at least: each look is an API call and a
-# pause of SCRUB_POLL seconds (ADR-0470).
+# pause of SCRUB_POLL seconds (ADR-0473).
 SCRUB_LOOKS = 5
 
 
@@ -3940,7 +3940,7 @@ def scrub_check(c: Check) -> None:
     if to_the_end:
         with c.step(f"btrfs reports the scrub of {name}, its progress moving, until it ends, finished without "
                     "errors") as s:
-            # What a look can see (ADR-0470): the bytes scrubbed of each answer that said running once
+            # What a look can see (ADR-0473): the bytes scrubbed of each answer that said running once
             # btrfs had recorded this scrub (its start time), and the end's counters. A fast disk ends
             # the scrub after one such look or none; a scrub seen running SCRUB_LOOKS times was
             # recorded at two of them.
@@ -4038,7 +4038,7 @@ BALLAST_MIB = 128
 BALLAST_KEEP = 8
 # A trial balance of BALLAST_TRIAL_CHUNKS of them (some seconds each on a hard disk) measures how
 # long the pool's disk takes for a chunk, and the relay for an API call and ssh.sh for a device
-# call (ADR-0470). It asks until the supervisor's time left rests on BALANCE_TRIAL_MOVED chunks
+# call (ADR-0473). It asks until the supervisor's time left rests on BALANCE_TRIAL_MOVED chunks
 # balanced since its first look, or it ends, and cancels it: that estimate is off by an eighth of a
 # chunk's time at most, and with as many chunks left its rounding up to the second by little. The
 # check's balance then gets enough chunks to run through the API and the device calls that its
@@ -4076,7 +4076,7 @@ def balance_until(c: Check, pool: str, done: Callable[[dict], bool], what: str) 
 
 def balance_trial(c: Check, pool: str) -> tuple[float, float, float, str]:
     """A balance of the trial's chunks, ended: the seconds a chunk took, an API call and a device
-    call took, and what the first rests on (ADR-0470). The seconds a chunk come from the time left
+    call took, and what the first rests on (ADR-0473). The seconds a chunk come from the time left
     that the supervisor estimates (ADR-0379: the chunks left at the rate since it first saw the
     balance run), less the second that it rounds up, over the chunks left: its last estimate, which
     rests on BALANCE_TRIAL_MOVED chunks or more when the trial ran that long. A trial that ends
@@ -4209,7 +4209,7 @@ def balance_check(c: Check) -> None:
         def refused(path: str, body: Any = None) -> str:
             """The refusal's reason. A request that was not refused names the balance's state: one
             that had ended makes the refusals prove nothing, and the trial measured the disk too
-            slow (ADR-0470)."""
+            slow (ADR-0473)."""
             answer = c.call("POST", path, body, expect=(409, 200))
             if "detail" not in answer:
                 now = balance_of(c, name)
