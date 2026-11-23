@@ -100,6 +100,18 @@ def test_the_pages_that_read_the_disks_could_not_preload_on_hover(page: str, uns
     assert unsafe <= asked and not asked <= HOVER_SAFE_API
 
 
+@pytest.mark.parametrize(
+    ("page", "asked"),
+    [("/users", {"auth", "groups"}), ("/audit", {"audit", "auth"}), ("/account", {"auth"})],
+)
+def test_the_pages_that_read_only_unos_records_preload_on_hover(page: str, asked: set[str]):
+    # Users (the accounts and the groups), the Audit Log (its entries, its actions and the usernames)
+    # and Account (the account's own two-factor status, keys, tokens and SMB access): the database
+    # and the audit log's files on the system disk, which a hover may read.
+    assert api_modules(SRC, route_file(SRC, page)) == asked
+    assert page in hover_pages(SRC / "lib" / "pages" / "preload.ts")
+
+
 def test_every_page_load_reads_through_read_page():
     loads = sorted(SRC.glob("routes/**/+page.ts"))
     assert loads, "the pages have loads"

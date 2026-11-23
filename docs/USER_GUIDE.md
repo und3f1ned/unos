@@ -108,17 +108,21 @@ come, grey shapes stand where its cards, tables and values will be, and the
 data take their places without moving the page. **Refresh** keeps what is
 shown while it reads the data again.
 
-Going from one page to another, the **Dashboard**, **Storage** and **Shares**
-pages wait until their data have come: the page you are on stays, with its
-link still marked, and when that takes a moment a thin bar runs across the top
-of the window; then the next page shows with its data, without grey shapes. A
-page you opened before in the same tab shows at once with what it showed last,
-and changes to what the NAS answers now a moment later. After a change, such as
-a share saved or the dashboard arranged, a page that shows it waits for its new
-data instead. Grey shapes still stand in for the data when the first page of a
-tab takes longer than a moment, and on the pages not built this way yet.
-Pointing at a link reads no data from the NAS, so that it wakes no sleeping
-disk; pressing it starts reading the next page's data.
+Going from one page to another, the **Dashboard**, **Storage**, **Shares**,
+**Users**, **Audit Log** and **Account** pages wait until their data have
+come: the page you are on stays, with its link still marked, and when that
+takes a moment a thin bar runs across the top of the window; then the next
+page shows with its data, without grey shapes. A page you opened before in the
+same tab shows at once with what it showed last, and changes to what the NAS
+answers now a moment later. After a change, such as a share saved or the
+dashboard arranged, a page that shows it waits for its new data instead. Grey
+shapes still stand in for the data when the first page of a tab takes longer
+than a moment, and on the pages not built this way yet. Pointing at a link
+reads no data from the NAS, so that it wakes no sleeping disk; pressing it
+starts reading the next page's data. Only the links of **Users**, **Audit
+Log** and **Account** read their page's data when you point at them, which
+come from UNOS's own records on its system disk and wake no data disk: the
+page then shows at once when you click.
 
 On a phone, or in a window narrower than 768 pixels, a bar at the top replaces
 the sidebar: its menu button (☰) opens the navigation, with your account and

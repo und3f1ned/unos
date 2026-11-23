@@ -94,7 +94,7 @@
 				size="sm"
 				class="mt-3"
 				loading={twoFactor.statusLoading}
-				onclick={() => twoFactor.loadStatus()}>{$t('common.retry')}</Button
+				onclick={() => twoFactor.retry()}>{$t('common.retry')}</Button
 			>
 		</Alert>
 	{/if}
@@ -102,8 +102,8 @@
 	<!-- Turning 2FA off removes the codes and the security keys, and a new setup starts without
        any (ADR-0238, ADR-0409). -->
 	{#if twoFactor.statusLoaded && twoFactor.enabled}
-		<RecoveryCodes />
-		<SecurityKeys />
+		<RecoveryCodes read={twoFactor.codes} onchange={(read) => (twoFactor.codes = read)} />
+		<SecurityKeys read={twoFactor.keys} onchange={(read) => (twoFactor.keys = read)} />
 	{:else if twoFactor.statusLoaded}
 		<p class="mt-4 pt-4 border-t border-border text-sm text-content-secondary">{$t('securitykeys.needsTotp')}</p>
 	{/if}

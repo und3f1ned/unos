@@ -1,5 +1,6 @@
 import { getUsers, type User } from '$lib/api/auth';
 import { ApiError } from '$lib/api/client';
+import type { Settled } from '$lib/pages/read';
 import { messageOf } from './errors';
 import { Outcome } from './outcome.svelte';
 
@@ -18,13 +19,32 @@ export class UserDirectory {
 	outcome = new Outcome();
 
 	#loadFailed: () => string;
+	// A load of its own has started: from then on it reads later than the page's load.
+	#ownLoad = false;
 
 	/** `loadFailed`: the page's words for a load that failed without a reason. */
 	constructor(loadFailed: () => string) {
 		this.#loadFailed = loadFailed;
 	}
 
+	/**
+	 * The users as the page's load read them ($lib/pages/users), as a load that has answered. Not
+	 * once a load of its own has started (a reload after a change, Retry): it read later.
+	 */
+	apply(read: Settled<User[]>) {
+		if (this.#ownLoad) return;
+		if (read.ok) {
+			this.users = read.value;
+			this.loaded = true;
+			this.error = '';
+		} else {
+			this.error = read.error || this.#loadFailed();
+		}
+		this.loading = false;
+	}
+
 	async load(showSpinner = true) {
+		this.#ownLoad = true;
 		if (showSpinner) this.loading = true;
 		try {
 			this.users = await getUsers();

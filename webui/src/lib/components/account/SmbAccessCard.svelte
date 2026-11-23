@@ -6,15 +6,27 @@
 	import { user } from '$lib/stores/auth';
 	import { Alert, Badge, Button, Card, Input, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { settle, type Settled } from '$lib/pages/read';
 	import SmbConnectHelp from './SmbConnectHelp.svelte';
 	import SmbSharesTable from './SmbSharesTable.svelte';
 
 	// SMB (network file) access of the signed-in account. An administrator
-	// allows it; the user turns it on with the current password.
+	// allows it; the user turns it on with the current password. The page holds the access (its
+	// load reads it, $lib/pages/account, and reads it again when the tab is drawn after a change of
+	// the account), so that the tab shows it again at once; the card's own reads give it their
+	// answers.
 
-	let status = $state<MySmbStatus | null>(null);
-	let loading = $state(true);
-	let loadError = $state('');
+	type Props = {
+		/** The access as last read, or why it could not be; null until the page has read it. */
+		read: Settled<MySmbStatus> | null;
+		/** A read answered. */
+		onchange: (read: Settled<MySmbStatus>) => void;
+	};
+
+	let { read, onchange }: Props = $props();
+
+	const status = $derived(read?.ok ? read.value : null);
+	const loadError = $derived(read && !read.ok ? read.error : '');
 
 	let password = $state('');
 	let totpCode = $state('');
@@ -27,33 +39,22 @@
 
 	onMount(() => {
 		host = window.location.hostname;
-		void load();
 	});
 
 	async function load() {
-		try {
-			status = await getMySmb();
-			loadError = '';
-		} catch (e) {
-			loadError = messageOf(e);
-		} finally {
-			loading = false;
-		}
+		onchange(await settle(getMySmb()));
 	}
 
 	/**
-	 * Read the status again, e.g. after 2FA was turned on or off, or after
-	 * the server refused to turn SMB on (the allowance or 2FA may have changed
-	 * since the card was loaded). What is shown stays when it fails.
+	 * Read the status again after the server refused to turn SMB on (the allowance or 2FA may have
+	 * changed since the card was loaded). What is shown stays when it fails.
 	 */
-	export async function refresh(): Promise<void> {
-		try {
-			status = await getMySmb();
-			loadError = '';
-			if (!status.totp_required) totpCode = '';
-		} catch {
-			// Keep the status shown; the next action reads it again.
-		}
+	async function refresh(): Promise<void> {
+		const answer = await settle(getMySmb());
+		// Keep the status shown on a failure; the next action reads it again.
+		if (!answer.ok) return;
+		onchange(answer);
+		if (!answer.value.totp_required) totpCode = '';
 	}
 
 	async function turnOn() {
@@ -118,7 +119,7 @@
 	</h3>
 
 	<LoadState
-		{loading}
+		loading={read === null}
 		error={loadError || (!status || !account ? $t('account.smb.unavailable') : '')}
 		errorTitle={$t('account.smb.loadError')}
 		onretry={load}

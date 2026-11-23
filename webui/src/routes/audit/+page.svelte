@@ -1,17 +1,20 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onDestroy, onMount, untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { Download, ScrollText } from 'lucide-svelte';
 	import { exportAuditLog, type AuditExportFormat, type AuditFilters as Filters } from '$lib/api/audit';
-	import { getUsers } from '$lib/api/auth';
 	import { Alert, Button, Card, EmptyState, LoadState, Skeleton } from '$lib/components/ui';
 	import { AuditFilters, AuditLog, AuditTimeline } from '$lib/components/audit';
 	import { dayBound, textOf, today } from '$lib/components/audit/timeline';
 	import { intlLocale, t } from '$lib/i18n';
+	import type { AuditSnapshot } from '$lib/pages/audit';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { PageProps } from './$types';
 
 	// The audit log as a timeline, newest first (ADR-0401). The server answers each time in UTC
 	// with its offset: the page shows it in the browser's time zone, groups the entries by the
 	// browser's days, and From and To are the browser's days, sent as their first and last instant.
+	let { data }: PageProps = $props();
 
 	let search = $state('');
 	let username = $state('');
@@ -23,7 +26,9 @@
 	let exporting = $state<AuditExportFormat | null>(null);
 	let exportError = $state('');
 
-	let mounted = $state(false);
+	// The page's load has given its first snapshot: from then on a change of the filters is the
+	// page's own read.
+	let ready = $state(false);
 
 	const filters: Filters = $derived({
 		search: search.trim(),
@@ -37,11 +42,11 @@
 	const activeFilters = $derived(Object.values(filters).filter(Boolean).length);
 	// The NAS's users, which the User field suggests; a name of a deleted user can still be typed.
 	let usernames = $state<string[]>([]);
-	// A change of the filters shows the newest entries that match, from the first page; the first
-	// load once the page is mounted. Only those make it run again: what schedule reads and writes
+	// A change of the filters shows the newest entries that match, from the first page; the page's
+	// load read them without a filter. Only those make it run again: what schedule reads and writes
 	// is its own business.
 	$effect(() => {
-		if (!mounted) return;
+		if (!ready) return;
 		const current = filters;
 		untrack(() => log.schedule(current));
 	});
@@ -207,14 +212,18 @@
 			: $t('audit.count', { n: log.total })
 	);
 
-	onMount(() => {
-		mounted = true;
-		void log.loadActions();
-		// Only suggestions: a failure leaves the field as it was, free text.
-		getUsers()
-			.then((users) => (usernames = users.map((u) => u.username).sort((a, b) => a.localeCompare(b))))
-			.catch(() => {});
-	});
+	// What the page's load read ($lib/pages/audit): the newest entries without a filter, the
+	// actions and the usernames, shown before the page is drawn, and replaced by a fresh read when
+	// the load gave the last visit's.
+	followPage(
+		() => data,
+		(snapshot: AuditSnapshot) => {
+			log.apply(snapshot);
+			// Only suggestions: a failure leaves the field as it was, free text.
+			if (snapshot.usernames.ok) usernames = snapshot.usernames.value;
+			ready = true;
+		}
+	);
 
 	onDestroy(() => log.dispose());
 
@@ -293,7 +302,8 @@
 		retrying={log.loading}
 	>
 		{#snippet skeleton()}
-			<!-- The first load (ADR-0430): a day of the timeline, its entries in their places. -->
+			<!-- The tab's first page, while its load takes a while (ADR-0469): a day of the timeline,
+			     its entries in their places. -->
 			<div class="card">
 				<Skeleton size="eyebrow" class="w-28 py-1.5 mb-2" />
 				<div class="ml-1.5 border-l border-border">

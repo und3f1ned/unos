@@ -16,6 +16,9 @@ import { user } from '$lib/stores/auth';
 
 type Entry = { session: number; areas: readonly string[]; mark: number; value: unknown };
 
+/** The area of a reader whose snapshot every change changes: the Audit Log, which records them all. */
+export const EVERY_AREA = '*';
+
 const entries = new Map<string, Entry>();
 // The changes of this tab: their count, and the count at the last change of each area.
 let changes = 0;
@@ -33,7 +36,7 @@ export function changeMark(): number {
 
 /** Whether no change of `areas` came after `mark` (a read's changeMark when it started). */
 export function upToDate(areas: readonly string[], mark: number): boolean {
-	return areas.every((area) => (changedAt.get(area) ?? 0) <= mark);
+	return areas.every((area) => (area === EVERY_AREA ? changes : (changedAt.get(area) ?? 0)) <= mark);
 }
 
 /** The value kept under `key` for this session, with the mark of its read; undefined when there is none. */
@@ -61,7 +64,7 @@ export function changed(area: string): void {
 	changes += 1;
 	changedAt.set(area, changes);
 	for (const [key, entry] of entries) {
-		if (entry.areas.includes(area)) entries.delete(key);
+		if (entry.areas.includes(area) || entry.areas.includes(EVERY_AREA)) entries.delete(key);
 	}
 }
 

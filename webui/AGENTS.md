@@ -167,14 +167,15 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `tests/loading.spec.ts` checks the main pages with the API slowed: no "Loading", no empty frame,
   the navigation drawn once, a layout shift below 0.05; `tests/page-loads.spec.ts` the navigations.
 
-### Page loads: the recipe for a page (Dashboard, Storage and Shares are done)
+### Page loads: the recipe for a page (Dashboard, Storage, Shares, Users, Audit Log and Account are done)
 
 1. **The reader**, `src/lib/pages/<page>.ts`: the page's API reads through `$lib/api`, as one
    snapshot type that holds each read's value or its failure (`settle` of `$lib/pages/read`, the
    server's message), never a throw; in the order and with the role checks the page had (an
    administrator's API only for an administrator). Export a `PageReader`: `key` (the page, and
    what it reads by its URL: `files:<folder>`), `areas` (the first part of every API path it reads,
-   `storage` of `/storage/pools`, and of what those answers show: Shares lists pools and users),
+   `storage` of `/storage/pools`, and of what those answers show: Shares lists pools and users;
+   `EVERY_AREA` of `$lib/pages/cache` for what every change changes, the Audit Log),
    `adminOnly`, `cache: false` when the snapshot holds a secret (a new token, a TOTP secret,
    recovery codes), and `read(account)`. A read that is slow and not the page's point is a
    `later(request, fallback)` part, which the page shows waiting in its place (the dashboard's

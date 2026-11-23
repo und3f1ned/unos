@@ -1,24 +1,33 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy } from 'svelte';
+	import type { ApiToken } from '$lib/api/auth';
 	import {
 		ApiTokensCard,
 		LoginHistoryCard,
 		PasswordCard,
-		TwoFactor,
 		TwoFactorCard,
 		TwoFactorDialogs
 	} from '$lib/components/account';
+	import type { TwoFactor } from '$lib/components/account/twoFactor.svelte';
 	import { t } from '$lib/i18n';
+	import type { Settled } from '$lib/pages/read';
 
 	// The Account page's Sign-in and security (ADR-0431): the account's own password, two-factor
 	// authentication with its recovery codes and security keys, API tokens and sign-in history.
-	// The two-factor status and its setup are shared by the card and its dialogs, which the tab
-	// draws after its content.
-	const twoFactor = new TwoFactor();
+	// The page holds what the tab shows (its load reads it), so that the tab is drawn again at once.
 
-	onMount(() => {
-		void twoFactor.loadStatus();
-	});
+	type Props = {
+		/** The two-factor status and its setup, shared by the card and its dialogs. */
+		twoFactor: TwoFactor;
+		/** The API tokens as last read; null until the page has read them. */
+		tokens: Settled<ApiToken[]> | null;
+		ontokens: (read: Settled<ApiToken[]>) => void;
+	};
+
+	let { twoFactor, tokens, ontokens }: Props = $props();
+
+	// The two-factor setup's secret goes with the tab, as it did when the tab held its state.
+	onDestroy(() => twoFactor.closeDialogs());
 </script>
 
 <div class="space-y-4">
@@ -28,7 +37,7 @@
 
 	<TwoFactorCard {twoFactor} />
 
-	<ApiTokensCard />
+	<ApiTokensCard read={tokens} onchange={ontokens} />
 
 	<!-- The account's own attempts, also an administrator's: every account's are in the Audit Log. -->
 	<LoginHistoryCard />
