@@ -68,12 +68,14 @@ write counts; its SD card is wiped and unused (ADR-0214, ADR-0470).
   how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
   (ADR-0309), the shares check makes entries of other owners and modes on the pool over ssh, signs
   in as its user and turns guest access on for its share (ADR-0340), the scrub check scrubs the pool
-  (ADR-0473), the smart check gives the pool's disk its shortest idle timeout, waits for it to sleep
+  (ADR-0481), the smart check gives the pool's disk its shortest idle timeout, waits for it to sleep
   and sets the timeout of UNOS's rule again, or Off, which leaves the disk no standby timer until
   its next power cycle (it skips that when `/etc/hdparm.conf` sets one, ADR-0378), the balance check
-  balances, pauses, resumes and cancels chunks of the pool that it leaves about 12% full, as many as
-  a trial balance finds the disk needs (ADR-0379, ADR-0473),
+  balances, pauses right after the start, resumes and cancels 24 chunks of the pool that it leaves
+  about 12% full (ADR-0379, ADR-0481),
   the offsite check sets up an off-device copy to a folder of the pool and forgets it (ADR-0337),
+  skipped where no pool is off the disks of the root filesystem and of the supervisor's data volume
+  (ADR-0481),
   the restore check restores a backup it made moments before, twice, which puts the device's
   database back as it was then (ADR-0341), and the hardware check only reads (ADR-0382). They change
   the device for their duration, so they run on the owner's request;

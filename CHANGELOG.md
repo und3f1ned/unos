@@ -2061,11 +2061,18 @@ manager, encrypted backup uploads, health checks, CI checks).
   references with it. A reference that an earlier removal took is passed over; the image is not
   found only when nothing was removed, also when another removed it after UNOS read it.
 - `scripts/dev/scenario.sh scrub` and `balance` hold on a fast disk such as the BPI-F3's NVMe pool
-  (ADR-0473). The scrub step takes the progress it can see: its looks after btrfs recorded that
-  scrub, and the bytes scrubbed by its end's rate and duration. A scrub seen running many times
-  must still move. The balance check runs a trial balance that measures the seconds a chunk, an
-  API call and a device call take, then gets enough chunks to keep its balance running through its
-  steps (12 on a hard disk, about 55 on the F3). Its refusals must say that the balance runs.
+  (ADR-0481, after ADR-0473). The scrub step takes the progress it can see: its looks after btrfs
+  recorded that scrub, and the bytes scrubbed by its end's rate and duration. A scrub seen running
+  many times must still move. The balance check no longer races its balance's end: it pauses the
+  balance with the request right after its start, checks the paused balance's chunks and the
+  second balance's refusal, then resumes it, with the scrub's refusal right after the resume, the
+  time left and the cancel. A step whose request the balance's end beat is a SKIP that says so,
+  and btrfs's output in the host's unit shows that the start and the resume ran there. Its 24
+  chunks need 48 GiB free, without the trial balance of before.
+- `scripts/dev/scenario.sh offsite` is a SKIP, before it makes anything, on a board whose pool's
+  disk also holds the root filesystem or the supervisor's data volume, such as the BPI-F3 with
+  Docker's data root on its pool: UNOS refuses a copy's folder there (ADR-0481). `scenario.sh all`
+  can pass on such a board.
 - `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
   bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip
   of 40 C: it measures the margin in the zones that slow a processor, and warns of every zone 5 C

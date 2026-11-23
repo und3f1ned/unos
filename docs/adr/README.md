@@ -528,8 +528,9 @@ and this index, and `make check-fast` runs it.
 | [0372](0372-the-bpi-f3-keeps-its-pool-docker-data-root-and-home-assistant-and-frigate-data-on-its-two-ssds.md) | The BPI-F3 keeps its pool, Docker's data root and the data of its Home Assistant and Frigate stack on its two SSDs | accepted | 2026-11-13 |
 | [0394](0394-the-smart-check-skips-the-disk-s-sleep-while-apps-containers-use-the-pool.md) | The smart check skips the disk's sleep while the containers of apps use it, and names them | accepted | 2026-11-17 |
 | [0470](0470-the-dev-device-runs-from-its-emmc-and-its-sd-card-is-wiped.md) | The dev device runs from its eMMC, which also holds Docker's data root, and its SD card is wiped | accepted | 2026-11-23 |
-| [0473](0473-the-scrub-and-balance-checks-prove-what-a-fast-disk-lets-them-see-and-size-the-balance-by-a-trial.md) | The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial | accepted | 2026-11-23 |
+| [0473](0473-the-scrub-and-balance-checks-prove-what-a-fast-disk-lets-them-see-and-size-the-balance-by-a-trial.md) | The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial | superseded by [0481](0481-the-balance-check-pauses-its-balance-right-after-its-start-and-the-offsite-check-needs-a-pool-off-the-system-disk.md) | 2026-11-23 |
 | [0477](0477-the-dev-scripts-share-one-ssh-connection-per-device-through-a-private-socket.md) | The dev scripts share one SSH connection per device, through a private socket that ssh.sh --close stops | accepted | 2026-11-23 |
+| [0481](0481-the-balance-check-pauses-its-balance-right-after-its-start-and-the-offsite-check-needs-a-pool-off-the-system-disk.md) | The balance check pauses its balance right after its start, and the offsite check needs a pool off the system disk | accepted | 2026-11-23 |
 
 ## Testing
 
