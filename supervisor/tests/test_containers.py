@@ -136,6 +136,7 @@ class TestDockerModule:
             "Ports": [{"IP": "0.0.0.0", "PrivatePort": 80, "PublicPort": 8080, "Type": "tcp"}],
         }]
         mock_client.api.inspect_container.return_value = {"Id": "abc123"}
+        mock_client.api.images.return_value = [{"Id": "sha256:def456", "RepoTags": ["nginx:latest"]}]
         return mock_client
 
     @pytest.fixture
@@ -457,9 +458,9 @@ def _jellyfin(pool: Path) -> MagicMock:
 
 def answer_docker_lists(client: MagicMock, by_name: dict[str, MagicMock]) -> None:
     """Let ``client.api`` answer Docker's list (GET /containers/json; its filter id is an ID or a
-    prefix of one, as Docker's index of IDs looks it up) and inspect for the containers of
-    ``by_name``, as their mocks describe them at the time of the request; the inspect finds a
-    container through ``client.containers.get``."""
+    prefix of one, as Docker's index of IDs looks it up), inspect and list of images (their tags)
+    for the containers of ``by_name``, as their mocks describe them at the time of the request; the
+    inspect finds a container through ``client.containers.get``."""
 
     def summary(c: MagicMock) -> dict:
         return {"Id": c.id, "Names": [f"/{c.name}"], "Image": c.image.tags[0] if c.image.tags else c.image.id,
@@ -474,6 +475,8 @@ def answer_docker_lists(client: MagicMock, by_name: dict[str, MagicMock]) -> Non
 
     client.api.containers.side_effect = containers
     client.api.inspect_container.side_effect = lambda name: {"Id": client.containers.get(name).id}
+    client.api.images.side_effect = lambda **kwargs: [
+        {"Id": c.image.id, "RepoTags": list(c.image.tags)} for c in list(by_name.values())]
 
 
 @pytest.fixture

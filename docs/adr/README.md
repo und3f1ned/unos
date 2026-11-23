@@ -75,7 +75,7 @@ and this index, and `make check-fast` runs it.
 | [0440](0440-unos-takes-no-plugins-and-backends-channels-and-sign-in-providers-are-added-in-its-own-code.md) | UNOS takes no plugins, and storage backends, notification channels and sign-in providers are added in its own code | accepted | 2026-11-21 |
 | [0444](0444-changes-to-existing-tables-ship-as-alembic-migrations-which-the-supervisor-applies-at-its-start.md) | Changes to existing tables ship as Alembic migrations, which the supervisor applies at its start | accepted | 2026-11-21 |
 | [0450](0450-unos-runs-on-one-host-and-has-no-high-availability.md) | UNOS runs on one host and has no high availability | accepted | 2026-11-22 |
-| [0468](0468-the-pages-slowest-reads-ask-docker-once-and-run-the-host-reads-that-do-not-depend-on-each-other-at-once.md) | The pages' slowest reads ask Docker once and run the host reads that do not depend on each other at once | accepted | 2026-11-23 |
+| [0468](0468-the-pages-slowest-reads-ask-docker-once-and-run-the-host-reads-that-do-not-depend-on-each-other-at-once.md) | The pages' slowest reads ask Docker for its lists and run the host reads that do not depend on each other at once | accepted | 2026-11-23 |
 
 ## Security
 

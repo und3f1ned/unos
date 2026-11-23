@@ -54,8 +54,9 @@ class ContainerInfo(BaseModel):
     id: str = Field(description="Docker's short id of the container: the first 12 hex digits of its id.")
     name: str = Field(description="The container's name.")
     image: str = Field(
-        description="The image reference the container was created from, as docker ps shows it, while it still "
-                    "names the container's image; else the image's short id (sha256: and 12 hex digits)."
+        description="The first tag of the container's image that is no digest form (name@sha256:...); without one, "
+                    "the image reference the container was created from, as docker ps shows it, while it still names "
+                    "the container's image; else the image's short id (sha256: and 12 hex digits)."
     )
     status: str = Field(
         description="Docker's status of the container: created, running, paused, restarting, removing, exited or dead."
