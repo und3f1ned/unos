@@ -52,7 +52,7 @@ async def get_standby(_=Depends(require_admin)) -> StandbyStatus:
     """Each condition of ADR-0471 with what this host shows, the card that is or would be the standby,
     this boot's choice, the copy's generation, the last sync and the standby's problems. Reads only.
     \f
-    ADR-0471, ADR-0476.
+    ADR-0471, ADR-0481.
     """
     return await service.status()
 
@@ -65,7 +65,7 @@ async def arm(body: Confirmed, request: Request, user=Depends(require_admin)) ->
     lines, the chooser and the units of the eMMC's system, then the first generation. Audited as
     standby_armed.
     \f
-    ADR-0471, ADR-0476.
+    ADR-0471, ADR-0481.
     """
     return await service.arm(body.model, dry_run=body.dry_run, request=request, username=user.username)
 
@@ -87,7 +87,7 @@ async def sync(body: DryRun, request: Request, user=Depends(require_admin)) -> S
     """Compare the eMMC's system with the card's copy and, when something changed, write a new generation
     and make it current. Audited as standby_synced.
     \f
-    ADR-0471, ADR-0476.
+    ADR-0471, ADR-0481.
     """
     return await service.sync_now(dry_run=body.dry_run, request=request, username=user.username)
 
@@ -97,7 +97,7 @@ async def sync(body: DryRun, request: Request, user=Depends(require_admin)) -> S
 async def settings(body: Settings, request: Request, user=Depends(require_admin)) -> None:
     """Keep the daily sync's time in the card's state.json. Audited as standby_settings_changed when it changed.
     \f
-    ADR-0471, ADR-0476.
+    ADR-0471, ADR-0481.
     """
     await service.set_sync_time(body.sync_time, request=request, username=user.username)
 
@@ -108,7 +108,7 @@ async def drill(body: Drill, request: Request, user=Depends(require_admin)) -> S
     """Write the drill's file on the card's FAT partition and reboot the host a moment after the answer.
     Audited as standby_drill.
     \f
-    ADR-0471, ADR-0476.
+    ADR-0471, ADR-0481.
     """
     return await service.drill(body.kind, dry_run=body.dry_run, request=request, username=user.username)
 

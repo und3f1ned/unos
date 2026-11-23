@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0476: The SD standby boots through a chooser checked against the eMMC's boot script, syncs through a unit it can kill, and dry-runs every host action
+# ADR-0481: The SD standby boots through a chooser checked against the eMMC's boot script, syncs through a unit it can kill, and dry-runs every host action
 
 ## Context
 

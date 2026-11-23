@@ -71,7 +71,7 @@ EXCLUDES = (
     f"{UNIT_DIR}/multi-user.target.wants/{STANDBY_UNIT}",
 )
 # State that the host rewrites on its own while it idles and that the card's system makes anew
-# (ADR-0476): without it, no sync would ever find the root unchanged.
+# (ADR-0481): without it, no sync would ever find the root unchanged.
 VOLATILE = (
     "/var/lib/systemd/timesync", "/var/lib/systemd/random-seed", "/var/lib/systemd/timers", "/var/lib/logrotate",
     "/var/lib/NetworkManager/timestamps",

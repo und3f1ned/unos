@@ -120,7 +120,7 @@ it with `mmc extcsd read` once a day, or as of boot from sysfs (ADR-0471, ADR-04
 
 **SD standby**: An SD card that holds a copy of an eMMC system disk's system and boots it by itself
 when the eMMC fails: its own loader, a FAT partition `UNOS-BOOT` with the chooser and the boot
-folders, and a btrfs partition `UNOS-STANDBY` with the generations (ADR-0471, ADR-0476). "Set up"
+folders, and a btrfs partition `UNOS-STANDBY` with the generations (ADR-0471, ADR-0481). "Set up"
 makes a free card one, "Remove" wipes it. Avoid: backup (it sits in the same device), spare disk
 (a card that serves the storage checks), failover card.
 
