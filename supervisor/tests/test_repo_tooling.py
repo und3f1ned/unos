@@ -1823,7 +1823,7 @@ def test_ci_jobs_run_the_targets_of_make_check():
     assert "lint test frontend" in MAKEFILE.read_text().split("\ncheck:", 1)[1].split("\n", 2)[1]
 
 
-@pytest.mark.parametrize("name", ["test.yml", "audit.yml"])
+@pytest.mark.parametrize("name", ["test.yml", "audit.yml", "btrfs.yml"])
 def test_workflows_read_only_with_timeouts(name):
     workflow = _workflow(name)
 
@@ -1898,6 +1898,93 @@ def test_the_audit_workflow_runs_make_setup_on_a_fresh_runner():
     for step in job["steps"]:
         assert not {"if", "continue-on-error", "env", "shell", "working-directory"} & set(step), step
     assert make("-n", "setup").stdout.splitlines() == ["scripts/setup.sh"]
+
+
+# The paths whose change in a pull request runs the workflow Storage on btrfs (ADR-0464): the storage
+# code, the snapshot API and the host boundary that its flow runs through, and the job's own files,
+# the check's modules of scripts/dev and the supervisor's packages, which the job installs, included.
+BTRFS_PATHS = [
+    "supervisor/src/storage/**",
+    "supervisor/src/snapshots/**",
+    "supervisor/src/host.py",
+    ".github/workflows/btrfs.yml",
+    "scripts/ci/**",
+    "scripts/dev/scenario.py",
+    "scripts/dev/api.py",
+    "supervisor/requirements.txt",
+]
+BTRFS_SCRIPT = REPO_ROOT / "scripts" / "ci" / "btrfs-loop.sh"
+
+
+def test_the_btrfs_workflow_runs_on_pull_requests_that_change_storage_and_on_demand():
+    """Every pull request, whatever its base, that changes a file below supervisor/src/storage or another
+    path of BTRFS_PATHS, and workflow_dispatch; no push, no schedule (ADR-0464)."""
+    trigger = _on(_workflow("btrfs.yml"))
+
+    assert set(trigger) == {"pull_request", "workflow_dispatch"}
+    assert trigger["workflow_dispatch"] in (None, {})
+    # Only paths: no branches (a pull request against a batch branch runs it too), no paths-ignore and
+    # no types, which would leave out a change of storage.
+    assert trigger["pull_request"] == {"paths": BTRFS_PATHS}
+    # Each pattern names files of the repository (a renamed one would never trigger it): ** as GitHub
+    # reads it, any file below the folder.
+    for pattern in BTRFS_PATHS:
+        found = REPO_ROOT.glob(pattern.replace("**", "**/*")) if pattern.endswith("**") else [REPO_ROOT / pattern]
+        assert [path for path in found if path.is_file()], pattern
+    # The job's own files: the workflow, its scripts and the modules of scripts/dev that the check imports.
+    imported = set(re.findall(r"^import (scenario|api)\b", (REPO_ROOT / "scripts" / "ci" / "btrfs_loop.py").read_text(),
+                              re.M))
+    assert imported == {"scenario"}
+    assert re.search(r"^import api as relay\b", (REPO_ROOT / "scripts" / "dev" / "scenario.py").read_text(), re.M)
+    assert {"scripts/dev/scenario.py", "scripts/dev/api.py"} <= set(BTRFS_PATHS)
+    # The packages that the job installs.
+    assert "-r supervisor/requirements.txt" in _workflow("btrfs.yml")["jobs"]["btrfs"]["steps"][3]["run"]
+    assert "supervisor/requirements.txt" in BTRFS_PATHS
+
+
+def test_no_step_of_the_btrfs_workflow_continues_on_error():
+    """A failed step fails the job and the run (ADR-0190, ADR-0462): no continue-on-error, no condition that
+    runs or skips a step, and no command that turns a failure into a pass; the script stops at its first
+    failure and exits with the check's status."""
+    text = (WORKFLOWS / "btrfs.yml").read_text()
+    jobs = _workflow("btrfs.yml")["jobs"]
+    script = BTRFS_SCRIPT.read_text()
+
+    assert "continue-on-error" not in text
+    assert list(jobs) == ["btrfs"]
+    for job in jobs.values():
+        assert not {"continue-on-error", "if", "needs", "strategy", "defaults"} & set(job)
+        for step in job["steps"]:
+            assert not {"continue-on-error", "if", "shell"} & set(step), step
+            assert not re.search(r"\|\|\s*(true|:)|\bset\s+\+e\b|\bexit\s+0\b", step.get("run", "")), step
+    assert "set -euo pipefail" in script.splitlines()[:40]
+    assert not re.search(r"\|\|\s*(true|:)\s*$|\bset\s+\+e\b", script, re.M)
+
+
+def test_the_btrfs_job_runs_its_script_as_root_on_a_fresh_runner_without_secrets():
+    """One job on ubuntu-latest: the checkout without the token, Python 3.11 with the supervisor's runtime
+    packages as wheels, btrfs-progs from Ubuntu, then the script as root, with the variables that name a
+    GitHub-hosted runner, which it requires, and setup-python's LD_LIBRARY_PATH, which sudo drops
+    (ADR-0464). No secret and no token reaches it."""
+    text = (WORKFLOWS / "btrfs.yml").read_text()
+    workflow = _workflow("btrfs.yml")
+    job = workflow["jobs"]["btrfs"]
+    checkout, python, progs, packages, check = job["steps"]
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert job["runs-on"] == "ubuntu-latest" and 0 < job["timeout-minutes"] <= 30
+    assert checkout["uses"].startswith("actions/checkout@") and checkout["with"] == {"persist-credentials": False}
+    assert python["uses"].startswith("actions/setup-python@")
+    assert python["with"] == {"python-version": "3.11", "cache": "pip",
+                              "cache-dependency-path": "supervisor/requirements.txt"}
+    assert progs["run"] == "sudo apt-get update && sudo apt-get install -y --no-install-recommends btrfs-progs"
+    assert packages["run"] == "pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements.txt"
+    assert check["run"] == ('sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" '
+                            'RUNNER_TEMP="$RUNNER_TEMP" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" '
+                            'scripts/ci/btrfs-loop.sh "$pythonLocation/bin/python"')
+    assert not {"env", "with", "uses", "working-directory"} & set(check)
+    assert not re.search(r"secrets\.|github\.token|GITHUB_TOKEN", text)
+    assert BTRFS_SCRIPT.stat().st_mode & 0o111
 
 
 # The Ubuntu of GitHub's ubuntu-latest, on which the bootstrap job runs make setup: 26.04 since

@@ -5817,7 +5817,7 @@ class TestContinuousIntegration:
     def test_every_action_is_pinned_to_a_commit_with_the_version_of_its_release(self):
         # A tag such as v7 can be moved to other code by whoever controls the action's repository,
         # and the next run takes it with the job's token. Every workflow, not only test.yml.
-        assert [path.name for path in WORKFLOWS] == ["audit.yml", "release.yml", "test.yml"]
+        assert [path.name for path in WORKFLOWS] == ["audit.yml", "btrfs.yml", "release.yml", "test.yml"]
         for path in WORKFLOWS:
             text = path.read_text()
             jobs = yaml.safe_load(text)["jobs"]
