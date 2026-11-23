@@ -1941,6 +1941,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- Mosquitto and Prometheus start on a fresh install (ADR-0476): the catalog bound an empty folder
+  over the folder of the configuration file their images ship (`/mosquitto/config/mosquitto.conf`,
+  `/etc/prometheus/prometheus.yml`), so they found none and restarted in a loop (Mosquitto wrote
+  about 1 MiB in 10 s to the BPI-W3's system disk). Each is now bound as that file, read-only,
+  which the install, and a start, write on the pool when it is missing (`content` of a template's
+  file volume, also in the catalog API); an existing file is kept. Prometheus's is the image's
+  example. Mosquitto's sets nothing, so it listens only inside its container until you add a
+  listener and its authentication: the image's own file would open port 1883 to anonymous
+  clients. An app installed before keeps its folder bind until its next update; install
+  Mosquitto again.
 - `install.sh` starts the `unos` unit as it enables it (`systemctl enable --now`): it stayed
   inactive until the first reboot, so `systemctl stop unos` did nothing and the first shutdown
   ran no `docker compose down`. The manual installation of `docs/INSTALL.md` does the same.
