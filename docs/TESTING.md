@@ -361,7 +361,13 @@ another filesystem answers differently, as ext4's EPERM in `tests/test_upload_st
 
 `tests/test_smbconf_testparm.py` checks the smb.conf that UNOS renders (both
 `[global]` variants, a share of every kind, many users and a long comment)
-with the real `testparm`, and is skipped where `testparm` is not installed.
+with the real `testparm`, the first one on `PATH`, and is skipped where `testparm` is not
+installed, but in CI (ADR-0463). CI's Unit Tests job installs `samba-common-bin` from the
+runner's Ubuntu (Samba 4.23.6 on Ubuntu 26.04, newer than the dev device's 4.22) before
+`make test`, and where `CI=true`, as GitHub sets it, a missing `testparm` fails every test of the
+file instead of skipping it. `make test` runs there with `PYTEST_ARGS=-rfEs`, so that its summary
+lists every failure and error, as pytest's default does, and every skip with its place and reason;
+it runs also when the install of Samba failed, and the job fails.
 `scripts/dev/bin/testparm` runs the dev device's testparm on a file sent over standard input,
 read-only, so the test can use Samba's real parser from a Mac:
 
@@ -605,7 +611,9 @@ request against `main`; a new push to a pull request cancels the run for the pre
    `tests/test_feature_list.py` can compare the ledger with the one at the merge base with
    `origin/main` (it skips while main has no `feature-list.json`), then
    `pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt` on
-   Python 3.11 and `make test`, with its coverage floor ([Coverage](#coverage)).
+   Python 3.11, Samba's `testparm` (`samba-common-bin` with apt, `/run/samba` and
+   `testparm --version`, [Samba's testparm](#sambas-testparm)) and `make test` with
+   `PYTEST_ARGS=-rfEs`, with its coverage floor ([Coverage](#coverage)).
 2. **Lint and Audit (Python)** (`lint`):
    - `pip install --require-hashes --only-binary=:all: -r .github/lint-requirements.txt`: ruff,
      mypy, shellcheck and pip-audit, and every package they depend on, with their hashes

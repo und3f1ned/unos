@@ -126,8 +126,9 @@ The SMB flows of users (allow, turn on, password changes) are in `src/auth/route
   does not know fails the test. Shared fakes live in test modules that other tests import.
 - Linux-only tests skip elsewhere with their reason (`os.O_PATH`, `/proc/self/fdinfo`, POSIX ACLs,
   `O_TMPFILE`); CI's Unit Tests job and `scripts/dev/linux-tests.sh` run them (ADR-0462).
-  `tests/test_smbconf_testparm.py` needs `scripts/dev/bin/testparm` on PATH (the device-checks
-  skill).
+  `tests/test_smbconf_testparm.py` runs the first testparm on PATH: in CI the runner's own, and
+  without one it fails there instead of skipping (ADR-0463); on the workstation
+  `scripts/dev/bin/testparm` (the device-checks skill).
 - After an edit of a file that tests read, run those tests: `test_deploy_scripts.py` (deploy/,
   `docs/INSTALL.md`, `docs/TESTING.md`, `scripts/test-cycle.sh`, `scripts/audit-python.sh`, the
   workflows, Dockerfiles, package files), `test_emergency.py` (`deploy/reset-admin.sh`,

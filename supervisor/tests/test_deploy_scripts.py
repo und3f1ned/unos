@@ -5863,6 +5863,29 @@ class TestContinuousIntegration:
                              "docker/setup-buildx-action"}
         assert {action: len(found) for action, found in pins.items()} == {action: 1 for action in pins}
 
+    @pytest.mark.parametrize("ci, status, outcome", [("true", 1, "failed"), (None, 0, "skipped")])
+    def test_the_testparm_check_fails_in_ci_without_testparm(self, tmp_path, ci, status, outcome):
+        # The Unit Tests job installs samba-common-bin (ADR-0463), and GitHub sets CI=true: a lost
+        # install fails every test of tests/test_smbconf_testparm.py there instead of skipping it.
+        # Elsewhere, a workstation without testparm, the check still skips. PATH is an empty folder.
+        env = {key: value for key, value in os.environ.items() if key not in ("CI", "PYTEST_ADDOPTS", "PYTEST_PLUGINS")}
+        env.update(PATH=str(tmp_path), PYTHONDONTWRITEBYTECODE="1", **({"CI": ci} if ci else {}))
+
+        result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
+                                 "tests/test_smbconf_testparm.py"],
+                                cwd=REPO_ROOT / "supervisor", capture_output=True, text=True, timeout=300, env=env)
+
+        output = result.stdout + result.stderr
+        summary = [line for line in result.stdout.splitlines() if re.search(r"\d+ \w+.* in [\d.]+s", line)]
+        counts = {kind: int(number) for number, kind in
+                  re.findall(r"(\d+) (passed|failed|skipped|errors?|xfailed|xpassed)\b", summary[-1] if summary else "")}
+        assert result.returncode == status, output[-4000:]
+        assert set(counts) == {outcome} and counts[outcome] >= 20, output[-4000:]
+        if ci:
+            assert "testparm is not on PATH" in output and "ADR-0463" in output, output[-4000:]
+        else:
+            assert "testparm is not installed" in output, output[-4000:]
+
     def test_every_check_fails_the_run(self):
         # Hard gates, also while a check fails (an audit after a new advisory,
         # say): no job or step may turn its failure into a pass.

@@ -25,7 +25,7 @@ concurrency:
 # workstation (ADR-0216), so a local run and CI check the same things. docs/TESTING.md describes
 # them; supervisor/tests/test_deploy_scripts.py and test_repo_tooling.py keep them in step.
 jobs:
-  # The backend tests: make test (pytest over supervisor/tests).
+  # The backend tests: make test (pytest over supervisor/tests), with Samba's testparm (ADR-0463).
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -50,9 +50,27 @@ jobs:
             supervisor/requirements-dev.txt
 
       - name: Install dependencies
+        id: deps
         run: 'pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements-dev.txt'
 
+      # Samba's testparm, from the runner's Ubuntu, for tests/test_smbconf_testparm.py, which fails
+      # rather than skips without it where GitHub sets CI=true (ADR-0463). /run/samba is the cache
+      # directory of the rendered [global] (ADR-0277) and the lock and pid directory of Ubuntu's
+      # Samba: testparm fails without it, and the runner's user cannot make it. The version goes
+      # into the log. A failed install fails the job, and the tests still run.
+      - name: Install Samba's testparm
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends samba-common-bin
+          sudo mkdir -p -m 0755 /run/samba
+          testparm --version
+
+      # -rfEs: the summary lists every failure and error, as pytest's default -rfE does, and every
+      # skip with its place and reason.
       - name: Run tests
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        env:
+          PYTEST_ARGS: -rfEs
         run: make test
 
   # make lint: ruff with the rules of ruff.toml (pyflakes findings, syntax

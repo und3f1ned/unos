@@ -552,3 +552,4 @@ and this index, and `make check-fast` runs it.
 | [0451](0451-the-audit-workflow-runs-make-setup-weekly-on-a-fresh-runner.md) | The Audit workflow runs make setup weekly on a fresh runner, and its baseline fails the run | accepted | 2026-11-22 |
 | [0461](0461-playwright-is-pinned-exactly-to-a-release-that-downloads-its-browsers-for-the-ubuntu-of-ubuntu-latest.md) | Playwright is pinned exactly, to a release that downloads its browsers for the Ubuntu of ubuntu-latest | accepted | 2026-11-22 |
 | [0462](0462-the-ci-workflow-runs-on-github-again.md) | The CI workflow runs on GitHub again | accepted | 2026-11-22 |
+| [0463](0463-ci-checks-the-rendered-smb-conf-with-the-runners-testparm-and-fails-without-it.md) | CI checks the rendered smb.conf with the runner's own testparm, and fails without it | accepted | 2026-11-22 |
