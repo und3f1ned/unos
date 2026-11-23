@@ -1608,8 +1608,8 @@ def get_health_overview(_: dict = Depends(verify_token)):
     responses=answer(model_example(system_disk.SystemDiskHealth), (
         "emmc: the eMMC that holds the root filesystem, with its life-time estimates A and B and its pre-EOL state "
         "(from mmc extcsd read, or as of boot from sysfs without mmc-utils), when they were read, the kernel's I/O "
-        "errors of the eMMC and ext4's new errors on the root since the supervisor started, and whether the root's "
-        "superblock is read-only; null with the reason when the system disk is no eMMC. problems: the problems of "
+        "errors of the eMMC and ext4's new errors on the root since the supervisor started, and whether the root is "
+        "read-only; null with the reason when the system disk is no eMMC. problems: the problems of "
         "the system disk that these values show.")),
 )
 async def get_system_disk_health(_: dict = Depends(verify_token)):

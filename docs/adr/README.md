@@ -413,6 +413,7 @@ and this index, and `make check-fast` runs it.
 | [0443](0443-the-in-app-updater-backs-up-and-rolls-back-the-database-safely-and-waits-for-a-release-installer.md) | The in-app updater backs up and rolls back the database through SQLite's backup API, and installs only through a release installer that is not decided yet | superseded by [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | 2026-11-21 |
 | [0471](0471-an-sd-card-standby-takes-over-by-itself-when-the-emmc-or-the-pool-of-the-critical-apps-fails.md) | An SD card standby takes over by itself when the eMMC or the pool of the critical apps fails, and only an administrator returns from it | accepted | 2026-11-23 |
 | [0475](0475-the-emmc-health-monitor-keeps-its-readings-in-ram-and-holds-a-failed-direct-read.md) | The eMMC health monitor finds the root's disk once, keeps its readings in RAM, counts the kernel's I/O lines of the eMMC and holds a failed direct read until a restart | accepted | 2026-11-23 |
+| [0476](0476-the-root-counts-as-read-only-by-mountinfo-the-kernels-log-of-the-boot-or-a-write-probe-after-a-new-ext4-error.md) | The root counts as read-only by mountinfo, the kernel's log of the boot, or a write probe after a new ext4 error | accepted | 2026-11-23 |
 
 ## Web UI
 

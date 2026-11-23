@@ -12,8 +12,10 @@ folder in sysfs. When it is an eMMC (``mmcblk<N>`` whose ``device/type`` is ``MM
 - at each pass (``monitor_pass``, every 300 s in ``system_disk_loop``, beside the RAID monitor) the
   kernel's I/O errors of the eMMC since the supervisor started (``journalctl --dmesg``), ext4's
   errors on the root since then (``errors_count`` against its value at the first read) and whether
-  the root's superblock is read-only (the superblock options in /proc/1/mountinfo, which a device
-  check's read-only mount namespace, ADR-0221, does not change);
+  the root is read-only: the superblock options in /proc/1/mountinfo, which a device check's
+  read-only mount namespace, ADR-0221, does not change, or, since a kernel such as the BPI-W3's 6.1
+  leaves them rw when ext4 takes the root read-only after an error, the kernel's log of the boot and,
+  after a new ext4 error, a write probe (ADR-0476);
 - while I/O errors of the eMMC were logged, a direct read (``O_DIRECT``) of the root partition's
   first MiB tells whether it still reads. Once it failed it is not read again: the failure stays
   until the supervisor restarts.
@@ -39,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import problems
 from .. import host
+from ..config import get_settings
 from ..times import utc_now, utc_text
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,19 @@ KILL_AFTER = 5
 TIMED_OUT = 124
 NOT_FOUND = 127
 SECTOR = 512
+# The probe of a root that may be read-only (ADR-0476): a tiny file made and removed in a folder of UNOS on
+# the host's root filesystem, the updater's backups, which deploy/docker-compose.yml mounts into the
+# supervisor at the same path; only after ext4 counted a new error, and never when mountinfo or the
+# kernel's log already tell.
+PROBE_DIR = get_settings().update_backup_dir
+_PROBE_SCRIPT = (
+    '[ "$(stat -L -c %D -- "$1")" = "$2" ] || { echo "$1 is not on the root filesystem" >&2; exit 3; }; '
+    'p="$1/.unos-write-probe"; : > "$p" && rm -f -- "$p"'
+)
+# What a create on a root that ext4 took read-only answers: EROFS, or EIO on a kernel that shuts the
+# filesystem down after an error (ADR-0476).
+_UNWRITABLE = ("Read-only file system", "Input/output error")
+STAT = "/proc/stat"
 # The estimates' values (JEDEC eMMC 5.0, EXT_CSD bytes 268 and 269): 0x01 to 0x0A each a tenth of
 # the life used, 0x0B past it; 0x00 not defined, higher values reserved. The pre-EOL state (byte 267):
 # 0x01 normal, 0x02 warning (80% of the reserved blocks used), 0x03 urgent.
@@ -115,7 +131,9 @@ class EmmcHealth(BaseModel):
     ext4_errors: int | None = Field(description=(
         "The errors that ext4 counted on the root since the supervisor started; null for another filesystem or "
         "until they were read."))
-    read_only: bool | None = Field(description="Whether the root's superblock is read-only; null until it was read.")
+    read_only: bool | None = Field(description=(
+        "Whether the root is read-only: its superblock's options say so, or ext4 took it read-only in this boot "
+        "(the kernel's log, or a write probe after a new ext4 error); null until it was read."))
     direct_read_failed: bool = Field(description=(
         "Whether a direct read of the root partition's first MiB failed after I/O errors of the eMMC."))
     checked_at: str | None = Field(description="When the errors were last read, in UTC.")
@@ -152,13 +170,15 @@ class _Root:
     majmin: str
     fstype: str
     source: str
-    read_only: bool
+    read_only: bool  # the superblock's options
+    mount_read_only: bool = False  # the mount's own options
 
 
 @dataclass(frozen=True)
 class _Emmc:
     disk: str  # mmcblk0
     root: str  # mmcblk0p1, or the disk itself
+    majmin: str  # the root's device number, 179:1
     fstype: str
     model: str | None
     size: int
@@ -186,6 +206,15 @@ class _State:
     ext4_errors: int | None = None
     io_errors: int | None = None
     read_only: bool | None = None
+    # ext4 took the root read-only in this boot, by the kernel's log or the probe (ADR-0476): it stays so
+    # until the reboot, whatever mountinfo says.
+    read_only_by_ext4: bool = False
+    # Whether the kernel's log of the boot was looked at; whether ext4's last error was looked for in
+    # this boot; the error count at the last probe, and why that probe could not tell.
+    boot_log_read: bool = False
+    boot_error_read: bool = False
+    ext4_at_probe: int | None = None
+    probe_error: str | None = None
     direct_read_failed: bool = False
     checked_at: str | None = None
     check_error: str | None = None
@@ -221,7 +250,8 @@ def _root_mount(mountinfo: str) -> _Root | None:
         fields, rest = mount.split(), filesystem.split()
         if not separator or len(fields) < 6 or len(rest) < 3 or fields[4] != "/":
             continue
-        found = _Root(majmin=fields[2], fstype=rest[0], source=rest[1], read_only="ro" in rest[2].split(","))
+        found = _Root(majmin=fields[2], fstype=rest[0], source=rest[1], read_only="ro" in rest[2].split(","),
+                      mount_read_only="ro" in fields[5].split(","))
     return found
 
 
@@ -287,7 +317,7 @@ def _identify(state: _State) -> None:
     except Exception:
         model = None
     state.reason = state.detail = state.system_disk = None
-    state.emmc = _Emmc(disk=disk, root=device, fstype=root.fstype, model=model, size=size)
+    state.emmc = _Emmc(disk=disk, root=device, majmin=root.majmin, fstype=root.fstype, model=model, size=size)
 
 
 def _hex(text: str | None) -> int | None:
@@ -374,14 +404,17 @@ def _count_io_errors(state: _State, emmc: _Emmc) -> str | None:
 def _read_errors(state: _State, emmc: _Emmc) -> None:
     """The root's state, ext4's errors and the kernel's I/O errors; a direct read after I/O errors."""
     failures = []
+    mounted_read_only = None
+    mount_read_only = False
     try:
         root = _root_mount(_read(MOUNTINFO))
         if root is None:
             failures.append(f"{MOUNTINFO} names no mount of /")
         else:
-            state.read_only = root.read_only
+            mounted_read_only, mount_read_only = root.read_only, root.mount_read_only
     except Exception as exc:
         failures.append(f"{MOUNTINFO} could not be read: {_why(exc)}")
+    count = None
     if emmc.fstype == "ext4":
         try:
             count = int(_read(f"/sys/fs/ext4/{emmc.root}/errors_count").strip())
@@ -393,6 +426,10 @@ def _read_errors(state: _State, emmc: _Emmc) -> None:
             state.ext4_errors = max(0, count - state.ext4_at_start)
     if failure := _count_io_errors(state, emmc):
         failures.append(failure)
+    if emmc.fstype == "ext4" and not mounted_read_only and not state.read_only_by_ext4:
+        failures.extend(_read_only_by_ext4(state, emmc, count, mount_read_only))
+    if mounted_read_only is not None or state.read_only_by_ext4:
+        state.read_only = bool(mounted_read_only) or state.read_only_by_ext4
     if state.io_errors and not state.direct_read_failed:
         read = _read_directly(emmc)
         if read is False:
@@ -401,6 +438,96 @@ def _read_errors(state: _State, emmc: _Emmc) -> None:
             failures.append(read)
     state.check_error = "; ".join(failures) or None
     state.checked_at = utc_text(utc_now())
+
+
+def _remount_pattern(device: str) -> str:
+    """The kernel's lines of ext4 taking the root read-only, as PCRE2 and Python read it:
+    "EXT4-fs (mmcblk0p1): Remounting filesystem read-only" and
+    "EXT4-fs error (device mmcblk0p1) in ext4_reserve_inode_write:5718: Journal has aborted"."""
+    return rf"EXT4-fs( error)? \((device )?{device}\).*(Remounting filesystem read-only|Journal has aborted)"
+
+
+def _read_only_by_ext4(state: _State, emmc: _Emmc, count: int | None, mount_read_only: bool) -> list[str]:
+    """Whether ext4 took the root read-only in this boot without the superblock's ro in mountinfo, as the
+    BPI-W3's kernel 6.1 does (ADR-0476): the kernel's log of the boot, at the first pass and at each pass
+    after the first new ext4 error; else the probe, once per rise of the error count, and at the first
+    pass when ext4's last error is of this boot. Sets read_only_by_ext4; what could not be read."""
+    failures = []
+    if not state.boot_log_read or state.ext4_errors:
+        pattern = _remount_pattern(emmc.root)
+        cmd = [
+            "timeout", f"--kill-after={KILL_AFTER}", str(JOURNAL_TIMEOUT), "journalctl", "--no-pager", "--quiet",
+            "--dmesg", "--output=cat", f"--grep={pattern}", "--case-sensitive=true",
+        ]
+        try:
+            result = host.run_on_host(cmd, timeout=JOURNAL_TIMEOUT + KILL_AFTER + 5, errors="replace")
+        except (OSError, subprocess.SubprocessError) as exc:
+            failures.append(f"The kernel's log of the boot could not be read: {_why(exc)}")
+        else:
+            if result.ok and any(re.search(pattern, line) for line in result.stdout.split("\n")):
+                state.read_only_by_ext4 = True
+                state.probe_error = None
+                return failures
+            if result.ok or (result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip()):
+                state.boot_log_read = True
+            else:
+                why = result.stderr.strip()[:300] or f"journalctl exited with status {result.returncode}"
+                failures.append(f"The kernel's log of the boot could not be read: {why}")
+    last = state.ext4_at_probe if state.ext4_at_probe is not None else state.ext4_at_start
+    due = count is not None and last is not None and count > last
+    if not state.boot_error_read:
+        state.boot_error_read = True
+        due = due or _ext4_error_in_this_boot(emmc)
+    if due:
+        # One probe per rise: also one that cannot tell is not made again before a further error.
+        state.ext4_at_probe = count
+        if mount_read_only:
+            state.probe_error = "No write probe: / is mounted read-only, so a refused write would tell nothing"
+        else:
+            probe = _probe_write(emmc)
+            if probe is False:
+                state.read_only_by_ext4 = True
+            state.probe_error = probe if isinstance(probe, str) else None
+    if state.probe_error:
+        failures.append(state.probe_error)
+    return failures
+
+
+def _ext4_error_in_this_boot(emmc: _Emmc) -> bool:
+    """Whether ext4's last error on the root is of this boot: its last_error_time (0 for none) not before
+    the boot's time in /proc/stat. False when either cannot be read."""
+    try:
+        last_error = int(_read(f"/sys/fs/ext4/{emmc.root}/last_error_time").strip())
+        boot = next(int(line.split()[1]) for line in _read(STAT).splitlines() if line.startswith("btime "))
+    except Exception:
+        return False
+    return last_error > 0 and last_error >= boot
+
+
+def _linux_dev_hex(majmin: str) -> str:
+    """A device number "179:1" as Linux encodes it in st_dev, in hex as stat -c %D prints it: b301."""
+    major, minor = (int(part) for part in majmin.split(":"))
+    dev = (minor & 0xFF) | ((major & 0xFFF) << 8) | ((minor & ~0xFF) << 12) | ((major & ~0xFFF) << 32)
+    return format(dev, "x")
+
+
+def _probe_write(emmc: _Emmc) -> bool | str:
+    """Whether the root takes a write (blocking): a tiny file made and removed in PROBE_DIR when that
+    folder is on the root. True, False when the create is refused (_UNWRITABLE), or why the probe could
+    not tell."""
+    cmd = ["timeout", f"--kill-after={KILL_AFTER}", str(COMMAND_TIMEOUT), "sh", "-c", _PROBE_SCRIPT, "sh",
+           PROBE_DIR, _linux_dev_hex(emmc.majmin)]
+    try:
+        result = host.run_on_host(cmd, timeout=COMMAND_TIMEOUT + KILL_AFTER + 5, errors="replace")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"The write probe in {PROBE_DIR} could not tell: {_why(exc)}"
+    if result.ok:
+        return True
+    # The create's own refusal: dash's "cannot create <dir>/.unos-write-probe: Read-only file system".
+    if result.returncode != 3 and any(f".unos-write-probe: {text}" in result.stderr for text in _UNWRITABLE):
+        return False
+    why = result.stderr.strip()[:300] or f"exit status {result.returncode}"
+    return f"The write probe in {PROBE_DIR} could not tell: {why}"
 
 
 def _read_directly(emmc: _Emmc) -> bool | str:
@@ -495,11 +622,14 @@ def _found(state: _State) -> dict[str, problems.Problem]:
             add("emmc_worn", "warning", f"The system's eMMC {device} is wearing out", detail, stage=1)
 
     io_errors, ext4_errors = state.io_errors or 0, state.ext4_errors or 0
-    if state.read_only and ext4_errors:
+    # ext4 that took the root read-only in this boot (ADR-0476) made an error of it, also one before the
+    # supervisor's start; a root remounted read-only by hand, without a new error, is no failure.
+    if state.read_only and (ext4_errors or state.read_only_by_ext4):
+        made = (f"ext4 counted {ext4_errors} new error(s) on the root filesystem {root} and made it read-only"
+                if ext4_errors else f"ext4 made the root filesystem {root} read-only after an error in this boot")
         add("system_disk_failed", "error", f"The system disk {device} is failing",
-            f"ext4 counted {ext4_errors} new error(s) on the root filesystem {root} and made it read-only: the host "
-            "and UNOS can no longer save changes. Check the kernel log (System > Logs, Kernel), and replace the eMMC "
-            "if the errors come back after a restart.")
+            f"{made}: the host and UNOS can no longer save changes. Check the kernel log (System > Logs, Kernel), "
+            "and replace the eMMC if the errors come back after a restart.")
     elif state.direct_read_failed:
         add("system_disk_failed", "error", f"The system disk {device} is failing",
             f"The kernel logged {io_errors} I/O error(s) of the eMMC since the supervisor started, and a direct read "
