@@ -13,6 +13,7 @@ This guide provides detailed instructions for installing UNOS on your system.
 7. [Network Discovery](#network-discovery)
 8. [Troubleshooting](#troubleshooting)
 9. [Upgrading](#upgrading)
+10. [Uninstalling](#uninstalling)
 
 ---
 
@@ -996,6 +997,45 @@ Without the systemd unit, run
 
 - `update.sh` backs up the database first; keep backups of your own data too
 - Reload the web interface without the cache after an update (Ctrl+Shift+R)
+
+---
+
+## Uninstalling
+
+```bash
+sudo /opt/unos/deploy/uninstall.sh
+```
+
+This removes UNOS containers and configuration but preserves your storage pools and data.
+
+It also removes the Samba passwords of the SMB accounts that UNOS created
+and, when it removed one, restarts Samba so that open connections end. It
+keeps those host accounts and the group `unos-smb`: files on the pools
+belong to them, and while the accounts exist, a new installation gives its
+SMB accounts other user ids. The script prints how to remove them, and names
+the accounts whose Samba password it could not remove.
+`/etc/samba/smb.conf` stays, and Samba still serves the shares it lists,
+unless `install.sh` kept the file it replaced (`smb.conf.original`), which
+is then restored, with NetBIOS (nmbd) on again. The network discovery
+services avahi-daemon and wsdd2 keep running. If the supervisor replaced an
+existing smb.conf with its own (after a manual installation, for example), it
+kept that file, whose shares it imported, as
+`/etc/samba/smb.conf.unos-import-backup-<UTC time>` (the newest 10 such
+copies), and the script lists them.
+
+It undoes what UNOS's udev rule of the disks' idle timeouts
+(`/etc/udev/rules.d/90-unos-disk-spindown.rules`) set, then removes the rule.
+Each disk it names gets no standby timer until it restarts (`hdparm -S 0`),
+and a disk whose own automatic offline scans UNOS turned off gets them on
+again (`smartctl -o on`, where the host has smartctl). What it could not undo
+(a missing tool, a disk not attached, SMART off on a disk, a command that
+failed) is named at the end, with the command to run. A disk whose scans stay
+off keeps its record: the rule then holds only such records, which do nothing
+at boot, until they are on. The rule's lines other than comments that UNOS did
+not write go with it, and the end shows them. This happens before the script
+removes `/opt/unos`: if the uninstallation stops while it undoes the disks
+(Ctrl-C, a dropped SSH session), the rule is still whole, and running the
+script again finishes it.
 
 ---
 

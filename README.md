@@ -5,297 +5,133 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/und3f1ned/unos/releases"><img src="https://img.shields.io/github/v/release/und3f1ned/unos?style=flat-square&color=blue" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/und3f1ned/unos?style=flat-square" alt="License"></a>
-  <a href="https://github.com/und3f1ned/unos/stargazers"><img src="https://img.shields.io/github/stars/und3f1ned/unos?style=flat-square" alt="Stars"></a>
-  <a href="https://github.com/und3f1ned/unos/issues"><img src="https://img.shields.io/github/issues/und3f1ned/unos?style=flat-square" alt="Issues"></a>
-  <a href="https://github.com/und3f1ned/unos/commits/main"><img src="https://img.shields.io/github/last-commit/und3f1ned/unos?style=flat-square" alt="Last Commit"></a>
+  <a href="https://github.com/und3f1ned/unos/actions/workflows/test.yml"><img src="https://github.com/und3f1ned/unos/actions/workflows/test.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/und3f1ned/unos/releases/latest"><img src="https://github.com/und3f1ned/unos/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+  <a href="https://github.com/und3f1ned/unos/actions/workflows/audit.yml"><img src="https://github.com/und3f1ned/unos/actions/workflows/audit.yml/badge.svg?branch=main" alt="Audit"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue?style=flat-square" alt="License: GPL-3.0-or-later"></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11">
   <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/SvelteKit-FF3E00?style=flat-square&logo=svelte&logoColor=white" alt="SvelteKit">
-  <img src="https://img.shields.io/badge/TailwindCSS-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="TailwindCSS">
+  <img src="https://img.shields.io/badge/SvelteKit-3-FF3E00?style=flat-square&logo=svelte&logoColor=white" alt="SvelteKit 3">
+  <img src="https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4">
   <img src="https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/BTRFS-FF6600?style=flat-square&logo=linux&logoColor=white" alt="BTRFS">
-  <img src="https://img.shields.io/badge/ARM64-supported-green?style=flat-square" alt="ARM64">
-  <img src="https://img.shields.io/badge/ARM64-BPI--W3-green?style=flat-square" alt="BPI-W3">
-  <img src="https://img.shields.io/badge/AMD64-supported-green?style=flat-square" alt="AMD64">
-  <img src="https://img.shields.io/badge/RISCV64-BPI--F3-yellow?style=flat-square" alt="RISCV64">
+  <img src="https://img.shields.io/badge/Btrfs-FF6600?style=flat-square&logo=linux&logoColor=white" alt="Btrfs">
+</p>
+
+<p align="center">
+  <a href="https://github.com/und3f1ned/unos/pkgs/container/unos-supervisor"><img src="https://img.shields.io/badge/GHCR_images-amd64_%7C_arm64_%7C_riscv64-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Images on GHCR: amd64, arm64, riscv64"></a>
+  <img src="https://img.shields.io/badge/tested_on-BPI--W3_(RK3588,_arm64)-green?style=flat-square" alt="Tested on the BPI-W3 (RK3588, arm64)">
+  <img src="https://img.shields.io/badge/tested_on-BPI--F3_(SpacemiT_K1,_riscv64),_partly-yellow?style=flat-square" alt="Partly tested on the BPI-F3 (SpacemiT K1, riscv64)">
 </p>
 
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#documentation">Documentation</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#contributing">Contributing</a>
+  <a href="#development">Development</a>
 </p>
 
 ---
 
-## Overview
-
-UNOS turns any Debian or Ubuntu machine into a full-featured NAS server with a modern web interface. It installs on top of your existing Linux system as a set of Docker containers — no need to replace your OS or reflash your device. Built with FastAPI and SvelteKit, UNOS provides real-time monitoring, containerized app deployment, and BTRFS-based storage management out of the box.
+UNOS turns a Debian or Ubuntu machine into a NAS with a web interface. It runs as two Docker
+containers on top of the existing system: nothing is reflashed or replaced.
 
 ## Features
 
-### Storage Management
-- **BTRFS Storage Pools** - Create and manage pools with single, RAID 0/1/1C3/1C4/10 profiles (no RAID 5/6: btrfs write hole)
-- **Volume Management** - Create subvolumes within pools for organized storage
-- **SMART Monitoring** - Real-time disk health monitoring and diagnostics
-- **BTRFS Snapshots** - Create, restore, and schedule filesystem snapshots
-- **Pool Scrubbing** - Data integrity verification with scheduled scrubs
+- **Storage**: btrfs pools (single, RAID 0, 1, 1C3, 1C4 and 10; no RAID 5/6, for btrfs's write
+  hole), import of an existing pool, volumes, snapshots and restores, scrub and balance, SMART
+  with scheduled tests, disk spin-down.
+- **Sharing**: SMB shares with per-user and per-group access, listed by Windows and macOS
+  (WS-Discovery, Bonjour); NFS exports; a web file browser with a 30-day trash.
+- **Apps**: an App Store of 69 curated apps, apps of several containers, memory and CPU limits,
+  and the containers and images of Docker.
+- **Security**: HTTPS from a built-in local CA, administrators, users and groups, TOTP two-factor
+  sign-in with recovery codes, API tokens, sign-in rate limits, the host's firewall and an audit
+  log.
+- **System**: a dashboard and resource monitor, network settings, the host's name, time zone and
+  logs, reboot, shutdown, suspend, scheduled power and Wake-on-LAN, a task scheduler, alerts by
+  e-mail, Telegram, webhooks, Discord and Slack, and a Prometheus endpoint.
+- **Backups**: encrypted configuration backups, and off-device copies with restic to a disk,
+  S3, SFTP or a REST server, each checked by a test restore.
+- **Updates**: each release publishes its images for amd64, arm64 and riscv64 on GHCR;
+  `update.sh` installs the newest with a backup first and rolls back if it does not start.
+- The interface is in English and Russian, in a light or dark theme, and works on a phone.
 
-### File Sharing
-- **SMB/CIFS Shares** - SMB shares with per-user read/write access, for Windows, macOS, and Linux; Windows and macOS list the NAS in their network browsers (WS-Discovery and Bonjour, NetBIOS off)
-- **NFS Exports** - Export a folder of a pool, or a volume, read-only or read-write to one network of your local network; exports written by hand on the NAS are kept and listed. Needs the host's NFS server (`nfs-kernel-server`), which the installer does not install
-- **Web File Browser** - Upload, download, copy, move, rename, and manage files via browser, with a trash that keeps deleted items for 30 days
-
-### Application Platform
-- **70+ Curated Apps** - One-click installation of popular self-hosted applications
-- **Docker Management** - Full container lifecycle management (create, start, stop, logs)
-- **Image Management** - Pull, list, and remove Docker images
-- **App Categories** - Media, Downloads, Productivity, Monitoring, Smart Home, Network, AI & LLMs, Security, and more
-
-### System Monitoring
-- **Real-time Dashboard** - Live CPU, memory, network, and disk I/O statistics via WebSocket
-- **Resource Monitor** - The host's CPU, memory, network and disk I/O, live and over the last hour, and the processes that use the most CPU
-- **Temperature Monitoring** - Hardware temperature sensors
-- **Network Statistics** - Per-interface bandwidth monitoring with history graphs
-- **Prometheus Metrics** - `/api/v1/health/prometheus` endpoint for external monitoring (administrator API token)
-
-### User Management & Security
-- **HTTPS by Default** - The web interface is served over HTTPS with certificates from a built-in local CA; plain HTTP redirects
-- **Multi-user Support** - Administrators and regular users (who see only the dashboard and their own account)
-- **Two-Factor Authentication** - TOTP-based 2FA with authenticator apps, and ten single-use recovery codes for a lost app; an administrator can require it for every account, with a grace period
-- **API Tokens** - Generate tokens for scripts through the API
-- **Audit Logging** - Sign-ins, the management of users and their SMB access, shares, API tokens and recovery codes are recorded, and so are changes of pools, volumes, snapshots, containers and apps, backups, reboots and shutdowns, scheduled tasks, network interfaces, the host name and the time zone (the firewall, the TLS certificate, suspend, the off-device copy and notifications not yet); administrators search, filter and export them on the Audit Log page or through the API
-- **Rate Limiting** - Protection against brute-force attacks
-
-### Notifications
-- **Alerts** - Pool (RAID) errors and disk health (SMART) warnings go to every enabled e-mail and Telegram channel
-- **Channels** - E-mail (over STARTTLS or SMTPS with the mail server's certificate checked, or plain SMTP), Telegram, generic webhooks, Discord and Slack in System > Notifications, with test messages that name why one was not sent
-- **History** - The latest 100 notifications sent, tests and alerts included, newest first, with their result
-
-### Task Scheduler
-- **Automated Snapshots** - Schedule periodic snapshot creation with retention
-- **Scheduled Scrubs** - Automate BTRFS data integrity checks
-- **SMART Tests** - Schedule disk health tests
-- **Configuration Backups** - Automated system backups, always encrypted with the task's passphrase, with cleanup
-- **Custom Commands** - Run a shell command in the supervisor container on a schedule
-
-### Network Management
-- **Interfaces** - View network interfaces with their IPv4 and IPv6 addresses, state and link speed, and bring them up or down; a disabled interface comes back on by itself after 60 seconds unless the change is kept
-- **DNS Configuration** - View DNS servers and search domains
-- **Routing Table** - View the IPv4 and IPv6 routes, the gateway and active connections
-
-### Backup & Recovery
-- **Configuration Backup** - Back up the UNOS database (accounts, 2FA, API tokens, SMB shares and their access)
-- **Encrypted Backups** - Optional AES-256 encryption with passphrase
-- **Restore** - Import backups to restore configuration
-- **Off-Device Copies** - The configuration and the pools' folders copied with restic, encrypted, to a disk of their own or an S3-compatible store, on a schedule; each copy is checked and its restore tested, and its snapshots restore the configuration and the files
-
-### Power Management
-- **Reboot, shutdown and suspend** - From System > Power after a confirmation; reboot and shutdown act on the host one minute later and can be cancelled until then
-- **Wake-on-LAN** - Turned on or off per Ethernet interface, and set again after every reboot
-
-### System Updates
-- **Releases and the update script** - a release is a git tag `v<x.y.z>` whose amd64, arm64 and riscv64 images are published on GHCR; `install.sh` installs the newest, and `sudo /opt/unos/deploy/update.sh` pulls the newest one's images, backs up the database and the data volume first, and rolls back automatically, with the backup's database, if the new version does not start
-- **Updates from the web UI** - System > Updates shows the installed version and the latest release on GitHub; on a NAS that runs a release on amd64, arm64 or riscv64 it installs a release, rolls it back and installs new ones automatically, through `update.sh` on the host, and elsewhere names the update script and why
-
-### Planned
-
-Not working yet; each has an entry in [feature-list.json](feature-list.json), named in parentheses:
-- **UPS monitoring** (`system.ups-monitoring`) - The UPS state and the shutdown on low battery: there is no UPS page, the API reads the state only where the host has NUT, which its owner installs, and the shutdown is skipped inside a container
-- **Scheduled power** (`system.scheduled-power`) - Shutdown and wake times are stored, and nothing acts on them
-- **Alerts for every event and channel** (`system.alert-events`) - Discord, Slack and webhook channels get no alerts, and the events chosen for a channel have no effect
-- **Host name and time zone** (`system.hostname-and-time-zone`) - Setting them from the web interface
+Built and waiting for a check on real hardware: UPS monitoring through NUT, bonds, VLANs and
+bridges, iSCSI targets, remote access over WireGuard, and installing updates from System >
+Updates. [feature-list.json](feature-list.json) tracks every feature and what it still needs.
 
 ## Quick Start
-
-### One-Line Installation
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/und3f1ned/unos/main/deploy/install.sh | sudo bash
 ```
 
-### Manual Installation
+Or clone the repository to `/opt/unos` and run `sudo ./install.sh` in `deploy/`: it checks out
+the newest release and pulls its images. Then open `https://YOUR_SERVER_IP` (plain `http://`
+redirects). Expect a certificate warning: UNOS issues its certificate from its own local CA
+([HTTPS and the Certificate Warning](docs/INSTALL.md#https-and-the-certificate-warning)).
+
+There are no default credentials: the first visit creates the administrator account. Do this
+right after installing, because until then anyone who can reach the page can create it.
+
+### Requirements
+
+- Debian 11 to 13, Ubuntu 22.04 or 24.04, or Raspberry Pi OS 64-bit
+  ([the details](docs/INSTALL.md#prerequisites)); Docker, which `install.sh` installs if missing.
+- amd64, arm64 or riscv64 (Debian 13 or Ubuntu 24.04); 1 GB of RAM and 8 GB for the system at
+  least. ARMv7 works with limits and no release images ([ARMv7](docs/INSTALL.md#armv7)).
+- Tested on the Banana Pi [BPI-W3](docs/INSTALL.md#banana-pi-bpi-w3-rockchip-rk3588-arm64)
+  (RK3588) and, in part, the [BPI-F3](docs/INSTALL.md#banana-pi-bpi-f3-spacemit-k1-riscv64)
+  (SpacemiT K1).
+- A browser no older than Chrome or Edge 111, Firefox 128 or Safari 16.4.
+
+### Updating and uninstalling
 
 ```bash
-git clone https://github.com/und3f1ned/unos.git /opt/unos
-cd /opt/unos/deploy
-sudo ./install.sh   # checks out the newest release and pulls its images
+sudo /opt/unos/deploy/update.sh      # or System > Updates
+sudo /opt/unos/deploy/uninstall.sh   # keeps the pools and their data
 ```
 
-### Access the Web Interface
-
-After installation, open your browser:
-
-```
-https://YOUR_SERVER_IP
-```
-
-Plain `http://` redirects to `https://`. Expect a certificate warning: UNOS
-issues its certificate from its own local CA. Accept it, or trust the CA on
-your devices as described in
-[HTTPS and the Certificate Warning](docs/INSTALL.md#https-and-the-certificate-warning).
-
-There are no default credentials: on the first visit UNOS asks you to create the
-administrator account. Do this right after installing, because until then
-anyone who can reach the page can create it.
-
-## System Requirements
-
-### Minimum
-- **CPU:** 1 GHz dual-core (ARM64, AMD64 or RISCV64)
-- **RAM:** 1 GB
-- **Storage:** 8 GB for system
-- **OS:** Debian 11+ or Ubuntu 22.04+
-- **Browser:** Chrome or Edge 111, Firefox 128, Safari 16.4 (iOS 16.4) or newer
-
-### Recommended
-- **CPU:** 2 GHz quad-core
-- **RAM:** 4 GB
-- **Storage:** 16 GB SSD for system
-
-### Supported Platforms
-- x86_64 (AMD64)
-- ARM64 (AArch64); the dev device is a Banana Pi BPI-W3 (Rockchip RK3588): see
-  [its notes](docs/INSTALL.md#banana-pi-bpi-w3-rockchip-rk3588-arm64)
-- RISCV64 on Debian 13 or Ubuntu 24.04, made for the Banana Pi BPI-F3
-  (SpacemiT K1): see [its notes](docs/INSTALL.md#banana-pi-bpi-f3-spacemit-k1-riscv64)
+[Upgrading](docs/INSTALL.md#upgrading) and [Uninstalling](docs/INSTALL.md#uninstalling)
+describe both.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Web Browser                                            │
-└──────────────────────┬──────────────────────────────────┘
-                       │ HTTPS + WebSocket (wss)
-┌──────────────────────▼──────────────────────────────────┐
-│  unos-webui (SvelteKit + Caddy)                         │
-│  Port: 443 (HTTPS), 80 (redirects to HTTPS)             │
-└──────────────────────┬──────────────────────────────────┘
-                       │ /api/*, /ws/*
-┌──────────────────────▼──────────────────────────────────┐
-│  unos-supervisor (Python FastAPI)                       │
-│  Port: 8080 (internal)                                  │
-│  SQLite: /data/unos.db                                  │
-└──────────────────────┬──────────────────────────────────┘
-                       │ Docker socket, system commands
-┌──────────────────────▼──────────────────────────────────┐
-│  Host OS (Debian/Ubuntu)                                │
-│  btrfs, samba, smartmontools, docker                    │
-└─────────────────────────────────────────────────────────┘
+Browser ──HTTPS, wss──▶ unos-webui (SvelteKit behind Caddy; 443, 80 redirects)
+                              │ /api/*, /ws/*
+                              ▼
+                        unos-supervisor (FastAPI, SQLite in /data; 8080, internal)
+                              │ the Docker socket, the host's commands
+                              ▼
+                        Debian or Ubuntu host: btrfs, Samba, smartmontools, Docker
 ```
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Installation Guide](docs/INSTALL.md) | Detailed installation instructions |
-| [User Guide](docs/USER_GUIDE.md) | How to use UNOS features |
+| [Installation Guide](docs/INSTALL.md) | Installing, upgrading, uninstalling, troubleshooting |
+| [User Guide](docs/USER_GUIDE.md) | Every page of the web interface |
 | [Recovery](docs/RECOVERY.md) | Reach the pools from another Linux machine; reset an administrator who cannot sign in |
-| [Changelog](CHANGELOG.md) | Version history and release notes |
-| [Contributing](CONTRIBUTING.md) | How work flows, from an issue to a pull request |
-| [AGENTS.md](AGENTS.md) | Commands, rules and conventions for developers and coding agents |
-| [Testing Guide](docs/TESTING.md) | The tests, the local stand-in and CI |
+| [Changelog](CHANGELOG.md) | Release notes |
 | [Decision Records](docs/adr/README.md) | Why UNOS is built the way it is |
 
-## Tech Stack
-
-### Backend (Supervisor)
-- Python 3.11+, FastAPI, Uvicorn
-- SQLAlchemy + aiosqlite (async SQLite)
-- PyJWT (JWT), bcrypt, pyotp (2FA)
-- docker-py, psutil
-
-### Frontend (WebUI)
-- SvelteKit 3 with Svelte 5 (runes), Vite 8, TypeScript 6
-- Tailwind CSS 4, Lucide Icons
-- Caddy (reverse proxy)
-
-## Updating
+## Development
 
 ```bash
-sudo /opt/unos/deploy/update.sh
+make setup   # once per checkout: venvs, npm packages, Playwright, git hooks
+make check   # the gate that CI runs: backend tests, lint, svelte-check, the build
 ```
 
-The script refuses to run over local changes in `/opt/unos`, pulls the newest
-release's images while UNOS keeps running (on 32-bit arm it builds the supervisor), and
-rolls back if the new version does not start. `docs/INSTALL.md` describes it
-and the manual upgrade.
-
-## Uninstalling
-
-```bash
-sudo /opt/unos/deploy/uninstall.sh
-```
-
-This removes UNOS containers and configuration but preserves your storage pools and data.
-
-It also removes the Samba passwords of the SMB accounts that UNOS created
-and, when it removed one, restarts Samba so that open connections end. It
-keeps those host accounts and the group `unos-smb`: files on the pools
-belong to them, and while the accounts exist, a new installation gives its
-SMB accounts other user ids. The script prints how to remove them, and names
-the accounts whose Samba password it could not remove.
-`/etc/samba/smb.conf` stays, and Samba still serves the shares it lists,
-unless `install.sh` kept the file it replaced (`smb.conf.original`), which
-is then restored, with NetBIOS (nmbd) on again. The network discovery
-services avahi-daemon and wsdd2 keep running. If the supervisor replaced an
-existing smb.conf with its own (after a manual installation, for example), it
-kept that file, whose shares it imported, as
-`/etc/samba/smb.conf.unos-import-backup-<UTC time>` (the newest 10 such
-copies), and the script lists them.
-
-It undoes what UNOS's udev rule of the disks' idle timeouts
-(`/etc/udev/rules.d/90-unos-disk-spindown.rules`) set, then removes the rule.
-Each disk it names gets no standby timer until it restarts (`hdparm -S 0`),
-and a disk whose own automatic offline scans UNOS turned off gets them on
-again (`smartctl -o on`, where the host has smartctl). What it could not undo
-(a missing tool, a disk not attached, SMART off on a disk, a command that
-failed) is named at the end, with the command to run. A disk whose scans stay
-off keeps its record: the rule then holds only such records, which do nothing
-at boot, until they are on. The rule's lines other than comments that UNOS did
-not write go with it, and the end shows them. This happens before the script
-removes `/opt/unos`: if the uninstallation stops while it undoes the disks
-(Ctrl-C, a dropped SSH session), the rule is still whole, and running the
-script again finishes it.
-
-## Contributing
-
-Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) describes how work
-flows from an issue or a feature entry to a pull request, the tests every change
-needs, and how decisions are recorded in [docs/adr/](docs/adr/README.md).
-
-```bash
-make setup   # once per checkout: Python venv, lint tools, npm packages, Playwright, git hooks
-make check   # the quality gate: the backend tests, lint, svelte-check, the web UI's texts and the build, as in CI
-```
-
-Developers and coding agents follow [AGENTS.md](AGENTS.md) for the commands and
-the rules; [docs/TESTING.md](docs/TESTING.md) covers the tests, the local
-stand-in and CI.
+[CONTRIBUTING.md](CONTRIBUTING.md) describes how work flows from an issue to a pull request,
+[AGENTS.md](AGENTS.md) the commands and rules for developers and coding agents, and
+[docs/TESTING.md](docs/TESTING.md) the tests, the local stand-in and CI. Problems go to the
+[issue tracker](https://github.com/und3f1ned/unos/issues).
 
 ## License
 
-UNOS is released under the [GPL-3.0-or-later](LICENSE) license: the GNU General Public
-License, version 3 or (at your option) any later version.
-
-## Support
-
-- [Issue Tracker](https://github.com/und3f1ned/unos/issues)
-- [Discussions](https://github.com/und3f1ned/unos/discussions)
-
----
-
-<p align="center">
-  Built for self-hosters, by self-hosters
-</p>
-
-<p align="center">
-  <code>nas</code> · <code>self-hosted</code> · <code>homelab</code> · <code>storage</code> · <code>btrfs</code> · <code>docker</code> · <code>samba</code> · <code>fastapi</code> · <code>sveltekit</code> · <code>arm64</code> · <code>home-server</code> · <code>file-sharing</code> · <code>network-attached-storage</code> · <code>linux</code>
-</p>
+[GPL-3.0-or-later](LICENSE): the GNU General Public License, version 3 or any later version.
