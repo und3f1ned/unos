@@ -476,8 +476,14 @@ def remove_image(image_id: str, force: bool = False) -> str:
     one tag by its ID only when forced ("image is referenced in multiple
     repositories"), so each tag is removed on its own, without force: the last one
     takes the image with it, and what is left of it is then removed by its ID
-    (ADR-0255). Docker's own refusals still reach the caller as docker-py errors. Its client waits
-    IMAGE_REMOVE_TIMEOUT_SECONDS: Docker answers once the layers are deleted.
+    (ADR-0255). With the containerd image store the tags include the image's digest references
+    (name@sha256:..., ADR-0468), and Docker removes with the last tag of a repository the
+    repository's digest references, and with a digest reference every reference of its
+    repository: the whole image when all are of one. A reference, or the ID, that an earlier
+    removal took is passed over. The image is not found (ValueError) when it is not there to read,
+    or when none of the removals found anything to remove. Docker's own refusals still reach the
+    caller as docker-py errors. Its client waits IMAGE_REMOVE_TIMEOUT_SECONDS: Docker answers once
+    the layers are deleted.
     """
     client = get_client()
     client.api.timeout = IMAGE_REMOVE_TIMEOUT_SECONDS  # docker-py's every request reads it
@@ -492,12 +498,15 @@ def remove_image(image_id: str, force: bool = False) -> str:
         users = client.containers.list(all=True, filters={"ancestor": _id(img)})
         if users:
             raise ImageInUse(_in_use_message(img.tags[0] if img.tags else img.short_id, users))
-        for tag in img.tags:
-            client.images.remove(tag, force=False)
     except NotFound:
         raise ValueError(f"Image {image_id} not found")
-    try:
-        client.images.remove(_id(img), force=False)
-    except NotFound:
-        pass  # removing its last tag removed the image
+    removed = False
+    for reference in [*img.tags, _id(img)]:  # the ID last: what the tags left of the image
+        try:
+            client.images.remove(reference, force=False)
+            removed = True
+        except NotFound:
+            pass  # an earlier removal took it with it
+    if not removed:  # another removed the image after it was read
+        raise ValueError(f"Image {image_id} not found")
     return label

@@ -5480,6 +5480,28 @@
       ],
       "passes": false,
       "notes": "Opened as issue 108 on 2026-11-22, from the review of deploy.riscv64-release-images: six packages of supervisor/requirements.txt publish no armv7l wheel, so pip builds them from source on the host, and cffi needs the libffi headers and greenlet a C++ compiler, which supervisor/Dockerfile does not install. Accepted in the first triage of the labels of process.triage-labels (ready-for-agent). Not run on a real ARMv7 board; a build under QEMU shows step 1."
+    },
+    {
+      "id": "apps.image-remove-containerd",
+      "category": "apps",
+      "description": "Removing an image on Docker's containerd image store, whose tags include the image's digest references, answers that it was removed and writes one audit entry, as on the classic image store",
+      "steps": [
+        "With the containerd image store, DELETE /api/v1/containers/images/{id} of an image that no container uses answers 200 {\"status\": \"removed\"} and the image is gone, with its tag listed before or after its digest reference (name@sha256:...), with a second tag of the repository, with tags of two repositories and with only a digest reference",
+        "That removal writes one image_removed entry to the audit log, naming the image's first tag",
+        "An image Docker does not know, or one that another removed after UNOS read it, answers 404 \"Image {id} not found\" and writes no entry, on both image stores",
+        "An image that a container uses, running or stopped, is still refused with 409 naming the containers, before any of its references is removed, on both image stores"
+      ],
+      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_containers.py",
+        "supervisor/tests/test_audit_pools_containers_images.py"
+      ],
+      "adr": [
+        "ADR-0255",
+        "ADR-0402",
+        "ADR-0468"
+      ],
+      "notes": "Built 2026-11-23 on origin/main 9dfa1048 (branch containers.image-remove-containerd; the ledger has no containers area, so the id is under apps, beside apps.containers-and-images). Found by the device checks of 2026-11-23 on the W3 (Docker 29.9.3 with the containerd image store): DELETE /containers/images/<id> answered 404 \"Image ... not found\" for MariaDB, BookStack and Syncthing although each image was removed, and no image_removed entry was written. Cause: remove_image of supervisor/src/containers/docker.py removed the image's tags one by one (ADR-0255); the containerd image store lists an image's digest references (name@sha256:...) among its tags (ADR-0468), and Docker's ImageDelete removes with a reference the others of its repository that it counts as the same (a tag takes the repository's digest references when no other tag of it is left, a digest reference every reference of its repository), so the first removal took the whole image, the next one raised NotFound, and the outer handler turned it into the 404 before the audit entry. Fix, no new decision (ADR-0255 stands): after the in-use check, each tag and then the image's ID are removed, a reference that is no longer there is passed over, and the image is not found only when it cannot be read or none of the removals found anything (another removed it after it was read); the answer's shape is unchanged, so the Images tab (removeImage, which reads no body) is unchanged. Tests, watched failing first (6 of them): TestImageRemoval's fake _DockerImage of tests/test_containers.py answers as the classic store or, with store=\"containerd\", as Docker 29's containerd store does (getSameReferences of moby's daemon/containerd/image_delete.go); test_with_the_containerd_store_an_image_whose_tags_hold_its_digests_is_removed (step 1), test_a_removal_with_the_containerd_store_writes_one_entry of tests/test_audit_pools_containers_images.py (step 2), test_an_unknown_image_is_not_found, test_an_image_that_another_removed_after_it_was_read_is_not_found and test_an_image_that_is_not_there_to_remove_writes_nothing (step 3), test_an_image_that_a_container_uses_keeps_every_tag_and_the_answer_names_it (step 4). Host-level (Docker's images on the host); device check on the W3, by the lead: scripts/dev/api.py GET /containers/images lists an image that no container uses and whose tags hold a name@sha256 form (an earlier version kept by an app's update, or one the owner pulls by digest, an owner action with its SD writes); scripts/dev/api.py DELETE /containers/images/<its id> answers 200 {\"status\": \"removed\"}; GET /containers/images no longer lists it; GET /audit/logs?limit=5 shows one image_removed entry naming it. Nothing to re-check after a reboot: the removal leaves no state of UNOS. Review in a fresh context (ADR-0017): no blocking finding; the fake checked against moby's getSameReferences and ImageDelete. Fixed: the docstring and CHANGELOG said a tag takes the other references (it takes the repository's digest references only as its last tag); step 3's \"writes no entry\" lacked assertions for the containerd store and the removal by another (test_an_image_that_is_not_there_to_remove_writes_nothing); step 1 claimed any order; an untagged image removed by another after the read now answers 404 instead of 200 with an entry (tested, in the CHANGELOG). Left: the audit label and the 409 message still take the image's first tag (ADR-0402), which on the containerd store can be a name@sha256 form when the image has only digest references or its first listed repository was pulled by digest; passing over digest forms as ADR-0468 does for a container's image would be a new decision, not part of this fix. ADR-0255's Tests line still names only the classic store's fake; its decision is unchanged, so its text stays (the adr skill)."
     }
   ]
 }

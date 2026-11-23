@@ -1947,6 +1947,11 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
   removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
   estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.
+- Removing an image on Docker's containerd image store no longer answers 404 "Image ... not
+  found" after it removed the image, without an audit entry: the store lists the image's digest
+  references among its tags, and removing the last tag of a repository took its digest
+  references with it. A reference that an earlier removal took is passed over; the image is not
+  found only when nothing was removed, also when another removed it after UNOS read it.
 - `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
   bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip
   of 40 C: it measures the margin in the zones that slow a processor, and warns of every zone 5 C

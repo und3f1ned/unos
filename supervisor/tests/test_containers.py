@@ -979,22 +979,41 @@ IMAGE_ID = "sha256:" + "def456" * 10 + "abcd"
 # What GET /api/v1/containers/images lists as the image's id, and the Images tab sends back.
 IMAGE_SHORT_ID = IMAGE_ID[:19]
 REMOVE_IMAGE = f"/api/v1/containers/images/{IMAGE_SHORT_ID}"
+# The digest part of a reference by digest, as the containerd image store lists it among the tags.
+DIGEST = "@sha256:" + "a1" * 32
+
+
+def _repository(reference: str) -> str:
+    """The repository of an image reference: without its tag and its digest."""
+    name = reference.split("@")[0]
+    path, _, last = name.rpartition("/")
+    return f"{path}/{last.split(':')[0]}" if path else last.split(":")[0]
 
 
 class _DockerImage:
-    """One image as the classic image store of Docker (moby) answers for it, through docker-py.
+    """One image as an image store of Docker (moby) answers for it, through docker-py.
 
-    Without force, Docker deletes an image by its ID only while at most one tag refers to
-    it ("image is referenced in multiple repositories" otherwise) and no container uses it.
-    A tag is removed on its own, except the last one of an image that a container uses,
-    and removing the last tag deletes the image, unless other images are built on it.
-    The containers are those of the ``docker_client`` fixture.
+    The classic store (``store="classic"``): without force, Docker deletes an image by its ID only
+    while at most one tag refers to it ("image is referenced in multiple repositories" otherwise)
+    and no container uses it. A tag is removed on its own, except the last one of an image that a
+    container uses, and removing the last tag deletes the image, unless other images are built on
+    it. The containers are those of the ``docker_client`` fixture.
+
+    The containerd image store (``store="containerd"``, Docker 29) lists an image's digest
+    references (``name@sha256:...``) among its tags (ADR-0468), and removing one reference
+    removes the others of its repository that Docker's ImageDelete counts as the same
+    (``getSameReferences``): a tag takes the repository's digest references with it when no other
+    tag of the repository is left, and a digest reference takes every reference of its
+    repository. So removing one tag can take the whole image, and the removal of the next
+    reference is not found. Removing a reference that would leave an image that a container uses
+    without any is refused as in the classic store.
     """
 
-    def __init__(self, docker_client: MagicMock, tags: list[str], *, children: bool = False):
+    def __init__(self, docker_client: MagicMock, tags: list[str], *, children: bool = False, store: str = "classic"):
         self.client = docker_client
         self.tags = list(tags)
         self.children = children
+        self.store = store
         self.exists = True
         # Every removal Docker was asked for: (reference, force).
         self.removals: list[tuple[str, bool]] = []
@@ -1004,6 +1023,16 @@ class _DockerImage:
     def _is_named(self, reference: str) -> bool:
         by_id = reference.startswith("sha256:") and IMAGE_ID.startswith(reference)
         return self.exists and (by_id or reference in self.tags)
+
+    def _taken_with(self, reference: str) -> list[str]:
+        """The references that removing ``reference`` removes."""
+        if self.store == "classic":
+            return [reference]
+        same = [tag for tag in self.tags if _repository(tag) == _repository(reference)]
+        if "@" in reference:
+            return same
+        tags_left = [tag for tag in same if "@" not in tag and tag != reference]
+        return [reference] + ([] if tags_left else [tag for tag in same if "@" in tag])
 
     def _users(self) -> list[str]:
         return [c.name for c in self.client.containers.list(all=True) if c.image.id == IMAGE_ID]
@@ -1021,12 +1050,13 @@ class _DockerImage:
             raise NotFound(f"No such image: {image}")
         short, users = IMAGE_ID[7:19], self._users()
         if image in self.tags:
-            if len(self.tags) == 1 and users and not force:
+            taken = self._taken_with(image)
+            if len(taken) == len(self.tags) and users and not force:
                 raise _docker_refusal(409, (
                     f'conflict: unable to remove repository reference "{image}" (must force) - '
                     f"container {users[0]} is using its referenced image {short}"
                 ))
-            self.tags.remove(image)
+            self.tags = [tag for tag in self.tags if tag not in taken]
             self.exists = bool(self.tags) or self.children
         elif self.children:
             raise _docker_refusal(409, f"conflict: unable to delete {short} (cannot be forced) - image has dependent child images")
@@ -1064,13 +1094,43 @@ class TestImageRemoval:
         assert not image.exists
         assert [force for _, force in image.removals if force] == []
 
+    @pytest.mark.parametrize(
+        "tags",
+        [
+            ["mariadb:11.4", "mariadb" + DIGEST],
+            ["mariadb" + DIGEST, "mariadb:11.4"],
+            ["alpine:3.20", "alpine:latest", "alpine" + DIGEST],
+            ["lscr.io/linuxserver/bookstack:24.10", "lscr.io/linuxserver/bookstack" + DIGEST, "bookstack:local"],
+            ["syncthing/syncthing" + DIGEST],
+        ],
+        ids=["tag-and-its-digest", "digest-first", "two-tags-and-a-digest", "two-repositories", "digest-only"],
+    )
+    def test_with_the_containerd_store_an_image_whose_tags_hold_its_digests_is_removed(self, api, docker_client, tags):
+        # Removing one of its references can take the whole image, or the digests of one
+        # repository, with it: the removal of a reference that is gone is not an unknown image.
+        image = _DockerImage(docker_client, tags, store="containerd")
+
+        response = api.delete(REMOVE_IMAGE)
+
+        assert (response.status_code, response.json()) == (200, {"status": "removed"})
+        assert not image.exists
+        assert [force for _, force in image.removals if force] == []
+
     @pytest.mark.parametrize("status", ["exited", "running"])
-    @pytest.mark.parametrize("tags", [["nginx:1.27"], ["nginx:1.27", "nginx:latest"]], ids=["one-tag", "two-tags"])
+    @pytest.mark.parametrize(
+        ("store", "tags"),
+        [
+            ("classic", ["nginx:1.27"]),
+            ("classic", ["nginx:1.27", "nginx:latest"]),
+            ("containerd", ["nginx:1.27", "nginx" + DIGEST]),
+        ],
+        ids=["one-tag", "two-tags", "containerd-tag-and-its-digest"],
+    )
     def test_an_image_that_a_container_uses_keeps_every_tag_and_the_answer_names_it(
-        self, api, docker_client, tags, status
+        self, api, docker_client, store, tags, status
     ):
         _using_the_image(docker_client, "e2e-web", status)
-        image = _DockerImage(docker_client, tags)
+        image = _DockerImage(docker_client, tags, store=store)
 
         response = api.delete(REMOVE_IMAGE)
 
@@ -1113,13 +1173,44 @@ class TestImageRemoval:
         assert [(IMAGE_ID.startswith(reference), force) for reference, force in image.removals] == [(True, True)]
         assert not image.exists
 
-    def test_an_unknown_image_is_not_found(self, api, docker_client):
-        image = _DockerImage(docker_client, ["nginx:1.27"])
+    @pytest.mark.parametrize(
+        ("store", "tags"), [("classic", ["nginx:1.27"]), ("containerd", ["nginx:1.27", "nginx" + DIGEST])],
+        ids=["classic", "containerd"],
+    )
+    def test_an_unknown_image_is_not_found(self, api, docker_client, store, tags):
+        image = _DockerImage(docker_client, tags, store=store)
 
         response = api.delete("/api/v1/containers/images/sha256:0123456789ab")
 
         assert (response.status_code, response.json()) == (404, {"detail": "Image sha256:0123456789ab not found"})
         assert image.removals == []
+
+    @pytest.mark.parametrize(
+        ("store", "tags"),
+        [
+            ("classic", ["nginx:1.27"]),
+            ("classic", ["nginx:1.27", "nginx:latest"]),
+            ("classic", []),
+            ("containerd", ["nginx:1.27", "nginx" + DIGEST]),
+        ],
+        ids=["one-tag", "two-tags", "no-tag", "containerd-tag-and-its-digest"],
+    )
+    def test_an_image_that_another_removed_after_it_was_read_is_not_found(self, api, docker_client, store, tags):
+        # Removed with docker rmi between UNOS's read of the image and its removals: none of them
+        # found anything to remove, so nothing was removed by this request.
+        image = _DockerImage(docker_client, tags, store=store)
+        read = image.get
+
+        def read_then_gone(reference: str) -> MagicMock:
+            found = read(reference)
+            image.tags, image.exists = [], False
+            return found
+
+        docker_client.images.get.side_effect = read_then_gone
+
+        response = api.delete(REMOVE_IMAGE)
+
+        assert (response.status_code, response.json()) == (404, {"detail": f"Image {IMAGE_SHORT_ID} not found"})
 
     def test_other_docker_errors_are_still_server_errors(self, api, docker_client):
         _DockerImage(docker_client, ["nginx:1.27"])

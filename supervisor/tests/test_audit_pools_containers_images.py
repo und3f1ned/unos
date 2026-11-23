@@ -22,7 +22,7 @@ from src.containers import docker as docker_module
 
 from . import test_audit_storage_and_apps as storage
 from .test_audit_storage_and_apps import CONTAINERS, POOLS, entries, entry, lost, running
-from .test_containers import _container
+from .test_containers import DIGEST, REMOVE_IMAGE, _container, _DockerImage
 from .test_pool_persistence import BASE_FSTAB, DATA_UUID
 from .test_pool_persistence import entry as fstab_entry
 from .test_pool_persistence import marker
@@ -244,6 +244,40 @@ class TestImages:
         assert entries(audit_file) == [
             entry("image_removed", "image", "alpine:3.20", "Removed the image alpine:3.20", "warning")
         ]
+
+    @pytest.mark.parametrize(
+        "tags", [["mariadb:11.4", "mariadb" + DIGEST], ["mariadb:11.4", "mariadb:11", "mariadb" + DIGEST]],
+        ids=["tag-and-its-digest", "two-tags-and-a-digest"],
+    )
+    def test_a_removal_with_the_containerd_store_writes_one_entry(self, admin, audit_file, docker, tags):
+        # Docker's containerd image store lists the image's digest among its tags, and removing a
+        # tag removes the digest with it: the removal is still one removal of the image.
+        image = _DockerImage(docker, tags, store="containerd")
+
+        response = admin.delete(REMOVE_IMAGE)
+
+        assert response.status_code == 200, response.text
+        assert not image.exists
+        assert entries(audit_file) == [
+            entry("image_removed", "image", "mariadb:11.4", "Removed the image mariadb:11.4", "warning")
+        ]
+
+    @pytest.mark.parametrize("store", ["classic", "containerd"])
+    def test_an_image_that_is_not_there_to_remove_writes_nothing(self, admin, audit_file, docker, store):
+        image = _DockerImage(docker, ["mariadb:11.4", "mariadb" + DIGEST], store=store)
+        unknown = admin.delete(f"{CONTAINERS}/images/sha256:0123456789ab")
+        read = image.get
+
+        def read_then_gone(reference):  # another removes it after UNOS read it
+            found = read(reference)
+            image.tags, image.exists = [], False
+            return found
+
+        docker.images.get.side_effect = read_then_gone
+        gone = admin.delete(REMOVE_IMAGE)
+
+        assert (unknown.status_code, gone.status_code) == (404, 404)
+        assert entries(audit_file) == []
 
     def test_a_refused_removal_writes_nothing(self, admin, audit_file, docker):
         docker.images.get.return_value = _image("sha256:aaaaaaaaaaaaaaaaaaaa", ["alpine:3.20"])
