@@ -619,3 +619,41 @@ test.describe('Dashboard', () => {
     });
   });
 });
+
+// webui.navigation-without-skeletons (ADR-0469): the dashboard's load does not wait for the
+// containers, its slowest read (Docker): the page shows with the rest, and the containers' card
+// waits in its place until they come.
+test.describe('Dashboard from its load', () => {
+  test('the containers come after the rest: their card waits in its place', async ({ authenticatedPage: page }) => {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/containers',
+      async (route) => {
+        await held;
+        await route
+          .fulfill({
+            json: [{
+              id: '0d1f2e3c4b5a', name: 'e2e-web', image: 'nginx:1.27', status: 'running', state: 'running',
+              created: '2026-11-01T10:00:00Z', ports: [], labels: {},
+            }],
+          })
+          .catch(() => undefined);
+      },
+    );
+    await page.goto('/');
+    const card = page.locator('main [data-widget="containers"]');
+    await expect(page.getByRole('heading', { name: 'Storage pools' })).toBeVisible();
+    await expect(card.locator('[data-containers-pending][aria-busy="true"]')).toBeVisible();
+    await expect(card.getByText('e2e-web')).toHaveCount(0);
+    const below = page.locator('main [data-widget="recent-activity"]');
+    const [cardBefore, belowBefore] = [await card.boundingBox(), await below.boundingBox()];
+    release();
+    await expect(card.getByText('e2e-web')).toBeVisible();
+    await expect(card.locator('[data-containers-pending]')).toHaveCount(0);
+    // In its place: the card stays where it was, and what is under it is not pushed down.
+    const [cardAfter, belowAfter] = [await card.boundingBox(), await below.boundingBox()];
+    expect(Math.abs(cardAfter!.y - cardBefore!.y)).toBeLessThanOrEqual(1);
+    expect(belowAfter!.y).toBeLessThanOrEqual(belowBefore!.y + 1);
+  });
+});

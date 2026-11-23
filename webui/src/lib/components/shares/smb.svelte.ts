@@ -7,6 +7,7 @@ import {
 	type SmbServiceStatus,
 	type SmbShare
 } from '$lib/api/shares';
+import type { Settled } from '$lib/pages/read';
 import { messageOf } from './errors';
 import type { ShareOutcome } from './outcome.svelte';
 
@@ -56,6 +57,20 @@ export class SmbShares {
 		} catch (e) {
 			this.error = messageOf(e);
 		}
+	}
+
+	/** The shares and the status as the page's load read them ($lib/pages/shares), as load and loadStatus show them. */
+	apply(shares: Settled<SmbShare[]>, status: Settled<SmbServiceStatus>) {
+		if (shares.ok) {
+			this.shares = shares.value;
+			this.error = '';
+			const listed = new Set(this.shares.map(keyOf));
+			this.selected = new Set([...this.selected].filter((key) => listed.has(key)));
+		} else {
+			this.error = shares.error;
+		}
+		this.status = status.ok ? status.value : null;
+		this.statusError = status.ok ? '' : status.error;
 	}
 
 	async loadStatus() {

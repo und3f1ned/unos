@@ -9,6 +9,7 @@ import {
 	type ImportableFilesystem,
 	type Pool
 } from '$lib/api/storage';
+import type { StorageSnapshot } from '$lib/pages/storage';
 import type { WebSocketStats } from '$lib/stores/stats';
 import { PoolJobs } from './jobs.svelte';
 import { messageOf } from './pools';
@@ -64,6 +65,10 @@ export class StorageLists {
 	}
 
 	reloadForDevices() {
+		if (this.#readOnClose && !this.loading && !this.#deviceReload && !this.#dialogOpen()) {
+			void this.loadData(false, false);
+			return;
+		}
 		if (this.#devicesHeld === this.#devicesLoaded || this.loading || this.#deviceReload || this.#dialogOpen()) {
 			return;
 		}
@@ -102,6 +107,7 @@ export class StorageLists {
 	 * not start, the one for the devices.
 	 */
 	async loadData(showSpinner = true, startedByUser = true) {
+		this.#readOnClose = false;
 		const load = ++this.#loadSequence;
 		this.#listsLoad = this.#disksLoad = load;
 		if (showSpinner) this.loading = true;
@@ -140,6 +146,51 @@ export class StorageLists {
 		}
 		await found;
 		if (load === this.#listsLoad) this.loading = false;
+	}
+
+	// The #loadSequence after the last snapshot of the page's load was shown.
+	#appliedAt = 0;
+	// A snapshot came while a dialog was open: the lists are read again once it closes.
+	#readOnClose = false;
+
+	/**
+	 * The lists and the jobs of one snapshot of the page's reads (its load, $lib/pages/storage), as a
+	 * load of the lists that has answered. Not while a dialog is open, whose lists stay as the user
+	 * saw them: the lists are read again once it closes. Not after a load of the page's own started
+	 * since the last snapshot (a reload after a change, for the devices, the Create Pool dialog's
+	 * disks): it read later. The devices stay as the lists' last load or the first stats message
+	 * found them (followBlockDevices).
+	 */
+	apply(snapshot: StorageSnapshot) {
+		if (this.#loadSequence !== this.#appliedAt) return;
+		if (this.#dialogOpen()) {
+			this.#readOnClose = true;
+			return;
+		}
+		const load = ++this.#loadSequence;
+		this.#appliedAt = load;
+		this.#listsLoad = this.#disksLoad = load;
+		const { disks, pools, importable } = snapshot;
+		this.disks = disks.ok ? disks.value : [];
+		this.disksError = disks.ok ? '' : disks.error;
+		this.disksLoading = false;
+		this.pools = pools.ok ? pools.value : [];
+		this.poolsError = pools.ok ? '' : pools.error;
+		this.importable = importable.ok ? importable.value : [];
+		this.importableError = importable.ok ? '' : importable.error;
+		for (const { pool, status } of snapshot.scrubs) {
+			if (status.ok) this.jobs.scrub.show(pool, status.value);
+			else this.jobs.scrub.fail(pool, new Error(status.error));
+		}
+		for (const { pool, status } of snapshot.balances) {
+			if (status.ok) this.jobs.balance.show(pool, status.value);
+			else this.jobs.balance.fail(pool, new Error(status.error));
+		}
+		for (const { pool, status } of snapshot.removals) {
+			if (status.ok) this.jobs.showRemoval(pool, status.value);
+			else this.jobs.removal.fail(pool, new Error(status.error));
+		}
+		this.loading = false;
 	}
 
 	async #loadImportable(load: number) {

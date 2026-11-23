@@ -1,13 +1,16 @@
 import type { Page, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createAccount, deleteAccount, type Account } from './accounts';
+import { fakeSmbApi } from './shares-fakes';
 
 // webui.loading-without-flicker (ADR-0430): the web UI loads without flicker. A boot screen covers
 // the first frames until the app knows the account and the page has drawn its skeleton; the shell
-// is drawn once, with the account's role; each page shows skeletons in its final layout, never a
-// "Loading" text, and its data arriving shifts nothing (cumulative layout shift below 0.05). The
-// API answers late here (a route delay), so that every stage of the loading is on screen for a
-// while, as on a slow NAS.
+// is drawn once, with the account's role; the tab's first page shows skeletons in its final
+// layout, never a "Loading" text, and its data arriving shifts nothing (cumulative layout shift
+// below 0.05). The API answers late here (a route delay), so that every stage of the loading is on
+// screen for a while, as on a slow NAS. Since webui.navigation-without-skeletons (ADR-0469) a page
+// with a load function shows its skeleton only on the tab's first page, and only when its data
+// take longer than a moment; a navigation keeps the open page instead (tests/page-loads.spec.ts).
 
 /** How long each request of the API waits before it goes to the server. */
 const API_DELAY = 700;
@@ -84,6 +87,16 @@ const SAMPLER = `
 })();
 `;
 
+// Whether a skeleton was ever drawn in the page, from the first frame on.
+const SKELETON_WATCH = `
+(() => {
+  window.__skeletonSeen = false;
+  new MutationObserver(() => {
+    if (document.querySelector('main [data-skeleton]')) window.__skeletonSeen = true;
+  }).observe(document, { subtree: true, childList: true });
+})();
+`;
+
 // When the boot screen was marked done and when it was removed, with what the page showed then.
 const BOOT_WATCH = `
 (() => {
@@ -116,7 +129,8 @@ type Loading = { samples: Sample[]; shifts: { t: number; value: number; nodes: s
 async function slowApi(page: Page, delay = API_DELAY) {
   await page.route('**/api/**', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, delay));
-    await route.continue().catch(() => undefined);
+    // To a fake registered before, or else to the stand-in.
+    await route.fallback().catch(() => undefined);
   });
 }
 
@@ -189,6 +203,20 @@ test.describe('Loading without flicker', () => {
     expect(boot.skeletons).toBeGreaterThan(0);
     expect(boot.busy).toBeGreaterThan(0);
     expect(boot.removedAt - boot.doneAt).toBeLessThan(400);
+  });
+
+  test("the tab's first page shows no skeleton when its data come within a moment", async ({
+    authenticatedPage: page,
+  }) => {
+    // Shares, as the Storage page above but answered at once (the fake's answers): its reads end
+    // within the moment that its load waits before it draws its skeleton ($lib/pages/load).
+    await fakeSmbApi(page);
+    await page.addInitScript(SKELETON_WATCH);
+    await slowApi(page, 20);
+    await page.goto('/shares');
+    await settled(page);
+    await expect(page.getByRole('heading', { level: 1, name: 'Shares' })).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { __skeletonSeen: boolean }).__skeletonSeen)).toBe(false);
   });
 
   test('the sign-in page shows no boot screen longer than needed', async ({ page }) => {

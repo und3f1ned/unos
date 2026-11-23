@@ -12,6 +12,14 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- The web UI's Dashboard, Storage and Shares read their data in SvelteKit load functions
+  (ADR-0469): a navigation keeps the open page, its link marked, until the next page has its data,
+  with a thin bar at the top after 200 ms, and shows no skeleton; a page visited before in the tab
+  appears at once with its last data, which a fresh read replaces, and a change forgets the data
+  it made old. Only the tab's first page shows its skeleton, after 300 ms. The dashboard shows
+  without waiting for its containers, whose card waits in its place. Links preload a page's data
+  on the press of the pointer, not on hover, so that no hover wakes a sleeping disk.
+  `webui/AGENTS.md` has the recipe for the other pages.
 - `scripts/prune-merged-branches.py` (ADR-0465), for the end of a batch: after `git fetch --prune`
   it removes the clean worktrees of branches merged into `origin/main` and deletes those local
   branches with `git branch -d`, as a dry run unless `--apply`. It keeps the main checkout, detached,

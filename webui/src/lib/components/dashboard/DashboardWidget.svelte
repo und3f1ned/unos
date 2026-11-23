@@ -16,12 +16,22 @@
 		/** The pools could not be read: the storage card says so, not "No pools yet". */
 		poolsFailed?: boolean;
 		containers: Container[];
+		/** The containers have not come yet: their card waits in its place. */
+		containersPending?: boolean;
 		notificationLogs: NotificationLog[];
 		/** The last message of the live stats; until the first, a stats card is a skeleton of its tile (ADR-0430). */
 		stats: WebSocketStats | null;
 	};
 
-	let { id, pools, poolsFailed = false, containers, notificationLogs, stats }: Props = $props();
+	let {
+		id,
+		pools,
+		poolsFailed = false,
+		containers,
+		containersPending = false,
+		notificationLogs,
+		stats
+	}: Props = $props();
 
 	// The CPU's temperature, which the server chooses among the host's sensors (ADR-0346), in whole
 	// degrees; null on a host without sensors.
@@ -71,7 +81,7 @@
 {#if id === 'storage'}
 	<StorageWidget pools={poolsForWidget} failed={poolsFailed} />
 {:else if id === 'containers'}
-	<ContainersWidget containers={containersForWidget} limit={5} />
+	<ContainersWidget containers={containersForWidget} pending={containersPending} limit={5} />
 {:else if id === 'recent-activity'}
 	<RecentActivityWidget notifications={notificationsForWidget} limit={5} />
 {:else if stats}

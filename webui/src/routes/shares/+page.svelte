@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { Plus } from 'lucide-svelte';
 	import type { IscsiState } from '$lib/api/iscsi';
-	import { getSharePaths, type NfsExport, type RepairResult, type SharePath, type SmbShare } from '$lib/api/shares';
+	import type { NfsExport, RepairResult, SharePath, SmbInterfaces, SmbShare } from '$lib/api/shares';
 	import { Alert, Button, Skeleton, Tabs } from '$lib/components/ui';
 	import {
 		BulkDeleteDialog,
@@ -19,12 +19,17 @@
 		SmbShareList,
 		SmbStatusAlerts
 	} from '$lib/components/shares';
-	import { messageOf } from '$lib/components/shares/errors';
 	import { NfsExports } from '$lib/components/shares/nfs.svelte';
 	import { ShareOutcome } from '$lib/components/shares/outcome.svelte';
 	import { SmbShares } from '$lib/components/shares/smb.svelte';
 	import { t } from '$lib/i18n';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { errorOf, valueOr, type Settled } from '$lib/pages/read';
+	import type { SharesSnapshot } from '$lib/pages/shares';
 	import { isRepairOf, repairJob } from '$lib/stores/repair';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// i18n-ignore: the names of the protocols, the same in every language
 	const tabs = [
@@ -38,9 +43,12 @@
 	// The NAS's address as this browser reaches it, for the connection hints.
 	let host = $state('');
 
+	// Until the page's load has answered: only on the tab's first page, when it takes a while.
 	let loading = $state(true);
 	let paths: SharePath[] = $state([]);
 	let pathsError = $state('');
+	// The interfaces SMB listens on, which SmbInterfacesCard shows and changes.
+	let interfaces = $state.raw<Settled<SmbInterfaces> | null>(null);
 
 	// Outcome of the last change: shown until dismissed.
 	const outcome = new ShareOutcome();
@@ -85,9 +93,24 @@
 	let nfsFormOpen = $state(false);
 	let nfsDeleteDialog: ReturnType<typeof DeleteNfsExportDialog> | undefined;
 
+	// What the page's load read ($lib/pages/shares): shown before the page is drawn, and replaced by
+	// a fresh read when the load gave the last visit's.
+	followPage(
+		() => data,
+		(snapshot) => applySnapshot(snapshot)
+	);
+
+	function applySnapshot(snapshot: SharesSnapshot) {
+		smb.apply(snapshot.shares, snapshot.smbStatus);
+		nfs.apply(snapshot.nfsExports, snapshot.nfsStatus);
+		paths = valueOr(snapshot.paths, []);
+		pathsError = errorOf(snapshot.paths);
+		interfaces = snapshot.interfaces;
+		loading = false;
+	}
+
 	onMount(() => {
 		host = window.location.hostname;
-		void loadAll();
 	});
 
 	// A repair of a share's permissions runs in the background (ADR-0363): its card says so, and
@@ -106,24 +129,6 @@
 			followedRepair?.state === 'running' && job?.state !== 'running' && isRepairOf(job, followedRepair.share);
 		followedRepair = job;
 		if (ended) void smb.reload();
-	}
-
-	async function loadAll() {
-		loading = true;
-		// The share list imports the old smb.conf on first use, so the status
-		// (with the import report) is read after it.
-		await Promise.all([smb.load().then(() => smb.loadStatus()), loadPaths(), nfs.load()]);
-		loading = false;
-	}
-
-	async function loadPaths() {
-		try {
-			paths = await getSharePaths();
-			pathsError = '';
-		} catch (e) {
-			paths = [];
-			pathsError = messageOf(e);
-		}
 	}
 
 	// ---- SMB shares ----
@@ -208,7 +213,8 @@
 		<ShareOutcomeAlerts {outcome} />
 
 		{#if loading}
-			<!-- The first load (ADR-0430): the shares' table and the card under it. -->
+			<!-- The tab's first page, when its data take longer than a moment: the shares' table and the
+			     card under it. A navigation keeps the page before until they are in. -->
 			<div class="space-y-6" aria-busy="true">
 				<Skeleton shape="table" columns={5} count={3} />
 				<Skeleton shape="card" count={2} />
@@ -230,7 +236,7 @@
 				ondelete={(share) => deleteDialog?.open(share)}
 				onbulkdelete={() => bulkDeleteDialog?.open()}
 			/>
-			<SmbInterfacesCard />
+			<SmbInterfacesCard {interfaces} onchange={(answer) => (interfaces = answer)} />
 		{:else if activeTab === 'iscsi'}
 			<IscsiTab bind:this={iscsiTab} bind:iscsiState {paths} />
 		{:else}

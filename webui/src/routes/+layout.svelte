@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { onMount, untrack, type Snippet } from 'svelte';
 	import { browser } from '$app/env';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import {
 		user,
@@ -22,8 +22,10 @@
 	import CommandPalette from '$lib/components/palette/CommandPalette.svelte';
 	import AppSidebar from '$lib/components/layout/AppSidebar.svelte';
 	import { gateFor } from '$lib/components/layout/routes';
+	import { ACCOUNT_DEPENDENCY, markStarted, readForOf } from '$lib/pages/load';
 	import {
 		ApiError,
+		currentSession,
 		isPublicRoute,
 		knownSignedOut,
 		obtainSessionKey,
@@ -72,12 +74,21 @@
 	// A page renders only once we know who is asking and that they may see it,
 	// so admin pages never fire requests on behalf of a regular account.
 	const gate = $derived(gateFor(pathname, $user));
-	// SvelteKit gives the layout the next page and updates page.url in the same update, once the
-	// page has loaded. While navigating to a page with another gate (e.g. from /login to an admin
-	// page), show no page, so that the old one goes and the next one is created only once the
-	// layout shows the branch and gate for it.
-	const nextPath = $derived(navigating.to && !navigating.willUnload ? navigating.to.url.pathname : null);
-	const showSlot = $derived(nextPath === null || gateFor(nextPath, $user) === gate);
+	// SvelteKit keeps the open page while the next one's load runs, and then gives the layout the
+	// next page and its page.url in one update: the branch and the gate change with the page.
+	// A page's load says whom it read for ($lib/pages/load): its data are shown only to the session
+	// and the account of now. Another account signed in meanwhile (here or in another tab), or the
+	// account could not be read for the first page: the page waits, and its load runs again.
+	const readFor = $derived((page.data as { readFor?: string }).readFor);
+	const showSlot = $derived(readFor === undefined || readFor === readForOf(currentSession(), $user));
+	$effect(() => {
+		if (gate === 'allowed' && !showSlot) untrack(() => void invalidate(ACCOUNT_DEPENDENCY));
+	});
+	// The first navigation, the tab's load, has ended: a page's load from now on is a navigation's.
+	afterNavigate(() => markStarted());
+	// A navigation in progress: a thin bar at the top, which app.css shows only after a moment, so
+	// that a fast one shows nothing; the page's region is busy for screen readers meanwhile.
+	const navigatingNow = $derived(navigating.to !== null && !navigating.willUnload);
 	// Once mounted, on every change of the path or of the account: the handlers of the session are
 	// set by then. Only those make it run again: what guardRoute reads and writes is its own business.
 	$effect(() => {
@@ -232,7 +243,10 @@
 
 		<!-- Main content -->
 		<!-- 16 px of padding below md, 24 px from md, 32 px from xl (ADR-0428). -->
-		<main class="flex-1 min-w-0 overflow-auto bg-surface p-4 md:p-6 xl:p-8 scrollbar-thin">
+		<main
+			class="flex-1 min-w-0 overflow-auto bg-surface p-4 md:p-6 xl:p-8 scrollbar-thin"
+			aria-busy={navigatingNow ? 'true' : undefined}
+		>
 			<!-- The problems of the NAS, above every page of an administrator (ADR-0332). -->
 			{#if gate === 'allowed' && $isAdmin && !setupOnly}
 				<div class="mx-auto max-w-[1440px]">
@@ -256,6 +270,11 @@
 		</main>
 	</div>
 	<CommandPalette bind:this={commandPalette} enabled={paletteEnabled} admin={$user?.is_admin === true} />
+{/if}
+
+{#if navigatingNow}
+	<!-- No text and no role: <main> says that it is busy. -->
+	<div class="navigation-progress" aria-hidden="true" data-navigation-progress></div>
 {/if}
 
 <!-- The messages after an action and the confirmations of confirm() (ADR-0432), on every page. -->

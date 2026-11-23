@@ -3394,6 +3394,33 @@
       ]
     },
     {
+      "id": "webui.navigation-without-skeletons",
+      "category": "webui",
+      "description": "A page opened from the navigation appears with its data, without a skeleton in between: the pages read their data in SvelteKit load functions",
+      "steps": [
+        "A click on a sidebar link between Dashboard, Storage and Shares keeps the open page, its link marked and its URL, until the next page's data are in, and then shows that page with them; no frame shows a skeleton or an empty page, and a navigation that takes longer than 200 ms shows a thin bar at the top",
+        "A page visited before in the session appears at once with its last data, and a fresh read replaces them when it answers",
+        "Only the tab's first page shows its skeleton, and only when its data take longer than 300 ms",
+        "The dashboard does not wait for its containers: their card waits in its place until they come",
+        "A pointer resting on a sidebar link reads nothing from the API; the press of the link starts the next page's reads (Storage's disks first)",
+        "A change made on a page is never shown older on the next visit, and another account signed in after the last one never sees what was read for it",
+        "The live stats keep coming on the dashboard after a navigation"
+      ],
+      "passes": false,
+      "adr": [
+        "ADR-0469"
+      ],
+      "verified_by": [
+        "webui/tests/page-loads.spec.ts",
+        "webui/tests/loading.spec.ts",
+        "webui/tests/dashboard.spec.ts",
+        "webui/tests/storage.spec.ts",
+        "webui/tests/shares.spec.ts",
+        "supervisor/tests/test_webui_page_loads.py"
+      ],
+      "notes": "Built 2026-11-23 on the workstation from the measured spike spike.rendering (not merged), for Dashboard, Storage and Shares; the owner chose the approach for all 23 pages, and webui/AGENTS.md (Loading, \"Page loads\") has the recipe for the other 20, which keep their onMount reads and skeletons until converted. Decisions in ADR-0469, which supersedes ADR-0430 in part (each page's first load showed its skeleton). Shared part: webui/src/lib/pages (load.ts readPage, cache.ts, follow.svelte.ts, read.ts, preload.ts), onApiChange of $lib/api/client.ts, the root layout's readFor check and navigation bar, routes/+layout.ts (ssr = false). Click-to-data on the stand-in with the BPI-W3's API times (spike's nav.mjs, 6 sessions x 3 rounds, p50): before Storage 248 ms, Shares 405 ms, Dashboard 466 ms, all behind a skeleton; after a first visit 244 ms (Storage) and 244 ms (Shares) with the old page up, a revisit 31-32 ms, the Dashboard 30 ms (cached from the sign-in), no skeleton. Host-independent: no device check beyond the batch's deploy (the web UI's static files). Review (fresh context, ADR-0017): fixed a read in flight that was cached under the next account's session (reads are bound to their session and account; spec 'a read for the administrator that answers after a regular user signed in elsewhere is nobody's'), the dashboard's areas missing network (hostname) and updates (and files and snapshots added to the pages that show pool usage, network and snapshots to Shares), an old fresh snapshot applied after the re-reads (now dropped; a navigation re-reads), StorageLists.apply overruling a newer own load, a dialog's lists and the devices' bookkeeping (now it yields to a later load and waits for a dialog to close), readers that could throw and leave a skeleton (guards; a failed read reruns the load or fails the navigation), the containers' placeholder shorter than a full card (now the height of five rows; the spec checks the widget below), a pressed link's preload reused at any age (older than 5 s is read again), the hover check's bypass through $lib/api/client (counted now), the cache not cleared on a change of role (cleared, and readFor names the role), a tab without a session key waiting twice, nothing setting ssr = false, and specs that would pass without the fresh read (Shares) or depend on the stand-in's timing (loading). Left: 'tap' is also a touch, so a scroll of the phone's drawer that starts on a link reads that page (SvelteKit's preload; accepted); a 403 set-up-two-factor answer to the first page's read before the layout mounted reaches no handler (the socket's 4403 recovers it); a theme save forgets the Dashboard's and Shares' entries (area auth; harmless); after another account signs in elsewhere the page waits under the shell's placeholder, as before; the hover check follows $lib/pages and $lib/api imports only, not stores; no spec for the hostname's area or for a fresh snapshot arriving with a Storage dialog open (covered by review and code)."
+    },
+    {
       "id": "webui.system-tabs",
       "category": "webui",
       "description": "The tabs of the System page follow the URL",

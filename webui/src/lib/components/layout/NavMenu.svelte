@@ -15,6 +15,7 @@
 	} from 'lucide-svelte';
 	import { Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { preloadOf } from '$lib/pages/preload';
 	import { isActive } from './routes';
 
 	// The links of the sidebar: an administrator's pages, or a regular account's (ADR-0030). The
@@ -131,6 +132,7 @@
 				<li>
 					<a
 						href={item.href}
+						data-sveltekit-preload-data={preloadOf(item.href)}
 						onclick={onnavigate}
 						aria-current={item.href === current ? 'page' : undefined}
 						class="nav-item {item.sub ? 'pl-[38px]' : ''} {item.href === current

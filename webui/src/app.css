@@ -439,8 +439,9 @@
 			background-image: none;
 		}
 
-		/* The boot screen's bar still says "busy", without moving (ADR-0430). */
-		.boot-progress::after {
+		/* The boot screen's bar still says "busy", without moving (ADR-0430), and so does a navigation's. */
+		.boot-progress::after,
+		.navigation-progress::after {
 			animation: boot-breathe 2s ease-in-out infinite alternate !important;
 		}
 	}
@@ -2053,6 +2054,29 @@
 	width: 40%;
 	border-radius: inherit;
 	background-color: rgb(var(--color-brand-ring));
+	animation: boot-slide 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+/* A navigation that waits for the next page's data (the root layout draws it while SvelteKit
+   navigates): a thin bar across the top of the window, the boot screen's, which shows only after
+   200 ms, so that a fast navigation shows nothing. The page stays as it is under it. */
+.navigation-progress {
+	position: fixed;
+	inset: 0 0 auto 0;
+	z-index: 90;
+	height: 3px;
+	overflow: hidden;
+	pointer-events: none;
+	opacity: 0;
+	animation: boot-appear 160ms var(--ease) 200ms forwards;
+}
+
+.navigation-progress::after {
+	content: '';
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 40%;
+	background-color: rgb(var(--color-brand));
 	animation: boot-slide 1.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
 
