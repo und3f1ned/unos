@@ -795,6 +795,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-23: install.sh on a host, the pruning script
+
+- At the owner's word ("you have extended rights: do everything you can without me") the lead
+  installed Lima and ran the host checks of the scripts on a throwaway Debian 12 VM (arm64,
+  Apple Virtualization): the repository is private, so install.sh of main ran through a local
+  mirror (UNOS_REPO) instead of the one-liner. install.sh installed v0.1.0 from GHCR with nothing
+  built, two more runs kept UNOS's smb.conf and recreated nothing, a header-less copy was replaced
+  like a host file, and after the VM's reboot the unos unit started v0.1.0 with no pull and no
+  build. `deploy.no-legacy-smb-conf-recognition` passes. Found: install.sh leaves the unos unit
+  inactive until the first reboot (`deploy.install-script` stays open for the fix); Samba 4.17
+  ignores `smb3 unix extensions`; System > Updates sees no release while the repository is
+  private (GitHub's API answers 404).
+- `process.prune-merged-branches` passes: pull request 113 (ADR-0465) merged as a44d5377, and its
+  script removed its own worktree and branch.
+
 ### 2026-11-22 to 2026-11-23: CI on GitHub again, v0.1.0, Samba in CI
 
 - At the owner's word ("start the other features in the order of my growing part", in
