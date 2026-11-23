@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0332]
 ---
 
-# ADR-0476: The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool the administrator removed is not alerted
+# ADR-0479: The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool the administrator removed is not alerted
 
 ## Context
 

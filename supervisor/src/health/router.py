@@ -1115,7 +1115,7 @@ async def raid_monitor_loop():
     errors, a filesystem forced read-only, and a status that turned from healthy, but not to not
     mounted for a pool that UNOS managed at the previous check (``managed`` in the status) and whose
     entry the host's fstab, read, no longer has: the administrator removed or unmounted it, and its
-    disks keep it (ADR-0476).
+    disks keep it (ADR-0479).
     """
     while _raid_monitor_running:
         read = None
