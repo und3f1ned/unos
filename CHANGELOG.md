@@ -156,7 +156,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   but a GitHub-hosted runner, and the check one with pools.
 
 ### Changed
-- The dev scripts share one SSH connection per device (ADR-0476): `scripts/dev/ssh.sh`, which
+- The dev scripts share one SSH connection per device (ADR-0477): `scripts/dev/ssh.sh`, which
   api.py, scenario.py, check.sh, sd.sh and deploy.sh go through, opens a master connection that
   the next calls use until 300 s after its last session, its socket in a private folder of the
   workstation's user (`$TMPDIR/unos-ssh-<uid>`); a call takes 0.10 s instead of 1.6 s on the

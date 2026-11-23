@@ -600,7 +600,7 @@ data in RAM. `deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh` (install, remove), 
 `check.sh` and `sd.sh` print the SD writes of their run; `ssh.sh`, `api.py` and `bin/testparm`
 take no lock and print no SD writes, so a check made with them runs under `sd.sh measure`. Every
 script that reaches the device goes through `ssh.sh`, which shares one SSH connection per device
-host and user (ADR-0476): the first call opens a master that the next ones use until 300 s after
+host and user (ADR-0477): the first call opens a master that the next ones use until 300 s after
 its last session, so a call costs no new login (on the BPI-F3, 0.10 s instead of 1.6 s), and
 proves none either; `scripts/dev/ssh.sh --close` stops it before a check of a new login, a reboot
 of the device or a change of dev.env's SSH settings (the device-checks skill). The

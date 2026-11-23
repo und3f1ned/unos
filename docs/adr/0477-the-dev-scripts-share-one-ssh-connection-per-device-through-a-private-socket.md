@@ -5,7 +5,7 @@ area: device
 decided-by: agent
 ---
 
-# ADR-0476: The dev scripts share one SSH connection per device, through a private socket that ssh.sh --close stops
+# ADR-0477: The dev scripts share one SSH connection per device, through a private socket that ssh.sh --close stops
 
 ## Context
 

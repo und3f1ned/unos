@@ -13,7 +13,7 @@
 # (a known_hosts file instead of ~/.ssh/known_hosts). The host key is checked: a new host is
 # added once, a changed key is refused (run `ssh-keygen -R <host>` after reinstalling it).
 #
-# One connection per device (ADR-0476): the first call opens a master connection, and the calls
+# One connection per device (ADR-0477): the first call opens a master connection, and the calls
 # after it run their commands over it (OpenSSH's ControlMaster), without a key exchange, login and
 # PAM session each: on the boards, pam_motd runs Armbian's login scripts at every login, whatever
 # the command. The master ends 300 s after its last session ends. Its socket is
@@ -56,7 +56,7 @@ else
 fi
 dest=$UNOS_DEV_SSH_USER@$UNOS_DEV_HOST
 
-# The shared connection's socket (ADR-0476). sun_path holds 104 bytes on macOS, and ssh first
+# The shared connection's socket (ADR-0477). sun_path holds 104 bytes on macOS, and ssh first
 # binds the socket under its name and 17 more characters: at most 86 here. ssh expands % and
 # splits at spaces in ControlPath: plain characters only. Checked in the C locale, where letters
 # are ASCII ones and the length counts bytes.
@@ -91,7 +91,7 @@ if [ "${1:-}" = --close ]; then
         dev_warn "--close takes no command"
         exit 2
     fi
-    # A master that died leaves its socket, which the next call's ssh removes (ADR-0476).
+    # A master that died leaves its socket, which the next call's ssh removes (ADR-0477).
     if [ -n "$mux_path" ] && [ -S "$mux_path" ]; then
         ssh "${opts[@]}" -O stop -- "$dest" 2>/dev/null || :
     fi

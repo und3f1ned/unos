@@ -22,7 +22,7 @@ wiped and unused (ADR-0214, ADR-0470). Run every check from the repository root,
   `api.py` and the testparm shim print nothing of the kind: run them under
   `scripts/dev/sd.sh measure <label> -- <command>`, as the steps below do.
 - Every script reaches the device through `ssh.sh`, which shares one SSH connection per device
-  (ADR-0476): over it, a call proves no new login, since a firewall lets the connection through
+  (ADR-0477): over it, a call proves no new login, since a firewall lets the connection through
   as established. Run `scripts/dev/ssh.sh --close`, after which the next call logs in anew,
   before a check that the device takes a new SSH login (step 1, and the LAN checks after a change
   of its firewall or network, also within a revert window), before the owner reboots the device

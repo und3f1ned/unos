@@ -608,7 +608,7 @@ def test_ssh_sh_uses_keys_only_without_a_password(device):
     assert "SSH_ASKPASS" not in env
 
 
-# --- ssh.sh's shared connection (ADR-0476) ----------------------------------------------------
+# --- ssh.sh's shared connection (ADR-0477) ----------------------------------------------------
 
 MUX_OPTIONS = ("ControlMaster=", "ControlPath=", "ControlPersist=")
 
