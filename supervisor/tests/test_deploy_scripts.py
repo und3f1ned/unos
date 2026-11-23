@@ -6546,8 +6546,8 @@ class TestWheelsOnly:
     """pip installs take wheels only (ADR-0423): make setup, the CI jobs, the test image and the audit
     environment. nut2 publishes only its sdist, which their command lines name after
     --only-binary=:all:. The supervisor's image is left to pip's default, which with exact pins takes
-    a wheel wherever the pinned version has one: its pip layer, a hundred MB on the dev device's SD
-    card (ADR-0214), stays as it was."""
+    a wheel wherever the pinned version has one: its pip layer, a hundred MB on the dev device's
+    system disk (ADR-0214), stays as it was."""
 
     # The one package without a wheel, after the option that it narrows: --only-binary=:all: after
     # it would clear it.

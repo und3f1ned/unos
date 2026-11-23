@@ -1013,8 +1013,8 @@ def pool_device_problems(paths: list[str]) -> dict[str, str]:
     Mount and Import mount such a filesystem and keep it in the host's fstab
     (ADR-0283), so its members follow the rules of a pool's creation
     (ADR-0035, pools._check_pool_devices): nothing on a boot or virtual
-    device (HIDDEN_DISK_PREFIXES: the SD card and the eMMC, which is never
-    written, ADR-0225; loop and RAM disks), and nothing on the system disk,
+    device (HIDDEN_DISK_PREFIXES: the SD card and the eMMC, the boot flash of
+    ARM boards, ADR-0470; loop and RAM disks), and nothing on the system disk,
     whose partitions and the devices built on them are never used for pools.
     A device that lsblk does not list cannot be checked. Returns path ->
     reason for each of ``paths`` that breaks a rule. RuntimeError when lsblk

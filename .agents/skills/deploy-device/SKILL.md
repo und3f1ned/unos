@@ -1,19 +1,19 @@
 ---
 name: deploy-device
-description: Deploy the working tree to the UNOS dev device with scripts/dev/deploy.sh (status, sync, build, up, check), under the device lock, reporting the SD-card writes of every step. Use only when the owner has asked for a deploy in this conversation.
+description: Deploy the working tree to the UNOS dev device with scripts/dev/deploy.sh (status, sync, build, up, check), under the device lock, reporting the system disk's writes of every step. Use only when the owner has asked for a deploy in this conversation.
 disable-model-invocation: true
 ---
 
 # Deploy to the dev device
 
-The dev device is one shared board. It runs from an SD card, which wears with every write, and
-its eMMC keeps the owner's firmware and is never written: every write counts (ADR-0214,
-ADR-0225). `scripts/dev/deploy.sh` does the deploy in scripted, measured,
-reversible steps, and keeps the backups and rollback copies on this workstation (ADR-0223).
+The dev device is one shared board. It runs from its eMMC, a soldered chip that wears with
+every write, and its SD card is wiped and unused: every write counts (ADR-0214, ADR-0470).
+`scripts/dev/deploy.sh` does the deploy in scripted, measured, reversible steps, and keeps the
+backups and rollback copies on this workstation (ADR-0223).
 Each step holds the device lock (`/run/unos-dev.lock` on the device, ADR-0210) and ends with a
-line `SD writes <step>: <MiB> MiB (<sectors> sectors)`. Settings and passwords come from
-`dev.env` (mode 600, never printed, ADR-0212); in a git worktree without one, the scripts use
-the main checkout's. `status`, `sync --dry-run` and `backup` only read the device; the other
+line `SD writes <step>: <MiB> MiB (<sectors> sectors)`, the system disk's writes. Settings and
+passwords come from `dev.env` (mode 600, never printed, ADR-0212); in a git worktree without
+one, the scripts use the main checkout's. `status`, `sync --dry-run` and `backup` only read the device; the other
 steps change what runs there.
 
 The owner starts this skill (`/deploy-device`); the model does not load it on its own.
@@ -81,7 +81,7 @@ lists the rolled-back files as differing from the working tree.
   device's checkout by hand.
 - A supervisor build reruns apt-get and pip on the device when `supervisor/requirements.txt`
   changed, or the base's digest in `supervisor/Dockerfile` names a linux/arm64 image new to the
-  device (ADR-0305): hundreds of MB on the SD card. The step's note says before the build when no
+  device (ADR-0305): hundreds of MB on the system disk. The step's note says before the build when no
   layer of the build cache comes from the pinned digest. Tell the owner before such a build.
 - Every container created (docker run, docker create) writes about 2 MB, and a pulled image is
   written whole: they are owner actions, and the guard hook refuses them over SSH (ADR-0211).

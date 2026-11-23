@@ -450,6 +450,13 @@ def test_dev_env_example_names_every_setting_with_empty_secrets(device):
     assert result.returncode == 0, result.stderr
 
 
+def test_dev_env_example_measures_the_writes_of_the_bpi_w3s_emmc():
+    """The dev device runs from its eMMC mmcblk0, and its SD card mmcblk1 is wiped (ADR-0470): a
+    copy of the template counts the eMMC's writes, not those of the idle card."""
+    example = (REPO_ROOT / "dev.env.example").read_text()
+    assert re.findall(r"^UNOS_DEV_SYSTEM_DISK=(.*)$", example, flags=re.M) == ["mmcblk0"]
+
+
 def test_git_ignores_dev_env_but_not_the_example():
     if shutil.which("git") is None or not (REPO_ROOT / ".git").exists():
         pytest.skip("not a git checkout")
@@ -1076,7 +1083,7 @@ def test_check_sh_unreadable_values_of_a_zone_never_end_the_check_early(local_de
 
 def test_check_sh_reads_load_and_heat_without_writing_anything():
     """The reading is /proc, /sys and docker stats --no-stream: no redirection into a file, no tool
-    that makes one, so that the check adds nothing to the device's SD card (ADR-0214, ADR-0421)."""
+    that makes one, so that the check adds nothing to the device's system disk (ADR-0214, ADR-0421)."""
     script = (DEV / "check.sh").read_text()
     section = script.split('echo "== load and temperature"', 1)[1].split('echo "== result"', 1)[0]
     assert "docker stats --no-stream" in section
@@ -1720,7 +1727,7 @@ def relay(local_device):
 
 
 def test_the_relay_keeps_the_token_private_and_signs_in_only_when_needed(relay):
-    """Every login writes the SD card (ADR-0222): a first call signs in once and keeps the token
+    """Every login writes the system disk (ADR-0222): a first call signs in once and keeps the token
     in a file of mode 600, through no temporary file left behind; the next call reuses it; a 401
     brings exactly one new login, also when the new token is refused too; a request without a
     login sends no token; --forget-token deletes the cache. The password goes only in the
@@ -2118,7 +2125,7 @@ def test_skill_and_its_claude_symlink(name):
 
 
 def test_only_the_owner_starts_a_deploy():
-    """A deploy replaces what runs on the device and writes its SD card: the model never loads
+    """A deploy replaces what runs on the device and writes its system disk: the model never loads
     the deploy-device skill on its own, and the skill says so (AGENTS.md: the owner asks)."""
     text = (SKILLS / "deploy-device" / "SKILL.md").read_text()
     fields = front_matter(text)
@@ -2221,7 +2228,7 @@ def test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_devic
     build-supervisor says whether the device has that base: as an image, or as the layers that
     BuildKit pulled into its build cache, which `docker buildx du --verbose` describes as "pulled
     from <name>:<tag>@<digest>". When it has neither, the build pulls the base and runs apt-get and
-    pip again, hundreds of MB on the SD card (ADR-0214), unless the image the digest names for the
+    pip again, hundreds of MB on the system disk (ADR-0214), unless the image the digest names for the
     device's platform is one the cache holds under another digest: the note says both. A base
     without a whole digest is refused before anything on the device changes."""
     device, repo, checkout = trees

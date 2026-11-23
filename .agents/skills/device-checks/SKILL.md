@@ -1,13 +1,13 @@
 ---
 name: device-checks
-description: Check the UNOS dev device (health, API answers, Samba's real testparm, the backend tests on Linux in the device's RAM, read-only; and, when the owner asks, the scenario check of an area, which makes temporary things and removes them) and report the SD-card writes of each check. Use to verify a deployed change, behaviour the local stand-in cannot provide, Linux-only tests before a push (ADR-0462), or the host-level steps of an entry before and after a reboot (ADR-0018).
+description: Check the UNOS dev device (health, API answers, Samba's real testparm, the backend tests on Linux in the device's RAM, read-only; and, when the owner asks, the scenario check of an area, which makes temporary things and removes them) and report the system disk's writes of each check. Use to verify a deployed change, behaviour the local stand-in cannot provide, Linux-only tests before a push (ADR-0462), or the host-level steps of an entry before and after a reboot (ADR-0018).
 ---
 
 # Checks on the dev device
 
-The device runs from an SD card that wears with every write, and its eMMC keeps the owner's
-firmware and is never written (ADR-0214, ADR-0225). Run every check from
-the repository root, through `scripts/dev`:
+The device runs from its eMMC, a soldered chip that wears with every write, and its SD card is
+wiped and unused (ADR-0214, ADR-0470). Run every check from the repository root, through
+`scripts/dev`:
 
 - `check.sh`, the API relay of `api.py`, the testparm shim `bin/testparm`, `linux-tests.sh`
   and the commands of the scenario checks (but pdbedit) run on the device in a private mount
@@ -18,9 +18,9 @@ the repository root, through `scripts/dev`:
   `ssh.sh`, `sd.sh` and the testparm shim take none.
 - `check.sh`, `linux-tests.sh`, `deploy.sh`, `ipv6-filter.sh` (install and remove), `scenario.sh`
   (for each check, and each step's MiB in its line) and `sd.sh measure` print
-  `SD writes <label>: <MiB> MiB (<sectors> sectors)`. `ssh.sh`, `api.py` and the testparm shim
-  print nothing of the kind: run them under `scripts/dev/sd.sh measure <label> -- <command>`, as
-  the steps below do.
+  `SD writes <label>: <MiB> MiB (<sectors> sectors)`, the system disk's writes. `ssh.sh`,
+  `api.py` and the testparm shim print nothing of the kind: run them under
+  `scripts/dev/sd.sh measure <label> -- <command>`, as the steps below do.
 
 Settings come from `dev.env` (mode 600, ADR-0212); in a git worktree without one, the scripts
 use the main checkout's. Output shows secrets as `<redacted>`.
@@ -106,7 +106,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
 - A `<redacted>` where you expected a plain value means that a secret's value occurs in the
   output: the redaction works. Tell the owner; the cure is a new password (an owner action),
   never a weaker redaction.
-- API calls write a little anyway: about 0.02 MiB a call (logs on the SD card), a login about
+- API calls write a little anyway: about 0.02 MiB a call (logs on the system disk), a login about
   0.08 MiB and the first after a supervisor start about 0.15 MiB (the login history's commit
   in the database's write-ahead log and the file system's metadata, ADR-0308). api.py signs
   in only when it has no usable token: none is kept in the device's RAM
@@ -160,7 +160,7 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   `/dev/shm/unos-scenario-unoscheck<6 hex digits>.token`, which the user's Delete makes useless:
   `scripts/dev/ssh.sh 'rm -f /dev/shm/unos-scenario-unoscheck<6 hex digits>.token'`. Its ACL step
   needs setfacl and getfacl (the package acl) on the device; without them it says so and skips.
-- The scenario checks write to the SD card, and each step's line says how much: the API's
+- The scenario checks write to the system disk, and each step's line says how much: the API's
   database and audit log at every change, smb.conf at every share change, `/etc/passwd` and
   `/etc/shadow` when the smb check's account is made and deleted, passdb.tdb then, at its
   password change and at each wrong password that Samba's lockout counts (not at the replaced

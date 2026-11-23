@@ -7,7 +7,7 @@ server (backup.off-device-copies-over-sftp, ADR-0422): the owner's second NAS is
 
 Copied into /dev/shm of the dev device and run there with the host's python3, in the background, it
 serves restic's REST protocol (versions 1 and 2) at https://ADDRESS:PORT/<repository>/ for the
-repositories below FOLDER (a folder of the pool, not the SD card), with basic authentication: NAME
+repositories below FOLDER (a folder of the pool, not the system disk), with basic authentication: NAME
 and the password in FILE (mode 600, in RAM), never on a command line. One repository per path of
 folder names; its files as restic's local back end lays them out (data/<2 hex digits>/<name>).
 It writes nothing but the repositories' files and logs nothing but a line for a refused or failed

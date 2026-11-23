@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: device
 decided-by: owner
+superseded-by: ADR-0470
 ---
 
 # ADR-0225: The dev device runs from its SD card and never writes its eMMC
 
 ## Context
+
+Superseded by ADR-0470: since 2026-11-23 the dev device runs from its eMMC, in place of UGREEN's firmware, and its SD card is wiped.
 
 The owner asked for "maximum protection of the eMMC memory, it cannot be replaced later". ADR-0214 and the docs then called the device's system disk "an SD card that cannot be replaced". A read-only check on 2026-11-07 showed two separate flash devices:
 

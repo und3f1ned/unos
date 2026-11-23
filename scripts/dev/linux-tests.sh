@@ -42,7 +42,7 @@ no_rootfs() {
     cat >&2 << EOF
 linux-tests.sh: there is no Python in $UNOS_DEV_ROOTFS on the device (RAM: it is lost at every
 reboot). It is the supervisor image's filesystem. Making it creates a container, which writes
-about 2 MB to the device's SD card, so it is an owner action:
+about 2 MB to the device's system disk, so it is an owner action:
 
   scripts/dev/sd.sh measure rootfs -- scripts/dev/ssh.sh 'set -e; c=\$(docker create deploy-supervisor:latest);
     mkdir -p $UNOS_DEV_ROOTFS; docker export "\$c" | tar -x -C $UNOS_DEV_ROOTFS; docker rm "\$c" > /dev/null'

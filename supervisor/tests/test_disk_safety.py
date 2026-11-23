@@ -18,6 +18,7 @@ from .test_pool_persistence import (
     BASE_FSTAB,
     DATA_UUID,
     NEW_UUID,
+    ROOT_UUID,
     admin_client,
     entry,
     install_fake_host,
@@ -46,7 +47,7 @@ def api(fake_host):
 
 @pytest.fixture
 def nas(fake_host):
-    """The ArmSoM layout: root on the SD card plus four data disks.
+    """A board that boots from an SD card, plus four data disks.
 
     sda      btrfs pool 'data', not mounted
     sdb      blank
@@ -81,15 +82,21 @@ def nvme_root(fake_host):
 
 
 def bpi_w3(fake_host):
-    """The flash of a Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588) as the dev device has it, on
-    top of the fake host's microSD card mmcblk1 with the system and zram0 for swap: the eMMC
-    mmcblk0 keeps a firmware in nine partitions, one of them a swap partition that is not in use,
-    beside its boot partitions mmcblk0boot0 and mmcblk0boot1, and Armbian keeps /var/log on zram1
-    (ADR-0225, ADR-0376). The SATA disk sda sits behind an AHCI controller, blank here."""
+    """The flash of a Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588) as the dev device has it since
+    2026-11-23 (ADR-0470, ADR-0376): the system on the eMMC mmcblk0, one GPT partition with the
+    root filesystem (ext4, the fake host's root UUID), beside its boot partitions mmcblk0boot0 and
+    mmcblk0boot1; the microSD card mmcblk1 in its slot, wiped, with no partition table; zram0 for
+    swap, and Armbian keeps /var/log on zram1. The SATA disk sda sits behind an AHCI controller,
+    blank here."""
     fake_host.files["/proc/device-tree/compatible"] = "rockchip,rk3588-armsom-w3\0rockchip,rk3588\0"
+    card = fake_host.node("mmcblk1")
+    card.update(size=31_914_983_424, pttype=None)
+    card.pop("children")
+    fake_host.mounts = [m for m in fake_host.mounts if m["target"] != "/"]
     fake_host.add_disk("mmcblk0", size=31_268_536_320, rota=False, pttype="gpt")
-    for n, fstype in enumerate(("vfat", "squashfs", "ext4", "ext4", "swap", "ext4", None, None, "ext4"), 1):
-        fake_host.add_partition("mmcblk0", f"mmcblk0p{n}", fstype=fstype)
+    fake_host.add_partition("mmcblk0", "mmcblk0p1", size=31_251_759_104, fstype="ext4",
+                            label="armbi_emmc", uuid=ROOT_UUID)
+    fake_host.add_mount("/", "/dev/mmcblk0p1", "ext4", ROOT_UUID)
     fake_host.add_disk("mmcblk0boot0", size=4_194_304, rota=False)
     fake_host.add_disk("mmcblk0boot1", size=4_194_304, rota=False)
     fake_host.add_disk("zram1", size=52_428_800, rota=False, fstype="ext4")
@@ -193,8 +200,8 @@ class TestListDisks:
         assert [d.name for d in disks.list_disks()] == ["sdb"]
 
     def test_on_a_bpi_w3_only_the_sata_disk_is_listed(self, fake_host):
-        # The eMMC, its boot partitions, the microSD card and both zram devices are no disks of
-        # the Storage page (ADR-0225, ADR-0376).
+        # The eMMC with the system, its boot partitions, the wiped microSD card and both zram
+        # devices are no disks of the Storage page (ADR-0470, ADR-0376).
         bpi_w3(fake_host)
         sda = by_name(disks.list_disks())["sda"]
         assert [d.name for d in disks.list_disks()] == ["sda"]
@@ -368,17 +375,16 @@ class TestCreatePoolGuards:
     @pytest.mark.parametrize(
         ("device", "refusal", "message"),
         [("/dev/mmcblk0", HTTPException, "Invalid device name format"),
-         ("/dev/mmcblk0p9", HTTPException, "Invalid device name format"),
+         ("/dev/mmcblk0p1", HTTPException, "Invalid device name format"),
          ("/dev/mmcblk0boot0", HTTPException, "Invalid device name format"),
          ("/dev/mmcblk1", HTTPException, "Invalid device name format"),
-         ("/dev/mmcblk1p1", HTTPException, "Invalid device name format"),
          ("/dev/zram1", ValueError, "boot or virtual device")],
-        ids=["emmc", "emmc-partition", "emmc-boot-partition", "sd-card", "sd-card-root", "zram-var-log"],
+        ids=["emmc", "emmc-root", "emmc-boot-partition", "wiped-sd-card", "zram-var-log"],
     )
     def test_on_a_bpi_w3_the_flash_is_never_formatted(self, fake_host, device, refusal, message):
         # A name of the eMMC or the microSD card is refused by its format before any host command;
         # zram's name is a disk name, so lsblk runs and it is refused as a virtual device
-        # (ADR-0225, ADR-0376).
+        # (ADR-0470, ADR-0376).
         bpi_w3(fake_host)
         with pytest.raises(refusal) as raised:
             create_forced(fake_host, [device])

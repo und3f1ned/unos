@@ -13,7 +13,7 @@
 # added once, a changed key is refused (run `ssh-keygen -R <host>` after reinstalling it).
 #
 # On the device, read with care: commands that write files, refresh git's index (git status),
-# create containers or pull images write to its SD card (ADR-0214); scripts/dev/sd.sh
+# create containers or pull images write to its system disk (ADR-0214); scripts/dev/sd.sh
 # measures how much.
 set -euo pipefail
 case ${1:-} in

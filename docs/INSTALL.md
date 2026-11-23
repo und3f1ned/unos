@@ -185,8 +185,8 @@ for apps (ADR-0372):
 
 ### Banana Pi BPI-W3 (Rockchip RK3588, ARM64)
 
-UNOS runs on a BPI-W3 with 8 GB of RAM, its dev device, from a microSD card
-with Armbian's community image for the board (26.11.0-trunk, Debian 13, the
+UNOS runs on a BPI-W3 with 8 GB of RAM, its dev device, from its eMMC with
+Armbian's community image for the board (26.11.0-trunk, Debian 13, the
 `vendor-rk35xx` kernel 6.1.172). The BPI-W3 and the ArmSoM W3 are one board,
 and Armbian names its images `armsom-w3`. UNOS has no code of its own for the
 board (ADR-0376).
@@ -199,18 +199,20 @@ board (ADR-0376).
 - **Upgrades.** `apt full-upgrade` also replaces the kernel and its device
   trees: `/boot/dtb` then points to the new kernel's directory, so copy a device
   tree overlay of your own into its `rockchip/overlay/` before the reboot.
-- **The eMMC stays as it is.** Write the image to a microSD card and boot from
-  it. UNOS neither lists nor formats the eMMC (`mmcblk0`), its boot partitions,
-  the microSD card or zram, so whatever is on the eMMC stays there.
-- **Docker's data and the card.** `update.sh` pulls both images of each
+- **The eMMC or a microSD card.** Armbian's image boots from a microSD card:
+  the board's boot ROM starts the loader of a card in the slot before the
+  eMMC's. The dev device runs from its eMMC (ADR-0470). UNOS neither lists nor
+  formats the eMMC (`mmcblk0`), its boot partitions, the microSD card or zram,
+  so no pool takes them.
+- **Docker's data and the system disk.** `update.sh` pulls both images of each
   release: about their size in writes, without the build's layers (installing
   the supervisor's Python packages alone wrote about 440 MiB to the dev
-  device's card). Keep Docker's data root on another disk where you can, and make Docker
+  device's system disk). Keep Docker's data root on another disk where you can, and make Docker
   wait for that disk with a drop-in
   `/etc/systemd/system/docker.service.d/data-root.conf` that says `[Unit]` and
   `RequiresMountsFor=<the data root>`, as on the BPI-F3. Docker, and with it
   UNOS, then does not start while that disk is missing; the dev device keeps
-  its data root on the card for that reason (ADR-0228).
+  its data root on its system disk, the eMMC, for that reason (ADR-0470).
 - **Disks for pools.** SATA disks behind an AHCI controller (the dev device has
   a JMicron JMB58x on a PCIe 2.0 x1 link), NVMe drives in the M.2 Key M slot
   (PCIe 3.0 x4) and USB 3 disks need nothing special: UNOS makes and mounts

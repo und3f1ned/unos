@@ -47,10 +47,10 @@ and proposes the changes, and the owner reviews them.
    (`make test-fast` runs `supervisor/tests/test_feature_list.py`, `make check` the tests); an
    entry with `passes: true` still passes its steps; each entry for removing a legacy code path
    (ADR-0207) shows whether that path is still in the code.
-6. **The dev device's SD-card writes and wear.** `scripts/dev/check.sh` prints the writes since
-   boot and the card's wear data where the card reports it; compare them with the totals in the
-   Dev device section of `PROGRESS.md`. A rise that nothing explains becomes a feature-list entry
-   (ADR-0214).
+6. **The dev device's system disk: writes and wear.** `scripts/dev/check.sh` prints the writes
+   since boot and the eMMC's wear estimate (`life_time`, `pre_eol_info`, ADR-0470); compare
+   them with the totals in the Dev device section of `PROGRESS.md`. A rise that nothing explains
+   becomes a feature-list entry (ADR-0214).
 7. **The agent setup.** The guard's denials of the month, one line each in the git-ignored
    `tmp/guard/denials.log` (the time in UTC, the rule and the tool, never the command): a false
    block gets a fix and a case in `supervisor/tests/test_agent_guard.py`. The permission rules of

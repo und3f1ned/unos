@@ -18,7 +18,7 @@ device's own loopback address, and never through a proxy.
 
 Login: UNOS_DEV_ADMIN_USER and UNOS_DEV_ADMIN_PASSWORD from dev.env. Every login commits a
 row of the login history to the database and appends a line to the audit log, both on the
-device's SD card (about 0.08 MiB in all, 0.15 MiB for the first after a start; ADR-0308),
+device's system disk (about 0.08 MiB in all, 0.15 MiB for the first after a start; ADR-0308),
 and counts
 against the login rate limit (5 per minute), so the relay keeps the token in the device's RAM
 (/dev/shm/unos-dev-api.token, mode 600, root's; root there can mint tokens anyway; ADR-0222)
@@ -217,7 +217,7 @@ done(status=status, body=body)
 
 
 # The relay runs with the device's root filesystem read-only and noatime in a private mount
-# namespace (DEV_RO_ROOT of env.sh, ADR-0221): nothing it does writes to the SD card; the token
+# namespace (DEV_RO_ROOT of env.sh, ADR-0221): nothing it does writes to the system disk; the token
 # cache is in /dev/shm, which stays writable.
 RELAY_COMMAND = "unshare --mount --propagation private sh -c " + shlex.quote(
     'mount -o remount,bind,ro,noatime / && exec python3 -I -B -c "$1"'

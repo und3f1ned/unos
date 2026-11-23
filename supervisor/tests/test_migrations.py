@@ -251,7 +251,7 @@ class TestUpgrades:
         assert _tables(path) == set()
 
     def test_a_start_at_the_head_writes_nothing(self, tmp_path, monkeypatch):
-        """ADR-0214: unos.db is on the SD card. A start with nothing to apply only reads."""
+        """ADR-0214: unos.db is on the system disk. A start with nothing to apply only reads."""
         path = tmp_path / "unos.db"
         _start(path, monkeypatch)
         before = hashlib.sha256(path.read_bytes()).hexdigest()

@@ -108,8 +108,9 @@ preserve (ADR-0220). Avoid: production NAS, the server.
 stand-in runs and the web UI's static files are built (ADR-0016). Avoid: host, local server.
 
 **System disk**: The disk that holds the host's root filesystem; it never joins a pool. On the dev
-device it is an SD card whose writes are measured and kept minimal (ADR-0214). Avoid: eMMC (the
-dev device's is an SD card), boot disk.
+device it is the eMMC `mmcblk0` (ADR-0470), whose writes are measured and kept minimal (ADR-0214);
+the scripts of `scripts/dev/` print them as `SD writes`, a label from the time when the dev device
+ran from an SD card. Avoid: SD card, eMMC (media that a system disk may be), boot disk.
 
 **Supervisor log**: What `unos-supervisor` writes to Docker's container log (`docker logs
 unos-supervisor`): one JSON object per line with `time`, `level`, `logger` and `message`, set up in

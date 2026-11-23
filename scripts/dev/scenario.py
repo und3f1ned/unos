@@ -186,7 +186,7 @@ SD writes of each check (ADR-0214). The areas:
 Each check reads first how the device is (its baseline), and refuses to start beside leftovers
 of an earlier check. It makes what it needs through the API, under names made of "unoscheck"
 and the run's six hex digits (backups get UNOS's names), runs its steps in order and prints PASS
-or FAIL for each with the MiB written to the SD card meanwhile; the first FAIL ends the steps.
+or FAIL for each with the MiB written to the system disk meanwhile; the first FAIL ends the steps.
 Then it removes what it made, newest first, also after a FAIL or an interruption (Ctrl-C,
 SIGTERM, SIGHUP; signals wait while the clean-up runs), and compares the device with the
 baseline: a difference is a FAIL. Each clean-up is registered before the call that makes its

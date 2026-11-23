@@ -13,7 +13,7 @@
 #   scripts/dev/deploy.sh all                status, sync, build-supervisor, build-webui, up, then check.sh
 #
 # Every step holds the device lock (ADR-0210) and reports the MiB written to the device's system
-# disk, an SD card (ADR-0214). status, sync --dry-run and backup only read there. The other steps
+# disk (ADR-0214). status, sync --dry-run and backup only read there. The other steps
 # change what runs on the device: run them when the owner asks for a deploy.
 #
 # The device checkout (UNOS_DEV_REPO) is compared and synced file by file by tree.py, which reads
@@ -97,7 +97,7 @@ for base in $(awk '\''toupper($1) == "FROM" { print $2 }'\'' "$repo/supervisor/D
         # platform did not change (another platform was rebuilt) is reused, and no layer of the
         # cache then names it.
         echo "note: no layers of the build cache come from the base $base, so this build pulls it" \
-             "and runs apt-get and pip again (hundreds of MB on the SD card) unless the image it names" \
+             "and runs apt-get and pip again (hundreds of MB on the system disk) unless the image it names" \
              "for the platform of this device is one the cache holds under another digest." >&2
     fi
 done

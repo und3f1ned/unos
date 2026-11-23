@@ -376,7 +376,7 @@ class TestIdleWritesNothing:
     def test_a_loop_logs_only_in_the_handler_of_an_error(self):
         """Every background loop of supervisor/src (an `async def` named `*_loop`, and the startup
         checks the lifespan starts) logs no INFO line and no warning of a pass that went well: ADR-0214
-        keeps the SD card quiet while UNOS idles. What it logs when it fails is held back by
+        keeps the system disk quiet while UNOS idles. What it logs when it fails is held back by
         RepeatLimit to one line per ten minutes, and a loop that is new must be listed here."""
         loops_that_log_failures = {
             "app_resources_loop", "scheduler_loop", "task_check_loop", "raid_monitor_loop", "smart_monitor_loop",

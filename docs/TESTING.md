@@ -31,7 +31,7 @@ template point here.
   any other target, and so does the agents' guard (`.claude/hooks/guard.py`).
 - Level 3 is for host-level changes, as [GLOSSARY.md](../GLOSSARY.md) defines them: they are done
   only after a check on the dev device and a reboot check (ADR-0018). The owner asks for the
-  deploy; every step reports what it wrote to the device's SD card (ADR-0214).
+  deploy; every step reports what it wrote to the device's system disk (ADR-0214).
 
 On Linux with Docker there is also a container-level route, the deviceless test stack of
 `deploy/docker-compose.test.yml` and `scripts/test-cycle.sh`; see
@@ -70,8 +70,8 @@ it with the newest setuptools from the index. The CI jobs, `supervisor/Dockerfil
 audit do the same. A machine for which a pinned package has no wheel cannot be set up: an Intel
 Mac, since cryptography 50 publishes none for macOS x86_64. The supervisor's image is left to
 pip's default, which with the exact pins of `supervisor/requirements.txt` takes a wheel wherever
-the pinned version has one: its pip layer, about a hundred MB of writes on the dev device's SD
-card (ADR-0214), stays as it is.
+the pinned version has one: its pip layer, about a hundred MB of writes on the dev device's
+system disk (ADR-0214), stays as it is.
 
 A step that is up to date is skipped: each environment remembers the SHA-256 of the files it was
 installed from, so a rerun installs only what changed. Steps 1-4 need the network.
@@ -375,7 +375,7 @@ read-only, so the test can use Samba's real parser from a Mac:
 PATH="$PWD/scripts/dev/bin:$PATH" scripts/dev/sd.sh measure testparm -- make test TESTS=tests/test_smbconf_testparm.py
 ```
 
-`sd.sh measure` prints what the run wrote to the device's SD card, as every check on the device
+`sd.sh measure` prints what the run wrote to the device's system disk, as every check on the device
 reports it (ADR-0214).
 
 With Docker instead, the Samba of Debian 13 (trixie) in a container (this downloads a Python
@@ -522,18 +522,19 @@ test('should display dashboard', async ({ authenticatedPage }) => {
 
 ## The Dev Device
 
-The dev device is a single shared resource whose system disk is an SD card that cannot be
-replaced (ADR-0214). It is reached only through `scripts/dev/`, which reads its settings and
-secrets from the git-ignored `dev.env` (ADR-0212):
+The dev device is a single shared resource whose system disk is its soldered eMMC, which wears
+with every write; its SD card is wiped and unused (ADR-0214, ADR-0470). It is reached only
+through `scripts/dev/`, which reads its settings and secrets from the git-ignored `dev.env`
+(ADR-0212):
 
 - `scripts/dev/check.sh`: the device's health (containers, Samba and network discovery, the API,
-  the inbound IPv6 filter, SD writes since boot, each container's CPU and the temperatures, with
-  UNOS's budget and the throttling margin of ADR-0421), read-only.
+  the inbound IPv6 filter, the system disk's writes since boot, each container's CPU and the
+  temperatures, with UNOS's budget and the throttling margin of ADR-0421), read-only.
 - `scripts/dev/api.py METHOD PATH`: what the API on the device answers. Methods other than GET
   change the device.
 - `scripts/dev/upload-speed.py [--mib N] [--runs R]`: how fast this workstation uploads to the
   device through Caddy and the upload route; it makes and deletes a folder `unoscheck<6 hex>` on
-  the pool and signs in and out (about 0.1 MiB on the SD card).
+  the pool and signs in and out (about 0.1 MiB on the system disk).
 - `scripts/dev/immich-ml-probe.py [--runs N] [--clip-model NAME] [--language CODE] [--text TEXT]`:
   whether Immich's machine learning answers, and how fast: run inside its container with that
   container's python3, read from standard input (`scripts/dev/ssh.sh 'docker exec -i
@@ -569,7 +570,8 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   device's JWT secret and password hashes, and keeps the newest 3. Only `rollback` reads them:
   they are never shown or extracted (the guard and the settings' deny rules). The building steps,
   `up` and `rollback` run only when the owner asks for a deploy.
-- `scripts/dev/sd.sh measure <label> -- <command>`: how many MiB a command wrote to the SD card.
+- `scripts/dev/sd.sh measure <label> -- <command>`: how many MiB a command wrote to the system
+  disk (`UNOS_DEV_SYSTEM_DISK`), in a line `SD writes <label>`.
 - `scripts/dev/ipv6-filter.sh install|status|remove`: the device's inbound IPv6 filter
   (ADR-0301); `status` only reads, `install` and `remove` run on the owner's request.
 - `scripts/dev/scenario.sh [--pool NAME] AREA...`: the scenario checks (ADR-0304) of `files`,
