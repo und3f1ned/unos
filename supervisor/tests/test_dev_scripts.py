@@ -49,6 +49,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import textwrap
 import threading
 import time
@@ -212,6 +213,7 @@ STUB_SSH = textwrap.dedent(
     reply = os.path.join(log, "reply")
     if os.path.exists(reply):
         sys.stdout.write(open(reply).read())
+    sys.exit(int(os.environ.get("FAKE_SSH_STATUS", "0")))
     """
 )
 
@@ -604,6 +606,171 @@ def test_ssh_sh_uses_keys_only_without_a_password(device):
     env = (device.log / "env").read_text()
     assert "BatchMode=yes" in argv and "IdentitiesOnly=yes" in argv and f"{device.tmp}/id_test" in argv
     assert "SSH_ASKPASS" not in env
+
+
+# --- ssh.sh's shared connection (ADR-0476) ----------------------------------------------------
+
+MUX_OPTIONS = ("ControlMaster=", "ControlPath=", "ControlPersist=")
+
+
+@pytest.fixture
+def short_tmpdir():
+    """A TMPDIR short enough for a socket path (pytest's tmp_path is not, on macOS), removed after."""
+    path = Path(tempfile.mkdtemp(prefix="unos-", dir="/tmp"))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def ssh_calls(device) -> list[list[str]]:
+    path = device.log / "argv"
+    return [line.split("\0") for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def mux_options(argv: list[str]) -> list[str]:
+    """The connection-sharing options among ssh's options (before "--")."""
+    options = argv[:argv.index("--")]
+    return [a for a in options if a.startswith(MUX_OPTIONS)]
+
+
+def test_ssh_sh_shares_one_connection_per_device_host_and_user(device, short_tmpdir):
+    """Every call names the same master socket for the device's host and user, in a folder of
+    this user's with mode 700 (made so whatever the umask), and keeps its other options, the
+    password's askpass and standard input as they were."""
+    folder = short_tmpdir / f"unos-ssh-{os.getuid()}"
+    result = device.bash("umask 000; ./ssh.sh 'echo hello' <<< 'data on stdin'", TMPDIR=f"{short_tmpdir}/")
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    (argv,) = ssh_calls(device)
+    assert mux_options(argv) == ["ControlMaster=auto", f"ControlPath={folder}/root@10.0.0.9", "ControlPersist=300"]
+    assert argv[-3:] == ["--", "root@10.0.0.9", "echo hello"]
+    assert "StrictHostKeyChecking=accept-new" in argv and "-n" not in argv and "-t" not in argv
+    assert (device.log / "askpass").read_text() == device.ssh_password + "\n"
+    assert (device.log / "stdin").read_text() == "data on stdin\n"
+    info = os.lstat(folder)
+    assert stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == os.getuid()
+    assert os.listdir(folder) == []
+
+    # A second call, another user and another host: one socket for each host and user.
+    device.run(DEV / "ssh.sh", "true", TMPDIR=str(short_tmpdir))
+    device.run(DEV / "ssh.sh", "true", TMPDIR=str(short_tmpdir), UNOS_DEV_SSH_USER="unos")
+    device.write_env(extra="", ssh_password="")
+    device.env_file.write_text(device.env_file.read_text().replace("10.0.0.9", "nas.example"))
+    device.run(DEV / "ssh.sh", "true", TMPDIR=str(short_tmpdir))
+    paths = [mux_options(argv)[1] for argv in ssh_calls(device)[1:]]
+    assert paths == [f"ControlPath={folder}/root@10.0.0.9", f"ControlPath={folder}/unos@10.0.0.9",
+                     f"ControlPath={folder}/root@nas.example"]
+
+
+def test_ssh_sh_without_tmpdir_puts_the_folder_in_tmp(device):
+    """The real /tmp: the folder is left as it was found (made by this test, it is removed)."""
+    folder = Path(f"/tmp/unos-ssh-{os.getuid()}")
+    existed = os.path.lexists(folder)
+    try:
+        result = device.bash("unset TMPDIR; ./ssh.sh true")
+    finally:
+        if not existed and folder.is_dir() and not folder.is_symlink() and not os.listdir(folder):
+            folder.rmdir()
+    assert result.returncode == 0, result.stderr
+    # Used, or refused with its reason when someone else's folder is there already.
+    used = mux_options(ssh_calls(device)[0])
+    assert used[1:2] == [f"ControlPath={folder}/root@10.0.0.9"] or f"{folder} is not a folder of" in result.stderr
+
+
+@pytest.mark.parametrize("kind", ["open to others", "a symlink", "a file"])
+def test_ssh_sh_connects_on_its_own_when_the_folder_is_not_private(device, short_tmpdir, kind):
+    """A folder that another user could reach (or put a socket in) is never used, nor changed:
+    the call connects without sharing, says why, and still runs."""
+    folder = short_tmpdir / f"unos-ssh-{os.getuid()}"
+    if kind == "open to others":
+        folder.mkdir(mode=0o700)
+        folder.chmod(0o755)
+    elif kind == "a symlink":
+        (short_tmpdir / "elsewhere").mkdir(mode=0o700)
+        folder.symlink_to(short_tmpdir / "elsewhere")
+    else:
+        folder.write_text("")
+    before = os.lstat(folder)
+    result = device.run(DEV / "ssh.sh", "echo hello", input="data on stdin", TMPDIR=str(short_tmpdir))
+    assert result.returncode == 0, result.stderr
+    assert f"not sharing the SSH connection: {folder} is not a folder of" in result.stderr
+    (argv,) = ssh_calls(device)
+    assert mux_options(argv) == [] and argv[-3:] == ["--", "root@10.0.0.9", "echo hello"]
+    assert (device.log / "stdin").read_text() == "data on stdin"
+    after = os.lstat(folder)
+    assert (after.st_mode, after.st_ino) == (before.st_mode, before.st_ino)
+
+
+def test_ssh_sh_connects_on_its_own_when_the_socket_path_is_too_long(device, short_tmpdir):
+    """sun_path holds 104 bytes on macOS and ssh first binds the socket under a name 17 characters
+    longer: a path of 87 characters is not used, and no folder is made for it; one of 86 is."""
+    prefix = f"{short_tmpdir}/unos-ssh-{os.getuid()}/root@"
+    too_long = device.run(DEV / "ssh.sh", "true", TMPDIR=str(short_tmpdir), UNOS_DEV_HOST="h" * (87 - len(prefix)))
+    assert too_long.returncode == 0, too_long.stderr
+    assert "not sharing the SSH connection" in too_long.stderr and "is longer than 86 characters" in too_long.stderr
+    assert mux_options(ssh_calls(device)[0]) == []
+    assert os.listdir(short_tmpdir) == []
+    fits = device.run(DEV / "ssh.sh", "true", TMPDIR=str(short_tmpdir), UNOS_DEV_HOST="h" * (86 - len(prefix)))
+    assert fits.returncode == 0 and fits.stderr == ""
+    assert len(mux_options(ssh_calls(device)[1])[1]) == len("ControlPath=") + 86
+
+
+@pytest.mark.parametrize("name", ["with space", "with%h", "caf\u00e9", "relative"])
+def test_ssh_sh_connects_on_its_own_when_tmpdir_is_not_a_plain_absolute_path(device, short_tmpdir, name):
+    """ssh splits ControlPath at spaces and expands % in it, a relative path would put the socket
+    wherever a script runs (the repository too), and a letter outside ASCII is more than one byte
+    of sun_path: such a TMPDIR is not used, in a UTF-8 locale too, and the call still runs."""
+    if name == "relative":
+        tmpdir = "relative-tmp"
+    else:
+        (short_tmpdir / name).mkdir()
+        tmpdir = str(short_tmpdir / name)
+    result = device.run(DEV / "ssh.sh", "echo hello", TMPDIR=tmpdir, LANG="en_US.UTF-8", LC_ALL="en_US.UTF-8")
+    assert result.returncode == 0, result.stderr
+    assert "not sharing the SSH connection" in result.stderr and "is not absolute or has other characters" in result.stderr
+    (argv,) = ssh_calls(device)
+    assert mux_options(argv) == [] and argv[-3:] == ["--", "root@10.0.0.9", "echo hello"]
+    assert not (REPO_ROOT / "relative-tmp").exists() and not (DEV / "relative-tmp").exists()
+    if name != "relative":
+        assert os.listdir(short_tmpdir / name) == []
+
+
+def make_socket(path: Path) -> None:
+    """A socket file with nothing listening on it, as a master leaves it when it is killed."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(str(path))
+    s.close()
+
+
+def test_ssh_sh_close_stops_the_shared_connection(device, short_tmpdir):
+    """--close asks the master to stop (ssh -O stop: it takes no new session and ends once the
+    commands running over it end), runs nothing on the device, needs no master and removes no
+    socket: a socket that a new master made at that moment would be lost."""
+    folder = short_tmpdir / f"unos-ssh-{os.getuid()}"
+    socket_path = folder / "root@10.0.0.9"
+    # No master: nothing to do, no ssh.
+    none = device.run(DEV / "ssh.sh", "--close", TMPDIR=str(short_tmpdir))
+    assert none.returncode == 0 and none.stderr == "" and ssh_calls(device) == []
+    # A master: ssh -O stop with the socket, the host and no command.
+    make_socket(socket_path)
+    stop = device.run(DEV / "ssh.sh", "--close", TMPDIR=str(short_tmpdir))
+    assert stop.returncode == 0, stop.stderr
+    (argv,) = ssh_calls(device)
+    options = argv[:argv.index("--")]
+    assert argv[argv.index("--"):] == ["--", "root@10.0.0.9"]
+    assert options[-2:] == ["-O", "stop"] and f"ControlPath={socket_path}" in options
+    assert socket_path.exists()  # the master removes it itself
+    # A master that does not answer (killed, its socket left): nothing to stop, and the next
+    # call's ssh removes the socket (ControlMaster=auto).
+    stale = device.run(DEV / "ssh.sh", "--close", TMPDIR=str(short_tmpdir), FAKE_SSH_STATUS="255")
+    assert stale.returncode == 0 and stale.stderr == "" and len(ssh_calls(device)) == 2
+    # --close takes nothing else: it is never sent to the device as a command.
+    extra = device.run(DEV / "ssh.sh", "--close", "now", TMPDIR=str(short_tmpdir))
+    assert extra.returncode == 2 and "--close" in extra.stderr and len(ssh_calls(device)) == 2
+
+
+def test_ssh_sh_help_names_close(device):
+    result = device.run(DEV / "ssh.sh", "--help")
+    assert "scripts/dev/ssh.sh --close" in result.stdout
 
 
 def test_sd_sh_measures_and_keeps_the_status_of_the_command(device):

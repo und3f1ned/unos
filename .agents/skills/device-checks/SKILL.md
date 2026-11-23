@@ -21,13 +21,20 @@ wiped and unused (ADR-0214, ADR-0470). Run every check from the repository root,
   `SD writes <label>: <MiB> MiB (<sectors> sectors)`, the system disk's writes. `ssh.sh`,
   `api.py` and the testparm shim print nothing of the kind: run them under
   `scripts/dev/sd.sh measure <label> -- <command>`, as the steps below do.
+- Every script reaches the device through `ssh.sh`, which shares one SSH connection per device
+  (ADR-0476): over it, a call proves no new login, since a firewall lets the connection through
+  as established. Run `scripts/dev/ssh.sh --close`, after which the next call logs in anew,
+  before a check that the device takes a new SSH login (step 1, and the LAN checks after a change
+  of its firewall or network, also within a revert window), before the owner reboots the device
+  and before a change of `dev.env`'s SSH settings.
 
 Settings come from `dev.env` (mode 600, ADR-0212); in a git worktree without one, the scripts
 use the main checkout's. Output shows secrets as `<redacted>`.
 
 ## Steps
 
-1. **Reach the device.** `scripts/dev/sd.sh measure ssh -- scripts/dev/ssh.sh true`.
+1. **Reach the device.** After `--close` (above), so that it is a new login:
+   `scripts/dev/sd.sh measure ssh -- scripts/dev/ssh.sh true`.
    Result: exit status 0 and `SD writes ssh: 0.000 MiB`. On `no dev.env` or `mode 644`, do
    what the message says; the passwords in `dev.env` are the owner's to fill in.
    `Host key verification failed` after a reinstall of the device: ask the owner to remove the

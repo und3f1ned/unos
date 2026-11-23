@@ -156,6 +156,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   but a GitHub-hosted runner, and the check one with pools.
 
 ### Changed
+- The dev scripts share one SSH connection per device (ADR-0476): `scripts/dev/ssh.sh`, which
+  api.py, scenario.py, check.sh, sd.sh and deploy.sh go through, opens a master connection that
+  the next calls use until 300 s after its last session, its socket in a private folder of the
+  workstation's user (`$TMPDIR/unos-ssh-<uid>`); a call takes 0.10 s instead of 1.6 s on the
+  BPI-F3 and 0.08 s instead of 0.81 s on the BPI-W3. `scripts/dev/ssh.sh --close` stops it, before
+  a check of a new login or a reboot of the device. A folder that is not the user's own with mode
+  700, or a TMPDIR that is not a short, plain absolute path, makes every call connect on its own,
+  as before.
 - The reads that the pages wait for answer faster (ADR-0468): the container list asks Docker for its
   list of containers and its list of images (and its version, as every client does), instead of an
   inspect of every container and of its image (about 40 ms each on the dev device); a container's
