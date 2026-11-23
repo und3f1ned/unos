@@ -5,8 +5,9 @@
 #   scripts/dev/sd.sh sectors
 #       Sectors (512 bytes) written to the system disk since boot, after a sync.
 #   scripts/dev/sd.sh measure <label> -- <command> [args...]
-#       Run a command here (it may use ssh.sh) and print, on standard error, the MiB written to
-#       the device's system disk meanwhile ("SD writes <label>: 0.055 MiB (112 sectors)").
+#       Run a command here (it may use ssh.sh), with this script's standard input, and print, on
+#       standard error, the MiB written to the device's system disk meanwhile ("SD writes <label>:
+#       0.055 MiB (112 sectors)"). The sector reads before and after it read no standard input.
 #       Exits with the command's status. Writes by anything else on the device in that time
 #       count too: compare with an idle interval when a number looks high.
 #

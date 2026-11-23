@@ -571,7 +571,9 @@ through `scripts/dev/`, which reads its settings and secrets from the git-ignore
   they are never shown or extracted (the guard and the settings' deny rules). The building steps,
   `up` and `rollback` run only when the owner asks for a deploy.
 - `scripts/dev/sd.sh measure <label> -- <command>`: how many MiB a command wrote to the system
-  disk (`UNOS_DEV_SYSTEM_DISK`), in a line `SD writes <label>`.
+  disk (`UNOS_DEV_SYSTEM_DISK`), in a line `SD writes <label>`. The command gets the caller's
+  standard input (`echo '[...]' | scripts/dev/sd.sh measure x -- scripts/dev/api.py ... -`); the
+  sector reads before and after it read none.
 - `scripts/dev/ipv6-filter.sh install|status|remove`: the device's inbound IPv6 filter
   (ADR-0301); `status` only reads, `install` and `remove` run on the owner's request.
 - `scripts/dev/scenario.sh [--pool NAME] AREA...`: the scenario checks (ADR-0304) of `files`,
