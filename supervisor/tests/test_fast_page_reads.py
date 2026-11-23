@@ -54,8 +54,9 @@ class FakeContainer:
 class FakeDockerApi(requests.adapters.BaseAdapter):
     """Docker's HTTP API behind a real docker-py client: GET /containers/json (all; the filter id
     as Docker's index of IDs looks it up: an ID or a prefix that names one container, anything
-    else none), /containers/{id}/json, /images/{id}/json and POST /containers/{id}/stop. Each
-    request is recorded in ``requests`` as (method, path without the API version)."""
+    else none), /containers/{id}/json, /images/json, /images/{id}/json and POST
+    /containers/{id}/stop. Each request is recorded in ``requests`` as (method, path without the
+    API version)."""
 
     def __init__(self, containers: list[FakeContainer], images: dict[str, list[str]]) -> None:
         super().__init__()
@@ -112,6 +113,11 @@ class FakeDockerApi(requests.adapters.BaseAdapter):
                          if [other.id for other in self.containers if other.id.startswith(prefix)] == [c.id]}
                 listed = [c for c in listed if c.id in named]
             status, body = 200, [self.summary(c) for c in listed]
+        elif path == "/images/json":
+            # With the containerd image store an image pulled by its digest holds that digest form
+            # (name@sha256:...) among its RepoTags.
+            status, body = 200, [{"Id": image_id, "RepoTags": tags or None, "RepoDigests": [], "Size": 1}
+                                 for image_id, tags in self.images.items()]
         elif request.method == "POST" and (match := re.fullmatch(r"/containers/([^/]+)/stop", path)):
             found = self._find(match[1])
             if found is not None:
@@ -144,6 +150,11 @@ JELLYFIN_IMAGE = f"sha256:{_hex('jellyfin-image')}"
 OLD_TRANSMISSION_IMAGE = f"sha256:{_hex('old-transmission')}"
 NEW_TRANSMISSION_IMAGE = f"sha256:{_hex('new-transmission')}"
 SUPERVISOR_IMAGE = f"sha256:{_hex('supervisor')}"
+IMMICH_IMAGE = f"sha256:{_hex('immich-image')}"
+TRANSMISSION_IMAGE = f"sha256:{_hex('transmission-image')}"
+# The app catalog creates an app's containers from their images' digests (name@sha256:...).
+IMMICH_DIGEST = f"ghcr.io/immich-app/immich-server@{IMMICH_IMAGE}"
+TRANSMISSION_DIGEST = f"ghcr.io/linuxserver/transmission@{TRANSMISSION_IMAGE}"
 
 CONTAINERS = [
     FakeContainer(
@@ -167,6 +178,18 @@ CONTAINERS = [
         id=_hex("leaving"), name="leaving", image_ref=JELLYFIN_IMAGE, image_id=JELLYFIN_IMAGE,
         state="removing", created=1762498392, created_text="2025-11-07T06:53:12.000000001Z", ports={},
     ),
+    # Created from a digest; its image also has a tag (as Immich's on the dev device).
+    FakeContainer(
+        id=_hex("immich"), name="immich", image_ref=IMMICH_DIGEST, image_id=IMMICH_IMAGE,
+        state="running", created=1763384739, created_text="2025-11-17T13:05:39.526599643Z", ports={},
+        labels={"unos.app": "immich"},
+    ),
+    # Created from a digest; its image has only that digest form (as Transmission's on the dev device).
+    FakeContainer(
+        id=_hex("transmission"), name="transmission", image_ref=TRANSMISSION_DIGEST, image_id=TRANSMISSION_IMAGE,
+        state="running", created=1763575781, created_text="2025-11-19T18:09:41.436906743Z", ports={},
+        labels={"unos.app": "transmission"},
+    ),
     FakeContainer(
         id=_hex("unos-supervisor"), name="unos-supervisor", image_ref="deploy-supervisor:latest",
         image_id=SUPERVISOR_IMAGE, state="running", created=1762498392, created_text="2025-11-07T06:53:12Z",
@@ -176,13 +199,16 @@ CONTAINERS = [
 IMAGES = {
     # Its first tag is not the one the container was created from.
     JELLYFIN_IMAGE: ["jellyfin/jellyfin:latest", "jellyfin/jellyfin:10.10.3"],
+    IMMICH_IMAGE: [IMMICH_DIGEST, "ghcr.io/immich-app/immich-server:v3.4.1"],
+    TRANSMISSION_IMAGE: [TRANSMISSION_DIGEST],
     OLD_TRANSMISSION_IMAGE: [],
     NEW_TRANSMISSION_IMAGE: ["lscr.io/linuxserver/transmission:latest"],
     SUPERVISOR_IMAGE: ["deploy-supervisor:latest"],
 }
 
 JELLYFIN = {
-    "id": _hex("jellyfin")[:12], "name": "jellyfin", "image": "jellyfin/jellyfin:10.10.3",
+    # Its image's first tag, not the one it was created from.
+    "id": _hex("jellyfin")[:12], "name": "jellyfin", "image": "jellyfin/jellyfin:latest",
     "status": "running", "state": "running", "created": "2025-11-19T18:09:41Z",
     # Sorted as Docker prints the inspect's port map, each port's bindings in their order.
     "ports": [
@@ -198,9 +224,19 @@ PREVIOUS = {
     "image": OLD_TRANSMISSION_IMAGE[:19], "status": "exited", "state": "exited",
     "created": "2025-11-07T06:53:12Z", "ports": [], "labels": {},
 }
-LEAVING = {
-    "id": _hex("leaving")[:12], "name": "leaving", "image": JELLYFIN_IMAGE[:19], "status": "removing",
+LEAVING = {  # created from its image's ID: the image's first tag
+    "id": _hex("leaving")[:12], "name": "leaving", "image": "jellyfin/jellyfin:latest", "status": "removing",
     "state": "created", "created": "2025-11-07T06:53:12Z", "ports": [], "labels": {},
+}
+IMMICH = {  # the tag of its image, not the digest it was created from
+    "id": _hex("immich")[:12], "name": "immich", "image": "ghcr.io/immich-app/immich-server:v3.4.1",
+    "status": "running", "state": "running", "created": "2025-11-17T13:05:39Z", "ports": [],
+    "labels": {"unos.app": "immich"},
+}
+TRANSMISSION = {  # its image has no tag but the digest form: the reference it was created from
+    "id": _hex("transmission")[:12], "name": "transmission", "image": TRANSMISSION_DIGEST,
+    "status": "running", "state": "running", "created": "2025-11-19T18:09:41Z", "ports": [],
+    "labels": {"unos.app": "transmission"},
 }
 
 
@@ -225,24 +261,35 @@ def docker_api(monkeypatch, tmp_path):
 
 
 class TestContainerList:
-    def test_the_list_is_one_docker_request(self, docker_api):
-        """Not an inspect of each container and of its image (8 requests here; on the dev device
-        an image's inspect took about 40 ms, 2026-11-23)."""
+    def test_the_list_is_two_docker_requests(self, docker_api):
+        """Docker's list of containers and its list of images: not an inspect of each container and
+        of its image (12 requests here; on the dev device an image's inspect took about 40 ms,
+        2026-11-23)."""
         response = docker_api.client.get("/api/v1/containers?all=true")
 
         assert response.status_code == 200, response.text
-        assert docker_api.fake.requests == [("GET", "/containers/json")]
+        assert docker_api.fake.requests == [("GET", "/containers/json"), ("GET", "/images/json")]
         assert docker_api.fake.queries[0]["all"] == ["1"]
 
     def test_the_list_answers_what_docker_lists(self, docker_api):
         response = docker_api.client.get("/api/v1/containers?all=true")
 
-        assert response.json() == [JELLYFIN, PREVIOUS, LEAVING]
+        assert response.json() == [JELLYFIN, PREVIOUS, LEAVING, IMMICH, TRANSMISSION]
+
+    def test_a_container_created_from_a_digest_shows_its_images_tag_or_else_the_digest(self, docker_api):
+        """The catalog creates the apps' containers from digests: Immich's image also has a tag,
+        which it shows; Transmission's has only its digest form, which it keeps."""
+        listed = {c["name"]: c["image"] for c in docker_api.client.get("/api/v1/containers?all=true").json()}
+
+        assert (listed["immich"], listed["transmission"]) == (
+            "ghcr.io/immich-app/immich-server:v3.4.1", TRANSMISSION_DIGEST)
+        assert docker_api.client.get("/api/v1/containers/immich").json() == IMMICH
+        assert docker_api.client.get("/api/v1/containers/transmission").json() == TRANSMISSION
 
     def test_only_the_running_ones(self, docker_api):
         response = docker_api.client.get("/api/v1/containers?all=false")
 
-        assert response.json() == [JELLYFIN]
+        assert response.json() == [JELLYFIN, IMMICH, TRANSMISSION]
         assert docker_api.fake.queries[0]["all"] == ["0"]
 
     @pytest.mark.parametrize("key", ["jellyfin", _hex("jellyfin")[:12], _hex("jellyfin")])
@@ -251,7 +298,8 @@ class TestContainerList:
 
         assert response.status_code == 200, response.text
         assert response.json() == JELLYFIN
-        assert docker_api.fake.requests == [("GET", f"/containers/{key}/json"), ("GET", "/containers/json")]
+        assert docker_api.fake.requests == [
+            ("GET", f"/containers/{key}/json"), ("GET", "/containers/json"), ("GET", "/images/json")]
         assert json.loads(docker_api.fake.queries[1]["filters"][0]) == {"id": [_hex("jellyfin")]}
 
     def test_a_stop_answers_the_container_as_the_list_does(self, docker_api):

@@ -129,12 +129,28 @@ def _summary_name(summary: dict[str, Any]) -> str:
 _IMAGE_ID_PREFIX = re.compile(r"[0-9a-f]{12,64}")
 
 
-def _image_label_of(summary: dict[str, Any]) -> str:
-    """The container's image from its summary: the reference the container was created from, which
-    Docker gives while it still names the container's image; else the image's short ID (sha256: and
-    12 hex digits), as Docker then gives the image's ID or the container was created by an ID."""
+def _image_tags(client: docker.DockerClient) -> dict[str, str]:
+    """Each image's first tag that is no digest form (name@sha256:..., which the containerd image
+    store lists among the tags of an image pulled by its digest), by the image's ID: Docker's list
+    of images, one request. An image without such a tag is not in it."""
+    tags = {}
+    for image in client.api.images():
+        tag = next((t for t in image.get("RepoTags") or [] if "@" not in t and t != "<none>:<none>"), None)
+        if tag is not None and image.get("Id"):
+            tags[image["Id"]] = tag
+    return tags
+
+
+def _image_label_of(summary: dict[str, Any], tags: dict[str, str]) -> str:
+    """The container's image from its summary: its image's first tag that is no digest form
+    (_image_tags); else the reference the container was created from, which Docker gives while it
+    still names the container's image (a digest the app catalog created it from); else the image's
+    short ID (sha256: and 12 hex digits), as Docker then gives the image's ID or the container was
+    created by an ID."""
     image = summary.get("Image") or ""
     image_id = summary.get("ImageID") or ""
+    if image_id in tags:
+        return tags[image_id]
     digits = image.removeprefix("sha256:")
     if image_id and (image == image_id or (
         _IMAGE_ID_PREFIX.fullmatch(digits) and image_id.removeprefix("sha256:").startswith(digits)
@@ -168,8 +184,9 @@ def _created(seconds: Any) -> str:
         return ""
 
 
-def _info(summary: dict[str, Any]) -> ContainerInfo:
-    """A container's answer from its summary in Docker's list: no request of its own."""
+def _info(summary: dict[str, Any], tags: dict[str, str]) -> ContainerInfo:
+    """A container's answer from its summary in Docker's list and the images' tags (_image_tags): no
+    request of its own."""
     status = str(summary.get("State") or "")
     try:
         state = ContainerState(status.lower())
@@ -178,7 +195,7 @@ def _info(summary: dict[str, Any]) -> ContainerInfo:
     return ContainerInfo(
         id=str(summary["Id"])[:12],
         name=_summary_name(summary),
-        image=_image_label_of(summary),
+        image=_image_label_of(summary, tags),
         status=status,
         state=state,
         created=_created(summary.get("Created")),
@@ -189,17 +206,19 @@ def _info(summary: dict[str, Any]) -> ContainerInfo:
 
 def list_containers(all: bool = True) -> list[ContainerInfo]:
     """The containers, but UNOS's own (is_system_container): after get_client's version query,
-    Docker's list alone, which holds all that the answer needs; no inspect of a container or of an
-    image."""
-    summaries = get_client().api.containers(all=all)
-    return [info for info in map(_info, summaries) if not is_system_container(info.name)]
+    Docker's list of containers and its list of images, which hold all that the answer needs; no
+    inspect of a container or of an image."""
+    client = get_client()
+    summaries = client.api.containers(all=all)
+    tags = _image_tags(client)
+    return [info for info in (_info(summary, tags) for summary in summaries) if not is_system_container(info.name)]
 
 
 def get_container(container_id: str) -> ContainerInfo:
     """A container by its ID, a prefix of its ID or its name, answered as list_containers answers it:
-    Docker's inspect finds it, and its summary in Docker's list, filtered by its full ID, is the
-    answer (Docker takes the filter id as an ID or a prefix of one, so the full ID names it alone).
-    ValueError when Docker has no such container."""
+    Docker's inspect finds it, and its summary in Docker's list, filtered by its full ID, with the
+    images' tags, is the answer (Docker takes the filter id as an ID or a prefix of one, so the full
+    ID names it alone). ValueError when Docker has no such container."""
     client = get_client()
     try:
         full_id = client.api.inspect_container(container_id)["Id"]
@@ -208,7 +227,7 @@ def get_container(container_id: str) -> ContainerInfo:
     summaries = client.api.containers(all=True, filters={"id": full_id})
     if not summaries:  # removed in between
         raise ValueError(f"Container {container_id} not found")
-    return _info(summaries[0])
+    return _info(summaries[0], _image_tags(client))
 
 
 def create_container(config: ContainerCreate) -> ContainerInfo:
