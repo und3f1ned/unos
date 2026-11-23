@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import {
 		createFirewallRule,
 		deleteFirewallRule,
@@ -12,7 +12,8 @@
 		type FirewallRule,
 		type FirewallStatus
 	} from '$lib/api/security';
-	import { Alert, Badge, Button, Card, CardAction, Skeleton, confirm, toast } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, CardAction, confirm, toast } from '$lib/components/ui';
+	import type { Settled } from '$lib/pages/read';
 	import { t } from '$lib/i18n';
 	import { Flame, ShieldCheck, ShieldX } from 'lucide-svelte';
 	import FirewallAddRuleDialog from './FirewallAddRuleDialog.svelte';
@@ -42,6 +43,15 @@
 	const REVERT_GRACE_MS = 5000;
 	const REVERT_CHECKS = 3;
 
+	type Props = {
+		/** The firewall as the tab's load read it (ADR-0469); a change, its countdown and Retry read it here. */
+		read: Settled<FirewallStatus>;
+		/** When `read` answered (Date.now()): a change that waits to be kept is undone revert_in after it. */
+		readAt: number;
+	};
+
+	let { read, readAt }: Props = $props();
+
 	let status = $state<FirewallStatus | null>(null);
 	let loading = $state(false);
 	let loadError = $state('');
@@ -56,6 +66,9 @@
 
 	// The countdown of a change that waits to be kept: when the host undoes it, in the page's clock.
 	let deadline = $state<number | null>(null);
+	// The deadline is the card's own, counted from its change; else a read's, which a newer read
+	// replaces (a revisit shows a read of before, from the tab's cache).
+	let ownDeadline = false;
 	let now = $state(Date.now());
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	let check: ReturnType<typeof setTimeout> | null = null;
@@ -65,8 +78,11 @@
 	const revertSeconds = $derived(status?.revert_seconds ?? 120);
 	const secondsLeft = $derived(deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000)));
 
-	onMount(() => {
-		void load();
+	// What the load read, before the card is drawn, and its fresh read when that comes.
+	$effect.pre(() => {
+		const next = read;
+		const at = readAt;
+		untrack(() => take(next, at));
 	});
 
 	onDestroy(() => {
@@ -77,9 +93,7 @@
 	async function load() {
 		loading = true;
 		try {
-			status = await getFirewallStatus();
-			loadError = '';
-			follow(status.revert_in);
+			take({ ok: true, value: await getFirewallStatus() });
 		} catch (e) {
 			loadError = messageOf(e);
 		} finally {
@@ -87,13 +101,24 @@
 		}
 	}
 
+	function take(next: Settled<FirewallStatus>, at = Date.now()) {
+		if (!next.ok) {
+			loadError = next.error;
+			return;
+		}
+		status = next.value;
+		loadError = '';
+		follow(next.value.revert_in, at);
+	}
+
 	// A change that the host still counts down: a running countdown keeps its own deadline, and one
 	// found after a reload starts one.
-	function follow(revertIn: number | null) {
+	function follow(revertIn: number | null, at = Date.now()) {
 		if (revertIn === null) {
 			if (!check) deadline = null;
-		} else if (deadline === null) {
-			deadline = Date.now() + revertIn * 1000;
+		} else if (deadline === null || !ownDeadline) {
+			deadline = at + revertIn * 1000;
+			ownDeadline = false;
 		}
 		syncTicker();
 	}
@@ -101,6 +126,7 @@
 	function startCountdown(revertIn: number) {
 		notice = '';
 		deadline = Date.now() + revertIn * 1000;
+		ownDeadline = true;
 		syncTicker();
 	}
 
@@ -294,9 +320,6 @@
 				<Badge variant="success"><ShieldCheck class="w-4 h-4 inline" /> {$t('firewall.active')}</Badge>
 			{:else if status}
 				<Badge variant="warning"><ShieldX class="w-4 h-4 inline" /> {$t('firewall.inactive')}</Badge>
-			{:else if !loadError}
-				<!-- The badge's place until the status comes (ADR-0430). -->
-				<span aria-busy="true"><Skeleton shape="block" class="h-6 w-24 rounded-full" /></span>
 			{/if}
 			<!-- A card's action opens it here: a small secondary button, no primary (ADR-0432). -->
 			<CardAction aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}

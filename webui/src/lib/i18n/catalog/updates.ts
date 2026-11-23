@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Updates: src/routes/system/tabs/UpdateTab.svelte and src/lib/components/system/updates
+// System > Updates: src/routes/system/updates/+page.svelte and src/lib/components/system/updates
 // (ADR-0234, ADR-0443).
 
 export const en = {

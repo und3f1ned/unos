@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > General: src/routes/system/tabs/GeneralTab.svelte.
+// System > General: src/routes/system/+page.svelte.
 
 export const en = {
 	'general.title': 'General',

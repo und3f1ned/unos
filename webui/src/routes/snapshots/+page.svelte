@@ -175,7 +175,7 @@
 					</p>
 				</div>
 				<!-- Where they are taken on a schedule: the Scheduler's snapshot tasks, of pools only. -->
-				<CardAction href="/system#scheduler">{$t('snapshots.schedule')}</CardAction>
+				<CardAction href="/system/scheduler">{$t('snapshots.schedule')}</CardAction>
 			</div>
 			{#if lists.snapshots.loading && lists.snapshots.shownPath !== lists.selectedPath}
 				<div class="px-5 pb-5" aria-busy="true">

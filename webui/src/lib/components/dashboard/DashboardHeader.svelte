@@ -71,7 +71,7 @@
 			<!-- A summary of System > General, which an administrator opens from it (ADR-0431). -->
 			<p class="page-subtitle">
 				{#if $isAdmin}
-					<a href="/system#general" class="hover:underline">
+					<a href="/system" class="hover:underline">
 						{$t('dashboard.osUptime', { os: systemInfo.os, uptime: formatUptime(systemInfo.boot_time) })}
 					</a>
 				{:else}

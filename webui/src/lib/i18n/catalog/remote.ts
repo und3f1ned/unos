@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Remote access (src/routes/system/tabs/RemoteAccessTab.svelte): the WireGuard tunnel on
+// System > Remote access (src/routes/system/remote/+page.svelte): the WireGuard tunnel on
 // the host, which reaches the NAS alone, and the local names of apps through the web UI's Caddy
 // (ADR-0420).
 

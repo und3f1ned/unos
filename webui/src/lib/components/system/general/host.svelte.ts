@@ -1,9 +1,11 @@
-import { getHostname } from '$lib/api/network';
+import { getHostname, type HostnameConfig } from '$lib/api/network';
 import { getTimezone, getTimezones } from '$lib/api/system';
+import { settle, type Settled } from '$lib/pages/read';
 
 /**
  * The name and time zone of the host (ADR-0331): each read and saved on its own. The page creates
- * it and loads it; HostSettingsCard edits and saves it.
+ * it and gives it what its load read (apply); HostSettingsCard edits and saves it, and reads it
+ * again on Retry.
  */
 export class HostSettings {
 	hostname = $state('');
@@ -11,7 +13,6 @@ export class HostSettings {
 	zone = $state('');
 	savedZone = $state('');
 	zones = $state<string[]>([]);
-	loading = $state(true);
 	loadFailed = $state(false);
 	hostnameLoaded = $state(false);
 	zoneLoaded = $state(false);
@@ -27,18 +28,34 @@ export class HostSettings {
 	);
 
 	async load() {
-		// Each row from its own answers: one that fails leaves the other usable.
-		const [name, current, listed] = await Promise.allSettled([getHostname(), getTimezone(), getTimezones()]);
-		if (name.status === 'fulfilled') {
-			this.hostname = this.savedHostname = name.value.hostname;
+		const [name, current, listed] = await Promise.all([
+			settle(getHostname()),
+			settle(getTimezone()),
+			settle(getTimezones())
+		]);
+		this.apply(name, current, listed);
+	}
+
+	/**
+	 * Each row from its own answers: one that fails leaves the other usable. A field changed and not
+	 * saved keeps what was typed.
+	 */
+	apply(
+		name: Settled<HostnameConfig>,
+		current: Settled<{ timezone: string }>,
+		listed: Settled<{ timezones: string[] }>
+	) {
+		if (name.ok) {
+			if (this.hostname === this.savedHostname) this.hostname = name.value.hostname;
+			this.savedHostname = name.value.hostname;
 			this.hostnameLoaded = true;
 		}
-		if (current.status === 'fulfilled') {
-			this.zone = this.savedZone = current.value.timezone;
+		if (current.ok) {
+			if (this.zone === this.savedZone) this.zone = current.value.timezone;
+			this.savedZone = current.value.timezone;
 			this.zoneLoaded = true;
 		}
-		if (listed.status === 'fulfilled') this.zones = listed.value.timezones;
+		if (listed.ok) this.zones = listed.value.timezones;
 		this.loadFailed = !this.hostnameLoaded && !this.zoneLoaded;
-		this.loading = false;
 	}
 }

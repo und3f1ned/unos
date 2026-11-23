@@ -168,7 +168,7 @@ async function fakeUpdateEvents(page: Page): Promise<(step: Progress) => Promise
 }
 
 async function openUpdatesTab(page: Page) {
-  await page.goto('/system#updates');
+  await page.goto('/system/updates');
   await expect(page.getByRole('heading', { level: 2, name: 'Updates', exact: true })).toBeVisible();
 }
 
@@ -267,7 +267,7 @@ test.describe('Software Updates', () => {
   // The version is in Updates alone: General shows it no more (ADR-0431).
   test('General does not show the version', async ({ authenticatedPage: page }) => {
     await fakeUpdatesApi(page, { version: 'v1.2.0-3-g712fc3a', check: checked('v1.2.0-3-g712fc3a', null, false) });
-    await page.goto('/system#general');
+    await page.goto('/system');
 
     await expect(page.getByRole('heading', { name: 'System information' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'UNOS Version' })).toHaveCount(0);
@@ -456,7 +456,7 @@ test.describe('Software Updates in Russian', () => {
     });
     // As the Language card of the Account page leaves it.
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
-    await page.goto('/system#updates');
+    await page.goto('/system/updates');
 
     await expect(page.getByRole('heading', { level: 2, name: 'Обновления', exact: true })).toBeVisible();
     const current = card(page, 'Версия UNOS');
@@ -477,7 +477,7 @@ test.describe('Software Updates in Russian', () => {
     await expect(card(page, 'Версия UNOS').getByText(UPDATE_COMMAND, { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { level: 2, name: 'Updates', exact: true })).toHaveCount(0);
 
-    await page.locator('main nav').getByRole('button', { name: 'Общие', exact: true }).click();
+    await page.locator('main nav').getByRole('link', { name: 'Общие', exact: true }).click();
     await expect(page.getByRole('heading', { level: 2, name: 'Общие', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Сведения о системе', exact: true })).toBeVisible();
     await expect(page.getByText('Ядро', { exact: true })).toBeVisible();

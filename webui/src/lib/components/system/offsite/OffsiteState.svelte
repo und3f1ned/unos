@@ -140,7 +140,7 @@
 	{#if tasks.length === 0}
 		<p class="pt-1 break-words">
 			<span class="text-status-warning">{$t('offsite.task.none')}</span>
-			<a href="#scheduler" class="link">{$t('offsite.task.schedule')}</a>
+			<a href="/system/scheduler" class="link">{$t('offsite.task.schedule')}</a>
 		</p>
 	{:else}
 		<p class="pt-1 break-words">

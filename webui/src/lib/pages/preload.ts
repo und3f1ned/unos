@@ -6,9 +6,10 @@
 
 /**
  * The pages whose loads may run when the pointer rests on a link to them: those that read only
- * UNOS's own records on the system disk (the accounts, the groups, the audit log), never a data disk.
+ * UNOS's own records on the system disk (the accounts, the groups, the audit log, and System >
+ * Notifications, which reads the database alone: ADR-0470), never a data disk.
  */
-export const HOVER_PAGES: readonly string[] = ['/users', '/audit', '/account'];
+export const HOVER_PAGES: readonly string[] = ['/users', '/audit', '/account', '/system/notifications'];
 
 /** The preload of a link to `href`: hover for the pages of HOVER_PAGES, tap for the others. */
 export function preloadOf(href: string): 'hover' | 'tap' {

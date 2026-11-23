@@ -2,7 +2,7 @@
 	// The snapshots of the off-device copy (ADR-0337), with their restores: a configuration lands in
 	// the backup list, files go into a new folder of a pool, by the form of the snapshot `filesOf`.
 	import type { OffsiteSnapshot, OffsiteStatus } from '$lib/api/offsite';
-	import { Badge, Button, Input, HelpText, EmptyState, ErrorState } from '$lib/components/ui';
+	import { Badge, Button, Input, HelpText, EmptyState, ErrorState, Skeleton } from '$lib/components/ui';
 	import { formatSize } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
@@ -12,6 +12,8 @@
 		snapshots: OffsiteSnapshot[];
 		// Why the snapshots could not be listed: the server's message.
 		snapshotsError: string;
+		// The list is on its way after the rest of the tab (restic reads the target): its place waits.
+		pending?: boolean;
 		running: OffsiteStatus['running'];
 		// The snapshot being restored.
 		restoring: string | null;
@@ -29,6 +31,7 @@
 	let {
 		snapshots,
 		snapshotsError,
+		pending = false,
 		running,
 		restoring,
 		filesOf,
@@ -56,7 +59,9 @@
 </script>
 
 <h4 class="font-medium text-sm mb-2">{$t('offsite.snapshots.title')}</h4>
-{#if snapshotsError}
+{#if pending}
+	<div class="mb-4" aria-busy="true" data-later><Skeleton count={2} /></div>
+{:else if snapshotsError}
 	<ErrorState title={$t('offsite.snapshots.loadFailed')} message={snapshotsError} class="mb-4" />
 {:else if snapshots.length === 0}
 	<EmptyState compact icon={Camera} title={$t('offsite.snapshots.empty')} class="mb-4" />

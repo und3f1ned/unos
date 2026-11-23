@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { isTechnical, messageOf } from '$lib/errors';
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { ApiError } from '$lib/api/client';
 	import { Alert, Button, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
@@ -16,11 +16,20 @@
 	import BackupList from '$lib/components/system/backup/BackupList.svelte';
 	import RestoreBackupDialog, { type RestoreOutcome } from '$lib/components/system/backup/RestoreBackupDialog.svelte';
 	import { Plus, Upload } from 'lucide-svelte';
+	import { changedEverything } from '$lib/pages/cache';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { BackupSnapshot, OffsiteRead } from '$lib/pages/system/backup';
 	import OffsiteCopy from './OffsiteCopy.svelte';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	let backups = $state<BackupInfo[]>([]);
-	// The first load has answered: a reload keeps the list (ADR-0430).
+	// The tab's data have come (its load, ADR-0469): until then, on the tab's first page, its
+	// skeleton; a reload keeps the list.
 	let loaded = $state(false);
+	// The off-device copy as the load read it, for its section.
+	let offsite = $state.raw<OffsiteRead | null>(null);
 	let creating = $state(false);
 	let uploading = $state(false);
 	let restoring = $state<string | null>(null);
@@ -54,7 +63,22 @@
 	// Upload input ref
 	let fileInput: HTMLInputElement | undefined;
 
-	onMount(() => loadBackups());
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: BackupSnapshot) {
+		const loadFailed = $t('backup.loadFailed');
+		if (snapshot.backups.ok) {
+			backups = snapshot.backups.value;
+			if (error?.title === loadFailed) error = null;
+		} else {
+			error = { title: loadFailed, message: snapshot.backups.error };
+		}
+		offsite = snapshot.offsite;
+		loaded = true;
+	}
 
 	async function loadBackups() {
 		try {
@@ -143,6 +167,8 @@
 		restoring = restoreTarget.filename;
 		try {
 			const result = await restoreBackup(restoreTarget.filename, restoreTarget.encrypted ? passphrase : undefined);
+			// The configuration of every page is the backup's now: nothing read before is kept.
+			changedEverything();
 			restoreResult = {
 				success: true,
 				message: result.message,
@@ -168,7 +194,7 @@
 			<h2 class="text-xl font-semibold">{$t('system.tabs.backup')}</h2>
 			<p class="page-subtitle">
 				{$t('backup.subtitle')}
-				<a href="#scheduler" class="link whitespace-nowrap">{$t('backup.schedule')}</a>
+				<a href="/system/scheduler" class="link whitespace-nowrap">{$t('backup.schedule')}</a>
 			</p>
 		</div>
 		<div class="flex flex-wrap gap-2">
@@ -215,7 +241,7 @@
 	/>
 
 	<!-- The off-device copy (ADR-0337): a configuration it restores lands in the list above. -->
-	<OffsiteCopy onrestored={loadBackups} />
+	<OffsiteCopy read={offsite} onrestored={loadBackups} />
 </div>
 
 <!-- Restore Confirmation Modal -->

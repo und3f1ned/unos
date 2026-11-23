@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Scheduler: src/routes/system/tabs/SchedulerTab.svelte.
+// System > Scheduler: src/routes/system/scheduler/+page.svelte.
 
 export const en = {
 	'scheduler.title': 'Scheduler',

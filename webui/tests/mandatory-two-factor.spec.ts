@@ -108,7 +108,7 @@ test.describe('Two-factor authentication for every account', () => {
   test('an administrator without two-factor authentication is told to turn it on first', async ({
     authenticatedPage: page,
   }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     const card = page.locator('div.card', {
       has: page.getByRole('heading', { name: 'Two-factor authentication for every account' }),
     });
@@ -123,7 +123,7 @@ test.describe('Two-factor authentication for every account', () => {
   }) => {
     // Two codes of the administrator, each in a step of its own.
     test.setTimeout(3 * TOTP_STEP_MS + 60_000);
-    await useSession(page, adminToken, '/system#security');
+    await useSession(page, adminToken, '/system/security');
     const card = page.locator('div.card', {
       has: page.getByRole('heading', { name: 'Two-factor authentication for every account' }),
     });
@@ -171,7 +171,7 @@ test.describe('Two-factor authentication for every account', () => {
     await expect(page.getByRole('button', { name: 'Set up now' })).toBeVisible();
 
     // Turned off on the card, with a newer code: the password alone leads to the dashboard again.
-    await useSession(page, adminToken, '/system#security');
+    await useSession(page, adminToken, '/system/security');
     await expect(card.getByText(/^Required since .+, turned on by /)).toBeVisible();
     await card.getByLabel('Code from your authenticator app').fill(await nextAdminCode());
     await card.getByRole('button', { name: 'Stop requiring' }).click();

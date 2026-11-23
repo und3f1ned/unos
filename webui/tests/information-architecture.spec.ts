@@ -22,7 +22,8 @@ const SYSTEM_GROUPS = {
   Maintenance: ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management'],
 };
 
-const tabs = (page: Page) => page.locator('main nav').getByRole('button');
+// System's tabs are links (ADR-0470), the Account page's buttons.
+const tabs = (page: Page) => page.locator('main nav').locator('a, button');
 // A card's title: its h3 (card-title, or section-title for the API tokens' card).
 const cardTitles = (page: Page) => page.locator('main h3.card-title, main h3.section-title');
 
@@ -75,7 +76,7 @@ test.describe('Where things live', () => {
     await expectCards(page, SIGN_IN);
 
     // System > Security holds only what applies to the whole NAS.
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await expect(page.getByRole('heading', { level: 2, name: 'Security of the NAS' })).toBeVisible();
     await expectCards(page, ['Two-factor authentication for every account', 'Firewall', 'SSL/TLS Certificates']);
     // Without its own two-factor authentication, the administrator is sent to the Account page.
@@ -102,7 +103,7 @@ test.describe('Where things live', () => {
     await page.route('**/api/v1/auth/totp/status', (route) =>
       route.fulfill({ status: 500, contentType: 'text/plain', body: 'Internal Server Error' }),
     );
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     const alert = page.locator('.alert-error', { hasText: 'Could not load the two-factor status' });
     await expect(alert).toContainText('Request failed');
     const heading = page.getByRole('heading', { name: 'Two-factor authentication for every account' });
@@ -131,7 +132,7 @@ test.describe('Where things live', () => {
     await expect(ownRows.filter({ hasText: USER.username })).toHaveCount(0);
     // System > Security has no list of sign-ins: every account's are in the Audit Log, which
     // holds every failed sign-in and refused second factor too.
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await expect(page.getByRole('heading', { level: 2, name: 'Security of the NAS' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'View History' })).toHaveCount(0);
 
@@ -149,7 +150,7 @@ test.describe('Where things live', () => {
     await page.goto('/system');
     await expect(page.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
     for (const [label, names] of Object.entries(SYSTEM_GROUPS)) {
-      await expect(groupOf(page, label).getByRole('button')).toHaveText(names);
+      await expect(groupOf(page, label).getByRole('link')).toHaveText(names);
     }
 
     // General: the system's facts and its name and time zone, without the version, the signed-in
@@ -161,11 +162,11 @@ test.describe('Where things live', () => {
     await expect(info.getByText('Hostname:')).toHaveCount(0);
 
     // The version is in Updates alone.
-    await openTab(page, 'Updates', '/system#updates');
+    await openTab(page, 'Updates', '/system/updates');
     await expect(page.getByRole('heading', { name: 'UNOS version' })).toBeVisible();
 
     // Remote Access is the tunnel alone; the apps' names on the LAN are in Network.
-    await openTab(page, 'Remote Access', '/system#remote');
+    await openTab(page, 'Remote Access', '/system/remote');
     await expect(page.getByRole('heading', { name: 'Remote access (WireGuard)' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Local names for apps' })).toHaveCount(0);
 
@@ -184,8 +185,8 @@ test.describe('Where things live', () => {
     await expect(page.getByRole('heading', { name: 'Storage pools' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Quick Actions' })).toHaveCount(0);
     // Its summaries link to the places of their facts, for an administrator.
-    await expect(page.locator('main a[href="/system#monitor"]', { hasText: 'CPU' })).toBeVisible();
-    await expect(page.locator('main a[href="/system#general"]')).toContainText('Uptime');
+    await expect(page.locator('main a[href="/system/monitor"]', { hasText: 'CPU' })).toBeVisible();
+    await expect(page.locator('main a[href="/system"]')).toContainText('Uptime');
     // The Containers card has one link, Manage.
     const containers = page.locator('.card', { has: page.getByRole('heading', { name: 'Containers' }) });
     await expect(containers.getByRole('link')).toHaveText(['Manage']);
@@ -218,7 +219,7 @@ test.describe('Where things live', () => {
     await expectCards(page, APPEARANCE);
 
     // System is the NAS's: a regular account is sent to the dashboard.
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await expect(page).toHaveURL('/');
   });
 });

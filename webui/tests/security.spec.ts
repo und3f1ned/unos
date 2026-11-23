@@ -3,14 +3,14 @@ import { answerConfirmation } from './ui';
 import { browserSession } from './session';
 
 // The account's own sign-in settings (Account > Sign-in and security, /account#security) and the
-// NAS's (System > Security, /system#security), ADR-0431.
+// NAS's (System > Security, /system/security), ADR-0431.
 
 // What the server answers for an error it did not handle; the page shows "Request failed".
 const SERVER_ERROR = { status: 500, contentType: 'text/plain', body: 'Internal Server Error' };
 
 test.describe('Security Settings', () => {
   test('should navigate to security tab', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.waitForTimeout(1000);
     await expect(page.locator('text=Security of the NAS')).toBeVisible();
   });
@@ -31,14 +31,14 @@ test.describe('Security Settings', () => {
   });
 
   test('should display Firewall section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.waitForTimeout(1000);
     // The section heading; the description below it mentions the firewall too.
     await expect(page.locator('h3:has-text("Firewall")')).toBeVisible();
   });
 
   test('should display SSL/TLS Certificates section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.waitForTimeout(1000);
     await expect(page.locator('text=SSL/TLS Certificates')).toBeVisible();
   });
@@ -50,14 +50,14 @@ test.describe('Security Settings', () => {
   });
 
   test('should have Configure button for Firewall', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.waitForTimeout(1000);
     const firewallSection = page.locator('div:has(h3:has-text("Firewall"))');
     await expect(firewallSection.locator('button:has-text("Configure")')).toBeVisible();
   });
 
   test('should have Manage button for SSL/TLS Certificates', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.waitForTimeout(1000);
     // Exact name: the outer divs matched here also hold the System tab
     // buttons, one of which is "Power Management".
@@ -167,7 +167,7 @@ test.describe('Security Settings', () => {
   });
 
   test('should toggle certificate management', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.waitForTimeout(1000);
 
     // Click Manage button for Certificates
@@ -189,7 +189,7 @@ test.describe('Security Settings', () => {
     const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
     const served = card.getByText("HTTPS for browsers: Caddy's local CA", { exact: true });
     try {
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       // The card's status, before and without Manage.
       await expect(card.getByText("Caddy's local CA", { exact: true })).toBeVisible();
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
@@ -240,7 +240,7 @@ test.describe('Security Settings', () => {
       expect((await page.request.post('/api/v1/security/certificates/self-signed', {
         data: { domain }, headers,
       })).ok()).toBeTruthy();
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
       await expect(row.getByText('Not served', { exact: true })).toBeVisible();
       await expect(card.getByRole('button', { name: "Use Caddy's local CA" })).toHaveCount(0);
@@ -309,7 +309,7 @@ test.describe('Security Settings', () => {
       expect((await page.request.post('/api/v1/security/certificates/self-signed', {
         data: { domain, validity_days: 10 }, headers,
       })).ok()).toBeTruthy();
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
       await expect(row.getByText('Expires soon', { exact: true })).toBeVisible();
 
@@ -342,7 +342,7 @@ test.describe('Security Settings', () => {
       expect((await page.request.post('/api/v1/security/certificates/self-signed', {
         data: { domain }, headers,
       })).ok()).toBeTruthy();
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
       await row.getByRole('button', { name: `Serve ${domain}` }).click();
       await dialog.getByRole('button', { name: 'Serve', exact: true }).click();
@@ -363,7 +363,7 @@ test.describe('Security Settings', () => {
       (url) => url.pathname === '/api/v1/security/certificates',
       (route) => route.fulfill(SERVER_ERROR),
     );
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
     await card.getByRole('button', { name: 'Manage', exact: true }).click();
 
@@ -392,7 +392,7 @@ test.describe('Security Settings', () => {
       expect((await page.request.post('/api/v1/security/certificates/self-signed', {
         data: { domain }, headers,
       })).ok()).toBeTruthy();
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       await card.getByRole('button', { name: 'Manage', exact: true }).click();
       const row = card.locator('div.bg-surface-overlay').filter({ has: page.getByText(domain, { exact: true }) });
       await expect(row).toBeVisible();
@@ -421,7 +421,7 @@ test.describe('Security Settings', () => {
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/api/v1/security/certificates/self-signed') sent.push(request.method());
     });
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
     await card.getByRole('button', { name: 'Manage', exact: true }).click();
     await card.getByRole('button', { name: 'Generate Self-Signed' }).click();
@@ -441,7 +441,7 @@ test.describe('Security Settings', () => {
   test('a generation that the server refuses says why in its dialog', async ({ authenticatedPage: page }) => {
     // The server's message for a domain that is no host name (422, SelfSignedCertRequest).
     const refusal = 'Value error, must be a host name (letters, digits and hyphens, separated by dots) or an IP address';
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     const card = page.locator('div:has(> div > h3:has-text("SSL/TLS Certificates"))');
     await card.getByRole('button', { name: 'Manage', exact: true }).click();
     await card.getByRole('button', { name: 'Generate Self-Signed' }).click();

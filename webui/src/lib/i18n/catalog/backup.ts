@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Backup & Restore: src/routes/system/tabs/BackupTab.svelte.
+// System > Backup & Restore: src/routes/system/backup/+page.svelte.
 
 export const en = {
 	'backup.upload': 'Upload backup',

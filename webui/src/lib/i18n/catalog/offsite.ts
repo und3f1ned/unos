@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// The off-device copy on System > Backup & Restore: src/routes/system/tabs/OffsiteCopy.svelte
+// The off-device copy on System > Backup & Restore: src/routes/system/backup/OffsiteCopy.svelte
 // (ADR-0337, ADR-0422).
 
 export const en = {

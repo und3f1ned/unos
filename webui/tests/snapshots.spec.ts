@@ -687,7 +687,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     // The list's card names its folder once, and links to the schedule of snapshots; the About card
     // is gone, its rules are where they apply.
     await expect(page.getByText(`Kept in ${DATA.path}/.snapshots`, { exact: true })).toBeVisible();
-    await expectCardLink(page, 'Schedule snapshots', '/system#scheduler');
+    await expectCardLink(page, 'Schedule snapshots', '/system/scheduler');
     await expect(page.getByRole('heading', { name: 'About Snapshots' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Create snapshot' }).click();

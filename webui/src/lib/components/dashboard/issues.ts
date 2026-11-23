@@ -86,7 +86,7 @@ export function dashboardIssues(
 			severity: 'error',
 			text: t('dashboard.issue.replaceSoon', { device: prediction.device, serial: prediction.serial }),
 			detail: prediction.risk_factors.join('; '),
-			href: '/system#health'
+			href: '/system/health'
 		});
 	}
 	if (predictionsError) {
@@ -95,7 +95,7 @@ export function dashboardIssues(
 			severity: 'warning',
 			text: t('dashboard.issue.predictionsFailed'),
 			detail: predictionsError,
-			href: '/system#health'
+			href: '/system/health'
 		});
 	}
 	return issues;

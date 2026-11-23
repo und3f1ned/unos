@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Resource Monitor: src/routes/system/tabs/MonitorTab.svelte. It writes its sizes, rates
+// System > Resource Monitor: src/routes/system/monitor/+page.svelte. It writes its sizes, rates
 // and percentages itself, the numbers in the format of the page and the units of this catalog.
 
 export const en = {

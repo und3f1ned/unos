@@ -59,7 +59,7 @@
 			<Bell class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 			{$t('dashboard.activity.title')}
 		</h3>
-		<CardAction href="/system#notifications">{$t('dashboard.activity.viewAll')}</CardAction>
+		<CardAction href="/system/notifications">{$t('dashboard.activity.viewAll')}</CardAction>
 	</div>
 
 	{#if notifications.length === 0}

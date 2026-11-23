@@ -76,7 +76,7 @@ async function openWithFakes(
   await page.routeWebSocket('**/ws/v1/events', (ws) => {
     sockets.push(ws);
   });
-  await page.goto('/system#monitor');
+  await page.goto('/system/monitor');
   let authenticated = false;
   return {
     send: async (data: object = STATS) => {
@@ -254,7 +254,7 @@ test.describe('Resource Monitor', () => {
 
     // Into the tab without a reload: the store still holds that message.
     await page.locator('aside, nav').getByRole('link', { name: 'System', exact: true }).first().click();
-    await page.getByRole('button', { name: 'Resource Monitor', exact: true }).click();
+    await page.locator('main nav').getByRole('link', { name: 'Resource Monitor', exact: true }).click();
     const cpu = card(page, 'CPU');
     await expect(cpu.getByText('95.0%', { exact: true })).toBeVisible();
     await expect(cpu.getByText('Peak 25.0%', { exact: true })).toBeVisible();
@@ -280,7 +280,7 @@ test.describe('Resource Monitor', () => {
   // the machine it runs on.
   test('the stand-in: the history answers, and the processes come from its socket', async ({ authenticatedPage: page }) => {
     const answer = page.waitForResponse((response) => new URL(response.url()).pathname === HISTORY_PATH);
-    await page.goto('/system#monitor');
+    await page.goto('/system/monitor');
     const history = await answer;
     expect(history.status()).toBe(200);
     const body = await history.json();

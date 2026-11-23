@@ -92,7 +92,7 @@ function fingerprintOf(key: string): string {
 }
 
 async function openSection(page: Page): Promise<Locator> {
-  await page.goto('/system#backup');
+  await page.goto('/system/backup');
   const section = page.getByRole('region', { name: 'Off-device copy' });
   await expect(section).toBeVisible();
   return section;
@@ -151,13 +151,13 @@ test.describe('Off-device copy', () => {
       // which the card links to.
       await expect(section.getByText('No scheduled task: copies run only on Run now')).toBeVisible();
       await section.getByRole('link', { name: 'Add a task of the type Off-device copy in the Scheduler.' }).click();
-      await expect(page).toHaveURL(/\/system#scheduler$/);
+      await expect(page).toHaveURL(/\/system\/scheduler$/);
       await page.getByRole('button', { name: 'New task', exact: true }).click();
       await page.getByLabel('Task name', { exact: true }).fill('Off-device copy');
       await page.getByLabel('Task type', { exact: true }).selectOption('offsite_copy');
       await page.getByRole('button', { name: 'Create task' }).click();
       await expect(page.getByRole('heading', { name: 'Create task' })).toHaveCount(0);
-      await page.locator('main nav').getByRole('button', { name: 'Backup & Restore' }).click();
+      await page.locator('main nav').getByRole('link', { name: 'Backup & Restore' }).click();
       await expect(section.getByText(/A scheduled task copies: Off-device copy/)).toBeVisible();
 
       await section.getByRole('button', { name: 'Run now' }).click();
@@ -383,7 +383,7 @@ test.describe('Off-device copy', () => {
       await route.fallback();
     });
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     const section = page.getByRole('region', { name: 'Off-device copy' });
     await expect(section.locator('[aria-busy="true"]')).toHaveCount(2);
     await expect(section.locator('.card[data-skeleton]')).toHaveCount(1);

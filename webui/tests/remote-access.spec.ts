@@ -19,10 +19,10 @@ function namesCard(page: Page) {
 test.describe('Remote access', () => {
   test("the stand-in is no NAS host: both cards show the server's refusal", async ({ authenticatedPage: page }) => {
     test.skip(process.env.E2E_STAND_IN !== '1', 'The refusal comes from a supervisor that runs its host commands locally');
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     await expect(tunnelCard(page).getByText('Remote access could not be read')).toBeVisible();
     await expect(tunnelCard(page).getByText(REMOTE_LOCAL, { exact: true })).toBeVisible();
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     await expect(namesCard(page).getByText(NAMES_LOCAL, { exact: true })).toBeVisible();
   });
 
@@ -30,7 +30,7 @@ test.describe('Remote access', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page, { installed: false });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     await expect(tunnelCard(page).getByText('Not installed', { exact: true })).toBeVisible();
     await expect(tunnelCard(page).getByText(
       'wireguard-tools is not installed on the host. Install the package wireguard-tools on the host (sudo apt install wireguard-tools), then open this page again.',
@@ -43,7 +43,7 @@ test.describe('Remote access', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page);
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     const card = tunnelCard(page);
     await expect(card.getByText('Off', { exact: true })).toBeVisible();
     // The defaults are offered; the public address is the administrator's.
@@ -80,7 +80,7 @@ test.describe('Remote access', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page, { enabled: true });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     const card = tunnelCard(page);
     await card.getByRole('button', { name: 'Add peer' }).click();
     const add = page.getByRole('dialog', { name: 'Add a peer' });
@@ -112,7 +112,7 @@ test.describe('Remote access', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page, { enabled: true });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     await tunnelCard(page).getByRole('button', { name: 'Add peer' }).click();
     const add = page.getByRole('dialog', { name: 'Add a peer' });
     await add.getByLabel('Device name').fill('laptop');
@@ -127,7 +127,7 @@ test.describe('Remote access', () => {
 
   test("a peer's name that is taken shows the server's refusal in the dialog", async ({ authenticatedPage: page }) => {
     await fakeRemoteApi(page, { enabled: true, peers: [fakePeer(1, 'phone')] });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     await tunnelCard(page).getByRole('button', { name: 'Add peer' }).click();
     const add = page.getByRole('dialog', { name: 'Add a peer' });
     await add.getByLabel('Device name').fill('phone');
@@ -141,7 +141,7 @@ test.describe('Remote access', () => {
       peers: [fakePeer(1, 'phone', { latest_handshake: '2026-11-19T08:30:00Z', received: 1536, sent: 2048 }),
               fakePeer(2, 'laptop')],
     });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     const card = tunnelCard(page);
     await expect(card.getByRole('listitem').filter({ hasText: 'phone' })).toContainText('Received 1.5 KB, sent 2 KB');
     await card.getByRole('button', { name: 'Revoke phone' }).click();
@@ -168,7 +168,7 @@ test.describe('Remote access', () => {
       peers: [fakePeer(1, 'phone', { latest_handshake: iso(nasNow - 60_000), received: 2 * 1024 ** 5, sent: 2048 }),
               fakePeer(2, 'laptop', { latest_handshake: iso(nasNow - 3600_000) })],
     });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     const card = tunnelCard(page);
     const phone = card.getByRole('listitem').filter({ hasText: 'phone' });
     const laptop = card.getByRole('listitem').filter({ hasText: 'laptop' });
@@ -186,7 +186,7 @@ test.describe('Remote access', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page, { enabled: true, peers: [fakePeer(1, 'phone')] });
-    await page.goto('/system#remote');
+    await page.goto('/system/remote');
     const card = tunnelCard(page);
     await card.getByRole('button', { name: 'Change the public address' }).click();
     const edit = page.getByRole('dialog', { name: 'Change the public address' });
@@ -211,7 +211,7 @@ test.describe('Local names for apps', () => {
     authenticatedPage: page,
   }) => {
     const fake = await fakeRemoteApi(page);
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const card = namesCard(page);
     await expect(card.getByText('No app has a name yet.')).toBeVisible();
     await card.getByRole('button', { name: 'Add name' }).click();
@@ -235,7 +235,7 @@ test.describe('Local names for apps', () => {
 
   test("another app's label follows the choice of the app", async ({ authenticatedPage: page }) => {
     await fakeRemoteApi(page);
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     await namesCard(page).getByRole('button', { name: 'Add name' }).click();
     const dialog = page.getByRole('dialog', { name: 'Give an app a name' });
     await dialog.getByLabel('App').click();
@@ -245,7 +245,7 @@ test.describe('Local names for apps', () => {
 
   test("an app's other published port can get a name of its own", async ({ authenticatedPage: page }) => {
     const fake = await fakeRemoteApi(page);
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const card = namesCard(page);
     await card.getByRole('button', { name: 'Add name' }).click();
     const dialog = page.getByRole('dialog', { name: 'Give an app a name' });
@@ -259,7 +259,7 @@ test.describe('Local names for apps', () => {
 
   test('without avahi-utils the card says to install it and offers no name', async ({ authenticatedPage: page }) => {
     await fakeRemoteApi(page, { announcer: false });
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const card = namesCard(page);
     await expect(card.getByText(
       'avahi-utils is not installed on the host, which announces the names on the LAN. Install the package avahi-utils on the host (sudo apt install avahi-utils), then open this page again.',
@@ -273,7 +273,7 @@ test.describe('Local names for apps', () => {
     const fake = await fakeRemoteApi(page, {
       names: [{ label: 'jellyfin', app: 'jellyfin', port: 8096 }], address: '192.168.1.77', announced: '192.168.1.20',
     });
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const card = namesCard(page);
     await expect(card.getByText(
       'avahi announces the names with 192.168.1.20, but the host has the address 192.168.1.77 now.',

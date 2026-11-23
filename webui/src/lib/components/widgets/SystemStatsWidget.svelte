@@ -84,7 +84,7 @@
 	<!-- CPU, memory, network and disk I/O summarize System > Resource Monitor, where an
 	     administrator follows them: the label links there (ADR-0431). The temperature is shown here
 	     alone. -->
-	{#snippet header(Icon: typeof Cpu, chip: string, label: string, context: string, home = '/system#monitor')}
+	{#snippet header(Icon: typeof Cpu, chip: string, label: string, context: string, home = '/system/monitor')}
 		<div class="stat-card-header">
 			<span class="stat-chip {chip}" aria-hidden="true"><Icon class="w-4 h-4" /></span>
 			{#if $isAdmin && home}

@@ -1236,20 +1236,20 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: General',
-    path: '/system#general',
+    path: '/system',
     fake: (page) => serve(page, { '/api/v1/system/info': SYSTEM_INFO }),
     shows: (page) => page.getByText('6.12.48+deb13-arm64'),
   },
   {
     name: 'System: Updates',
-    path: '/system#updates',
+    path: '/system/updates',
     fake: (page) => serve(page, UPDATES),
     // The cards of the installer load after the release: the history's oldest version, in both languages.
     shows: (page) => page.getByText('v1.1.0', { exact: true }),
   },
   {
     name: 'System: Security',
-    path: '/system#security',
+    path: '/system/security',
     fake: (page) => serve(page, SECURITY),
     shows: (page) => page.getByText('SSH from the home network'),
     open: async (page) => {
@@ -1261,7 +1261,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Security, two-factor authentication for every account',
-    path: '/system#security',
+    path: '/system/security',
     fake: (page) => serve(page, TWO_FACTOR_REQUIRED),
     shows: (page) => page.getByText(/administrator_of_the_household/),
     end: (page) => page.getByRole('button', { name: /^(Stop requiring|Не требовать)$/ }),
@@ -1309,7 +1309,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Resource Monitor',
-    path: '/system#monitor',
+    path: '/system/monitor',
     fake: async (page) => {
       await fakeStatsStream(page);
       await serve(page, { '/api/v1/monitor/history': MONITOR_HISTORY });
@@ -1318,26 +1318,26 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Logs',
-    path: '/system#logs',
+    path: '/system/logs',
     fake: (page) => serve(page, LOGS),
     // The filters are open from the start.
     shows: (page) => page.getByText(/NT_STATUS_WRONG_PASSWORD/),
   },
   {
     name: 'System: Disk Health',
-    path: '/system#health',
+    path: '/system/health',
     fake: (page) => fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) }),
     shows: (page) => page.getByText('E2E HDD 4TB').first(),
   },
   {
     name: 'System: Backup',
-    path: '/system#backup',
+    path: '/system/backup',
     fake: (page) => serve(page, BACKUPS),
     shows: (page) => page.getByText('unos_backup_20261107_020000.tar.gz.enc'),
   },
   {
     name: 'System: Backup, an off-device copy to a cloud store',
-    path: '/system#backup',
+    path: '/system/backup',
     fake: (page) => serve(page, { ...BACKUPS, ...OFFSITE, ...SCHEDULER }),
     // A snapshot's Restore files opens its form, with the pool and the folder.
     open: (page) => page.getByRole('button', { name: /^(Restore files|Восстановить файлы)$/ }).click(),
@@ -1346,7 +1346,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Backup, a download that failed',
-    path: '/system#backup',
+    path: '/system/backup',
     fake: async (page) => {
       await serve(page, BACKUPS);
       // As the server answers for a backup that has gone meanwhile.
@@ -1361,7 +1361,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Scheduler',
-    path: '/system#scheduler',
+    path: '/system/scheduler',
     fake: async (page) => {
       await fakeStorageApi(page);
       await serve(page, SCHEDULER);
@@ -1370,13 +1370,13 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Notifications',
-    path: '/system#notifications',
+    path: '/system/notifications',
     fake: (page) => fakeNotificationsApi(page, CHANNELS),
     shows: (page) => page.getByText('Mail to the administrators of the household').first(),
   },
   {
     name: 'System: Network',
-    path: '/system#network',
+    path: '/system/network',
     fake: (page) => fakeNetworkApi(page),
     // The first interface, eth0, opened: its addresses and its button.
     open: (page) => page.locator('main [aria-expanded="false"]').first().click(),
@@ -1384,34 +1384,34 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Network (routes)',
-    path: '/system#network',
+    path: '/system/network',
     fake: (page) => fakeNetworkApi(page),
     open: (page) => page.locator('main').getByRole('tab', { name: /^(Routes|Маршруты)$/ }).click(),
     shows: (page) => page.getByText('2001:db8:1::/64').first(),
   },
   {
     name: 'System: Network (connections)',
-    path: '/system#network',
+    path: '/system/network',
     fake: (page) => fakeNetworkApi(page),
     open: (page) => page.locator('main').getByRole('tab', { name: /^(Connections|Подключения)$/ }).click(),
     shows: (page) => page.getByText('192.168.1.20:51515'),
   },
   {
     name: 'System: Power',
-    path: '/system#power',
+    path: '/system/power',
     fake: (page) => serve(page, POWER),
     shows: (page) => page.getByText('enx00e04c680a1b').first(),
   },
   {
     name: 'System: Remote access',
-    path: '/system#remote',
+    path: '/system/remote',
     fake: (page) => fakeRemoteApi(page, REMOTE_ON),
     shows: (page) => page.getByText(SERVER_KEY),
   },
   {
     // The apps' local names reach the LAN only: Network's (ADR-0431).
     name: 'System: Network, local names for apps',
-    path: '/system#network',
+    path: '/system/network',
     fake: async (page) => {
       await fakeNetworkApi(page);
       await fakeRemoteApi(page, REMOTE_ON);
@@ -1421,7 +1421,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'System: Remote access (off)',
-    path: '/system#remote',
+    path: '/system/remote',
     fake: (page) => fakeRemoteApi(page),
     shows: (page) => page.getByRole('button', { name: /^(Turn on|Включить)$/ }),
   },
@@ -1430,7 +1430,7 @@ const VIEWS: View[] = [
   // that its title shows as it opens and its last button once scrolled to its end.
   {
     name: 'Dialog: turn remote access on',
-    path: '/system#remote',
+    path: '/system/remote',
     fake: (page) => fakeRemoteApi(page),
     open: async (page) => {
       await page.getByLabel(/Public address|Внешний адрес/).fill('nasinthelivingroomoftheoldhouse.dyndns.example.org');
@@ -1442,7 +1442,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: add a remote access peer',
-    path: '/system#remote',
+    path: '/system/remote',
     fake: (page) => fakeRemoteApi(page, REMOTE_ON),
     open: (page) => page.getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
@@ -1452,7 +1452,7 @@ const VIEWS: View[] = [
   {
     // The configuration of a new peer, with its QR code: taller than the screen.
     name: "Dialog: a new peer's configuration",
-    path: '/system#remote',
+    path: '/system/remote',
     fake: (page) => fakeRemoteApi(page, REMOTE_ON),
     open: async (page) => {
       await page.getByRole('button', { name: /^(Add peer|Добавить узел)$/ }).click();
@@ -1466,7 +1466,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: give an app a name',
-    path: '/system#network',
+    path: '/system/network',
     fake: async (page) => {
       await fakeNetworkApi(page);
       await fakeRemoteApi(page, REMOTE_ON);
@@ -1689,7 +1689,7 @@ const VIEWS: View[] = [
     // The bonds, VLANs and bridges of System > Network (ADR-0424): a bond of the uplink, whose dialog
     // warns that the change waits to be kept, and a bridge with a long name to delete.
     name: 'Dialog: create a bond',
-    path: '/system#network',
+    path: '/system/network',
     fake: (page) => fakeNetworkApi(page),
     open: async (page) => {
       await page.getByRole('button', { name: /^(Create…|Создать…)$/ }).click();
@@ -1703,7 +1703,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: create a VLAN',
-    path: '/system#network',
+    path: '/system/network',
     fake: (page) => fakeNetworkApi(page),
     open: async (page) => {
       await page.getByRole('button', { name: /^(Create…|Создать…)$/ }).click();
@@ -1716,7 +1716,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: delete a bridge',
-    path: '/system#network',
+    path: '/system/network',
     fake: (page) => fakeNetworkApi(page, { virtual: { interfaces: [fakeBridge('brcontainers01', ['eth0'])] } }),
     open: (page) => page.getByRole('button', { name: /^(Delete brcontainers01|Удалить brcontainers01)$/ }).click(),
     shows: (page) => page.getByRole('dialog').getByText(/eth0/),
@@ -1867,7 +1867,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: SMART data of a disk',
-    path: '/system#health',
+    path: '/system/health',
     fake: (page) => fakeHealthApi(page),
     open: (page) => page.getByRole('button', { name: /\/dev\/e2e-sda$/ }).click(),
     shows: (page) => page.getByRole('dialog').getByText('Raw_Read_Error_Rate'),
@@ -1878,7 +1878,7 @@ const VIEWS: View[] = [
   {
     // The confirmation of confirm() (ADR-0432): its question, what happens and its two buttons.
     name: 'Dialog: confirm deleting a backup',
-    path: '/system#backup',
+    path: '/system/backup',
     fake: (page) => serve(page, BACKUPS),
     open: (page) =>
       page.getByRole('button', { name: /^(Delete|Удалить) unos_backup_20261107_020000\.tar\.gz\.enc$/ }).click(),
@@ -1889,7 +1889,7 @@ const VIEWS: View[] = [
   {
     // A Sheet (ADR-0432): the runs of a task in a panel as tall as the screen.
     name: 'Sheet: the runs of a task',
-    path: '/system#scheduler',
+    path: '/system/scheduler',
     fake: async (page) => {
       await fakeStorageApi(page);
       await serve(page, SCHEDULER);
@@ -1904,7 +1904,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: restore a backup',
-    path: '/system#backup',
+    path: '/system/backup',
     fake: (page) => serve(page, BACKUPS),
     open: (page) => backupAction(page, /^(Restore|Восстановить)$/),
     shows: (page) => page.getByRole('dialog'),
@@ -1913,7 +1913,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: a new task',
-    path: '/system#scheduler',
+    path: '/system/scheduler',
     fake: async (page) => {
       await fakeStorageApi(page);
       await serve(page, SCHEDULER);
@@ -1925,7 +1925,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: a mail channel',
-    path: '/system#notifications',
+    path: '/system/notifications',
     fake: (page) => fakeNotificationsApi(page, CHANNELS),
     open: (page) => page.locator('main').getByRole('button', { name: /^(Add channel|Добавить канал)$/ }).click(),
     shows: (page) => page.getByRole('dialog'),
@@ -1936,7 +1936,7 @@ const VIEWS: View[] = [
   // its name: the one that opened it has the same name.
   {
     name: 'Dialog: a firewall rule',
-    path: '/system#security',
+    path: '/system/security',
     fake: (page) => serve(page, SECURITY),
     open: async (page) => {
       await page.locator('main').getByRole('button', { name: /^(Configure|Настроить)$/ }).click();
@@ -1948,7 +1948,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: turning the firewall on',
-    path: '/system#security',
+    path: '/system/security',
     fake: (page) => serve(page, { ...SECURITY, '/api/v1/security/firewall': {
       ...SECURITY['/api/v1/security/firewall'], enabled: false, revert_in: null } }),
     open: async (page) => {
@@ -1963,7 +1963,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: a certificate',
-    path: '/system#security',
+    path: '/system/security',
     fake: (page) => serve(page, SECURITY),
     open: async (page) => {
       await page.locator('main').getByRole('button', { name: /^(Manage|Управление)$/ }).click();
@@ -1980,7 +1980,7 @@ const VIEWS: View[] = [
   },
   {
     name: 'Dialog: serving a certificate',
-    path: '/system#security',
+    path: '/system/security',
     fake: (page) => serve(page, SECURITY),
     open: async (page) => {
       await page.locator('main').getByRole('button', { name: /^(Manage|Управление)$/ }).click();
@@ -2266,19 +2266,18 @@ test.describe('The menu on a phone', () => {
     await expect(page).toHaveURL('/storage');
     await expect(navLink(page, '/system')).toBeHidden();
 
-    // Back between two places of one page, here from System's #scheduler to #backup, opens no
-    // other page, so SvelteKit's afterNavigate does not run: the menu closes all the same. The off-
-    // device copy's link to the Scheduler is such a link (General's Check for Updates is gone,
-    // ADR-0431).
-    await page.goto('/system#backup');
+    // Back between two tabs of System, here from Scheduler to Backup & Restore (each a page of its
+    // own, ADR-0470): the menu stays closed. The off-device copy's link to the Scheduler is such a
+    // link (General's Check for Updates is gone, ADR-0431).
+    await page.goto('/system/backup');
     const toScheduler = page.locator('main').getByRole('link', { name: 'Add a task of the type Off-device copy in the Scheduler.' });
     await toScheduler.click();
-    await expect(page).toHaveURL('/system#scheduler');
+    await expect(page).toHaveURL('/system/scheduler');
     await expect(toScheduler).toBeHidden();
     await menuButton(page).click();
     await expect(navLink(page, '/system')).toBeVisible();
     await page.goBack();
-    await expect(page).toHaveURL('/system#backup');
+    await expect(page).toHaveURL('/system/backup');
     await expect(toScheduler).toBeVisible();
     await expect(menuButton(page)).toHaveAttribute('aria-expanded', 'false');
     await expect(navLink(page, '/system')).toBeHidden();

@@ -117,12 +117,16 @@ same tab shows at once with what it showed last, and changes to what the NAS
 answers now a moment later. After a change, such as a share saved or the
 dashboard arranged, a page that shows it waits for its new data instead. Grey
 shapes still stand in for the data when the first page of a tab takes longer
-than a moment, and on the pages not built this way yet. Pointing at a link
-reads no data from the NAS, so that it wakes no sleeping disk; pressing it
-starts reading the next page's data. Only the links of **Users**, **Audit
-Log** and **Account** read their page's data when you point at them, which
-come from UNOS's own records on its system disk and wake no data disk: the
-page then shows at once when you click.
+than a moment, and on the pages not built this way yet. The tabs of **System**
+work the same way: each has an address of its own (General is `/system`, the
+others `/system/network`, `/system/power` and so on), the tab you are on stays
+until the next one has its data, and Back returns to the tab you came from.
+Pointing at a link reads no data from the NAS, so that it wakes no sleeping
+disk; pressing it starts reading the next page's data. Only the links of
+**Users**, **Audit Log**, **Account** and **System** > **Notifications** read
+their page's data when you point at them, which come from UNOS's own records
+on its system disk and wake no data disk: the page then shows at once when you
+click.
 
 On a phone, or in a window narrower than 768 pixels, a bar at the top replaces
 the sidebar: its menu button (☰) opens the navigation, with your account and

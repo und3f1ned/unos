@@ -59,10 +59,10 @@ test.describe('Navigation', () => {
       ['Maintenance', ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management']],
     ];
     for (const [label, names] of groups) {
-      await expect(tabs.getByRole('list', { name: label, exact: true }).getByRole('button')).toHaveText(names);
+      await expect(tabs.getByRole('list', { name: label, exact: true }).getByRole('link')).toHaveText(names);
     }
     // General is still the default.
-    await expect(tabs.getByRole('button', { name: 'General' })).toHaveClass(/bg-brand/);
+    await expect(tabs.getByRole('link', { name: 'General' })).toHaveClass(/bg-brand/);
   });
 
   test('should highlight active navigation item', async ({ authenticatedPage: page }) => {

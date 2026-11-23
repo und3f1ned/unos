@@ -1,7 +1,10 @@
-import { messageOf } from '$lib/errors';
 import { getWolStatus, type WolInterface } from '$lib/api/power';
+import { settle, type Settled } from '$lib/pages/read';
 
-/** The host's network interfaces and their Wake-on-LAN. The page creates it and loads it. */
+/**
+ * The host's network interfaces and their Wake-on-LAN. The page creates it and gives it what its
+ * load read (apply); Retry and a change read them here.
+ */
 export class WakeOnLan {
 	interfaces = $state<WolInterface[]>([]);
 	loading = $state(true);
@@ -10,13 +13,12 @@ export class WakeOnLan {
 	busy = $state<string | null>(null);
 
 	async load() {
-		try {
-			this.interfaces = (await getWolStatus()).interfaces;
-			this.error = '';
-		} catch (e) {
-			this.error = messageOf(e);
-		} finally {
-			this.loading = false;
-		}
+		this.apply(await settle(getWolStatus().then((answer) => answer.interfaces)));
+	}
+
+	apply(read: Settled<WolInterface[]>) {
+		if (read.ok) this.interfaces = read.value;
+		this.error = read.ok ? '' : read.error;
+		this.loading = false;
 	}
 }
