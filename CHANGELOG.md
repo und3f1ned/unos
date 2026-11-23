@@ -12,6 +12,11 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- `scripts/prune-merged-branches.py` (ADR-0465), for the end of a batch: after `git fetch --prune`
+  it removes the clean worktrees of branches merged into `origin/main` and deletes those local
+  branches with `git branch -d`, as a dry run unless `--apply`. It keeps the main checkout, detached,
+  locked and unmerged worktrees, new ones without a commit of their own, those with changes, a
+  handoff or another worktree inside, and the branch `main`, and changes nothing on GitHub.
 - The audit log records UNOS's own updates (ADR-0457): Install Update and Rollback write
   **System update started** or **System rollback started** (by the administrator, or by `system`
   when the automatic install starts one), and how the job ended writes **System update completed**

@@ -44,6 +44,11 @@ CI. Run `make setup` once per checkout; it needs the network.
    (and CI's Commit Messages job on GitHub, ADR-0462).
 10. **The pull request** follows [the template](.github/pull_request_template.md). The owner opens
     and merges pull requests (ADR-0208).
+11. **The end of a batch**: `scripts/prune-merged-branches.py` lists the clean worktrees and the
+    local branches of work merged into `origin/main`, and `--apply` removes them. It keeps every
+    other worktree, a new one without a commit yet included, names those with changes, and
+    changes nothing on GitHub, which deletes the branch of a merged pull request itself
+    (ADR-0465).
 
 ## Recording decisions
 
