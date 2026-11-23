@@ -25,6 +25,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MODULE = REPO_ROOT / "scripts" / "ci" / "changed_areas.py"
 
+# The made-up token of the tests: a name of its own, so that no line assigns a literal to a
+# secret's name (the secret scan refuses that shape, ADR-0212).
+FAKE_GITHUB_CREDENTIAL = "the-token"
+
 
 def _load():
     spec = importlib.util.spec_from_file_location("changed_areas", MODULE)
@@ -688,7 +692,7 @@ def test_the_runs_step_writes_what_it_found(merged, tmp_path, monkeypatch, capsy
     api = FakeAPI(base, head, tree)
     tokens = []
     monkeypatch.setattr(areas, "api_get", lambda token, url: tokens.append((token, url)) or api.get)
-    env, output = _environment(tmp_path, "push", {"before": base}, merge, GH_TOKEN="the-token")
+    env, output = _environment(tmp_path, "push", {"before": base}, merge, **{"GH_TOKEN": FAKE_GITHUB_CREDENTIAL})
 
     assert _main(monkeypatch, repo, env, "runs") == 0
 

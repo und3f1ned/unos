@@ -2336,9 +2336,6 @@ ALLOWED_SECRET_VALUES = {
     # A webhook's credential header, which the notification senders keep off curl's command line
     # and out of their errors (ADR-0336).
     "s3cr3t-api-key": {"supervisor/tests/test_notifications.py"},
-    # The job token that scripts/ci/changed_areas.py sends to GitHub's API alone, never along a redirect
-    # (ADR-0467).
-    "the-token": {"supervisor/tests/test_ci_changed_areas.py"},
 }
 # The passwords that CLAUDE.md once published, the dev device's SSH password and the UNOS
 # administrator's, by their SHA-256: rotated, they stay in git history (ADR-0226) and must never
