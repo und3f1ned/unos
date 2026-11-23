@@ -579,8 +579,9 @@ secrets from the git-ignored `dev.env` (ADR-0212):
   `unoscheck<6 hex digits>` and two backups (smbconf also edits smb.conf by hand and restarts the
   supervisor, ADR-0309; shares makes entries of other owners and modes on the pool over ssh, signs
   in as its user with a token of its own in the device's RAM and turns guest access on for its
-  share, ADR-0340; scrub scrubs the pool, ADR-0314; balance balances chunks of the pool that it
-  leaves about 12% full, and pauses, resumes and cancels the balance, ADR-0379; offsite sets up an off-device copy to a folder
+  share, ADR-0340; scrub scrubs the pool, ADR-0470; balance balances chunks of the pool that it
+  leaves about 12% full, as many as a trial balance finds the disk needs, and pauses, resumes and
+  cancels the balance, ADR-0379 and ADR-0470; offsite sets up an off-device copy to a folder
   of the pool, with its restores, and forgets it, ADR-0337; restore restores a backup it made
   moments before, twice, ADR-0341; hardware only reads what the App Store offers of the host's SoC
   to each container of an app, the device nodes the host has and the RKNPU driver's version,

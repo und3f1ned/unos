@@ -1947,6 +1947,12 @@ manager, encrypted backup uploads, health checks, CI checks).
 - Removing a large image no longer answers 500 after a minute while Docker still deletes it: the
   removal waits up to ten minutes for Docker, and the audit log gets its image_removed. BookStack's
   estimate of the system disk is what its pull took, plus about 5%: it was a quarter short.
+- `scripts/dev/scenario.sh scrub` and `balance` hold on a fast disk such as the BPI-F3's NVMe pool
+  (ADR-0470). The scrub step takes the progress it can see: its looks after btrfs recorded that
+  scrub, and the bytes scrubbed by its end's rate and duration. A scrub seen running many times
+  must still move. The balance check runs a trial balance that measures the seconds a chunk, an
+  API call and a device call take, then gets enough chunks to keep its balance running through its
+  steps (12 on a hard disk, about 55 on the F3). Its refusals must say that the balance runs.
 - `scripts/dev/check.sh` no longer warns of a thermal zone whose trips drive only a fan or are
   bound to nothing, such as the BPI-F3's top_thermal and gpu_thermal at their first passive trip
   of 40 C: it measures the margin in the zones that slow a processor, and warns of every zone 5 C

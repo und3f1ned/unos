@@ -11,8 +11,8 @@
 # share, a volume, a Scheduler task and folders whose names start with "unoscheck", and two
 # backups; smbconf also edits smb.conf by hand and restarts the supervisor, ADR-0309; shares
 # makes entries of other owners and modes on the pool over ssh, signs in as its user and turns
-# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0314; balance balances it with a
-# usage limit, pauses, resumes and cancels the balance, ADR-0379; offsite sets up an off-device
+# guest access on for its share, ADR-0340; scrub scrubs the pool, ADR-0470; balance balances it with a
+# usage limit, pauses, resumes and cancels the balance, ADR-0379 and ADR-0470; offsite sets up an off-device
 # copy to a folder of the pool and forgets it again, ADR-0337; restore restores a backup it made
 # moments before, twice, which puts the device's database back as it was then, ADR-0341;
 # hardware only reads what the App Store offers of the host's SoC and the nodes the host has

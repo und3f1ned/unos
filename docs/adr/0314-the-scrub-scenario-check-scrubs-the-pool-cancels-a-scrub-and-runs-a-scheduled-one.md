@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0470
 date: 2026-11-09
 area: device
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0314: The scrub scenario check scrubs the pool, cancels a scrub and runs a scheduled one
 
 ## Context
+
+Superseded by ADR-0470: the step of the scrub that runs to its end proves the progress that a fast disk lets it see, its looks and the end's total.
 
 The device checks of `storage.scrub` and `storage.scrub-needs-mounted-pool` were steps checked by
 hand through the API on 2026-11-09, with a script of that session (PROGRESS.md, Log); ADR-0304

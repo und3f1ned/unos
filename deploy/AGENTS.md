@@ -68,10 +68,11 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   how they found it; the smbconf check also edits smb.conf by hand and restarts the supervisor
   (ADR-0309), the shares check makes entries of other owners and modes on the pool over ssh, signs
   in as its user and turns guest access on for its share (ADR-0340), the scrub check scrubs the pool
-  (ADR-0314), the smart check gives the pool's disk its shortest idle timeout, waits for it to sleep
+  (ADR-0470), the smart check gives the pool's disk its shortest idle timeout, waits for it to sleep
   and sets the timeout of UNOS's rule again, or Off, which leaves the disk no standby timer until
   its next power cycle (it skips that when `/etc/hdparm.conf` sets one, ADR-0378), the balance check
-  balances, pauses, resumes and cancels chunks of the pool that it leaves about 12% full (ADR-0379),
+  balances, pauses, resumes and cancels chunks of the pool that it leaves about 12% full, as many as
+  a trial balance finds the disk needs (ADR-0379, ADR-0470),
   the offsite check sets up an off-device copy to a folder of the pool and forgets it (ADR-0337),
   the restore check restores a backup it made moments before, twice, which puts the device's
   database back as it was then (ADR-0341), and the hardware check only reads (ADR-0382). They change

@@ -510,11 +510,12 @@ and this index, and `make check-fast` runs it.
 | [0303](0303-the-dev-device-runs-its-nfs-server.md) | The dev device runs its NFS server | accepted | 2026-11-08 |
 | [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
 | [0309](0309-the-smbconf-scenario-check-edits-smb-conf-by-hand-and-restarts-the-supervisor.md) | The smbconf scenario check edits smb.conf by hand and restarts the supervisor | superseded by [0362](0362-every-replaced-smb-conf-is-kept-in-a-dated-copy-and-the-newest-10-stay.md) | 2026-11-09 |
-| [0314](0314-the-scrub-scenario-check-scrubs-the-pool-cancels-a-scrub-and-runs-a-scheduled-one.md) | The scrub scenario check scrubs the pool, cancels a scrub and runs a scheduled one | accepted | 2026-11-09 |
+| [0314](0314-the-scrub-scenario-check-scrubs-the-pool-cancels-a-scrub-and-runs-a-scheduled-one.md) | The scrub scenario check scrubs the pool, cancels a scrub and runs a scheduled one | superseded by [0470](0470-the-scrub-and-balance-checks-prove-what-a-fast-disk-lets-them-see-and-size-the-balance-by-a-trial.md) | 2026-11-09 |
 | [0340](0340-the-shares-scenario-check-makes-a-guest-share-a-users-own-smb-activation-and-a-repair.md) | The shares scenario check makes a guest share, a user's own SMB activation and a repair | accepted | 2026-11-11 |
 | [0341](0341-the-restore-scenario-check-restores-a-backup-it-made-moments-before.md) | The restore scenario check restores a backup it made moments before | accepted | 2026-11-11 |
 | [0372](0372-the-bpi-f3-keeps-its-pool-docker-data-root-and-home-assistant-and-frigate-data-on-its-two-ssds.md) | The BPI-F3 keeps its pool, Docker's data root and the data of its Home Assistant and Frigate stack on its two SSDs | accepted | 2026-11-13 |
 | [0394](0394-the-smart-check-skips-the-disk-s-sleep-while-apps-containers-use-the-pool.md) | The smart check skips the disk's sleep while the containers of apps use it, and names them | accepted | 2026-11-17 |
+| [0470](0470-the-scrub-and-balance-checks-prove-what-a-fast-disk-lets-them-see-and-size-the-balance-by-a-trial.md) | The scrub and balance checks prove what a fast disk lets them see, and size the balance by a trial | accepted | 2026-11-23 |
 
 ## Testing
 
