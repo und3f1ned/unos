@@ -10,9 +10,22 @@ export interface WidgetDef {
 	nameKey: string;
 	/** Only administrators see it (ADR-0030). */
 	adminOnly: boolean;
-	/** A small card, five to a row on a wide screen, or a wide one, two to a row. */
+	/** A small card, five to a row on a wide screen, or a wide one, three to a row there. */
 	size: 'small' | 'wide';
 }
+
+/**
+ * The grid of the widgets and the columns a widget of each size takes in it (ADR-0395, ADR-0476),
+ * for the page and its skeleton alike. Small cards are two to a row on a phone, three from `md`
+ * and five from `xl`; wide ones fill the row below `xl`, are two to a row from it and three from
+ * `2xl` (1536 px), where the grid's 15 columns take five small cards (3 each) or three wide ones
+ * (the 5 of `xl`). A laptop's 1440 px keeps the two columns.
+ */
+export const WIDGET_GRID = 'grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 2xl:grid-cols-15 gap-4';
+export const WIDGET_SPAN: Record<WidgetDef['size'], string> = {
+	small: 'col-span-1 md:col-span-2 2xl:col-span-3',
+	wide: 'col-span-2 md:col-span-6 xl:col-span-5'
+};
 
 /** The widgets in their default order. */
 export const WIDGETS: WidgetDef[] = [
