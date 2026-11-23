@@ -91,6 +91,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   demand, with Python 3.11 and Node.js 22 from setup-python and setup-node and no cache, and fails
   when the setup or its baseline, `make check-fast` and then `make smoke`, fails (the job
   `bootstrap`, ADR-0451): until now only stub tools tested the bootstrap of a new checkout.
+- The workflow Storage on btrfs (`.github/workflows/btrfs.yml`, ADR-0464) runs on every pull request
+  that changes the storage code, the snapshot API, `supervisor/src/host.py`, the supervisor's
+  packages or the job's own files, and on demand: the
+  real supervisor, as root on the GitHub-hosted runner with two loop devices as its disks
+  (`scripts/ci/btrfs-loop.sh`, `scripts/ci/btrfs_loop.py`), makes a raid1 pool, a volume, a
+  read-only snapshot, a restore and a scrub through the API, deletes them and forgets the pool, each
+  checked against what btrfs, findmnt and blkid show on the runner. The script refuses any machine
+  but a GitHub-hosted runner, and the check one with pools.
 
 ### Changed
 - The CI workflow runs on GitHub again (ADR-0462, which supersedes ADR-0230): every push to `main`

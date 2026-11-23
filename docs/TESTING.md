@@ -676,6 +676,44 @@ of the frontend job, of the builder stage in `webui/Dockerfile` and of `engines`
 `webui/package.json` must be the same (`supervisor/tests/test_deploy_scripts.py` checks it, and
 that this page has the commands of the lint and frontend jobs).
 
+### Storage on btrfs
+
+`.github/workflows/btrfs.yml` (ADR-0464) runs the storage flow on real btrfs on every pull request
+that changes `supervisor/src/storage/`, `supervisor/src/snapshots/`, `supervisor/src/host.py` or the
+job's own files (the workflow, `scripts/ci/`, `scripts/dev/scenario.py` and `api.py`,
+`supervisor/requirements.txt`), and on demand (`workflow_dispatch`, once the workflow is on `main`).
+GitHub compares only the first 300 changed files of a pull request with these paths: a larger one,
+such as a batch, gets a run by hand on its branch. Its job **Storage on btrfs loop devices**
+installs `btrfs-progs` and the supervisor's runtime packages on Python 3.11, then runs
+`scripts/ci/btrfs-loop.sh` as root: three loop devices on sparse files in a folder of its own below
+`RUNNER_TEMP`, the supervisor of the checkout on 127.0.0.1 as root on the runner with the first two
+as its disks (`scripts/ci/btrfs_loop.py serve`: its host commands go to the runner's kernel,
+`/mnt/pools` and `/etc/fstab` through the same nsenter as in its container; it offers those two
+alone), then `btrfs_loop.py check`. The check prints a PASS or FAIL line for each step with its
+seconds, as the scenario checks do (it reuses their `Check`): the two disks listed alone, a runner
+without pools (it stops before it changes anything on one with them), a loop device that is no disk
+of the job refused, a raid1 pool of the two, a volume, a read-only snapshot, a restore, a scrub, the
+deletes and Forget, each checked against `btrfs filesystem show`, `btrfs subvolume list`, `btrfs
+scrub status`, `findmnt` and `blkid` on the runner, and ends with `scenario btrfs: OK, <n> steps
+passed`. The supervisor's log follows in a collapsed group. The script refuses, before it makes
+anything, any machine but a GitHub-hosted runner (`GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted`), on Linux, as root.
+
+To run it on a workstation with Docker, in a privileged container that is thrown away afterwards,
+from an image with Python 3.11, the supervisor's packages and btrfs-progs, util-linux and
+e2fsprogs, with the repository mounted read-only:
+
+```bash
+docker run --rm --privileged -v "$PWD:/repo:ro" -e GITHUB_ACTIONS=true \
+  -e RUNNER_ENVIRONMENT=github-hosted -e RUNNER_TEMP=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
+  --entrypoint /repo/scripts/ci/btrfs-loop.sh <image> /usr/local/bin/python3
+```
+
+The two variables are set there by hand because the container is thrown away like a runner; never
+set them on a machine that you keep. The deletes and Forget ask Docker which running containers use
+the volume or the pool (ADR-0344): give the container a Docker API at `/var/run/docker.sock`, one
+that answers no containers and no volumes will do, or the first of those steps fails with 503.
+
 ### Scheduled Maintenance
 
 - `.github/workflows/audit.yml` runs `scripts/audit-python.sh` and

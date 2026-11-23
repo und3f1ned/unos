@@ -1,0 +1,65 @@
+name: Storage on btrfs
+
+# Pools, volumes, snapshots, a restore and a scrub through the API of the real supervisor, on real btrfs
+# on loop devices, checked against what btrfs and findmnt show on the runner (ADR-0464). On every pull
+# request that changes the storage code, the snapshot API or the host boundary that the flow runs through,
+# or the job's own files and the packages it installs, and on demand. supervisor/tests/test_repo_tooling.py checks the trigger and that
+# no step continues on error.
+on:
+  pull_request:
+    paths:
+      - 'supervisor/src/storage/**'
+      - 'supervisor/src/snapshots/**'
+      - 'supervisor/src/host.py'
+      - '.github/workflows/btrfs.yml'
+      - 'scripts/ci/**'
+      - 'scripts/dev/scenario.py'
+      - 'scripts/dev/api.py'
+      - 'supervisor/requirements.txt'
+  workflow_dispatch:
+
+# As in the CI workflow (ADR-0190): the job only reads the repository, and its checkout does not keep the
+# token. Every action is pinned to the commit of a release, as in the other workflows (ADR-0423). No
+# secret reaches the job.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # scripts/ci/btrfs-loop.sh, as root on the runner, which GitHub throws away after the job: three loop
+  # devices on sparse files, the supervisor of this checkout with two of them as its disks and its host
+  # commands on the runner, then scripts/ci/btrfs_loop.py check, a PASS or FAIL line for each step. The
+  # script refuses any machine but a GitHub-hosted runner.
+  btrfs:
+    name: Storage on btrfs loop devices
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: supervisor/requirements.txt
+
+      - name: Install btrfs-progs
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends btrfs-progs
+
+      # The supervisor's runtime packages, as wheels but nut2's sdist (ADR-0423), into setup-python's
+      # Python, which the script runs as root.
+      - name: Install the supervisor's packages
+        run: 'pip install --only-binary=:all: --no-binary=nut2 -r supervisor/requirements.txt'
+
+      # As root, through env: the variables that name a GitHub-hosted runner, which the script requires,
+      # whatever sudo's policy keeps, and LD_LIBRARY_PATH, which setup-python sets for its libpython and
+      # sudo always drops.
+      - name: Pools, volumes, snapshots and a scrub through the API on loop devices
+        run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_TEMP="$RUNNER_TEMP" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" scripts/ci/btrfs-loop.sh "$pythonLocation/bin/python"
