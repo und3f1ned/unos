@@ -19,8 +19,11 @@ export interface SmartInfo {
 	temperature: number | null;
 	power_on_hours: number | null;
 	power_cycle_count: number | null;
-	/** STANDBY: the disk sleeps, and its SMART data was not read so as not to wake it (ADR-0378). */
-	health_status: 'PASSED' | 'FAILED' | 'UNKNOWN' | 'STANDBY';
+	/**
+	 * STANDBY: the disk sleeps, and its SMART data was not read so as not to wake it (ADR-0378).
+	 * NO_SMART: an SD card or eMMC, which has no SMART (storage.free-mmc-as-data-disk).
+	 */
+	health_status: 'PASSED' | 'FAILED' | 'UNKNOWN' | 'STANDBY' | 'NO_SMART';
 	/** ATA attributes; NVMe disks have none. */
 	attributes: SmartAttribute[];
 	/**
@@ -57,6 +60,8 @@ export interface HealthOverview {
 	unknown: number;
 	/** Disks that sleep, whose SMART data was not read (ADR-0378). */
 	standby: number;
+	/** SD cards and eMMC, which have no SMART (storage.free-mmc-as-data-disk). */
+	no_smart: number;
 	average_temperature: number | null;
 }
 

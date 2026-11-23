@@ -40,6 +40,9 @@ SHARE_NAME_PATTERN = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}\Z')
 # Whether a name is a disk of the host is lsblk's to say (storage.disks.whole_disk_device).
 DISK_NAME_PATTERN = re.compile(r'^(?:[a-z]{2,4}|(?:sd|vd|xvd|hd|dasd)[a-z]+)[0-9]*\Z')
 NVME_DISK_PATTERN = re.compile(r'^nvme[0-9]+n[0-9]+(p[0-9]+)?\Z')  # nvme0n1, nvme0n1p1
+# An SD card or eMMC and its partitions (mmcblk1, mmcblk1p1); not an eMMC's boot, RPMB and general
+# purpose areas (mmcblk0boot0, mmcblk0rpmb, mmcblk0gp0), which are never disks (storage.free-mmc-as-data-disk).
+MMC_DISK_PATTERN = re.compile(r'^mmcblk[0-9]+(p[0-9]+)?\Z')
 # eth0, enp3s0, he-ipv6, and VLANs as the kernel names them (eth0.100). A leading
 # letter keeps out ".", ".." and option-like names.
 INTERFACE_NAME_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_.-]{0,14}\Z')
@@ -132,6 +135,12 @@ def validate_timezone(timezone: str, valid_timezones: set | None = None) -> str:
     return timezone
 
 
+def _is_disk_name(name: str) -> bool:
+    """Whether ``name`` has the form of a disk or a partition: DISK_NAME_PATTERN, NVME_DISK_PATTERN or
+    MMC_DISK_PATTERN."""
+    return any(pattern.fullmatch(name) for pattern in (DISK_NAME_PATTERN, NVME_DISK_PATTERN, MMC_DISK_PATTERN))
+
+
 def validate_disk_name(name: str) -> str:
     """
     Validate a disk device name.
@@ -156,10 +165,10 @@ def validate_disk_name(name: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid disk name")
 
     # Validate format
-    if not (DISK_NAME_PATTERN.fullmatch(name) or NVME_DISK_PATTERN.fullmatch(name)):
+    if not _is_disk_name(name):
         raise HTTPException(
             status_code=400,
-            detail="Invalid disk name format. Expected format like 'sda', 'sdb1', or 'nvme0n1'"
+            detail="Invalid disk name format. Expected format like 'sda', 'sdb1', 'nvme0n1' or 'mmcblk1'"
         )
 
     return name
@@ -620,7 +629,7 @@ def validate_device_path(device: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid device path")
 
     # Validate device name
-    if not (DISK_NAME_PATTERN.fullmatch(device_name) or NVME_DISK_PATTERN.fullmatch(device_name)):
+    if not _is_disk_name(device_name):
         raise HTTPException(status_code=400, detail="Invalid device name format")
 
     return device

@@ -14,7 +14,9 @@ export const HEALTH_STATUS: Record<string, string> = {
 	FAILED: 'health.status.failed',
 	UNKNOWN: 'health.status.unknown',
 	// The disk sleeps: smartctl left it alone, so no SMART data was read (ADR-0378).
-	STANDBY: 'health.status.standby'
+	STANDBY: 'health.status.standby',
+	// An SD card or eMMC, which has no SMART (storage.free-mmc-as-data-disk).
+	NO_SMART: 'health.status.noSmart'
 };
 
 // The recommendation of a failure prediction as the server writes it, one sentence per status
@@ -35,7 +37,7 @@ export function predictionOf(disk: SmartInfo, predictions: DiskPrediction[]): Di
 export function healthClass(status: string): string {
 	if (status === 'PASSED') return 'text-success';
 	if (status === 'FAILED') return 'text-error';
-	if (status === 'STANDBY') return 'text-content-secondary';
+	if (status === 'STANDBY' || status === 'NO_SMART') return 'text-content-secondary';
 	return 'text-warning';
 }
 
@@ -51,6 +53,7 @@ export function diskState(
 	if (disk.health_status === 'FAILED') return { key: 'health.state.failing', variant: 'error' };
 	if (disk.health_status === 'PASSED') return { key: 'health.state.healthy', variant: 'success' };
 	if (disk.health_status === 'STANDBY') return { key: 'health.state.asleep', variant: 'neutral' };
+	if (disk.health_status === 'NO_SMART') return { key: 'health.state.noSmart', variant: 'neutral' };
 	return { key: 'health.state.unknown', variant: 'warning' };
 }
 

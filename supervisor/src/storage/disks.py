@@ -23,6 +23,7 @@ import psutil
 from fastapi import HTTPException
 
 from .. import host
+from ..config import get_settings
 from ..security.validators import sanitize_error_message, validate_disk_target
 from .schemas import DiskCandidate, DiskInfo, PartitionInfo, PowerState, SmartData
 
@@ -30,9 +31,10 @@ logger = logging.getLogger(__name__)
 
 # Boot and virtual devices that are never offered for pools. Whether a disk is
 # a *system* disk is decided from what it backs on the host (see
-# _system_reason), not from its name.
+# _system_reason), not from its name. An SD card or eMMC is hidden by what it
+# holds (_mmc_use, storage.free-mmc-as-data-disk), and its areas that are no disk by their names
+# (MMC_AREA_PREFIX).
 HIDDEN_DISK_PREFIXES = (
-    "mmcblk",  # SD card / eMMC: the boot medium of ARM boards
     "mtdblock",  # SPI/NOR flash holding the bootloader
     "zram",  # compressed RAM disks (swap, /var/log on Armbian)
     "ram",  # RAM disks
@@ -43,6 +45,18 @@ HIDDEN_DISK_PREFIXES = (
 
 # A device that backs one of these host mountpoints is a system device.
 SYSTEM_MOUNTPOINTS = ("/", "/boot", "/boot/efi", "/boot/firmware")
+
+# An SD card or an eMMC (the kernel's mmc block devices): the whole card (mmcblk1) and its
+# partitions (mmcblk1p1). Every other device of the prefix is an area of an eMMC that is no disk:
+# its boot areas (mmcblk0boot0, mmcblk0boot1), its RPMB and its general purpose partitions
+# (mmcblk0gp0), hidden by their names (storage.free-mmc-as-data-disk).
+MMC_AREA_PREFIX = "mmcblk"
+_MMC_DISK = re.compile(r"mmcblk[0-9]+")
+_MMC_PARTITION = re.compile(r"mmcblk[0-9]+p[0-9]+")
+# What the kernel's command line names as the device the host booted from: the root filesystem's
+# (root=, the last one counts) and, as Armbian's boot scripts pass it, the partition that U-Boot
+# loaded the kernel from (ubootpart=, a PARTUUID).
+_BOOT_PARAMETERS = ("root=", "ubootpart=")
 
 LSBLK_COLUMNS = (
     "NAME,KNAME,PATH,PKNAME,TYPE,SIZE,ROTA,MODEL,SERIAL,WWN,"
@@ -103,6 +117,11 @@ _NOT_FOUND = 127
 # end it, timeout sends KILL to its own process group and dies by it too: nsenter passes that on, so
 # run_on_host answers -9 (137 through a shell). _ended_by_timeout.
 _ENDED_BY_TERM = 124
+
+# The SD cards and eMMC that the last read of the host's state found free, data disks, by name: the
+# idle shutdown counts their reads and writes, and cannot run lsblk every minute
+# (power.schedule._disk_counters, storage.free-mmc-as-data-disk).
+_free_cards: frozenset[str] = frozenset()
 
 # The hdparm -C reads, by disk (power_state), bounded as run_in_container bounds its commands
 # (ADR-0290): the disks whose read runs, and those whose last read timed out, whose hdparm may still
@@ -200,14 +219,42 @@ class _HostState:
     tree: list[dict[str, Any]]
     mounts: list[HostMount] | None
     swaps: set[str]
-    root_spec: tuple[str, str] | None
+    # The devices that the kernel's command line names as the one the host booted from (_boot_specs);
+    # None when it cannot be read.
+    boot_specs: tuple[tuple[str, str], ...] | None
     system_paths: dict[str, str] = field(default_factory=dict)
     system_majmin: dict[str, str] = field(default_factory=dict)
     mounted_btrfs_uuids: set[str] = field(default_factory=set)
+    # The SD cards and eMMC that are part of the running system or used by the host, by name, with
+    # the reason (_mmc_use): hidden like a boot device.
+    hidden_mmc: dict[str, str] = field(default_factory=dict)
 
 
 def is_hidden_disk(name: str) -> bool:
+    """Whether the device ``name`` is a boot or virtual device by its name alone: HIDDEN_DISK_PREFIXES,
+    and an area of an eMMC that is no disk (mmcblk0boot0, mmcblk0rpmb, mmcblk0gp0). A whole SD card or
+    eMMC and its partitions are judged by what the card holds (_hidden, storage.free-mmc-as-data-disk)."""
+    if name.startswith(MMC_AREA_PREFIX):
+        return not (_MMC_DISK.fullmatch(name) or _MMC_PARTITION.fullmatch(name))
     return name.startswith(HIDDEN_DISK_PREFIXES)
+
+
+def free_cards() -> frozenset[str]:
+    """The SD cards and eMMC that the last read of the host's state found free (storage.free-mmc-as-data-disk)."""
+    return _free_cards
+
+
+def is_mmc_disk(name: str) -> bool:
+    """Whether ``name`` is a whole SD card or eMMC (mmcblk1), which has no SMART and no spin-down
+    (storage.free-mmc-as-data-disk): not a partition (mmcblk1p1) nor an area of an eMMC (mmcblk0boot0)."""
+    return _MMC_DISK.fullmatch(name) is not None
+
+
+def _hidden(name: str, state: _HostState) -> bool:
+    """Whether the whole disk ``name`` is never listed nor offered: a boot or virtual device by its
+    name (is_hidden_disk), or an SD card or eMMC that is part of the running system or used by the
+    host (_HostState.hidden_mmc)."""
+    return is_hidden_disk(name) or name in state.hidden_mmc
 
 
 def _to_int(value: Any) -> int:
@@ -336,9 +383,27 @@ def _lsblk_tree() -> list[dict[str, Any]]:
             raise RuntimeError(f"lsblk failed: {result.stderr.strip() or result.returncode}")
         result = legacy
     try:
-        return json.loads(result.stdout).get("blockdevices") or []
+        tree = json.loads(result.stdout).get("blockdevices") or []
     except (json.JSONDecodeError, AttributeError) as exc:
         raise RuntimeError(f"lsblk failed: invalid output ({exc})") from exc
+    for top in tree:
+        if isinstance(top, dict) and is_mmc_disk(str(top.get("name") or "")):
+            _add_card_facts(top)
+    return tree
+
+
+def _add_card_facts(node: dict[str, Any]) -> None:
+    """What the host's sysfs says of the SD card or eMMC ``node`` (storage.free-mmc-as-data-disk), into its lsblk entry,
+    where sysfs knows it: the card's name as its model (lsblk reports none), its serial (lsblk
+    reports udev's ``<name>_<serial>``) and the kernel's type of it as ``mmc_type``, SD or MMC ("unknown" when
+    sysfs cannot tell). Every reader of the tree sees the same identity, the checks of a pool's
+    creation included. Reads no disk."""
+    name = str(node["name"])
+    model = host.block_device_attribute(name, "device/name")
+    serial = host.block_device_attribute(name, "device/serial")
+    node["model"] = disk_id(model) or disk_id(node.get("model"))
+    node["serial"] = disk_id(serial) or disk_id(node.get("serial"))
+    node["mmc_type"] = disk_id(host.block_device_attribute(name, "device/type")) or "unknown"
 
 
 def labelled_devices(label: str) -> list[str]:
@@ -380,18 +445,18 @@ def disks_of_filesystem(uuid: str) -> list[str]:
     ]
 
 
-def _whole_disks(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The whole disks among the top-level devices of an lsblk tree.
+def _whole_disks(state: _HostState) -> list[dict[str, Any]]:
+    """The whole disks among the top-level devices of the host's lsblk tree.
 
-    Devices of TYPE "disk" without the boot SD card/eMMC and virtual devices
-    (HIDDEN_DISK_PREFIXES). A system disk on NVMe, SATA or USB is included.
-    Partitions, RAID arrays and other devices built on a disk are not whole
-    disks.
+    Devices of TYPE "disk" without boot and virtual devices (_hidden): an SD
+    card or eMMC is one only while it holds no part of the running system
+    (storage.free-mmc-as-data-disk). A system disk on NVMe, SATA or USB is included. Partitions,
+    RAID arrays and other devices built on a disk are not whole disks.
     """
     return [
         node
-        for node in tree
-        if node.get("type") == "disk" and node.get("name") and not is_hidden_disk(node["name"])
+        for node in state.tree
+        if node.get("type") == "disk" and node.get("name") and not _hidden(node["name"], state)
     ]
 
 
@@ -409,25 +474,37 @@ def _active_swaps() -> set[str]:
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
-def _boot_root_spec() -> tuple[str, str] | None:
-    """Return the ``root=`` device of the running kernel as (kind, value)."""
+def _boot_specs() -> tuple[tuple[str, str], ...] | None:
+    """The devices that the running kernel's command line names as the one the host booted from, as
+    (kind, value): its ``root=``, and the ``ubootpart=`` of Armbian's boot scripts, the PARTUUID
+    of the partition that U-Boot loaded the kernel from (storage.free-mmc-as-data-disk); the last of each counts, as
+    the kernel's own root= does. None when the command line cannot be read."""
     try:
         cmdline = host.read_host_file("/proc/cmdline")
     except Exception as exc:
         logger.warning("Could not read the kernel command line: %s", exc)
         return None
-    spec = None
+    given: dict[str, str] = {}
     for token in cmdline.split():
-        if token.startswith("root="):
-            spec = token[len("root="):]  # the kernel uses the last root=
-    if not spec:
-        return None
+        for parameter in _BOOT_PARAMETERS:
+            if token.startswith(parameter) and token[len(parameter):]:
+                given[parameter] = token[len(parameter):]
+    specs = [_boot_spec(value, bare="partuuid" if parameter == "ubootpart=" else None)
+             for parameter, value in given.items()]
+    return tuple(spec for spec in specs if spec is not None)
+
+
+def _boot_spec(spec: str, *, bare: str | None) -> tuple[str, str] | None:
+    """A device of the kernel's command line as (kind, value): UUID=, PARTUUID=, LABEL= or a /dev
+    path; a value without a prefix is of the kind ``bare``, or names nothing when it is None."""
     for prefix, kind in (("UUID=", "uuid"), ("PARTUUID=", "partuuid"), ("LABEL=", "label")):
         if spec.startswith(prefix):
             value = spec[len(prefix):]
             return (kind, value if kind == "label" else value.lower())
     if spec.startswith("/dev/"):
         return ("path", spec)
+    if bare is not None:
+        return (bare, spec.lower())
     return None
 
 
@@ -458,9 +535,9 @@ def _build_state(
     tree: list[dict[str, Any]],
     mounts: list[HostMount] | None,
     swaps: set[str],
-    root_spec: tuple[str, str] | None,
+    boot_specs: tuple[tuple[str, str], ...] | None,
 ) -> _HostState:
-    state = _HostState(tree=tree, mounts=mounts, swaps=swaps, root_spec=root_spec)
+    state = _HostState(tree=tree, mounts=mounts, swaps=swaps, boot_specs=boot_specs)
 
     for mount in mounts or []:
         if mount.target not in SYSTEM_MOUNTPOINTS:
@@ -492,7 +569,60 @@ def _build_state(
             state.mounted_btrfs_uuids.add(mount.uuid.lower())
         elif mount.source in nodes_by_path and nodes_by_path[mount.source].get("uuid"):
             state.mounted_btrfs_uuids.add(nodes_by_path[mount.source]["uuid"].lower())
+    global _free_cards
+    cards = [str(top.get("name") or "") for top in tree if is_mmc_disk(str(top.get("name") or ""))]
+    for top in tree:
+        name = str(top.get("name") or "")
+        if is_mmc_disk(name) and (use := _mmc_use(top, state)) is not None:
+            state.hidden_mmc[name] = use
+    _free_cards = frozenset(name for name in cards if name not in state.hidden_mmc)
     return state
+
+
+def _is_pool_mountpoint(mountpoint: str) -> bool:
+    """Whether ``mountpoint`` is where UNOS mounts a pool: a folder of the setting pools_base_path."""
+    base = get_settings().pools_base_path.rstrip("/")
+    return bool(base) and mountpoint.rstrip("/").rpartition("/")[0] == base
+
+
+def _mmc_use(top: dict[str, Any], state: _HostState) -> str | None:
+    """Why the SD card or eMMC ``top`` is part of the running system or used by the host, so that it
+    is hidden like a boot device; None for a free one, which is a data disk (storage.free-mmc-as-data-disk).
+
+    It is in use when it or anything on it (a partition, an LVM, LUKS or md device) is the system's
+    (_system_reason: /, /boot, /boot/efi, /boot/firmware, active swap, or the device that root= or
+    ubootpart= names), mounted anywhere but at a pool's mountpoint, as lsblk shows it or as the
+    host's mount table does (by its path, its device number or its btrfs filesystem's UUID), or
+    used as swap; and when the mount table cannot be read, or has no /, or the kernel's command
+    line cannot be read, so that nothing in use could look free.
+    """
+    if state.mounts is None or not any(mount.target == "/" for mount in state.mounts):
+        return "The host's mount table cannot be read"
+    if state.boot_specs is None:
+        return "The kernel's command line cannot be read"
+    subtree = list(_walk(top))
+    reason = _system_reason(subtree, state)
+    if reason is not None:
+        return reason
+    for node in subtree:
+        for mountpoint in _mountpoints(node):
+            if mountpoint == "[SWAP]":
+                return "Active swap"
+            if not _is_pool_mountpoint(mountpoint):
+                return f"Mounted at {mountpoint}"
+    paths = {path for node in subtree for path in _node_paths(node)}
+    numbers = {node["maj:min"] for node in subtree if node.get("maj:min")}
+    uuids = {str(node["uuid"]).lower() for node in subtree if node.get("fstype") == "btrfs" and node.get("uuid")}
+    for mount in state.mounts:
+        if _is_pool_mountpoint(mount.target):
+            continue
+        if (
+            mount.source in paths
+            or mount.majmin in numbers
+            or (mount.fstype == "btrfs" and (mount.uuid or "").lower() in uuids)
+        ):
+            return f"Mounted at {mount.target}"
+    return None
 
 
 def _mounts_or_none() -> list[HostMount] | None:
@@ -509,9 +639,9 @@ def _collect_host_state() -> _HostState:
     tree: list[dict[str, Any]]
     mounts: list[HostMount] | None
     swaps: set[str]
-    root_spec: tuple[str, str] | None
-    tree, mounts, swaps, root_spec = host.at_once(_lsblk_tree, _mounts_or_none, _active_swaps, _boot_root_spec)
-    return _build_state(tree, mounts, swaps, root_spec)
+    boot_specs: tuple[tuple[str, str], ...] | None
+    tree, mounts, swaps, boot_specs = host.at_once(_lsblk_tree, _mounts_or_none, _active_swaps, _boot_specs)
+    return _build_state(tree, mounts, swaps, boot_specs)
 
 
 def _matches_root_spec(node: dict[str, Any], spec: tuple[str, str]) -> bool:
@@ -542,7 +672,7 @@ def _system_reason(subtree: list[dict[str, Any]], state: _HostState) -> str | No
                 return state.system_paths[path]
         if node.get("maj:min") in state.system_majmin:
             return state.system_majmin[node["maj:min"]]
-        if state.root_spec and _matches_root_spec(node, state.root_spec):
+        if any(_matches_root_spec(node, spec) for spec in state.boot_specs or ()):
             return "Host boot device"
     return None
 
@@ -647,8 +777,12 @@ def power_state(device: str) -> PowerState:
     On a host without hdparm (an optional host tool), and for an NVMe disk, which hdparm cannot ask
     and which gets no idle timeout, ``smartctl -n standby -i`` in the container reads it
     (_smartctl_power_state): it leaves a sleeping disk alone, but asks an awake one IDENTIFY DEVICE,
-    which restarts the disk's standby timer. Blocking: call it in a worker thread.
+    which restarts the disk's standby timer. An SD card or eMMC, which has no standby to read and
+    takes neither command, is active, and nothing runs (storage.free-mmc-as-data-disk). Blocking: call it in a worker
+    thread.
     """
+    if is_mmc_disk(device.removeprefix("/dev/")):
+        return "active"
     if device.removeprefix("/dev/").startswith("nvme"):
         return _smartctl_power_state(device)
     result = _hdparm_power_read(device)
@@ -816,7 +950,7 @@ def _node_facts(
         path=path,
         name=node.get("name") or "",
         type=node.get("type") or "",
-        hidden=is_hidden_disk(disk.get("name") or ""),
+        hidden=_hidden(disk.get("name") or "", state),
         is_system=system_reason is not None,
         in_use=reason is not None,
         in_use_reason=reason,
@@ -836,9 +970,11 @@ def _node_facts(
 def list_disks() -> list[DiskInfo]:
     """List the host's disks with what is needed to decide whether they are safe to use.
 
-    Boot and virtual devices (see HIDDEN_DISK_PREFIXES) are left out. Every
-    other disk is listed, including system disks, which are flagged with
-    ``is_system``/``in_use`` instead of being hidden. Each disk's power state is
+    Boot and virtual devices (see HIDDEN_DISK_PREFIXES), and an SD card or eMMC
+    that holds part of the running system or is used by the host (_mmc_use,
+    storage.free-mmc-as-data-disk), are left out. Every other disk is listed, including system
+    disks, which are flagged with ``is_system``/``in_use`` instead of being
+    hidden. Each disk's power state is
     read first, without waking it, and a disk in standby is not probed with
     wipefs; its idle timeout comes from UNOS's udev rule, with the reason when
     it can have none, a rule that cannot be read included (ADR-0378).
@@ -854,7 +990,7 @@ def list_disks() -> list[DiskInfo]:
     state, (timeouts, unread), no_hdparm = host.at_once(
         _collect_host_state, spindown.timeouts_or_problem, spindown.hdparm_missing
     )
-    whole = _whole_disks(state.tree)
+    whole = _whole_disks(state)
     listed = [(n.get("path") or f"/dev/{n['name']}", disk_id(n.get("serial"))) for n in whole]
 
     def disk_info(node: dict[str, Any]) -> DiskInfo:
@@ -898,6 +1034,7 @@ def list_disks() -> list[DiskInfo]:
             in_use_reason=facts.in_use_reason,
             pool=facts.pool,
             power_state=power,
+            mmc_type=node.get("mmc_type") if is_mmc_disk(name) else None,
             spindown=timeouts.get(facts.serial or "", 0),
             spindown_problem=(
                 spindown.problem(facts, listed) or unread or (spindown.NO_HDPARM if no_hdparm else None)
@@ -930,7 +1067,7 @@ def addable_disks() -> list[DiskCandidate]:
     contents are unknown and count as data. RuntimeError when lsblk fails."""
     state = _collect_host_state()
     found: list[DiskCandidate] = []
-    for node in _whole_disks(state.tree):
+    for node in _whole_disks(state):
         path = node.get("path") or f"/dev/{node['name']}"
         facts = _node_facts(node, node, state, probe=power_state(path) != "standby")
         if addable_problem(facts) is None:
@@ -955,11 +1092,14 @@ def disk_models(paths: list[str]) -> dict[str, tuple[str | None, str | None]]:
 def host_disks() -> list[HostDisk]:
     """The host's whole disks, exactly as the Storage page lists them (list_disks).
 
-    The disks lsblk reports in the host namespaces, without the boot SD
-    card/eMMC and virtual devices; a system disk on NVMe, SATA or USB is
-    included (_whole_disks). SMART data, self-tests, Disk Health and the
-    SMART monitor are for these disks only. Blocking (lsblk runs on the
-    host): call it in a worker thread. RuntimeError when lsblk fails.
+    The disks lsblk reports in the host namespaces, without boot and
+    virtual devices, the SD card or eMMC that holds the system among them
+    (storage.free-mmc-as-data-disk); a system disk on NVMe, SATA or USB is included
+    (_whole_disks), and so is a free SD card or eMMC, which has no SMART.
+    SMART data, self-tests, Disk Health and the SMART monitor are for these
+    disks only. Blocking (lsblk runs on the host, and findmnt and swapon
+    when it lists an SD card or eMMC: _disk_state): call it in a worker
+    thread. RuntimeError when lsblk fails.
     """
     return [
         HostDisk(
@@ -969,8 +1109,22 @@ def host_disks() -> list[HostDisk]:
             size=_to_int(node.get("size")),
             serial=disk_id(node.get("serial")),
         )
-        for node in _whole_disks(_lsblk_tree())
+        for node in _whole_disks(_disk_state())
     ]
+
+
+def _disk_state() -> _HostState:
+    """The host's state as host_disks needs it: lsblk, and only when it lists an SD card or eMMC,
+    whose use they tell (_mmc_use, storage.free-mmc-as-data-disk), the mount table, the active swaps and the kernel's
+    command line, read at once. RuntimeError when lsblk fails."""
+    tree = _lsblk_tree()
+    if not any(is_mmc_disk(str(top.get("name") or "")) for top in tree):
+        return _build_state(tree, [], set(), ())
+    mounts: list[HostMount] | None
+    swaps: set[str]
+    boot_specs: tuple[tuple[str, str], ...] | None
+    mounts, swaps, boot_specs = host.at_once(_mounts_or_none, _active_swaps, _boot_specs)
+    return _build_state(tree, mounts, swaps, boot_specs)
 
 
 def host_disks_or_500() -> list[HostDisk]:
@@ -1007,14 +1161,23 @@ def whole_disk_device(target: str) -> str:
     return device
 
 
+def smart_disk_device(target: str) -> str:
+    """whole_disk_device for a SMART self-test: HTTPException 400 also for an SD card or eMMC, which
+    has no SMART (storage.free-mmc-as-data-disk), and smartctl does not run."""
+    device = whole_disk_device(target)
+    if is_mmc_disk(device.removeprefix("/dev/")):
+        raise HTTPException(status_code=400, detail=f"{device} is an SD card or eMMC, which has no SMART self-tests")
+    return device
+
+
 def pool_device_problems(paths: list[str]) -> dict[str, str]:
     """Why devices of a btrfs filesystem found on the disks must not be part of a pool.
 
     Mount and Import mount such a filesystem and keep it in the host's fstab
     (ADR-0283), so its members follow the rules of a pool's creation
     (ADR-0035, pools._check_pool_devices): nothing on a boot or virtual
-    device (HIDDEN_DISK_PREFIXES: the SD card and the eMMC, the boot flash of
-    ARM boards, ADR-0470; loop and RAM disks), and nothing on the system disk,
+    device (_hidden: an SD card or eMMC that holds the system or is used by
+    the host, storage.free-mmc-as-data-disk; loop and RAM disks), and nothing on the system disk,
     whose partitions and the devices built on them are never used for pools.
     A device that lsblk does not list cannot be checked. Returns path ->
     reason for each of ``paths`` that breaks a rule. RuntimeError when lsblk
@@ -1030,7 +1193,7 @@ def pool_device_problems(paths: list[str]) -> dict[str, str]:
         for top in tops:
             top_path = top.get("path") or f"/dev/{top.get('name')}"
             on = "is" if path in _node_paths(top) else f"is on {top_path},"
-            if is_hidden_disk(top.get("name") or ""):
+            if _hidden(top.get("name") or "", state):
                 problems[path] = f"{path} {on} a boot or virtual device"
                 break
             reason = _system_reason(list(_walk(top)), state)
@@ -1076,8 +1239,11 @@ def get_smart_data(device_path: str) -> SmartData:
     """SMART data of a whole disk with smartctl (blocking: run it in a worker thread).
 
     ``-n standby`` leaves a sleeping disk asleep (ADR-0378): its answer has the power state
-    "standby", ``healthy`` None and no data.
+    "standby", ``healthy`` None and no data. An SD card or eMMC has no SMART: it is active, with
+    ``healthy`` None and no data, and smartctl does not run (storage.free-mmc-as-data-disk).
     """
+    if is_mmc_disk(device_path.removeprefix("/dev/")):
+        return SmartData(device=device_path, healthy=None, power_state="active")
     try:
         # Killed at the timeout and not waited for (ADR-0290).
         result = host.run_smartctl(["-n", "standby", "-j", "-a"], device_path, timeout=SMARTCTL_TIMEOUT)

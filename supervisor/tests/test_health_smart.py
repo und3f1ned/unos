@@ -132,6 +132,9 @@ def test_whole_disks_of_the_host_are_accepted(api, host, call, device, path):
         "zram0", "loop0",  # virtual devices
         "md0",  # a RAID array built on sdc
         "nvme0",  # the NVMe controller, not a block device
+        # The boot SD card and its root partition: a card is a disk only while it holds no part of
+        # the system, which lsblk and the mount table tell (storage.free-mmc-as-data-disk).
+        "mmcblk1", "mmcblk1p1",
     ],
 )
 def test_other_devices_are_not_a_disk_of_this_system(api, host, call, device):
@@ -146,7 +149,7 @@ def test_other_devices_are_not_a_disk_of_this_system(api, host, call, device):
 @pytest.mark.parametrize(
     "device",
     [
-        "mmcblk1", "mmcblk1p1",  # the boot SD card
+        "mmcblk0boot0", "mmcblk0rpmb",  # an eMMC's boot and RPMB areas, never disks (storage.free-mmc-as-data-disk)
         "%2Fdev%2Fdisk%2Fby-id%2Fata-WD-1",  # a link to sda
         "%2Fdev%2F..%2Fsda", "..%2Fsda", "dev%2Fsda", "sda%3B%20reboot",
     ],
@@ -211,7 +214,7 @@ def test_storage_smart_for_every_disk_the_storage_page_lists(api, host):
 # Names of the right format that are no disk of the host: smartctl used to run
 # on them (a tape drive such as st0 rewinds when the device is closed).
 @pytest.mark.parametrize(
-    "name", ["sda1", "md0", "zram0", "loop0", "null", "port", "st0", "sdz", "nvme0"]
+    "name", ["sda1", "md0", "zram0", "loop0", "null", "port", "st0", "sdz", "nvme0", "mmcblk1", "mmcblk1p1"]
 )
 def test_storage_smart_of_other_devices_is_refused(api, host, name):
     response = storage_smart(api, name)
@@ -225,7 +228,7 @@ def test_storage_smart_of_other_devices_is_refused(api, host, name):
     assert host.smartctl == []
 
 
-@pytest.mark.parametrize("name", ["mmcblk1", "mmcblk1p1", "sda%3B%20reboot", "sd..a", "SDA"])
+@pytest.mark.parametrize("name", ["mmcblk0boot0", "mmcblk0rpmb", "sda%3B%20reboot", "sd..a", "SDA"])
 def test_storage_smart_of_invalid_names_is_refused(api, host, name):
     response = storage_smart(api, name)
 
@@ -436,8 +439,10 @@ def test_the_system_disk_is_listed(board_api, board):
 
     disks = disk_health(board_api)
 
-    assert [d["device"] for d in disks] == ["/dev/sda", "/dev/nvme0n1"]
-    assert disks[1]["serial"] == "S64ANS0T"
+    # The eMMC no longer holds the system: a data disk, which has no SMART (storage.free-mmc-as-data-disk).
+    assert [d["device"] for d in disks] == ["/dev/mmcblk0", "/dev/sda", "/dev/nvme0n1"]
+    assert disks[0]["health_status"] == "NO_SMART"
+    assert disks[2]["serial"] == "S64ANS0T"
 
 
 def test_a_disk_without_smart_data_is_listed_with_what_lsblk_reports(board_api, board):
@@ -583,7 +588,7 @@ def test_overview_counts_the_same_disks(board_api, board):
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 1, "unknown": 0, "standby": 0,
+        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 1, "unknown": 0, "standby": 0, "no_smart": 0,
         "average_temperature": 37,
     }
     assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")
@@ -598,7 +603,7 @@ def test_overview_counts_a_disk_without_smart_data_as_unknown(board_api, board):
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 0, "unknown": 1, "standby": 0,
+        "total_disks": 2, "healthy": 1, "warning": 0, "failed": 0, "unknown": 1, "standby": 0, "no_smart": 0,
         "average_temperature": 34,
     }
     assert board.smartctl == smartctl_reads("/dev/sda", "/dev/nvme0n1")

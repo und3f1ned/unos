@@ -175,6 +175,8 @@
 			</div>
 		{:else if disk.health_status === 'STANDBY'}
 			<p class="text-secondary text-sm mt-6">{$t('health.asleep')}</p>
+		{:else if disk.health_status === 'NO_SMART'}
+			<p class="text-secondary text-sm mt-6">{$t('health.noSmart')}</p>
 		{:else}
 			<p class="text-secondary text-sm mt-6">{$t('health.noAttributes')}</p>
 		{/if}

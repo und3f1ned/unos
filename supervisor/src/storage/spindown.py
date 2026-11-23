@@ -216,6 +216,9 @@ def problem(facts: disks.DeviceFacts, listed: list[tuple[str, str | None]]) -> s
     if facts.name.startswith("nvme"):
         return (f"{facts.path} is an NVMe disk, which manages its own power: hdparm sets idle timeouts of "
                 "SATA disks")
+    if disks.is_mmc_disk(facts.name):  # storage.free-mmc-as-data-disk
+        return (f"{facts.path} is an SD card or eMMC, which has no disk that spins down: hdparm sets idle "
+                "timeouts of SATA disks")
     if not facts.serial or not _RULE_SERIAL.fullmatch(facts.serial):
         return (f"{facts.path} reports no serial number that a udev rule can match: UNOS could not set its "
                 "idle timeout again when it is connected")
@@ -400,7 +403,8 @@ def set_timeout(name: str, minutes: int) -> Change:
     scans still off after a failed -o on, so that the next Off turns them on).
 
     HTTPException 400 for a name that is no disk of this system, a boot or virtual device
-    (HIDDEN_DISK_PREFIXES) and a partition; 409 for a disk that gets no timeout (problem()), a host
+    (HIDDEN_DISK_PREFIXES, and an SD card or eMMC that holds the system, storage.free-mmc-as-data-disk) and a partition;
+    409 for a disk that gets no timeout (problem(): an SD card or eMMC among them), a host
     without hdparm, and a disk that udev knows by another serial than lsblk; 500 when hdparm fails
     or the rule cannot be read, and nothing is changed then. RuleNotWritten when hdparm set it but
     the rule could not be written; the collection is then put back as the old rule records it: turned

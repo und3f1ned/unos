@@ -331,11 +331,11 @@ UNOS uses BTRFS for storage management. A **storage pool** combines one or more 
 ### Viewing Disks
 
 **Storage** → **Disks**, under the pools, lists every whole disk of the host, the
-system disk included, but not SD cards and eMMC (the boot medium of ARM
-boards), flash, RAM, loop, optical and floppy devices. For each disk it
-shows the device, the model and serial number, the size, HDD or SSD, what
-it holds (a filesystem with its label, a partition table and its
-partitions), its status and its power:
+system disk included, but not flash, RAM, loop, optical and floppy devices,
+nor an SD card or eMMC that holds part of the system. For each disk it
+shows the device, the model and serial number, the size, HDD, SSD,
+**SD card** or **eMMC**, what it holds (a filesystem with its label, a
+partition table and its partitions), its status and its power:
 
 - **System**: it holds the host's root filesystem, `/boot` or active swap,
   or the host boots from it (no fault: it is just not for pools);
@@ -345,6 +345,22 @@ partitions), its status and its power:
 - **Has data**: it holds a filesystem, a partition table or another
   signature;
 - **Free**: it is empty.
+
+An SD card or eMMC is a disk like the others while nothing on it is mounted
+(but a pool), used as swap or the device the host booted from: the root
+filesystem's, `/boot`'s, or the one that `root=` or `ubootpart=` of the
+kernel's command line names. On a board that runs from its eMMC, a card in
+its SD slot is such a disk, and the other way round. The one with the system,
+one mounted elsewhere, and an eMMC's boot, RPMB and general purpose areas are
+not listed, nor is any card while the host's mount table or the kernel's
+command line cannot be read. Its
+model and serial number are the card's own; it has no SMART and no idle
+timeout, and it wears with every write, more than a hard disk or an SSD, so
+keep a copy of a pool on it elsewhere. UNOS cannot see a bootloader that a
+card keeps outside its partitions, and a pool erases it: before you make a
+pool of an eMMC or an SD card, make sure the board does not start from its
+loader (many boards, the RK3588's among them, start a loader on an SD card in
+the slot before the eMMC's).
 
 The reason, such as "Mounted at /srv/backup", where a disk is mounted
 included, is shown below the badge, in
@@ -384,7 +400,9 @@ power conditions that `hdparm` does not name; UNOS then asks with
 `smartctl -n idle`, which also sends only CHECK POWER MODE and shows them
 Awake (idle_a, idle_b, idle_c) or Asleep (standby_y). On a host without
 `hdparm`, and for an NVMe disk, UNOS asks with `smartctl` instead, which also
-leaves a sleeping disk asleep but starts an awake one's timer again.
+leaves a sleeping disk asleep but starts an awake one's timer again. An SD
+card or eMMC is always **Awake**: it has nothing to spin down, and UNOS asks
+it nothing.
 
 Below the state, **Idle timeout** with its value (**Off** by default) and a
 pencil is the button that opens **Idle timeout**: choose **Off**, 5, 10, 20 or
@@ -471,7 +489,8 @@ opened.
 3. Enter a pool name (e.g., "data", "media")
 4. Select disks to include. Only the disks a pool can take are listed; the
    system disk and disks in use are folded under **N disks not available**,
-   each with its reason.
+   each with its reason. While an SD card or eMMC is selected, the dialog
+   says that it wears with writes and has no SMART to warn before it fails.
 5. Choose a RAID profile:
 
 | Profile | Min Disks | Redundancy | Space Efficiency |
@@ -521,9 +540,10 @@ from another system, become a pool without being formatted:
   still there, because the imported disks would serve them: the message names
   them, so choose another name or delete them first.
 
-A btrfs filesystem on the SD card or the eMMC, on a loop or RAM disk, or on
-the system disk is neither listed nor mounted: it never becomes a pool, as no
-pool is created on those devices.
+A btrfs filesystem on an SD card or eMMC that holds part of the system, on a
+loop or RAM disk, or on the system disk is neither listed nor mounted: it
+never becomes a pool, as no pool is created on those devices. One on a free
+SD card or eMMC is a pool like one on any other disk.
 
 The data stays on the disks either way; an import changes only the label, so a
 system that mounted the filesystem by its old label needs the new one. Nothing
@@ -750,7 +770,11 @@ history shows why.
 
 **System** → **Disk Health** shows the model, size, temperature and SMART
 health status of each disk that the **Storage** page lists, the system disk
-included unless it is an SD card or eMMC. Opening the tab, or its refresh
+included unless it is an SD card or eMMC. A free SD card or eMMC, which the
+**Storage** page lists, has no SMART: it is listed as **No SMART**, with
+its model, serial number and size, and its dialog says so; no self-test runs
+on it, the hourly SMART records leave it out, and the Scheduler offers it for
+no **SMART Test** task. Opening the tab, or its refresh
 button, reads the SMART data of every disk that is awake: a disk that sleeps
 stays asleep and is listed as **STANDBY**, with the model, serial number and
 size that the host knows, and its dialog says that its SMART data is read
@@ -3000,8 +3024,10 @@ that the change to winter time shows twice comes the first time.
   host down after it has been idle that long, announced ten minutes before. The
   host is not idle while a page of the web interface is open (this one too),
   someone is logged in on the host (SSH or the console), an SMB or NFS client
-  is connected, a job of the list above runs, or a disk other than the boot SD
-  card or eMMC reads and writes more than 1 MiB a minute; what UNOS cannot
+  is connected, a job of the list above runs, or a disk other than the SD card
+  or eMMC of the system reads and writes more than 1 MiB a minute (a free SD
+  card or eMMC counts once the **Storage** page or the hourly SMART check has
+  found it free); what UNOS cannot
   check counts as use. While the idle shutdown is on, the Status card lists why
 the host is not idle, each reason once with its count. The idle time
   starts again after each use, after each start of UNOS (so after every boot)

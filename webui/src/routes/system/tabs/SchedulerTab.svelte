@@ -58,7 +58,8 @@
 		try {
 			const [poolsResult, disksResult] = await Promise.all([getPools(), getDisks()]);
 			pools = poolsResult;
-			disks = disksResult.filter((d) => d.type === 'disk');
+			// The disks a SMART test can run on: an SD card or eMMC has no SMART (storage.free-mmc-as-data-disk).
+			disks = disksResult.filter((d) => d.type === 'disk' && !d.mmc_type);
 			disksLoaded = true;
 		} catch (e) {
 			console.error('Failed to load resources:', e);

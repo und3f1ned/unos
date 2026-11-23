@@ -50,6 +50,14 @@
 		return { variant: 'success', label: $t('storage.disks.status.free') };
 	};
 
+	// The type of a disk: an SD card or eMMC by the kernel's type of it (storage.free-mmc-as-data-disk), else HDD or SSD.
+	const typeKey = (disk: Disk): string => {
+		if (disk.mmc_type === 'SD') return 'storage.disks.sdCard';
+		if (disk.mmc_type === 'MMC') return 'storage.disks.emmc';
+		if (disk.mmc_type) return 'storage.disks.mmc';
+		return disk.rotational ? 'storage.disks.hdd' : 'storage.disks.ssd';
+	};
+
 	// A disk's power as a dot and a word: awake, asleep, or not known.
 	const POWER_STATES: Record<PowerState, { dot: 'success' | 'neutral' | null; key: string }> = {
 		active: { dot: 'success', key: 'storage.disks.power.active' },
@@ -110,9 +118,7 @@
 							<td class="num whitespace-nowrap">{formatBytes(disk.size)}</td>
 							<td>
 								<!-- A type is no state: a neutral badge. -->
-								<Badge variant="neutral">
-									{$t(disk.rotational ? 'storage.disks.hdd' : 'storage.disks.ssd')}
-								</Badge>
+								<Badge variant="neutral">{$t(typeKey(disk))}</Badge>
 							</td>
 							<!-- prettier-ignore -->
 							<td class="min-w-[12rem]">

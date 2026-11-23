@@ -199,12 +199,13 @@ class TestListDisks:
         fake_host.add_disk("sdb")
         assert [d.name for d in disks.list_disks()] == ["sdb"]
 
-    def test_on_a_bpi_w3_only_the_sata_disk_is_listed(self, fake_host):
-        # The eMMC with the system, its boot partitions, the wiped microSD card and both zram
-        # devices are no disks of the Storage page (ADR-0470, ADR-0376).
+    def test_on_a_bpi_w3_the_sata_disk_and_the_wiped_sd_card_are_listed(self, fake_host):
+        # The eMMC with the system, its boot partitions and both zram devices are no disks of the
+        # Storage page; the wiped microSD card, of which nothing is mounted, is a data disk
+        # (ADR-0470, ADR-0376, storage.free-mmc-as-data-disk).
         bpi_w3(fake_host)
         sda = by_name(disks.list_disks())["sda"]
-        assert [d.name for d in disks.list_disks()] == ["sda"]
+        assert [d.name for d in disks.list_disks()] == ["mmcblk1", "sda"]
         assert (sda.is_system, sda.in_use, sda.model) == (False, False, "WDC WD6400AACS-00G8B0")
 
     def test_root_shown_as_dev_root_is_matched_by_device_number(self, fake_host):
@@ -374,17 +375,18 @@ class TestCreatePoolGuards:
 
     @pytest.mark.parametrize(
         ("device", "refusal", "message"),
-        [("/dev/mmcblk0", HTTPException, "Invalid device name format"),
-         ("/dev/mmcblk0p1", HTTPException, "Invalid device name format"),
+        [("/dev/mmcblk0", ValueError, "boot or virtual device"),
+         ("/dev/mmcblk0p1", ValueError, "boot or virtual device"),
          ("/dev/mmcblk0boot0", HTTPException, "Invalid device name format"),
-         ("/dev/mmcblk1", HTTPException, "Invalid device name format"),
+         ("/dev/mmcblk0boot1", HTTPException, "Invalid device name format"),
          ("/dev/zram1", ValueError, "boot or virtual device")],
-        ids=["emmc", "emmc-root", "emmc-boot-partition", "wiped-sd-card", "zram-var-log"],
+        ids=["emmc", "emmc-root", "emmc-boot-partition", "emmc-boot-partition-1", "zram-var-log"],
     )
-    def test_on_a_bpi_w3_the_flash_is_never_formatted(self, fake_host, device, refusal, message):
-        # A name of the eMMC or the microSD card is refused by its format before any host command;
-        # zram's name is a disk name, so lsblk runs and it is refused as a virtual device
-        # (ADR-0470, ADR-0376).
+    def test_on_a_bpi_w3_the_system_flash_is_never_formatted(self, fake_host, device, refusal, message):
+        # A name of the eMMC's boot partitions is refused by its format before any host command;
+        # the eMMC with the system and zram are refused after lsblk as boot or virtual devices
+        # (ADR-0470, ADR-0376, storage.free-mmc-as-data-disk; the wiped SD card is a data disk:
+        # test_mmc_data_disk.py).
         bpi_w3(fake_host)
         with pytest.raises(refusal) as raised:
             create_forced(fake_host, [device])
@@ -826,6 +828,9 @@ class TestDisksEndpoint:
         assert {d["name"]: tuple(d[f] for f in fields) for d in response.json()} == {
             "nvme0n1": (True, True, "Mounted at /boot/efi", True, None),
             "sdb": (False, False, None, False, None),
+            # The SD card that held the system before it moved to the NVMe disk: a data disk with
+            # its old ext4 partition (storage.free-mmc-as-data-disk).
+            "mmcblk1": (False, False, None, True, None),
             # A pool that is not mounted: its disk holds data and is free to mount.
             "sda": (False, False, None, True, "data"),
             "sdc": (False, True, "Mounted at /srv/backup", True, None),

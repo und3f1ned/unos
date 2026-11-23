@@ -64,6 +64,15 @@ export const SLEEPING_DISK = {
   self_test_status: null, last_test_result: null,
 };
 
+// A free SD card, which has no SMART: smartctl did not run, and lsblk's model, serial and size
+// stand in (storage.free-mmc-as-data-disk).
+export const SD_CARD_DISK = {
+  device: '/dev/mmcblk1', model: 'SC32G', serial: '0x8f3a1b2c', firmware: 'Unknown', capacity: '29.72 GB',
+  temperature: null, power_on_hours: null, power_cycle_count: null,
+  health_status: 'NO_SMART', attributes: [], nvme_health: null,
+  self_test_status: null, last_test_result: null,
+};
+
 // Predictions as GET /health/smart/predictions reports them. NVMe disks get
 // none: the SMART monitor records ATA attributes only.
 

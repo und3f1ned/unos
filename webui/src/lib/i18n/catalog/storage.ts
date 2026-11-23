@@ -31,6 +31,10 @@ export const en = {
 	'storage.disks.column.power': 'Power',
 	'storage.disks.hdd': 'HDD',
 	'storage.disks.ssd': 'SSD',
+	// The type of an SD card or eMMC that is a data disk (storage.free-mmc-as-data-disk): the kernel's SD, MMC, or neither.
+	'storage.disks.sdCard': 'SD card',
+	'storage.disks.emmc': 'eMMC',
+	'storage.disks.mmc': 'SD card or eMMC',
 	// What a disk holds, as lsblk reports it: {type} is the partition table's, such as GPT or DOS.
 	'storage.disks.partitionTable': '{type} partition table',
 	// The same after a filesystem of the whole disk, in the middle of the list.
@@ -281,6 +285,10 @@ export const en = {
 	'storage.create.dataTitle': 'Existing data will be destroyed',
 	'storage.create.notEmpty': 'These disks are not empty:',
 	'storage.create.eraseData': 'Erase the existing data on these disks',
+	// A selected SD card or eMMC (storage.free-mmc-as-data-disk).
+	'storage.create.flashTitle': 'An SD card or eMMC wears with writes',
+	'storage.create.flash':
+		'Each write wears its flash, and it has no SMART to warn before it fails. Keep a copy of the pool elsewhere.',
 	'storage.create.confirm': 'Type the pool name to confirm',
 	'storage.create.confirmName': 'Type {name} to confirm',
 	'storage.create.noneUsable': 'No disk can hold a new pool.',
@@ -437,6 +445,9 @@ export const ru: Translation<typeof en> = {
 	'storage.disks.column.power': 'Питание',
 	'storage.disks.hdd': 'HDD',
 	'storage.disks.ssd': 'SSD',
+	'storage.disks.sdCard': 'SD-карта',
+	'storage.disks.emmc': 'eMMC',
+	'storage.disks.mmc': 'SD-карта или eMMC',
 	'storage.disks.partitionTable': 'Таблица разделов {type}',
 	'storage.disks.partitionTableAfter': 'таблица разделов {type}',
 	'storage.disks.partitions': { one: '{n} раздел', few: '{n} раздела', many: '{n} разделов' },
@@ -673,6 +684,9 @@ export const ru: Translation<typeof en> = {
 	'storage.create.dataTitle': 'Существующие данные будут уничтожены',
 	'storage.create.notEmpty': 'Эти диски не пусты:',
 	'storage.create.eraseData': 'Стереть существующие данные на этих дисках',
+	'storage.create.flashTitle': 'SD-карта и eMMC изнашиваются от записи',
+	'storage.create.flash':
+		'Каждая запись изнашивает их флеш-память, а SMART, который предупредил бы о сбое, у них нет. Храните копию пула в другом месте.',
 	'storage.create.confirm': 'Введите имя пула для подтверждения',
 	'storage.create.confirmName': 'Введите {name} для подтверждения',
 	'storage.create.noneUsable': 'Ни один диск не подходит для нового пула.',

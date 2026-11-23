@@ -545,6 +545,19 @@ def _host_disk_number(name: str) -> tuple[int, int] | None:
     return int(found[1]), int(found[2])
 
 
+def block_device_attribute(name: str, attribute: str) -> str | None:
+    """The text of ``/sys/block/<name>/<attribute>`` of the host (SYS_BLOCK, which the container sees
+    as the host does), such as ``device/type`` of an SD card; None when the host has no such device
+    or attribute, or it cannot be read. Reads no disk: sysfs answers from the kernel's records."""
+    if not re.fullmatch(r"[a-z][a-z0-9]{0,31}", name):
+        return None
+    try:
+        with open(os.path.join(SYS_BLOCK, name, attribute), encoding="utf-8", errors="replace") as file:
+            return file.read().strip()
+    except OSError:
+        return None
+
+
 def _container_node_number(path: str) -> tuple[int, int] | None:
     """The device number (major, minor) of the block device node at ``path``; None when nothing is
     there, and _NOT_A_BLOCK_NODE for anything else (a file, a link, a character device)."""

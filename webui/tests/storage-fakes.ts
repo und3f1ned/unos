@@ -30,6 +30,24 @@ export const FAKE_DISKS = [
   },
 ];
 
+// An SD card and an eMMC that hold no part of the system: data disks without SMART or an idle
+// timeout, with the kernel's type of each (storage.free-mmc-as-data-disk). The model and
+// serial are the card's own (sysfs), as the W3's SanDisk card has them.
+export const FAKE_SD_CARD = {
+  name: 'mmcblk1', path: '/dev/mmcblk1', model: 'SC32G', serial: '0x8f3a1b2c', wwn: null, size: 31_914_983_424,
+  rotational: false, mountpoint: null, type: 'disk', fstype: null, label: null, pttype: null, partitions: [],
+  mountpoints: [], has_data: false, is_system: false, in_use: false, in_use_reason: null, pool: null,
+  power_state: 'active', mmc_type: 'SD', spindown: 0,
+  spindown_problem: '/dev/mmcblk1 is an SD card or eMMC, which has no disk that spins down: hdparm sets idle ' +
+    'timeouts of SATA disks',
+};
+export const FAKE_EMMC = {
+  ...FAKE_SD_CARD, name: 'mmcblk0', path: '/dev/mmcblk0', model: 'A3A444', serial: '0x2c7e19a5',
+  size: 125_069_950_976, mmc_type: 'MMC',
+  spindown_problem: '/dev/mmcblk0 is an SD card or eMMC, which has no disk that spins down: hdparm sets idle ' +
+    'timeouts of SATA disks',
+};
+
 /** FAKE_DISKS after the two data disks were reconnected the other way round. */
 export const SWAPPED_DISKS = [
   FAKE_DISKS[0],

@@ -52,6 +52,12 @@ export interface Disk {
 	pool: string | null;
 	/** Read first; a disk in standby is not probed for signatures, so has_data is true for it. */
 	power_state: PowerState;
+	/**
+	 * An SD card or eMMC that holds no part of the system: the kernel's type of it, SD, MMC (an eMMC)
+	 * or unknown; it has no SMART and no idle timeout, and wears with writes (storage.free-mmc-as-data-disk). null for
+	 * every other disk.
+	 */
+	mmc_type: string | null;
 	/** The idle timeout in minutes that UNOS's udev rule sets for the disk, 0 for none. */
 	spindown: number;
 	/** Why the disk gets no idle timeout (the server's message), or null when it can have one. */
@@ -60,7 +66,10 @@ export interface Disk {
 
 export interface SmartData {
 	device: string;
-	/** null when the disk sleeps: smartctl left it alone (power_state standby). */
+	/**
+	 * null when the disk sleeps: smartctl left it alone (power_state standby); and for an SD card or
+	 * eMMC, which has no SMART (storage.free-mmc-as-data-disk).
+	 */
 	healthy: boolean | null;
 	power_state: PowerState;
 	temperature: number | null;

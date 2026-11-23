@@ -178,6 +178,7 @@ and this index, and `make check-fast` runs it.
 | [0411](0411-a-disk-joins-a-pool-at-once-and-leaves-it-in-a-host-unit-after-typed-confirmations-and-checks-of-the-profile-and-the-space.md) | A disk joins a pool at once and leaves it in a unit of the host, after typed confirmations and checks of the profile and the space | superseded by [0429](0429-a-pool-on-an-nvme-drive-of-a-spacemit-k1-gets-trim-like-every-other-pool.md) | 2026-11-18 |
 | [0414](0414-a-hot-plugged-disk-is-read-by-smartctl-through-a-node-the-supervisor-makes-in-its-own-dev.md) | A disk attached after the supervisor started is read by smartctl through a node that the supervisor makes in its own /dev from the host's sysfs | accepted | 2026-11-18 |
 | [0429](0429-a-pool-on-an-nvme-drive-of-a-spacemit-k1-gets-trim-like-every-other-pool.md) | A pool on an NVMe drive of a SpacemiT K1 gets TRIM like every other pool | accepted | 2026-11-19 |
+| [0472](0472-an-sd-card-or-emmc-that-holds-no-part-of-the-running-system-is-a-data-disk.md) | An SD card or eMMC that holds no part of the running system is a data disk | accepted | 2026-11-23 |
 
 ## Shares
 
