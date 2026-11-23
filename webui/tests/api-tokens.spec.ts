@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Locator, type Page, type Route } from '@playwright/test';
 import { E2E_ADMIN, test as signedIn } from './fixtures';
 
 /**
@@ -397,5 +397,81 @@ signedIn.describe('API tokens on the Account page', () => {
     await expect(page.getByText(`The token ${name} was deleted`)).toBeVisible();
     await expect(row).toHaveCount(0);
     expect((await me(request, token)).status()).toBe(401);
+  });
+
+  // webui.navigation-without-skeletons (ADR-0469): the page reads its tokens in its load. A revisit
+  // appears at once with what it showed last, which a fresh read replaces; a change on the page
+  // makes the next visit wait for its fresh read, the open page staying meanwhile.
+
+  /** The GETs of the tokens answer, with `answer` or the server's, only once the returned function is called. */
+  async function holdTokens(page: Page, answer?: (route: Route) => Promise<void>): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/api/v1/auth/tokens', async (route) => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      await held;
+      await (answer ? answer(route) : route.fallback()).catch(() => undefined);
+    });
+    return release;
+  }
+
+  const dashboardLink = (page: Page) => page.locator('aside nav a[href="/"]');
+  // An administrator's link to the Account page: their name at the foot of the sidebar.
+  const accountLink = (page: Page) => page.locator('aside a[href="/account"]');
+
+  signedIn('a revisit of the Account page shows its tokens at once, and the fresh read replaces them', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/account#security');
+    await expect(tokensCard(page).getByRole('button', { name: 'New Token' })).toBeVisible();
+    await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
+    await dashboardLink(page).click();
+    await expect(page).toHaveURL('/');
+
+    // The next read of the tokens is held, and then answers one more.
+    const name = `${prefix}-fresh`;
+    const release = await holdTokens(page, async (route) => {
+      const response = await route.fetch();
+      const fresh = {
+        id: 999_999,
+        name,
+        token_prefix: 'unos_e2efres',
+        is_active: true,
+        read_only: true,
+        areas: null,
+        scope_known: true,
+        created_at: '2026-11-23T10:00:00Z',
+        last_used_at: null,
+        expires_at: null,
+      };
+      await route.fulfill({ response, json: [...(await response.json()), fresh] });
+    });
+    await accountLink(page).click();
+    await expect(page).toHaveURL('/account', { timeout: 1000 });
+    await expect(tokensCard(page).getByRole('button', { name: 'New Token' })).toBeVisible({ timeout: 1000 });
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    await expect(tokensCard(page).getByRole('listitem', { name })).toHaveCount(0);
+    release();
+    await expect(tokensCard(page).getByRole('listitem', { name })).toBeVisible();
+  });
+
+  signedIn('a token made on the Account page is listed on the next visit, which waits for its fresh read', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/account#security');
+    const name = `${prefix}-next-visit`;
+    await makeInDialog(page, name, async () => {});
+    await expect(tokensCard(page).getByRole('listitem', { name })).toBeVisible();
+    await dashboardLink(page).click();
+    await expect(page).toHaveURL('/');
+
+    // The tokens read before the change are not shown: the dashboard stays until the fresh ones are in.
+    const release = await holdTokens(page);
+    await accountLink(page).click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/');
+    release();
+    await expect(page).toHaveURL('/account');
+    await expect(tokensCard(page).getByRole('listitem', { name })).toBeVisible();
   });
 });

@@ -1,18 +1,12 @@
 import { messageOf } from '$lib/errors';
-// The entries of the audit log that the page shows (ADR-0401), with their loading and error: a
-// change of the filters loads the newest entries that match, after a pause in the typing, and
-// Show more loads more of them. The page creates it and passes it down.
-import {
-	getAuditActions,
-	getAuditCount,
-	getAuditLogs,
-	type AuditAction,
-	type AuditEntry,
-	type AuditFilters
-} from '$lib/api/audit';
+// The entries of the audit log that the page shows (ADR-0401), with their loading and error: the
+// page's load reads the newest ones without a filter ($lib/pages/audit), a change of the filters
+// loads the newest entries that match, after a pause in the typing, and Show more loads more of
+// them. The page creates it and passes it down.
+import { getAuditCount, getAuditLogs, type AuditAction, type AuditEntry, type AuditFilters } from '$lib/api/audit';
+import { AUDIT_PAGE_SIZE as PAGE_SIZE, type AuditSnapshot } from '$lib/pages/audit';
 
-// Entries per "Show more", and how long typing may pause before the list follows it.
-const PAGE_SIZE = 100;
+// How long typing may pause before the list follows it.
 const TYPING_DELAY_MS = 300;
 
 export class AuditLog {
@@ -32,6 +26,30 @@ export class AuditLog {
 	#scheduled = '';
 	// Each load gets a number: an answer that is not the newest request's is dropped.
 	#latest = 0;
+
+	/**
+	 * The entries and the actions as the page's load read them: as a load of the first page that
+	 * has answered. Its entries not once a load of the page's own has started (other filters, Show
+	 * more, Retry: it read later), nor while other filters wait for their load.
+	 */
+	apply(snapshot: AuditSnapshot) {
+		if (snapshot.actions.ok) {
+			this.actions = snapshot.actions.value;
+			this.actionsError = '';
+		} else {
+			this.actionsError = snapshot.actions.error;
+		}
+		const key = JSON.stringify(snapshot.filters);
+		if (this.#latest > 0 || (this.#scheduled !== '' && this.#scheduled !== key)) return;
+		this.#scheduled = key;
+		this.#limit = PAGE_SIZE;
+		const read = snapshot.entries;
+		this.entries = read.ok ? read.value.entries : [];
+		this.total = read.ok ? read.value.total : 0;
+		this.error = read.ok ? '' : read.error;
+		this.loading = false;
+		this.loaded = true;
+	}
 
 	/**
 	 * Load the entries that match `current` from the first page: at once the first time, else
@@ -71,15 +89,6 @@ export class AuditLog {
 				this.loading = false;
 				this.loaded = true;
 			}
-		}
-	}
-
-	async loadActions() {
-		try {
-			this.actions = await getAuditActions();
-			this.actionsError = '';
-		} catch (e) {
-			this.actionsError = messageOf(e);
 		}
 	}
 

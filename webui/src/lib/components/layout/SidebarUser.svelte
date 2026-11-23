@@ -3,6 +3,7 @@
 	import type { User } from '$lib/api/auth';
 	import { Button, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { preloadOf } from '$lib/pages/preload';
 
 	// The foot of the sidebar: who is signed in, and Logout. For an administrator the name is the
 	// link to the Account page, "Your account" (ADR-0431); a regular account has that link in the
@@ -37,6 +38,7 @@
 		{#if user.is_admin}
 			<a
 				href="/account"
+				data-sveltekit-preload-data={preloadOf('/account')}
 				title={$t('layout.yourAccount')}
 				onclick={onnavigate}
 				class="relative flex-1 min-w-0 flex items-center gap-2.5 p-1.5 rounded hover:bg-surface-overlay"

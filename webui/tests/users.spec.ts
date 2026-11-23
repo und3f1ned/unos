@@ -1370,3 +1370,68 @@ test.describe('Groups', () => {
     await expect(userRow(page, renamed)).toBeVisible();
   });
 });
+
+// webui.navigation-without-skeletons (ADR-0469): the page reads its users and groups in its load. A
+// revisit appears at once with what it showed last, which a fresh read replaces; a change on the
+// page makes the next visit wait for its fresh read, the open page staying meanwhile.
+test.describe('Users page load (fake data)', () => {
+  const sidebarLink = (page: Page, href: string) => page.locator(`aside nav a[href="${href}"]`);
+
+  /** The GETs of the users answer only once the returned function is called. */
+  async function holdUsers(page: Page): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/api/v1/auth/users', async (route) => {
+      if (route.request().method() === 'GET') await held;
+      await route.fallback().catch(() => undefined);
+    });
+    return release;
+  }
+
+  test('a revisit shows the users at once, and the fresh read replaces them', async ({ authenticatedPage: page }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+    await expect(userRow(page, 'alice')).toBeVisible();
+    await sidebarLink(page, '/').click();
+    await expect(page).toHaveURL('/');
+
+    // Another administrator adds a user meanwhile; the page's next read of the users is held.
+    fake.users.push(fakeUser(8, 'hank', 'off'));
+    const release = await holdUsers(page);
+    await sidebarLink(page, '/users').click();
+    await expect(page).toHaveURL('/users', { timeout: 1000 });
+    await expect(userRow(page, 'alice')).toBeVisible({ timeout: 1000 });
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    await expect(userRow(page, 'hank')).toHaveCount(0);
+    release();
+    await expect(userRow(page, 'hank')).toBeVisible();
+  });
+
+  test('a user added on the page is listed on the next visit, which waits for its fresh read', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { users: fakeUsers() });
+    await page.goto('/users');
+    await page.getByRole('button', { name: 'Add user' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add user' });
+    await dialog.getByLabel('Username').fill('e2e_new');
+    await dialog.getByLabel('Password', { exact: true }).fill('e2e-New-Password-1');
+    await dialog.getByLabel('Confirm password').fill('e2e-New-Password-1');
+    await dialog.getByRole('button', { name: 'Create user' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(userRow(page, 'e2e_new')).toBeVisible();
+    expect(fake.writes.map((write) => `${write.method} ${write.path}`)).toEqual(['POST /auth/users']);
+
+    await sidebarLink(page, '/').click();
+    await expect(page).toHaveURL('/');
+    // The list read before the change is not shown: the dashboard stays until the fresh one is in.
+    const release = await holdUsers(page);
+    await sidebarLink(page, '/users').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/');
+    await expect(page.locator('main [data-widget]').first()).toBeVisible();
+    release();
+    await expect(page).toHaveURL('/users');
+    await expect(userRow(page, 'e2e_new')).toBeVisible();
+  });
+});

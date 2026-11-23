@@ -13,6 +13,7 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { browserErrorKey, createCredential, openedByIpAddress, securityKeysSupported } from '$lib/webauthn';
+	import { settle, type Settled } from '$lib/pages/read';
 	import AddSecurityKeyDialog from './AddSecurityKeyDialog.svelte';
 	import RemoveSecurityKeyDialog from './RemoveSecurityKeyDialog.svelte';
 
@@ -20,9 +21,17 @@
 	// (ADR-0409). Each signs in at the code step in place of a code of the authenticator app.
 	// Adding and removing one take the current password; adding one also a touch of the key.
 
-	let keys = $state<SecurityKey[]>([]);
-	let loading = $state(true);
-	let loadError = $state('');
+	type Props = {
+		/** The keys as last read, or why they could not be; null until they are read (the page reads them). */
+		read: Settled<SecurityKey[]> | null;
+		/** A read answered, or a key was added or removed. */
+		onchange: (read: Settled<SecurityKey[]>) => void;
+	};
+
+	let { read, onchange }: Props = $props();
+
+	const keys = $derived(read?.ok ? read.value : []);
+	const loadError = $derived(read && !read.ok ? read.error : '');
 
 	// WebAuthn needs a host name, and a browser that has it.
 	let supported = $state(true);
@@ -42,7 +51,6 @@
 	onMount(() => {
 		supported = securityKeysSupported();
 		byIpAddress = openedByIpAddress(location.hostname);
-		void load();
 	});
 
 	function messageOf(e: unknown): string {
@@ -52,14 +60,7 @@
 	}
 
 	async function load() {
-		try {
-			keys = await getSecurityKeys();
-			loadError = '';
-		} catch (e) {
-			loadError = messageOf(e);
-		} finally {
-			loading = false;
-		}
+		onchange(await settle(getSecurityKeys()));
 	}
 
 	function openAdd() {
@@ -89,7 +90,7 @@
 			const answer = await createCredential(options);
 			touching = false;
 			const key = await finishSecurityKeyRegistration(name.trim(), answer);
-			keys = [...keys, key];
+			onchange({ ok: true, value: [...keys, key] });
 			toast.success($t('securitykeys.addedNotice', { name: key.name }));
 			password = '';
 			busy = false;
@@ -119,7 +120,7 @@
 		removeError = '';
 		try {
 			await deleteSecurityKey(key.id, removePassword);
-			keys = keys.filter((k) => k.id !== key.id);
+			onchange({ ok: true, value: keys.filter((k) => k.id !== key.id) });
 			toast.success($t('securitykeys.removedNotice', { name: key.name }));
 			busy = false;
 			removing = null;
@@ -147,7 +148,7 @@
 	{/if}
 
 	<LoadState
-		{loading}
+		loading={read === null}
 		error={loadError}
 		errorTitle={$t('securitykeys.loadError')}
 		empty={keys.length === 0}

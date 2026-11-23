@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount } from 'svelte';
 	import { KeyRound } from 'lucide-svelte';
 	import {
 		createApiToken,
@@ -12,6 +11,7 @@
 	} from '$lib/api/auth';
 	import { Alert, Button, Card, EmptyState, Skeleton, LoadState, confirm, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { settle, type Settled } from '$lib/pages/read';
 	import ApiTokenItem from './ApiTokenItem.svelte';
 	import ApiTokenShownDialog from './ApiTokenShownDialog.svelte';
 	import NewApiTokenDialog from './NewApiTokenDialog.svelte';
@@ -19,11 +19,21 @@
 
 	// The API tokens of the signed-in account (ADR-0239), each full or limited to reading and to
 	// areas of the API (ADR-0392). The page signs in with a session, which alone makes, disables
-	// and deletes tokens (ADR-0253).
+	// and deletes tokens (ADR-0253). The page holds the list (its load reads it,
+	// $lib/pages/account), so that the tab shows it again at once; the card's own reads give it
+	// their answers.
 
-	let tokens = $state<ApiToken[]>([]);
-	let loading = $state(true);
-	let loadError = $state('');
+	type Props = {
+		/** The tokens as last read, or why they could not be; null until the page has read them. */
+		read: Settled<ApiToken[]> | null;
+		/** A read answered. */
+		onchange: (read: Settled<ApiToken[]>) => void;
+	};
+
+	let { read, onchange }: Props = $props();
+
+	const tokens = $derived(read?.ok ? read.value : []);
+	const loadError = $derived(read && !read.ok ? read.error : '');
 	let actionError = $state('');
 	let busyId = $state<number | null>(null);
 	// The token whose deletion runs: its Enable or Disable does not spin meanwhile.
@@ -39,19 +49,8 @@
 	let created = $state<CreatedApiToken | null>(null);
 	let copyFailed = $state(false);
 
-	onMount(() => {
-		void load();
-	});
-
 	async function load() {
-		try {
-			tokens = await listApiTokens();
-			loadError = '';
-		} catch (e) {
-			loadError = messageOf(e);
-		} finally {
-			loading = false;
-		}
+		onchange(await settle(listApiTokens()));
 	}
 
 	function openCreate() {
@@ -149,7 +148,7 @@
 		{/if}
 
 		<LoadState
-			{loading}
+			loading={read === null}
 			error={loadError}
 			errorTitle={$t('tokens.loadError')}
 			empty={tokens.length === 0}

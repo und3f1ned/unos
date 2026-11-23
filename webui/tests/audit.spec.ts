@@ -1,6 +1,7 @@
-import type { APIRequestContext, Download, Page } from '@playwright/test';
+import type { APIRequestContext, Download, Page, Route } from '@playwright/test';
 import { test, expect, E2E_ADMIN } from './fixtures';
 import { SESSION_COOKIE, pageSessionKey, sessionToken } from './session';
+import { fakeSmbApi } from './shares-fakes';
 
 // The Audit Log page (feature-list.json: webui.audit-log-page and security.audit-log; ADR-0401),
 // against the real audit log of the target. beforeAll writes the entries the tests look for,
@@ -817,5 +818,77 @@ test.describe('Audit log in Russian', () => {
     await applyFilters(page, { search: 'login failed' }, () => search.fill('login failed'));
     await expect(timeline.getByRole('listitem').first()).toContainText('Неудачный вход');
     await expect(timeline.getByRole('listitem').first()).toContainText(stranger);
+  });
+});
+
+// webui.navigation-without-skeletons (ADR-0469): the page reads its first entries, the actions and
+// the usernames in its load. A revisit appears at once with what it showed last, which a fresh read
+// replaces; since every change is written to the audit log, a change of any area makes the next
+// visit wait for its fresh entries, the open page staying meanwhile.
+test.describe('Audit log load', () => {
+  const sidebarLink = (page: Page, href: string) => page.locator(`aside nav a[href="${href}"]`);
+
+  /** The GETs of `path` answer, with `answer` or the server's, only once the returned function is called. */
+  async function hold(page: Page, path: string, answer?: (route: Route) => Promise<void>): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === path,
+      async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        await held;
+        await (answer ? answer(route) : route.fallback()).catch(() => undefined);
+      },
+    );
+    return release;
+  }
+
+  test('a revisit shows the entries at once, and the fresh read replaces them', async ({ authenticatedPage: page }) => {
+    await page.goto('/audit');
+    const status = page.getByRole('status');
+    await expect(status).toHaveText(/entries$/);
+    await expect(timelineEntries(page).first()).toBeVisible();
+    const shown = (await status.textContent()) ?? '';
+    await sidebarLink(page, '/').click();
+    await expect(page).toHaveURL('/');
+
+    // The page's next count is held, and then answers another number.
+    const release = await hold(page, '/api/v1/audit/logs/count', (route) => route.fulfill({ json: { count: 999 } }));
+    await sidebarLink(page, '/audit').click();
+    await expect(page).toHaveURL('/audit', { timeout: 1000 });
+    await expect(timelineEntries(page).first()).toBeVisible({ timeout: 1000 });
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    await expect(status).toHaveText(shown);
+    release();
+    await expect(status).toHaveText(/ of 999 entries$/);
+  });
+
+  test('a change of another area makes the next visit wait for its fresh entries', async ({
+    authenticatedPage: page,
+  }) => {
+    // A group made on the Users page (canned answers: no group is made): the area of groups, which
+    // the entries read nothing of, but whose change is written to the audit log.
+    const fake = await fakeSmbApi(page);
+    await page.goto('/audit');
+    await expect(timelineEntries(page).first()).toBeVisible();
+    await sidebarLink(page, '/users').click();
+    await expect(page).toHaveURL('/users');
+    const groups = page.locator('.card').filter({ has: page.getByRole('heading', { name: /^Groups \(\d+\)$/ }) });
+    await groups.getByRole('button', { name: 'Add group' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add group' });
+    await dialog.getByLabel('Name', { exact: true }).fill('e2e_pageloads');
+    await dialog.getByRole('button', { name: 'Create group' }).click();
+    await expect(dialog).toBeHidden();
+    expect(fake.writes.map((write) => `${write.method} ${write.path}`)).toEqual(['POST /groups']);
+
+    // The entries read before the change are not shown: the Users page stays until the fresh ones are in.
+    const release = await hold(page, '/api/v1/audit/logs');
+    await sidebarLink(page, '/audit').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/users');
+    await expect(page.getByRole('heading', { name: 'Users', level: 1 })).toBeVisible();
+    release();
+    await expect(page).toHaveURL('/audit');
+    await expect(timelineEntries(page).first()).toBeVisible();
   });
 });

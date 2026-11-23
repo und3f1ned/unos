@@ -52,16 +52,19 @@
 	}
 
 	// Again with each new list of users (no polling: only after a load of the page's own). The
-	// page loaded the groups with the first list.
+	// page read the groups with the first list, and with each list its load gives (the directory's
+	// own users then).
 	let usersLoaded: User[] | null = null;
 	$effect(() => {
 		const current = users;
-		if (usersLoaded === null || current === usersLoaded) {
+		untrack(() => {
+			if (usersLoaded === null || current === usersLoaded || current === directory.known) {
+				usersLoaded = current;
+				return;
+			}
 			usersLoaded = current;
-			return;
-		}
-		usersLoaded = current;
-		untrack(() => void directory.load());
+			directory.followUsers();
+		});
 	});
 
 	// The markup that calls it reads $t through it: the text follows a change of the language.

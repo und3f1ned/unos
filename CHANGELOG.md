@@ -20,6 +20,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   without waiting for its containers, whose card waits in its place. Links preload a page's data
   on the press of the pointer, not on hover, so that no hover wakes a sleeping disk.
   `webui/AGENTS.md` has the recipe for the other pages.
+- Users, the Audit Log and Account read their data in load functions too (ADR-0469), each page
+  as one snapshot of its reads (Account's for all its tabs); their links preload their data on
+  hover, since they read only UNOS's own records on the system disk (its database and audit log),
+  never a data disk. The Audit Log's load reads the newest entries
+  without a filter, and a change of any area makes its next visit wait for fresh entries.
 - `scripts/prune-merged-branches.py` (ADR-0465), for the end of a batch: after `git fetch --prune`
   it removes the clean worktrees of branches merged into `origin/main` and deletes those local
   branches with `git branch -d`, as a dry run unless `--apply`. It keeps the main checkout, detached,

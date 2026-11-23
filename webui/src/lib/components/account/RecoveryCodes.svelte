@@ -1,18 +1,26 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount } from 'svelte';
 	import { ApiError } from '$lib/api/client';
 	import { generateRecoveryCodes, getRecoveryCodesStatus, type RecoveryCodesStatus } from '$lib/api/auth';
 	import { Alert, Button, ErrorState, Skeleton, confirm } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
+	import { settle, type Settled } from '$lib/pages/read';
 
 	// The recovery codes of the signed-in account, shown while two-factor
 	// authentication is on (ADR-0238). Each code signs in once in place of a
 	// code of the authenticator app.
 
-	let status = $state<RecoveryCodesStatus | null>(null);
-	let loading = $state(true);
-	let loadError = $state('');
+	type Props = {
+		/** The count as last read, or why it could not be; null until it is read (the page reads it). */
+		read: Settled<RecoveryCodesStatus> | null;
+		/** A read or a generation answered. */
+		onchange: (read: Settled<RecoveryCodesStatus>) => void;
+	};
+
+	let { read, onchange }: Props = $props();
+
+	const status = $derived(read?.ok ? read.value : null);
+	const loadError = $derived(read && !read.ok ? read.error : '');
 
 	// The codes just generated: shown only now, until Done. The server keeps
 	// their hashes and never answers them again.
@@ -24,19 +32,8 @@
 	// saved ones no longer work. Its warning stays until a generation succeeds or is refused.
 	let outcomeUnknown = $state(false);
 
-	onMount(() => {
-		void load();
-	});
-
 	async function load() {
-		try {
-			status = await getRecoveryCodesStatus();
-			loadError = '';
-		} catch (e) {
-			loadError = messageOf(e);
-		} finally {
-			loading = false;
-		}
+		onchange(await settle(getRecoveryCodesStatus()));
 	}
 
 	async function generate() {
@@ -47,8 +44,7 @@
 		try {
 			codes = await generateRecoveryCodes();
 			// No second request: if it failed, the codes answered only now would not be shown.
-			status = { remaining: codes.length, generated: true };
-			loadError = '';
+			onchange({ ok: true, value: { remaining: codes.length, generated: true } });
 		} catch (e) {
 			error = messageOf(e);
 			// Only a 4xx answer says that the server refused and changed nothing.
@@ -91,7 +87,7 @@
 			{/each}
 		</ul>
 		<Button onclick={() => (codes = [])}>{$t('common.done')}</Button>
-	{:else if loading}
+	{:else if read === null}
 		<div aria-busy="true"><Skeleton count={2} /></div>
 	{:else if loadError || !status}
 		<ErrorState title={$t('account.recovery.loadError')} message={loadError} onretry={load} />

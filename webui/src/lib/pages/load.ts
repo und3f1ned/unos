@@ -15,7 +15,7 @@
 import { get } from 'svelte/store';
 import { invalidate } from '$app/navigation';
 import type { User } from '$lib/api/auth';
-import { currentSession, knownSignedOut, obtainSessionKey, sessionStopped } from '$lib/api/client';
+import { currentSession, knownSignedOut, obtainSessionKey, onApiChange, sessionStopped } from '$lib/api/client';
 import { isSetupOnly, loadCurrentUser, user } from '$lib/stores/auth';
 import { connectWebSocket } from '$lib/stores/stats';
 import { changeMark, forget, recall, remember, upToDate } from './cache';
@@ -185,4 +185,12 @@ export async function refreshPage(key: string): Promise<void> {
 /** Whether `read`'s snapshot is old: a change of its areas came after its read. */
 export function isOld(read: PageRead<unknown>): boolean {
 	return !upToDate(read.areas, read.mark);
+}
+
+if (typeof window !== 'undefined') {
+	// A change makes the snapshot of a page preloaded before it old, and SvelteKit keeps a preload
+	// until the next navigation, which would take it: a link pointed at before a change (a page of
+	// HOVER_PAGES) would show its page without data. An invalidation that names no load discards
+	// the preload and runs no load again.
+	onApiChange(() => void invalidate(() => false, true));
 }

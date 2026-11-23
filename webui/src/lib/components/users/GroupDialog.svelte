@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { ApiError } from '$lib/api/client';
 	import {
 		createGroup,
@@ -25,6 +26,11 @@
 	// The dialog: a new group (editing null), or a group's name and members.
 	let editing = $state.raw<Group | null>(null);
 	let dialogOpen = $state(false);
+	// The directory keeps what the dialog lists while it is open.
+	$effect(() => {
+		const open = dialogOpen;
+		untrack(() => directory.dialog(open));
+	});
 	let name = $state('');
 	let chosen = $state.raw<Record<string, boolean>>({});
 	let saving = $state(false);

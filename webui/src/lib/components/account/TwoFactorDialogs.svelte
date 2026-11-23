@@ -26,7 +26,7 @@
 		twoFactor.loading = true;
 		try {
 			await enableTOTP(twoFactor.code);
-			twoFactor.enabled = true;
+			twoFactor.turned(true);
 			toast.success($t('account.totp.enabled'));
 			onchange?.();
 			twoFactor.setupOpen = false;
@@ -50,7 +50,7 @@
 		twoFactor.loading = true;
 		try {
 			await disableTOTP(twoFactor.disableCode);
-			twoFactor.enabled = false;
+			twoFactor.turned(false);
 			toast.success($t('account.totp.disabled'));
 			onchange?.();
 			twoFactor.disableOpen = false;
