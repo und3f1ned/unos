@@ -55,9 +55,10 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs f8a8ed58 of the branch `mvp.batch-21` since 2026-11-22, deployed at the owner's word ("yes,
-  deploy"; SD MiB, its eMMC: sync 6.023, build-supervisor 0.230, build-webui 0.148, up 0.328, check
-  0.016; check: OK). Before it 202403f9 of `mvp.batch-20` the same day, deployed at the owner's word
+  runs `main` cf3ae7f6 since the evening of 2026-11-22, deployed at the owner's word ("yes,
+  deploy"; SD MiB, its eMMC: sync 2.555, build-supervisor 0.457, build-webui 0.148, up 0.336, check
+  0.000; check: OK). Before it f8a8ed58 of `mvp.batch-21` the same day (sync 6.023,
+  build-supervisor 0.230, build-webui 0.148, up 0.328, check 0.016; check: OK), and 202403f9 of `mvp.batch-20` the same day, deployed at the owner's word
   ("merge everything and deploy it to the devices", in translation; SD MiB, its eMMC: sync
   6.023, build-supervisor 0.238, build-webui 0.156, up 0.344, check 0.000; check: OK; both
   images built that day). Before it 0c7b84b9 of `mvp.batch-19` since 2026-11-21, deployed at the
@@ -243,8 +244,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   2026-11-08, ADR-0303) and exports nothing for now; over IPv6 only LAN sources reach it
   (ADR-0301). avahi-daemon and wsdd2 run (network discovery), and nmbd is disabled since
   2026-11-09 (ADR-0275), which `scripts/dev/check.sh` checks.
-- The CI workflow is off on GitHub (ADR-0230): `make check` is the only gate, and
-  `scripts/dev/linux-tests.sh` runs the Linux-only tests. The weekly Audit workflow stays on.
+- The CI workflow runs on GitHub again since 2026-11-22 (ADR-0462) on every push and pull request,
+  besides `make check`; `scripts/dev/linux-tests.sh` still runs the Linux-only tests on the
+  device. The weekly Audit workflow stays on. v0.1.0 is tagged and released (Log).
 - The local venvs still hold the pip versions from before #25; `make setup` updates them (the
   network). The device has not had them yet either: the next supervisor deploy rebuilds the pip
   layer.
@@ -300,8 +302,11 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs f8a8ed58 of the branch `mvp.batch-21` since 2026-11-22, deployed at the owner's word ("yes,
-  deploy", in translation). SD MiB: sync 6.773, build-supervisor 15.371, build-webui 19.492, up
+- Runs `main` cf3ae7f6 since the evening of 2026-11-22, deployed at the owner's word ("yes,
+  deploy", in translation). SD MiB: sync 2.664, build-supervisor 1586.949 (pip's layer rebuilt for
+  Dependabot's pins), build-webui 18.734, up 6.215, check 0.543; total 1615.250. check: OK.
+- Before it, f8a8ed58 of the branch `mvp.batch-21` since 2026-11-22, deployed at the owner's word
+  ("yes, deploy", in translation). SD MiB: sync 6.773, build-supervisor 15.371, build-webui 19.492, up
   6.168, check 0.301; total 48.105. check: OK, both containers healthy; no base image pulled.
 - Before it, 202403f9 of the branch `mvp.batch-20` since 2026-11-22, deployed at the owner's word
   ("merge everything and deploy it to the devices", in translation) after `make check` and five
@@ -789,6 +794,30 @@ Open owner actions:
     GB on the SD card).
 
 ## Log
+
+### 2026-11-22 to 2026-11-23: CI on GitHub again, v0.1.0, Samba in CI
+
+- At the owner's word ("start the other features in the order of my growing part", in
+  translation) the lead turned the CI workflow on again (ADR-0462, pull request 109, merged as
+  5745ea71 after a test fix: an RK3588 of the fake host is arm64 on any machine). The throwaway
+  pull request 110 put one finding in for each check and failed each job on it; it was closed
+  without a merge and its branch deleted. So six entries pass (d913a66e): `ci.python-type-check`,
+  `ci.shellcheck`, `ci.wider-ruff-rules`, `ci.webui-eslint`, `ci.ledger-changes-checked`,
+  `ci.secret-scan-of-history`.
+- At the owner's word ("yes, deploy") both boards were deployed with `main` cf3ae7f6 (W3: check
+  OK, 1615 MiB on the SD card, pip's layer rebuilt; F3: check OK, 3.5 MiB); `main`'s later commits
+  change no runtime file. After the F3's deploy, fstrim on its NVMe pool and a warm reboot showed
+  no NVMe error, so `storage.nvme-trim-on-k1` passes.
+- The tag v0.1.0 on 68d26cc5 started the Release workflow (run 45068295885), which passed in
+  1 h 13 min, the riscv64 wheels under QEMU included.
+- The session stopped at 22:32 on a billing error of the subscription and was picked up on
+  2026-11-23. `ci.samba-in-ci` (ADR-0463, pull request 111): its run 45071062266 installed Samba
+  4.23.6 on Ubuntu 26.04, and the summary of `make test` (-rfEs) lists no skip or failure of
+  tests/test_smbconf_testparm.py; merged as ef7f04e8, the entry passes.
+- `ci.btrfs-loop-device-tests` was cut off before its review and commit; its builder resumes in
+  its worktree.
+- Open for the owner: public GHCR packages for v0.1.0, `make setup` in the main checkout (the
+  Dependabot pins and Playwright 1.65.1 since 89ca9fca).
 
 ### 2026-11-22: The twenty-first batch, merged on `mvp.batch-21` (ADR-0457 to ADR-0460)
 
