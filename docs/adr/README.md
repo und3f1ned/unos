@@ -410,6 +410,7 @@ and this index, and `make check-fast` runs it.
 | [0424](0424-bonds-vlans-and-bridges-are-systemd-networkd-files-and-a-change-that-may-cut-the-connection-waits-to-be-kept.md) | Bonds, VLANs and bridges are systemd-networkd files that UNOS writes, and a change that may cut the connection waits to be kept | accepted | 2026-11-19 |
 | [0441](0441-unos-sends-no-telemetry.md) | UNOS sends no telemetry, not even when an administrator turns it on | accepted | 2026-11-21 |
 | [0443](0443-the-in-app-updater-backs-up-and-rolls-back-the-database-safely-and-waits-for-a-release-installer.md) | The in-app updater backs up and rolls back the database through SQLite's backup API, and installs only through a release installer that is not decided yet | superseded by [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | 2026-11-21 |
+| [0471](0471-an-sd-card-standby-takes-over-by-itself-when-the-emmc-or-the-pool-of-the-critical-apps-fails.md) | An SD card standby takes over by itself when the eMMC or the pool of the critical apps fails, and only an administrator returns from it | accepted | 2026-11-23 |
 
 ## Web UI
 
