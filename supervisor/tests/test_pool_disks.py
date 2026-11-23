@@ -143,7 +143,7 @@ class FakePool(FakeKernel):
 @pytest.fixture
 def pool(monkeypatch):
     """The pool data on the disk sda, mounted read-write, without a scrub, a balance or a removal,
-    on a host whose only other disks are its SD card and zram swap (the dev device)."""
+    on a host whose only other disks are its boot flash and zram swap, as on the dev device."""
     fake_host = install_fake_host(monkeypatch)
     fake_host.add_disk("sda", model="WDC WD40EFRX", serial="WD-A", size=4 * TB)
     fake_host.add_btrfs("data", DATA_UUID, ["/dev/sda"])

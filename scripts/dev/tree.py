@@ -20,7 +20,7 @@ component); the other files (docs, tests, tooling) do not change what runs on th
 
 The device's checkout is read in a private mount namespace, for one command, in which the root
 filesystem is bind-remounted read-only and noatime (ADR-0221): neither git (an index refresh),
-Python (bytecode) nor reading (access times) can write to the device's SD card (ADR-0214). A
+Python (bytecode) nor reading (access times) can write to the device's system disk (ADR-0214). A
 sync writes only the files that differ. Before it changes anything it saves the device's
 versions of them on the workstation for a rollback (ADR-0223): in UNOS_DEV_STATE_DIR/rollback,
 by default tmp/dev/rollback of the main checkout, which git ignores and its worktrees share.

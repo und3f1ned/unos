@@ -104,7 +104,7 @@ def numbered_uuid(index: int) -> str:
 def boot_virtual_and_system_devices(host) -> dict[str, str]:
     """Devices that no pool is made of, empty: what each is -> its path.
 
-    The eMMC, which keeps the owner's firmware (ADR-0225); a second
+    A partition of the eMMC, which no pool uses (ADR-0470); a second
     partition of the SD card that the host boots from (FakeHost's system
     disk, mmcblk1); a loop device; and a partition of an NVMe disk whose EFI
     partition the host mounts at /boot/efi.
@@ -214,8 +214,8 @@ class TestImportableFilesystems:
             (FOREIGN_UUID, "missing"), (OLD_UUID, "duplicate")]
 
     def test_filesystems_on_boot_virtual_or_system_devices_are_not_offered(self, api, host):
-        # Nor imported (TestBootVirtualAndSystemDevices): the eMMC is never written
-        # (ADR-0225), and no pool is made of such devices (ADR-0035).
+        # Nor imported (TestBootVirtualAndSystemDevices): neither flash device becomes a pool
+        # (ADR-0470), and no pool is made of such devices (ADR-0035).
         for index, path in enumerate(boot_virtual_and_system_devices(host).values(), 1):
             host.add_btrfs(None, numbered_uuid(index), [path])
 
@@ -576,7 +576,7 @@ class TestRefusals:
 
 class TestBootVirtualAndSystemDevices:
     """No pool is made of a boot or virtual device or of the system disk, as Create refuses
-    them (ADR-0035): the eMMC is never mounted or written (ADR-0225)."""
+    them (ADR-0035): the eMMC and the SD card are never mounted as a pool (ADR-0470)."""
 
     @pytest.mark.parametrize("device", list(DEVICE_PROBLEMS))
     def test_an_import_is_refused(self, api, host, device):

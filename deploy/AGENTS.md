@@ -53,14 +53,14 @@
 
 ## The dev device
 
-One shared board. It runs from an SD card that wears with every write, and its eMMC keeps the
-owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225).
+One shared board. It runs from its eMMC, a soldered chip that wears with every write, so every
+write counts; its SD card is wiped and unused (ADR-0214, ADR-0470).
 
 - Every action goes through `scripts/dev/`, with the settings of `dev.env`: the deploy-device
   skill for deploys, the device-checks skill for checks. `deploy.sh`, `linux-tests.sh`,
   `ipv6-filter.sh` (install, remove) and `scenario.sh` hold the device lock `/run/unos-dev.lock`
   (ADR-0210). They and `check.sh` print
-  `SD writes <label>: <MiB>`; `ssh.sh`, `api.py` and `bin/testparm` print none, so wrap them in
+  `SD writes <label>: <MiB>`, the system disk's writes; `ssh.sh`, `api.py` and `bin/testparm` print none, so wrap them in
   `scripts/dev/sd.sh measure <label> -- ...`. The report carries those numbers.
 - The scenario checks (`scripts/dev/scenario.sh <area>`, ADR-0304) run an area's user scenario
   through the API and on the host with a temporary user, share, volume, Scheduler task and folders
@@ -102,8 +102,8 @@ owner's firmware and is never written, so every write counts (ADR-0214, ADR-0225
   `scripts/dev/api.py`, which runs on the device against `https://127.0.0.1/api/v1` (the device's
   web ports do not answer the workstation, ADR-0198) and keeps its token in the device's RAM
   (ADR-0222).
-- In the device's checkout, `git status` and other index-refreshing commands write to the SD
-  card; `scripts/dev/deploy.sh status` compares it with the working tree without writing, and the
+- In the device's checkout, `git status` and other index-refreshing commands write to the
+  system disk; `scripts/dev/deploy.sh status` compares it with the working tree without writing, and the
   scripts' read-only work runs with the device's root filesystem read-only (ADR-0221).
 - After a deploy or a rollback, the Dev device section of `PROGRESS.md` gets what runs there and
   the SD MiB of each step (ADR-0204).

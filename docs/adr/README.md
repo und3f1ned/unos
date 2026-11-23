@@ -502,10 +502,10 @@ and this index, and `make check-fast` runs it.
 | [0221](0221-read-only-device-commands-in-a-read-only-mount-namespace.md) | Read-only device commands run in a read-only mount namespace | accepted | 2026-11-07 |
 | [0222](0222-device-api-relay-caches-the-admin-token-in-ram.md) | The device API relay caches the admin token in the device's RAM | accepted | 2026-11-07 |
 | [0223](0223-device-deploys-keep-backups-and-rollback-copies-on-the-workstation.md) | Device deploys keep backups and rollback copies on the workstation | accepted | 2026-11-07 |
-| [0225](0225-the-device-runs-from-its-sd-card-and-never-writes-the-emmc.md) | The dev device runs from its SD card and never writes its eMMC | accepted | 2026-11-07 |
+| [0225](0225-the-device-runs-from-its-sd-card-and-never-writes-the-emmc.md) | The dev device runs from its SD card and never writes its eMMC | superseded by [0470](0470-the-dev-device-runs-from-its-emmc-and-its-sd-card-is-wiped.md) | 2026-11-07 |
 | [0226](0226-dev-device-ssh-by-key-only-with-rotated-passwords.md) | The dev device takes SSH by key only, and the passwords once published are rotated | accepted | 2026-11-07 |
 | [0227](0227-no-ipv6-inbound-filter-on-the-dev-device-for-now.md) | No inbound IPv6 filter on the dev device for now; each service protects itself | superseded by [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | 2026-11-07 |
-| [0228](0228-docker-data-root-stays-on-the-sd-card.md) | Docker's data root stays on the dev device's SD card | accepted | 2026-11-07 |
+| [0228](0228-docker-data-root-stays-on-the-sd-card.md) | Docker's data root stays on the dev device's SD card | superseded by [0470](0470-the-dev-device-runs-from-its-emmc-and-its-sd-card-is-wiped.md) | 2026-11-07 |
 | [0301](0301-the-dev-device-admits-inbound-ipv6-to-its-services-only-from-the-lan.md) | The dev device admits inbound IPv6 to its services only from the LAN | accepted | 2026-11-08 |
 | [0303](0303-the-dev-device-runs-its-nfs-server.md) | The dev device runs its NFS server | accepted | 2026-11-08 |
 | [0304](0304-the-scenario-checks-of-the-dev-device-are-scripts-that-remove-what-they-make.md) | The scenario checks of the dev device are scripts that remove what they make and report each step's SD writes | accepted | 2026-11-08 |
@@ -515,6 +515,7 @@ and this index, and `make check-fast` runs it.
 | [0341](0341-the-restore-scenario-check-restores-a-backup-it-made-moments-before.md) | The restore scenario check restores a backup it made moments before | accepted | 2026-11-11 |
 | [0372](0372-the-bpi-f3-keeps-its-pool-docker-data-root-and-home-assistant-and-frigate-data-on-its-two-ssds.md) | The BPI-F3 keeps its pool, Docker's data root and the data of its Home Assistant and Frigate stack on its two SSDs | accepted | 2026-11-13 |
 | [0394](0394-the-smart-check-skips-the-disk-s-sleep-while-apps-containers-use-the-pool.md) | The smart check skips the disk's sleep while the containers of apps use it, and names them | accepted | 2026-11-17 |
+| [0470](0470-the-dev-device-runs-from-its-emmc-and-its-sd-card-is-wiped.md) | The dev device runs from its eMMC, which also holds Docker's data root, and its SD card is wiped | accepted | 2026-11-23 |
 
 ## Testing
 

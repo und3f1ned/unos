@@ -17,7 +17,7 @@
 # moments before, twice, which puts the device's database back as it was then, ADR-0341;
 # hardware only reads what the App Store offers of the host's SoC and the nodes the host has
 # for it, ADR-0382), prints
-# PASS or FAIL for every step with the MiB written to the SD card meanwhile, removes what it made,
+# PASS or FAIL for every step with the MiB written to the system disk meanwhile, removes what it made,
 # also after a FAIL or Ctrl-C, and compares the device with how it found it. The checks change the
 # device: run them when the owner asks for a check of the device (ADR-0016), for example the
 # re-check after a reboot (ADR-0018). The feature-pass skill names the check of each host-level entry.

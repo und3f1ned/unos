@@ -1,13 +1,16 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-07
 area: device
 decided-by: agent
+superseded-by: ADR-0470
 ---
 
 # ADR-0228: Docker's data root stays on the dev device's SD card
 
 ## Context
+
+Superseded by ADR-0470: Docker's data root stays on the system disk, which is the eMMC since 2026-11-23.
 
 Image layers, the build cache and the containers' logs live in Docker's data root on the device's SD card (ADR-0214). Moving the data root to the hard disk of the pool `data` was an open owner decision (`device.docker-data-root-on-hdd`), which the owner handed to the agent on 2026-11-07. The facts of that day:
 

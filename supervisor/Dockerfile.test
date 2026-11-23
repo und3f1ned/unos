@@ -38,7 +38,7 @@ RUN chmod +x /init-test-data.sh
 # network's gateway, one client of the limit (ADR-0452). supervisor/Dockerfile never copies it.
 COPY tests/fixtures/stack_app.py ./stack_app.py
 
-# No .pyc files: the container's writable layer is on the system disk (SD card).
+# No .pyc files: the container's writable layer is on the system disk (flash on small boards).
 ENV PYTHONDONTWRITEBYTECODE=1
 
 EXPOSE 8080

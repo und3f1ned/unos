@@ -1,7 +1,7 @@
 # The base by tag and digest (ADR-0305): the digest decides what the build starts from, and
 # Dependabot follows the tag when it proposes a newer digest. A new digest whose linux/arm64
 # image changed makes the dev device pull the base and run apt-get and pip again, hundreds of
-# MB on its SD card (ADR-0214). supervisor/Dockerfile.test starts from the same base.
+# MB on its system disk (ADR-0214). supervisor/Dockerfile.test starts from the same base.
 FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
 WORKDIR /app
@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends restic && rm -r
 # The code, with the migrations of unos.db in src/migrations, which the start applies (ADR-0444).
 COPY src/ ./src/
 
-# No .pyc files: the container's writable layer is on the system disk (SD card).
+# No .pyc files: the container's writable layer is on the system disk (flash on small boards).
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # The version System > Updates shows: the release's tag, which

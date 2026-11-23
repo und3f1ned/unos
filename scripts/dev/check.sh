@@ -7,7 +7,7 @@
 # creates set, ADR-0330), the images, errors in the supervisor's log of the last 24
 # hours, smbd, network discovery (wsdd2 and avahi-daemon; nmbd off, as NetBIOS is: ADR-0275),
 # the API's health answer, the inbound IPv6 filter (ADR-0301), the system disk's writes since
-# boot (and its wear data where the card reports it), free RAM, the mounted pools, each running
+# boot (and its wear data where the disk reports it), free RAM, the mounted pools, each running
 # container's CPU averaged over five readings of docker stats, the load average and each thermal
 # zone with its first passive trip point (ADR-0421). Exits 0 when unos-supervisor and unos-webui
 # run and are healthy and stay within 15% of a core, smbd, wsdd2 and avahi-daemon are active,
@@ -120,7 +120,7 @@ awk -v d="$d" -v t="$type" -v s="$sectors" -v u="$up" "BEGIN { printf \"%s (%s):
 if [ -r "/sys/block/$d/device/life_time" ]; then
     echo "wear estimate (life_time, 0x01 = up to 10% used): $(cat "/sys/block/$d/device/life_time"), pre_eol_info: $(cat "/sys/block/$d/device/pre_eol_info" 2> /dev/null)"
 else
-    echo "the card reports no wear estimate"
+    echo "the disk reports no wear estimate"
 fi
 echo "root filesystem (as the system mounts it): $(findmnt -N 1 -no SOURCE,FSTYPE,OPTIONS /)"
 

@@ -640,7 +640,7 @@ def _pool_choices(
 def _device_problems(filesystems: list[BtrfsFilesystem]) -> dict[str, str]:
     """UUID -> why UNOS must not mount the filesystem as a pool, for those of ``filesystems``
     that have a member on a boot or virtual device or on the system disk
-    (disks.pool_device_problems; ADR-0035, ADR-0225). RuntimeError when lsblk fails.
+    (disks.pool_device_problems; ADR-0035, ADR-0470). RuntimeError when lsblk fails.
     """
     paths = sorted({device for fs in filesystems for device in fs.devices})
     if not paths:
@@ -1505,7 +1505,7 @@ def mount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
     This imports a pool found on the disks, too (ADR-0283), so a pool with a
     member on a boot or virtual device or on the system disk is refused
     (PoolConflictError, HTTP 409), as Create refuses such devices
-    (ADR-0035, ADR-0225). If this call mounted the pool, the pool's apps
+    (ADR-0035, ADR-0470). If this call mounted the pool, the pool's apps
     that Docker could not start without it are started in the background;
     that part never fails or delays the mount.
     """

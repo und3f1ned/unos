@@ -247,7 +247,7 @@ class Runner:
 
     @staticmethod
     def sectors() -> None:
-        return None  # no SD card here: the steps' seconds take its place
+        return None  # no dev device here: the steps' seconds take the place of its writes
 
     @staticmethod
     def run(*argv: str, ok: tuple[int, ...] = (0,)) -> str:

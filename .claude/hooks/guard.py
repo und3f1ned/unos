@@ -1371,7 +1371,7 @@ class Guard:
         what = self.docker_change(rest)
         if what:
             raise Blocked("device-docker", f"{what} on the dev device changes its containers or images "
-                          "and writes its SD card (ADR-0214). Deploys go through scripts/dev/deploy.sh when "
+                          "and writes its system disk (ADR-0214). Deploys go through scripts/dev/deploy.sh when "
                           "the owner asks; anything else is an owner action (ADR-0211)")
 
     @staticmethod
@@ -1401,7 +1401,7 @@ class Guard:
     def check_packages(self, name: str, args: list) -> None:
         def block(what: str) -> None:
             raise Blocked("device-packages", f"{what} on the dev device changes its system and writes "
-                          "its SD card: an owner action (ADR-0211, ADR-0214). Ask the owner")
+                          "its system disk: an owner action (ADR-0211, ADR-0214). Ask the owner")
 
         if name in ("apt", "apt-get", "aptitude"):
             dry = {"-s", "--simulate", "--just-print", "--dry-run", "--recon", "--no-act"}
@@ -1760,7 +1760,7 @@ class Guard:
         if method == "POST" and path in ("apps/install", "containers", "containers/images/pull",
                                          "updates/install"):
             raise Blocked("device-docker", f"POST /{path} pulls images or creates containers on the dev "
-                          "device and writes its SD card: an owner action (ADR-0211, ADR-0214)")
+                          "device and writes its system disk: an owner action (ADR-0211, ADR-0214)")
 
     def check_secret_args(self, name: str, args: list) -> None:
         def block(what: str) -> None:

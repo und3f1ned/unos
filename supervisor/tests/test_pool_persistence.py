@@ -348,8 +348,8 @@ class FakeHost:
         # The SMART self-tests started (smartctl -t), as (disk, test type).
         self.self_tests: list[tuple[str, str]] = []
         self._minor = 0
-        # The host boots from the SD card (ext4 root on mmcblk1p1), like the
-        # ArmSoM board, and swaps to zram.
+        # The host boots from an SD card (ext4 root on mmcblk1p1), like an ARM
+        # board on Armbian's image, and swaps to zram.
         self.add_disk("mmcblk1", size=64_000_000_000, rota=False, pttype="dos")
         self.add_partition("mmcblk1", "mmcblk1p1", fstype="ext4", uuid=ROOT_UUID)
         self.add_mount("/", "/dev/mmcblk1p1", "ext4", ROOT_UUID)

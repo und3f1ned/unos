@@ -1430,7 +1430,8 @@ class FakeNas:
 
     def set_spindown(self, name, body):
         if name == self.system_disk():
-            # The boot SD card, as on the dev device; with the defect system-disk-timeout it takes one.
+            # A boot flash device, as the dev device's system disk is; with the defect
+            # system-disk-timeout it takes one.
             if "system-disk-timeout" not in self.bugs:
                 raise Refused(400, f"{name} is a boot or virtual device: it gets no idle timeout")
             self.system_spindown = body["minutes"]
@@ -2592,7 +2593,7 @@ def test_each_check_passes_reports_every_step_with_its_sd_writes_and_leaves_the_
     assert status == 0, output
     steps = step_lines(output)
     assert len(steps) >= 4 and all(line.startswith("PASS  ") for line in steps), output
-    # Every step line ends with the MiB written to the SD card meanwhile (ADR-0214).
+    # Every step line ends with the MiB written to the system disk meanwhile (ADR-0214).
     assert all(re.search(r"  \[SD \d+\.\d{3} MiB\]$", line) for line in steps), output
     assert output.splitlines()[0] == f"== scenario {area} (run unoscheck1a2b3c)"
     assert re.search(rf"^scenario {area}: OK, \d+ steps passed$", output, re.M), output

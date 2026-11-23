@@ -11,7 +11,7 @@ is gone and dropped, and nothing is sent for it; when it comes back, it is new a
 socket sends administrators the list (``current``) whenever ``version`` changes, and the web UI shows
 it as its health banner.
 
-The list lives in RAM only: the system disk is an SD card on the dev device (ADR-0214). After a
+The list lives in RAM only: the system disk wears with every write (ADR-0214). After a
 restart of the supervisor, the problems that are still there are alerted once again.
 """
 

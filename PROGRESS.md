@@ -291,15 +291,20 @@ significant step. Features and their state live in `feature-list.json`, decision
 
 ## Dev device
 
-State on 2026-11-20, evening. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
+State on 2026-11-23. A Banana Pi BPI-W3 (ArmSoM W3, Rockchip RK3588, 8 GB), running
 Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-trunk.151 to
-26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx);
+26.11.0-trunk.133 (Debian 13, kernel 6.1.172-vendor-rk35xx), from its eMMC since 2026-11-23;
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
 the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (ADR-0376).
 
-- Flash (ADR-0225): the system runs from the SD card `mmcblk1` (SanDisk, 32 GB). The soldered
-  eMMC `mmcblk0` (Samsung, 32 GB) keeps the UGREEN firmware the owner put there: 0 MiB written
-  since boot, its own wear estimate 0 to 10%. Nothing writes to it.
+- Flash (ADR-0470): the system and Docker's data root run from the soldered eMMC `mmcblk0`
+  (Samsung, 29.1 GB): one GPT partition `mmcblk0p1` from sector 32768 (ext4, label `armbi_emmc`,
+  UUID 1ccf0051-691b-4a89-92cc-4294a651e3ed) and U-Boot of Armbian's package
+  `linux-u-boot-vendor-armsom-w3` (fwver uboot-rmbian 11/12/2026) at sectors 64 and 16384. UGREEN's
+  partitions are wiped from it. The SD card `mmcblk1` (SanDisk, 32 GB) is wiped and unused in its
+  slot; a card with a loader would boot before the eMMC. No SPI flash. `UNOS_DEV_SYSTEM_DISK` is
+  `mmcblk0` in `dev.env`, so the `SD writes` lines count the eMMC: 12.0 MiB since the boot from it
+  on 2026-11-23.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
 - Runs `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
@@ -732,8 +737,9 @@ Open owner actions:
 5. Done by the agents on 2026-11-19 at the owner's word: the supervisor image's root filesystem
    in the dev device's `/dev/shm` (about 1.5 SD MiB, the command that `scripts/dev/linux-tests.sh`
    prints). A reboot clears it; the agents make it again before a run of the Linux-only tests.
-6. A second microSD card for the dev device, for a fresh `deploy/install.sh` on the BPI-W3 with
-   Armbian's `armsom-w3` image (`deploy.arm64-bpi-w3`, step 1).
+6. A microSD card for a fresh `deploy/install.sh` on the BPI-W3 with Armbian's `armsom-w3` image
+   (`deploy.arm64-bpi-w3`, step 1); the board boots from the card while it is in the slot, before
+   its eMMC (ADR-0470).
 7. An NVMe drive for the BPI-W3's M.2 Key M slot, for an NVMe pool before and after a reboot
    (`deploy.arm64-bpi-w3`).
 8. `storage.pool-balance`, on the dev device's Storage page in a browser (the agents do not sign
@@ -751,7 +757,7 @@ Open owner actions:
     specs'), and that the reboot checks on 5d79302 stand for cc9482e, whose `read_rule` reads the
     lines that UNOS writes as before.
 11. `apps.rk3588-hardware-acceleration`: step 1's open parts, with Jellyfin installed again at the
-    owner's word (its image is a pull of about 1.3 GB onto the SD card): the load on the decoder
+    owner's word (its image is a pull of about 1.3 GB onto the eMMC): the load on the decoder
     and encoder cores in `/proc/mpp_service/load` while ffmpeg runs, with `load_interval` set first
     (step 4 of its notes' steps by hand), and the owner's look at the App Store's card and details
     of the installed Jellyfin, with RKMPP chosen in Jellyfin's dashboard (step 6). Step 2's open
@@ -768,7 +774,7 @@ Open owner actions:
     Settings > Hardware Acceleration, as Immich does.
 15. `apps.install-progress`, the steps of its notes that wait for the owner: (3) Immich installed
     from the App Store in a browser on the LAN with its four images pulled (after an uninstall that
-    keeps its data and a removal of its images: a pull of about 3.6 GB onto the SD card), the card
+    keeps its data and a removal of its images: a pull of about 3.6 GB onto the eMMC), the card
     with each image's bar and layers, a reload of the page and a second tab during the pulls, and a
     second install refused with 409 meanwhile; (3b) Cancel install on the card during the pulls;
     (4) a restart of the supervisor during Immich's wait for its database. The agent reads the job's
@@ -791,9 +797,39 @@ Open owner actions:
 19. Done on 2026-11-19: the pulls from lscr.io failed on the dev device's network, those from
     ghcr.io of the same images do not; the catalog takes LinuxServer's images from ghcr.io
     (ADR-0426). BookStack's login page after an install is still to read (one install, about 1
-    GB on the SD card).
+    GB on the eMMC).
 
 ## Log
+
+### 2026-11-23: The BPI-W3 runs from its eMMC, its SD card wiped (ADR-0470)
+
+- At the owner's word (in translation: "W3: move the system from SD to eMMC"; asked about the
+  eMMC's UGREEN firmware and the SD card: "erase without an image" and "wipe after the check")
+  the lead moved the dev device's system from its SD card to its eMMC, from 11:25 to 11:31 UTC:
+  `scripts/dev/deploy.sh backup` first, Docker stopped, the eMMC's signatures and partition table
+  wiped, one GPT partition from sector 32768 (ext4 `armbi_emmc`), Armbian's bootloader of
+  `linux-u-boot-vendor-armsom-w3` written as its `platform_install.sh` does, `/` copied with
+  `rsync -aAXH --one-file-system --numeric-ids` (4.5 minutes), the new UUID in the eMMC's fstab
+  and armbianEnv.txt and the SD card's armbianEnv.txt pointed at it. A reboot with U-Boot from the
+  card and the root on `mmcblk0p1`: check.sh OK with `UNOS_DEV_SYSTEM_DISK=mmcblk0`. Then the
+  card wiped with `blkdiscard` (sector 64 reads zeros) and a reboot from the eMMC alone: U-Boot
+  and the root from the eMMC, check.sh OK, both UNOS containers healthy with no restart, the apps
+  healthy, 12.0 MiB written to `mmcblk0` since the boot. The lead set `UNOS_DEV_SYSTEM_DISK=mmcblk0`
+  in `dev.env`.
+- ADR-0470 supersedes ADR-0225 (the SD card as the system disk, the eMMC never written) and
+  ADR-0228 (Docker's data root on the SD card; it stays on the system disk). The rules, skills,
+  docs, `dev.env.example`, the scripts' comments, the guard's messages and the board's model in
+  `test_disk_safety.py` say so; the label `SD writes` stays, as tests and ADR-0304 name it.
+  `device.w3-system-on-emmc` passes on the lead's checks before and after the reboots. Not
+  recorded: the MiB written by the move itself and up to the first check, and what the eMMC's
+  boot partitions hold.
+- The review in a fresh context found no blocking fault. Fixed: SD-card phrases left in
+  `docs/TESTING.md`, comments, test docstrings and the open procedures of ledger notes, a step
+  cited for the wrong boot, a test of `dev.env.example` added for step 4, and ADR-0470 now says
+  that "the SD card" in the ledger's steps that measure writes means the system disk, so the
+  steps of passing entries stay as they are. Left: the ledger's notes and this Log both tell the
+  move (the notes hold its checks), the label `SD writes`, and no case of `mmcblk1p1` in
+  `bpi_w3`'s refusals, as the wiped card has no partition (`mmcblk0p1` covers a partition's name).
 
 ### 2026-11-23: install.sh on a host, the pruning script
 

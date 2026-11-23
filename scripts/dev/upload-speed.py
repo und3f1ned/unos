@@ -7,7 +7,7 @@ with UNOS_DEV_ADMIN_USER and UNOS_DEV_ADMIN_PASSWORD of dev.env (env.sh reads it
 the token stays in this process and in curl's standard input, never on a command line. It makes
 the folder unoscheck<6 hex digits> at the root of the pool, writes a file of N MiB of random data
 here (in TMPDIR), uploads it R times and prints each run's time and rate, deletes the folder for
-good and signs out. The uploads go to the pool, not to the SD card: the sign-in and the sign-out
+good and signs out. The uploads go to the pool, not to the system disk: the sign-in and the sign-out
 write about 0.1 MiB there (measure with scripts/dev/sd.sh). Exit status: 0 when every upload
 answered 200.
 """

@@ -71,10 +71,11 @@ RULE = (
 
 @pytest.fixture
 def host(monkeypatch, tmp_path):
-    """The dev device (a BPI-W3, ADR-0376): the system on the microSD card mmcblk1, swap on zram0;
-    the pool data on the SATA disk sda, mounted with UNOS's fstab entry, whose automatic offline data
-    collection is on, as the dev device's disk's is; and, as a NAS has them, a second disk sdb with the
-    pool spare, which is not mounted, a blank disk sdc and an NVMe drive, none of which has it."""
+    """The dev device's board (a BPI-W3, ADR-0376), with the fake host's system disk, the flash
+    device mmcblk1, and swap on zram0; the pool data on the SATA disk sda, mounted with UNOS's
+    fstab entry, whose automatic offline data collection is on, as the dev device's disk's is;
+    and, as a NAS has them, a second disk sdb with the pool spare, which is not mounted, a blank
+    disk sdc and an NVMe drive, none of which has it."""
     fake = install_fake_host(monkeypatch)
     monkeypatch.setattr(audit_router, "AUDIT_FILE", str(tmp_path / "audit.jsonl"))
     fake.add_disk("sda", size=640_135_028_736, model="WDC WD6400AACS-00G8B0", serial="WD-W3")
