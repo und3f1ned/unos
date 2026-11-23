@@ -347,12 +347,16 @@ sudo apt install -y \
     curl git ca-certificates gnupg lsb-release \
     btrfs-progs smartmontools \
     samba samba-common-bin samba-vfs-modules \
-    hdparm ethtool iproute2
+    hdparm ethtool iproute2 mmc-utils
 ```
 
 UNOS does not install `mdadm`: Debian's package assembles the md arrays of the
 disks of an old NAS at the next boot. A host that already has it keeps it
 (ADR-0413).
+
+`mmc-utils` reads the wear of a system disk that is an eMMC, once a day, for
+**System** → **Disk Health**; without it UNOS shows the wear that the kernel
+read when the host started (ADR-0471).
 
 UNOS reads the disks' SMART data itself. Turn off smartd, which the package
 smartmontools starts: it would read every awake disk every 30 minutes, and

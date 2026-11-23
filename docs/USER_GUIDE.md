@@ -239,7 +239,8 @@ print in the tables of the **Network** tab, such as a connection's state
 The dashboard provides an at-a-glance view of your NAS. Above every other
 page, administrators see the health banner while UNOS knows of a problem: a
 pool not mounted, degraded or almost full, a volume near its quota, a failing
-disk, a task that failed or missed its run (see [Alerts](#alerts)). On the
+disk, a worn or failing eMMC system disk, a task that failed or missed its run
+(see [Alerts](#alerts)). On the
 dashboard the same banner sits under the header and also lists what the
 dashboard knows: each pool that is not healthy or is mounted read-only, each
 disk to replace soon (see [Disks to Replace](#disks-to-replace)), and a failed
@@ -824,6 +825,32 @@ without a serial number are told apart by their path.
 `GET /api/v1/health/smart/trends` lists every recorded disk, removed disks
 included, with its number of records and the counters that rose over its
 last 24 records.
+
+### System Disk
+
+Below the disks, **System** → **Disk Health** shows the **System disk** card.
+When the host's system is on an eMMC, as on the BPI-W3 and the BPI-F3, the card
+shows the eMMC's model, device and size, and how worn it is in its own words:
+
+- **Life used, estimate A** and **estimate B**: the share of its life that its
+  writes have used, in tenths (**0% to 10% used** up to **90% to 100% used**,
+  then **Past its rated life**); A is its fast SLC area, B the rest
+- **Reserve blocks (pre-EOL)**: how much of its reserve for worn blocks is
+  used: **Normal**, **Warning** or **Urgent**
+- **Wear read**: when UNOS read these values, once a day and when UNOS starts,
+  with `mmc extcsd read` of mmc-utils (`install.sh` installs it). Without
+  mmc-utils, or when it fails before its first reading, the card shows the
+  values that the kernel read when the host started, **As of boot**; when a
+  later daily reading fails, it keeps the one before. It says why
+- **I/O errors since UNOS started**, **ext4 errors since UNOS started** and the
+  **Root filesystem**, read-write or read-only, checked every 5 minutes
+
+A badge sums it up: **Healthy**, **Wearing out**, **Errors**, **Nearly worn
+out** or **Failing**, and the problems are alerted (see [Alerts](#alerts)).
+UNOS only reports them: it changes nothing on the disk, and the reads write
+nothing to it. When the system is on another disk, the card names it and says
+that UNOS reads the wear of an eMMC only; such a disk shows its SMART data in
+the list above when smartctl can read it.
 
 ---
 
@@ -3050,6 +3077,8 @@ NUT server on another machine).
   reasons under **Why**), or else **Failing**, **Healthy**, **Not read** or
   **Asleep** from smartctl's overall health; the temperature; and the disk's
   SMART data under **SMART data** (see [SMART Monitoring](#smart-monitoring))
+- The **System disk** card: the wear and the errors of a system disk that is
+  an eMMC, or why it shows none (see [System Disk](#system-disk))
 
 ### Logs
 
@@ -3708,6 +3737,9 @@ enabled channel, when it finds it:
 | A container of an app used 90% of its CPU limit on average for 5 minutes; kept until that average is below 70% | warning | every 30 seconds |
 | The kernel ended a process of a container of an app for lack of memory, at its memory limit or because the NAS ran out of memory; kept an hour after the last such end, so that one alert covers a container that is ended again and again | error | every 30 seconds |
 | The daily shutdown of the power settings comes in 10 minutes, or waits for running jobs; the idle shutdown comes in 10 minutes (System → Power Management) | warning | every minute |
+| The eMMC that holds the system has used 70% of its life or more, or its reserve blocks are at warning: at 90% or more, past its life, or reserve blocks urgent it is an error, alerted again (see [System Disk](#system-disk)) | warning, then error | once a day and at the start |
+| The kernel logged I/O errors of the system's eMMC, or ext4 counted new errors on the root filesystem, since UNOS started | warning | every 5 minutes |
+| The system's eMMC is failing: ext4 made the root filesystem read-only after a new error, or after I/O errors a direct read of the root partition fails. The alert needs no write to the system disk; a root made read-only by hand, without a new error, is none | error | every 5 minutes |
 
 A problem is alerted once, not at every check, and stays known while it
 lasts: administrators see it in the health banner above every page, in the
@@ -3716,7 +3748,9 @@ again, the task ran), the banner drops it and UNOS sends nothing; the banner
 goes once no problem is left. A problem that comes back is alerted again. UNOS
 keeps the problems in memory, not on the system disk: after a restart of the
 supervisor (an update, a reboot) it alerts each problem that is still there
-once more. The RAID monitor also alerts each rise of a pool's device error
+once more. When the file of the notification channels cannot be read, as on a
+failing system disk, the alerts go to the channels that UNOS read when it
+started or last saved. The RAID monitor also alerts each rise of a pool's device error
 counts, unless the problem that the rise causes is alerted at the same check,
 and once when it cannot read the state of a managed pool. For a pool that UNOS
 does not manage, it alerts the changes of its health instead: a status that is

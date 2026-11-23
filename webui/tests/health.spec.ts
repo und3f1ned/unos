@@ -7,8 +7,11 @@ import {
   REPLACE_SOON,
   REPLACE_SOON_HDD_2,
   SLEEPING_DISK,
+  NO_EMMC,
+  W3_EMMC,
   fakeHealthApi,
   predictionsAnswer,
+  systemDiskAnswer,
   type FakeAnswer,
 } from './health-fakes';
 
@@ -37,6 +40,19 @@ function replaceSoonMark(scope: Locator | Page): Locator {
 /** The alert that lists the predictions to replace soon that match no listed disk. */
 function unmatchedAlert(page: Page): Locator {
   return page.locator('.alert', { has: page.getByText('Replace soon', { exact: true }) });
+}
+
+/** The System disk card of Disk Health (ADR-0471). */
+function systemDiskCard(page: Page, title = 'System disk'): Locator {
+  return page.locator('.card', { has: page.getByRole('heading', { name: title, exact: true }) });
+}
+
+/** The value of a field of the System disk card. */
+function cardField(card: Locator, name: string): Locator {
+  return card
+    .locator('.kv > div')
+    .filter({ has: card.page().locator('.kv-label', { hasText: new RegExp(`^${name}$`) }) })
+    .locator('.kv-value');
 }
 
 // Where this browser keeps the language chosen on the Account page (ADR-0287).
@@ -203,7 +219,7 @@ test.describe('Disk Health', () => {
     await expect(usb.getByRole('table')).toHaveCount(0);
 
     // One load of the tab, in either order; the dialogs asked for nothing more.
-    expect([...requested].sort()).toEqual(['GET /disks', 'GET /smart/predictions']);
+    expect([...requested].sort()).toEqual(['GET /disks', 'GET /smart/predictions', 'GET /system-disk']);
   });
 
   // storage.disk-spindown: reading SMART data does not wake a sleeping disk (ADR-0378).
@@ -394,5 +410,130 @@ test.describe('Disk Health', () => {
     await expect(field(usb, 'Серийный номер')).toHaveText('Неизвестно');
     await expect(field(usb, 'Последняя самопроверка')).toHaveText('Не проводилась');
     await expect(usb.getByText('smartctl не сообщил атрибутов SMART для этого диска.')).toBeVisible();
+  });
+
+  // system.emmc-health-monitoring (ADR-0471): the wear and the errors of an eMMC system disk, after
+  // the list of the disks. The I/O-error failure cannot be caused on a device: the answers here and
+  // the backend tests show it.
+  test('shows the eMMC that holds the system with its wear and errors', async ({ authenticatedPage: page }) => {
+    await fakeHealthApi(page);
+    await page.goto('/system#health');
+
+    const card = systemDiskCard(page);
+    await expect(card.locator('.badge')).toHaveText('Healthy');
+    await expect(card).toContainText('BJTD4R');
+    await expect(card).toContainText('/dev/mmcblk0 · 29.1 GB');
+    await expect(cardField(card, 'Life used, estimate A')).toHaveText('0% to 10% used');
+    await expect(cardField(card, 'Life used, estimate B')).toHaveText('0% to 10% used');
+    await expect(cardField(card, 'Reserve blocks \\(pre-EOL\\)')).toHaveText('Normal');
+    await expect(cardField(card, 'Wear read')).toContainText('2026');
+    await expect(cardField(card, 'I/O errors since UNOS started')).toHaveText('0');
+    await expect(cardField(card, 'ext4 errors since UNOS started')).toHaveText('0');
+    await expect(cardField(card, 'Root filesystem')).toHaveText('/dev/mmcblk0p1 · ext4, read-write');
+    await expect(card.getByText(/UNOS reads them once a day and the errors every 5 minutes/)).toBeVisible();
+    // It only reports: no action on the card.
+    await expect(card.getByRole('button')).toHaveCount(0);
+    // The card comes after the list of the disks.
+    const list = (await page.getByRole('list', { name: 'Disks' }).boundingBox())!;
+    expect((await card.boundingBox())!.y).toBeGreaterThan(list.y + list.height - 1);
+  });
+
+  test('marks a worn and failing eMMC, and its read-only root', async ({ authenticatedPage: page }) => {
+    let answer = systemDiskAnswer({ ...W3_EMMC, life_time_a: 8, pre_eol: 2 }, [{ kind: 'emmc_worn', severity: 'warning' }]);
+    await fakeHealthApi(page, { systemDisk: () => answer });
+    await page.goto('/system#health');
+
+    const card = systemDiskCard(page);
+    await expect(card.locator('.badge')).toHaveText('Wearing out');
+    await expect(cardField(card, 'Life used, estimate A')).toHaveText('70% to 80% used');
+    await expect(cardField(card, 'Reserve blocks \\(pre-EOL\\)')).toHaveText('Warning');
+
+    answer = systemDiskAnswer({ ...W3_EMMC, life_time_a: 10, life_time_b: 11, pre_eol: 3, io_errors: 3 }, [
+      { kind: 'emmc_worn', severity: 'error' },
+      { kind: 'system_disk_errors', severity: 'warning' },
+    ]);
+    await refresh(page);
+    await expect(card.locator('.badge')).toHaveText('Nearly worn out');
+    await expect(cardField(card, 'Life used, estimate A')).toHaveText('90% to 100% used');
+    await expect(cardField(card, 'Life used, estimate B')).toHaveText('Past its rated life');
+    await expect(cardField(card, 'Reserve blocks \\(pre-EOL\\)')).toHaveText('Urgent');
+    await expect(cardField(card, 'I/O errors since UNOS started')).toHaveText('3');
+
+    answer = systemDiskAnswer({ ...W3_EMMC, ext4_errors: 1, read_only: true }, [
+      { kind: 'system_disk_failed', severity: 'error' },
+    ]);
+    await refresh(page);
+    await expect(card.locator('.badge')).toHaveText('Failing');
+    await expect(cardField(card, 'Root filesystem')).toHaveText('/dev/mmcblk0p1 · ext4, read-only');
+    await expect(cardField(card, 'ext4 errors since UNOS started')).toHaveText('1');
+  });
+
+  test('says that the wear is as of boot without mmc-utils, and why mmc failed', async ({
+    authenticatedPage: page,
+  }) => {
+    let answer = systemDiskAnswer({ ...W3_EMMC, wear_source: 'sysfs', mmc_missing: true });
+    await fakeHealthApi(page, { systemDisk: () => answer });
+    await page.goto('/system#health');
+
+    const card = systemDiskCard(page);
+    await expect(cardField(card, 'Wear read')).toHaveText('As of boot');
+    await expect(card.getByText(/^The host has no mmc-utils: these are the values that the kernel read/)).toBeVisible();
+    await expect(card.locator('details')).toHaveCount(0);
+    await expect(card.locator('.badge')).toHaveText('Healthy');
+
+    const failure = 'mmc extcsd read failed: Could not read EXT_CSD from /dev/mmcblk0: Operation not permitted';
+    answer = systemDiskAnswer({ ...W3_EMMC, wear_source: 'sysfs', wear_error: failure });
+    await refresh(page);
+    await expect(card.getByText(/^mmc-utils could not read the eMMC/)).toBeVisible();
+    await expect(card.getByText('The host has no mmc-utils', { exact: false })).toHaveCount(0);
+    await expect(card.getByText(failure)).toBeHidden();
+    await card.getByText('Technical details', { exact: true }).click();
+    await expect(card.getByText(failure)).toBeVisible();
+  });
+
+  test('says why a system disk shows no wear', async ({ authenticatedPage: page }) => {
+    let answer: FakeAnswer = NO_EMMC;
+    await fakeHealthApi(page, { systemDisk: () => answer });
+    await page.goto('/system#health');
+
+    const card = systemDiskCard(page);
+    await expect(card).toContainText(
+      'The system is on /dev/e2e-sda, which is no eMMC: UNOS reads the wear of an eMMC system disk only.',
+    );
+    await expect(card.locator('.badge')).toHaveCount(0);
+    await expect(card.locator('.kv')).toHaveCount(0);
+
+    answer = { json: { emmc: null, reason: 'unreadable', system_disk: null,
+                       detail: '/proc/1/mountinfo could not be read: no answer in time', problems: [] } };
+    await refresh(page);
+    await expect(card).toContainText('UNOS could not read which disk holds the system. It tries again in 5 minutes.');
+
+    answer = { status: 500, json: { detail: 'Internal Server Error' } };
+    await refresh(page);
+    await expect(card.getByText('Could not load the system disk')).toBeVisible();
+    // The disks are still listed.
+    await expect(page.getByRole('list', { name: 'Disks' }).getByRole('listitem')).toHaveCount(FAKE_SMART_DISKS.length);
+  });
+
+  test('in Russian: the System disk card', async ({ authenticatedPage: page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await fakeHealthApi(page, {
+      systemDisk: () =>
+        systemDiskAnswer({ ...W3_EMMC, life_time_b: 11, pre_eol: 3, wear_source: 'sysfs', mmc_missing: true }, [
+          { kind: 'emmc_worn', severity: 'error' },
+        ]),
+    });
+    await page.goto('/system#health');
+
+    const card = systemDiskCard(page, 'Системный диск');
+    await expect(card.locator('.badge')).toHaveText('Почти изношен');
+    await expect(card).toContainText('/dev/mmcblk0 · 29,1 ГБ');
+    await expect(cardField(card, 'Израсходованный ресурс, оценка A')).toHaveText('Израсходовано от 0 % до 10 %');
+    await expect(cardField(card, 'Израсходованный ресурс, оценка B')).toHaveText('Расчётный ресурс превышен');
+    await expect(cardField(card, 'Резервные блоки \\(pre-EOL\\)')).toHaveText('Срочно');
+    await expect(cardField(card, 'Износ прочитан')).toHaveText('На момент загрузки');
+    await expect(cardField(card, 'Корневая файловая система')).toHaveText('/dev/mmcblk0p1 · ext4, чтение и запись');
+    await expect(card.getByText(/^На хосте нет mmc-utils/)).toBeVisible();
+    await expect(card).not.toContainText('Life used');
   });
 });

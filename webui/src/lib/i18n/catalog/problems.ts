@@ -36,6 +36,10 @@ export const en = {
 	'problems.kind.shutdown_postponed':
 		'The scheduled shutdown of {subject} is postponed: System > Power names what it waits for.',
 	'problems.kind.shutdown_idle': 'The host is idle and shuts down at about {subject} unless it is used before.',
+	// The system disk when it is an eMMC (ADR-0471): {subject} is its device, /dev/mmcblk0.
+	'problems.kind.emmc_worn': 'The eMMC {subject} that holds the system has used most of its life',
+	'problems.kind.system_disk_errors': 'The system disk {subject} reports I/O or filesystem errors',
+	'problems.kind.system_disk_failed': 'The system disk {subject} is failing',
 	// A kind that this web UI does not know yet.
 	'problems.kind.other': 'A problem with {subject}'
 };
@@ -69,5 +73,8 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.shutdown_postponed':
 		'Выключение по расписанию в {subject} отложено: в разделе «Система» → «Питание» указано, чего оно ждёт.',
 	'problems.kind.shutdown_idle': 'Хост простаивает и выключится примерно в {subject}, если им не воспользуются.',
+	'problems.kind.emmc_worn': 'eMMC {subject}, на которой находится система, израсходовала большую часть ресурса',
+	'problems.kind.system_disk_errors': 'Системный диск {subject} сообщает об ошибках ввода-вывода или файловой системы',
+	'problems.kind.system_disk_failed': 'Системный диск {subject} отказывает',
 	'problems.kind.other': 'Проблема: {subject}'
 };

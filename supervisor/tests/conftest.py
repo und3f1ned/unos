@@ -111,6 +111,15 @@ def _no_problems_yet(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_system_disk_read_yet(monkeypatch):
+    """What the system disk's passes read is kept in RAM (health.system_disk, ADR-0471): every test starts
+    before the first pass, as the supervisor does."""
+    system_disk = sys.modules.get("src.health.system_disk")
+    if system_disk is not None:
+        monkeypatch.setattr(system_disk, "_state", system_disk._State())
+
+
+@pytest.fixture(autouse=True)
 def _no_disk_nodes_of_this_machine(monkeypatch, tmp_path_factory):
     """host.run_smartctl first makes the container's node of the disk the host's (ADR-0414): no test
     reads this machine's sysfs or makes or replaces a node in its /dev. The three folders are
@@ -241,6 +250,9 @@ def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     notifications = importlib.import_module("src.notifications.router")
     monkeypatch.setattr(notifications, "CONFIG_FILE", str(tmp_path / "notifications.json"))
     monkeypatch.setattr(notifications, "LOGS_FILE", str(tmp_path / "notification_logs.json"))
+    # The channels that the alerts keep in RAM (ADR-0472): none before the test reads or writes them.
+    monkeypatch.setattr(notifications, "_known_channels", None)
+    monkeypatch.setattr(notifications, "_fallback_logged", False)
 
 
 @pytest.fixture(autouse=True)

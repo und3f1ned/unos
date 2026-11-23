@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from collections.abc import Awaitable
 from typing import Annotated, Any
 
-from . import problems
+from . import problems, system_disk
 from .. import host, paths, state_files
 from ..times import stored_time_text, utc_now, utc_text
 from ..auth.utils import verify_token
@@ -24,7 +24,8 @@ from ..storage import disks as storage_disks
 from ..storage import pools as storage_pools
 from ..storage import spindown, volume_usage
 from ..storage.schemas import PoolInfo
-from ..notifications.router import load_configs as load_notification_configs
+from ..notifications.router import alert_channels as load_notification_configs
+from ..notifications.router import remember_channels
 from ..notifications.router import history_entry, save_logs, send_email, send_through
 from ..notifications.schemas import NotificationEvent, NotificationType, NotificationChannel
 from ..openapi import answer, errors, model_example
@@ -531,8 +532,9 @@ def _send_email_blocking(config, event: NotificationEvent):
 async def _deliver_alert(event: NotificationEvent) -> None:
     """Send an alert through every enabled channel, of every kind; best effort.
 
-    The senders report failures as (False, error) instead of raising; those are
-    logged like timeouts and exceptions. The history of System > Notifications
+    The channels come from their file, or, when it cannot be read, from the copy kept in RAM
+    (notifications.alert_channels, ADR-0472). The senders report failures as (False, error) instead of
+    raising; those are logged like timeouts and exceptions. The history of System > Notifications
     lists each alert sent, with its result, in one write per alert, made in a
     worker thread: it is synced to the system disk (ADR-0021, ADR-0326).
     """
@@ -1573,6 +1575,24 @@ def get_health_overview(_: dict = Depends(verify_token)):
     }
 
 
+@router.get(
+    "/system-disk", response_model=system_disk.SystemDiskHealth, summary="Read the wear and errors of an eMMC system disk",
+    responses=answer(model_example(system_disk.SystemDiskHealth), (
+        "emmc: the eMMC that holds the root filesystem, with its life-time estimates A and B and its pre-EOL state "
+        "(from mmc extcsd read, or as of boot from sysfs without mmc-utils), when they were read, the kernel's I/O "
+        "errors of the eMMC and ext4's new errors on the root since the supervisor started, and whether the root's "
+        "superblock is read-only; null with the reason when the system disk is no eMMC. problems: the problems of "
+        "the system disk that these values show.")),
+)
+async def get_system_disk_health(_: dict = Depends(verify_token)):
+    """The health of the system disk when it is an eMMC, as the system disk monitor's passes read it: the wear
+    once a day, the errors every 5 minutes. Before the first pass the disk is read now. Nothing is written.
+    \f
+    health.system_disk; ADR-0471, ADR-0472.
+    """
+    return await system_disk.health()
+
+
 # ==================== RAID Health Monitoring ====================
 
 @router.get(
@@ -2037,12 +2057,19 @@ async def start_health_monitors():
     global _raid_monitor_running, _raid_monitor_task
     global _smart_monitor_running, _smart_monitor_task
 
+    # The channels in RAM for the alerts, so that an alert of a failing system disk does not depend on
+    # reading it (ADR-0472).
+    await asyncio.to_thread(remember_channels)
+
     _raid_monitor_running = True
     _raid_monitor_task = asyncio.create_task(raid_monitor_loop())
 
     _smart_monitor_running = True
     _smart_history.stopped = False
     _smart_monitor_task = asyncio.create_task(smart_monitor_loop())
+
+    # The system disk's wear and failure signs, beside the RAID monitor at its interval (ADR-0471).
+    system_disk.start_monitor()
 
 
 async def stop_health_monitors():
@@ -2056,6 +2083,7 @@ async def stop_health_monitors():
     _smart_monitor_running = False
     if _smart_monitor_task:
         _smart_monitor_task.cancel()
+    system_disk.stop_monitor()
     # The snapshots since the history was last written (ADR-0269).
     await asyncio.to_thread(save_unsaved_smart_history)
     # The points of the volumes' use since their history was last written (storage.volume_usage).

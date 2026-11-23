@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 // Canned /api/v1/health answers for System > Disk Health and the dashboard:
 // the stand-in has neither lsblk nor smartctl, and the specs must not depend on
 // the disks of the machine they run on. fakeHealthApi() answers the page's
-// requests for the disks and the failure predictions and aborts every other
+// requests for the disks, the failure predictions and the system disk and aborts every other
 // /api/v1/health/ request. The texts are the server's
 // (supervisor/src/health/router.py, supervisor/tests/test_smart_predictions.py):
 // change them with the server (ADR-0189). The device paths exist on no machine.
@@ -96,6 +96,25 @@ export const REPLACE_SOON_HDD_2 = {
   recommendation: 'Disk showing signs of failure. Replace within 30 days.',
 };
 
+// The system disk as GET /health/system-disk answers it (supervisor/src/health/system_disk.py,
+// ADR-0471): the BPI-W3's eMMC of 2026-11-23, read with mmc extcsd read.
+export const W3_EMMC = {
+  device: '/dev/mmcblk0', model: 'BJTD4R', size: 31268536320, root: '/dev/mmcblk0p1', filesystem: 'ext4',
+  life_time_a: 1, life_time_b: 1, pre_eol: 1, wear_source: 'mmc', wear_read_at: '2026-11-23T08:00:04Z',
+  mmc_missing: false, wear_error: null, io_errors: 0, ext4_errors: 0, read_only: false,
+  direct_read_failed: false, checked_at: '2026-11-23T10:05:04Z', check_error: null,
+};
+
+/** The answer for an eMMC system disk with `emmc`'s values and `problems` (default: the W3, none). */
+export function systemDiskAnswer(emmc: object = W3_EMMC, problems: object[] = []): FakeAnswer {
+  return { json: { emmc, reason: null, system_disk: null, detail: null, problems } };
+}
+
+/** The answer for a system disk that is no eMMC: an x86 host's SATA disk. */
+export const NO_EMMC: FakeAnswer = {
+  json: { emmc: null, reason: 'not_emmc', system_disk: '/dev/e2e-sda', detail: null, problems: [] },
+};
+
 export interface FakeAnswer {
   status?: number;
   json: unknown;
@@ -106,6 +125,8 @@ export interface FakeHealthOptions {
   disks?: () => FakeAnswer;
   /** The answer of GET /health/smart/predictions at each request (default: no predictions). */
   predictions?: () => FakeAnswer;
+  /** The answer of GET /health/system-disk at each request (default: the W3's eMMC, healthy). */
+  systemDisk?: () => FakeAnswer;
 }
 
 /** The predictions answer of GET /health/smart/predictions. */
@@ -117,6 +138,7 @@ export function predictionsAnswer(...predictions: object[]): FakeAnswer {
 export async function fakeHealthApi(page: Page, options: FakeHealthOptions = {}): Promise<string[]> {
   const disks: () => FakeAnswer = options.disks ?? (() => ({ json: { disks: FAKE_SMART_DISKS } }));
   const predictions: () => FakeAnswer = options.predictions ?? (() => predictionsAnswer());
+  const systemDisk: () => FakeAnswer = options.systemDisk ?? (() => systemDiskAnswer());
   const requested: string[] = [];
   await page.route(
     (url) => url.pathname.startsWith('/api/v1/health/'),
@@ -131,7 +153,9 @@ export async function fakeHealthApi(page: Page, options: FakeHealthOptions = {})
             ? disks()
             : path === '/smart/predictions'
               ? predictions()
-              : undefined;
+              : path === '/system-disk'
+                ? systemDisk()
+                : undefined;
       if (!answer) return route.abort();
       return route.fulfill({ status: answer.status ?? 200, json: answer.json });
     },

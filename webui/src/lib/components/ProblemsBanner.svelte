@@ -38,14 +38,17 @@
 		app_oom: 'problems.kind.app_oom',
 		shutdown_scheduled: 'problems.kind.shutdown_scheduled',
 		shutdown_postponed: 'problems.kind.shutdown_postponed',
-		shutdown_idle: 'problems.kind.shutdown_idle'
+		shutdown_idle: 'problems.kind.shutdown_idle',
+		emmc_worn: 'problems.kind.emmc_worn',
+		system_disk_errors: 'problems.kind.system_disk_errors',
+		system_disk_failed: 'problems.kind.system_disk_failed'
 	};
 
-	// Where each kind of problem is dealt with: its pool, disk, task, volume, container or the power
-	// settings. A kind this web UI does not know links nowhere.
+	// Where each kind of problem is dealt with: its pool, disk (the system disk's card too), task, volume,
+	// container or the power settings. A kind this web UI does not know links nowhere.
 	const PLACES: [RegExp, string][] = [
 		[/^(pool_|volume_quota_)/, '/storage'],
-		[/^disk_/, '/system#health'],
+		[/^(disk_|emmc_|system_disk_)/, '/system#health'],
 		[/^task_/, '/system#scheduler'],
 		[/^app_/, '/containers'],
 		[/^shutdown_/, '/system#power']

@@ -11,7 +11,9 @@ export interface Problem {
 	severity: 'warning' | 'error';
 	/**
 	 * pool_unmounted, pool_degraded, pool_read_only, pool_low_space, disk_failed, disk_test_failed,
-	 * task_failed, task_missed, volume_quota_80, volume_quota_90, volume_quota_95
+	 * task_failed, task_missed, volume_quota_80, volume_quota_90, volume_quota_95, app_memory, app_cpu,
+	 * app_oom, shutdown_scheduled, shutdown_postponed, shutdown_idle, emmc_worn, system_disk_errors,
+	 * system_disk_failed
 	 */
 	kind: string;
 	/** The pool's name, the disk's path, the task's name or <pool>/<volume>. */

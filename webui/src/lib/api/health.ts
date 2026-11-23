@@ -60,6 +60,62 @@ export interface HealthOverview {
 	average_temperature: number | null;
 }
 
+/** A problem of the system disk that its last reads show (supervisor/src/health/system_disk.py). */
+export interface SystemDiskProblem {
+	kind: 'emmc_worn' | 'system_disk_errors' | 'system_disk_failed';
+	severity: 'warning' | 'error';
+}
+
+/** The eMMC that holds the root filesystem: its wear and its errors (ADR-0471). */
+export interface EmmcHealth {
+	/** /dev/mmcblk0 */
+	device: string;
+	model: string | null;
+	/** Bytes. */
+	size: number;
+	/** The root filesystem's device, /dev/mmcblk0p1. */
+	root: string;
+	filesystem: string;
+	/** 1 to 10: each a tenth of the life used (1: 0 to 10%); 11 past it; 0 not defined; null not read. */
+	life_time_a: number | null;
+	life_time_b: number | null;
+	/** 1 normal, 2 warning, 3 urgent, 0 not defined; null not read. */
+	pre_eol: number | null;
+	/** mmc: read with mmc extcsd read; sysfs: the kernel's values of the boot; null: not read. */
+	wear_source: 'mmc' | 'sysfs' | null;
+	wear_read_at: string | null;
+	/** The host has no mmc-utils. */
+	mmc_missing: boolean;
+	/** Why mmc, or also sysfs, gave no wear: English, technical. */
+	wear_error: string | null;
+	/** Since the supervisor started; null until read. */
+	io_errors: number | null;
+	/** ext4's errors on the root since the supervisor started; null for another filesystem or until read. */
+	ext4_errors: number | null;
+	read_only: boolean | null;
+	direct_read_failed: boolean;
+	checked_at: string | null;
+	/** What the last pass could not read: English, technical. */
+	check_error: string | null;
+}
+
+/** GET /health/system-disk: the eMMC of the root filesystem, or why there is none. */
+export interface SystemDiskHealth {
+	emmc: EmmcHealth | null;
+	/** Why emmc is null. */
+	reason: 'not_emmc' | 'no_disk' | 'unreadable' | null;
+	/** With not_emmc: the root's disk. */
+	system_disk: string | null;
+	/** With no_disk and unreadable: English, technical. */
+	detail: string | null;
+	problems: SystemDiskProblem[];
+}
+
+/** The wear and the errors of an eMMC system disk, as the server's last reads found them. */
+export async function getSystemDiskHealth(): Promise<SystemDiskHealth> {
+	return api.get<SystemDiskHealth>('/health/system-disk');
+}
+
 export async function getDiskHealth(): Promise<{ disks: SmartInfo[] }> {
 	return api.get<{ disks: SmartInfo[] }>('/health/disks');
 }
