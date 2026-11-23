@@ -20,6 +20,12 @@ Volume host paths:
   /etc/localtime, ...). It is mounted as-is, never created, and cannot be
   changed through install overrides.
 - Mark single-file sources on the pool with is_file=True.
+- A configuration file that the image ships in a folder and needs at its start
+  is bound as that file, read-only, with a content that the install (and a
+  start) writes when the file is missing: a bind of an empty folder there hides
+  it, and the app restarts in a loop (Mosquitto's mosquitto.conf). The content
+  is the image's own, unless that opens the app to the network without
+  authentication (ADR-0476).
 - Never put a pool path inside another app's (or the same app's) writable
   pool path, e.g. {pool}/downloads/watch next to {pool}/downloads. Docker
   resolves bind sources again on every start and follows symbolic links, so
@@ -591,6 +597,70 @@ LINKWARDEN_COMMAND = (
 # The temporary files of a LinuxServer or Paperless-ngx image's s6-overlay, the variables that it
 # reads from files (FILE__*, *_FILE) among them: in RAM, where s6 must be able to run its scripts.
 S6_RUN = {"/run": "exec,size=16m"}
+
+# Mosquitto's configuration on a fresh install (ADR-0476): none of the settings of the image's own
+# file, which opens an MQTT listener on port 1883 to anonymous clients, so Mosquitto listens only
+# inside its container, its local-only mode, until the administrator adds a listener and its
+# authentication.
+MOSQUITTO_CONF = """\
+# Eclipse Mosquitto's configuration, which UNOS wrote at the install because it was missing.
+# UNOS does not write it again: edit it here, then restart the app.
+#
+# It sets nothing, so Mosquitto listens only inside its container: no other container or host
+# can connect. To let them, add a listener and its authentication, such as:
+#
+#   listener 1883
+#   password_file /mosquitto/data/passwords
+#
+# The container sees this file and the app's folders data (/mosquitto/data) and log
+# (/mosquitto/log), not the rest of this folder: make the passwords file in the data folder with
+# mosquitto_passwd. To keep retained messages across restarts, and to log to the log folder:
+#
+#   persistence true
+#   persistence_location /mosquitto/data/
+#   log_dest file /mosquitto/log/mosquitto.log
+"""
+
+# Prometheus's configuration on a fresh install: the image's own, its
+# documentation/examples/prometheus.yml (v3.16.0), which scrapes Prometheus itself.
+PROMETHEUS_YML = """\
+# Prometheus's configuration, which UNOS wrote at the install because it was missing: the image's
+# own example. UNOS does not write it again: edit it here, then restart the app.
+
+# my global config
+global:
+  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: "prometheus"
+
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+
+    static_configs:
+      - targets: ["localhost:9090"]
+       # The label name is added as a label `label_name=<label_value>` to any timeseries scraped from this config.
+        labels:
+          app: "prometheus"
+    scrape_native_histograms: true
+"""
 
 APP_CATALOG: list[AppTemplate] = [
     # ═══════════════════════════════════════════════════════════════════════════
@@ -1734,8 +1804,12 @@ APP_CATALOG: list[AppTemplate] = [
         recommended_memory="1g",
         ports=[PortMapping(host=9090, container=9090)],
         volumes=[
-            # The image runs as nobody (uid/gid 65534); it writes its TSDB to /prometheus.
-            VolumeMapping(host=f"{APPS_DATA_PATH}/prometheus/config", container="/etc/prometheus", uid=65534, gid=65534),
+            # The image runs as nobody (uid/gid 65534); it writes its TSDB to /prometheus. Its
+            # configuration is a file it only reads, the image's own on a fresh install.
+            VolumeMapping(
+                host=f"{APPS_DATA_PATH}/prometheus/config/prometheus.yml", container="/etc/prometheus/prometheus.yml",
+                readonly=True, is_file=True, content=PROMETHEUS_YML,
+            ),
             VolumeMapping(host=f"{APPS_DATA_PATH}/prometheus/data", container="/prometheus", uid=65534, gid=65534),
         ],
     ),
@@ -1953,7 +2027,10 @@ APP_CATALOG: list[AppTemplate] = [
             PortMapping(host=9001, container=9001),
         ],
         volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/config", container="/mosquitto/config"),
+            VolumeMapping(
+                host=f"{APPS_DATA_PATH}/mosquitto/config/mosquitto.conf", container="/mosquitto/config/mosquitto.conf",
+                readonly=True, is_file=True, content=MOSQUITTO_CONF,
+            ),
             VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/data", container="/mosquitto/data"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/log", container="/mosquitto/log"),
         ],

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import requests
+import yaml
 import urllib3
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
@@ -688,11 +690,13 @@ class TestCatalogPaths:
         assert response.status_code == 200
         assert response.json()["volumes"] == [
             {"host": f"{POOL_PLACEHOLDER}/apps/portainer/data", "container": "/data",
-             "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
-             "secret_digits": 64, "secret_for": None, "copy_before_update": False, "on_pool": True},
+             "readonly": False, "is_file": False, "content": None, "uid": None, "gid": None,
+             "generated_secret": False, "secret_digits": 64, "secret_for": None, "copy_before_update": False,
+             "on_pool": True},
             {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock",
-             "readonly": False, "is_file": False, "uid": None, "gid": None, "generated_secret": False,
-             "secret_digits": 64, "secret_for": None, "copy_before_update": False, "on_pool": False},
+             "readonly": False, "is_file": False, "content": None, "uid": None, "gid": None,
+             "generated_secret": False, "secret_digits": 64, "secret_for": None, "copy_before_update": False,
+             "on_pool": False},
         ]
 
 
@@ -1031,6 +1035,118 @@ DEMO = AppTemplate(
         VolumeMapping(host=f"{POOL_PLACEHOLDER}/apps/demo/data", container="/data"),
     ],
 )
+
+
+CONFIGURED = AppTemplate(
+    id="configured",
+    name="Configured",
+    description="Template with a configuration file that its image needs",
+    icon="x",
+    category=AppCategory.OTHER,
+    image=_pin("example/configured:1"),
+    version="1",
+    volumes=[
+        VolumeMapping(host=f"{POOL_PLACEHOLDER}/apps/configured/config/app.conf", container="/etc/app/app.conf",
+                      is_file=True, content="# the image's default\nport 1\n"),
+    ],
+)
+
+# The configuration files that an image of the catalog ships in a folder and needs at its start,
+# from its Dockerfile: a bind of an empty folder there hides it, and the app restarts in a loop
+# ("Unable to open config file '/mosquitto/config/mosquitto.conf'", the BPI-W3, 2026-11-23).
+# The other images of the catalog create their configuration in a folder bound empty.
+SHIPPED_CONFIGURATION = {
+    "eclipse-mosquitto": "/mosquitto/config/mosquitto.conf",
+    "prom/prometheus": "/etc/prometheus/prometheus.yml",
+}
+
+
+class TestShippedConfiguration:
+    @pytest.fixture(autouse=True)
+    def configured_template(self, monkeypatch):
+        real = apps_router.get_app_by_id
+        monkeypatch.setattr(
+            apps_router, "get_app_by_id", lambda app_id: CONFIGURED if app_id == "configured" else real(app_id)
+        )
+
+    def test_a_missing_file_is_created_with_its_content(self, api, pools, docker_client):
+        response = install(api, {"template_id": "configured"})
+
+        assert response.status_code == 200, response.text
+        conf = pools.alpha / "apps/configured/config/app.conf"
+        assert conf.read_text() == "# the image's default\nport 1\n"
+        assert _mounts(docker_client)["/etc/app/app.conf"]["Source"] == str(conf)
+
+    def test_an_existing_file_is_kept(self, api, pools, docker_client):
+        conf = pools.alpha / "apps/configured/config/app.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("port 2\n")
+
+        response = install(api, {"template_id": "configured"})
+
+        assert response.status_code == 200, response.text
+        assert conf.read_text() == "port 2\n"
+
+    def test_content_only_for_a_file(self):
+        with pytest.raises(ValueError, match="content"):
+            VolumeMapping(host=f"{POOL_PLACEHOLDER}/apps/x/config", container="/config", content="x")
+
+    @pytest.mark.parametrize("app_id", ["mosquitto", "prometheus"])
+    def test_a_fresh_install_has_the_configuration_its_image_ships(self, api, pools, docker_client, app_id):
+        template = get_app_by_id(app_id)
+        target = SHIPPED_CONFIGURATION[template.image.split(":")[0]]
+
+        response = install(api, {"template_id": app_id})
+
+        assert response.status_code == 200, response.text
+        mounts = _mounts(docker_client)
+        source = Path(mounts[target]["Source"])
+        assert source.is_relative_to(pools.alpha) and mounts[target]["ReadOnly"]
+        assert source.read_text() == next(v.content for v in template.volumes if v.container == target)
+        assert stat.S_IMODE(source.stat().st_mode) == 0o644  # readable by the image's user
+        assert os.path.dirname(target) not in mounts
+
+    def test_mosquitto_starts_in_its_local_only_mode(self):
+        """Not with the image's own file, whose listener on port 1883 takes anonymous clients:
+        Mosquitto listens inside its container until a listener and its authentication are added
+        (ADR-0476)."""
+        [conf] = [v.content for v in get_app_by_id("mosquitto").volumes if v.container.endswith("mosquitto.conf")]
+        settings = [line for line in conf.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        assert settings == []
+
+    def test_prometheus_has_its_images_example(self):
+        [conf] = [v.content for v in get_app_by_id("prometheus").volumes if v.container.endswith("prometheus.yml")]
+        config = yaml.safe_load(conf)
+        assert config["global"]["scrape_interval"] == "15s"
+        assert config["scrape_configs"][0]["static_configs"][0]["targets"] == ["localhost:9090"]
+
+    def test_a_start_creates_a_missing_configuration_again(self, pools):
+        (pools.alpha / "apps/mosquitto/config").mkdir(parents=True)
+        container = _container("mosquitto", template="mosquitto", pool="alpha", mounts=[
+            _bind(pools.alpha / "apps/mosquitto/config/mosquitto.conf", "/mosquitto/config/mosquitto.conf", rw=False),
+            _bind(pools.alpha / "apps/mosquitto/data", "/mosquitto/data"),
+            _bind(pools.alpha / "apps/mosquitto/log", "/mosquitto/log"),
+        ])
+
+        apps_router.prepare_app_start(_inspected(container))
+
+        conf = pools.alpha / "apps/mosquitto/config/mosquitto.conf"
+        assert conf.read_text() == catalog_module.MOSQUITTO_CONF
+        assert not [p.name for p in conf.parent.iterdir() if p.name.endswith(".tmp")]
+
+    def test_every_catalog_app_gets_the_configuration_its_image_ships(self):
+        """No folder bound over the folder of such a file, which the catalog binds as a file with
+        its content, for every container of every app."""
+        for template in APP_CATALOG:
+            for spec in [template, *template.companions]:
+                shipped = SHIPPED_CONFIGURATION.get(spec.image.split("@")[0].rsplit(":", 1)[0])
+                if shipped is None:
+                    continue
+                hiding = [v.container for v in spec.volumes if not v.is_file
+                          and (shipped + "/").startswith(v.container.rstrip("/") + "/")]
+                assert not hiding, f"{template.id}: {hiding} hides {shipped}"
+                [bound] = [v for v in spec.volumes if v.container == shipped]
+                assert bound.is_file and bound.content, f"{template.id}: {shipped} has no content"
 
 
 class TestFileVolumes:

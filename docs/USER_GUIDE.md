@@ -1903,7 +1903,12 @@ the Ollama app's port 11434, and Zigbee2MQTT the Mosquitto app's port 1883
 (**ZIGBEE2MQTT_CONFIG_MQTT_SERVER** names another broker). Mosquitto takes
 connections from other containers only once its `mosquitto.conf`, in
 `apps/mosquitto/config` on its pool, has a listener on port 1883 and its
-authentication. With the firewall on (**System** > **Security**), it must let
+authentication. The install writes that file when it is missing: it sets
+nothing, so Mosquitto listens only inside its container, and its comments say
+what to add (the container sees that file, not the rest of its folder: keep a
+password file in `apps/mosquitto/data`). The install of Prometheus writes its
+`prometheus.yml` in `apps/prometheus/config` the same way, the image's example.
+An existing file is kept; edit it and restart the app. With the firewall on (**System** > **Security**), it must let
 Docker's networks reach those ports of the NAS.
 
 ### Hardware Acceleration

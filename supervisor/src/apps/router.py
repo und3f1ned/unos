@@ -514,6 +514,8 @@ class _PlannedMount:
     secret_for: Path | None = None
     # The hexadecimal digits of the generated secret (VolumeMapping.secret_digits, ADR-0415).
     secret_digits: int = 64
+    # The text that a missing file is created with (VolumeMapping.content); None: empty.
+    content: str | None = None
 
 
 def _where(m: _PlannedMount) -> str:
@@ -641,6 +643,7 @@ def _plan_volumes(
                 generated_secret=volume.generated_secret,
                 secret_for=secret_for,
                 secret_digits=volume.secret_digits,
+                content=volume.content,
                 **mount,
             )
         )
@@ -896,6 +899,9 @@ def _create_source(m: _PlannedMount) -> None:
             ) from e
         raise HTTPException(500, f"Could not create {path}: {e.strerror or e}") from e
     try:
+        if m.is_file and m.content:
+            _create_file_with_content(m, dir_fd, name)
+            return
         if m.is_file:
             try:
                 fd = os.open(
@@ -929,6 +935,36 @@ def _create_source(m: _PlannedMount) -> None:
         raise HTTPException(500, f"Could not create {path}: {e.strerror or e}") from e
     finally:
         os.close(dir_fd)
+
+
+def _create_file_with_content(m: _PlannedMount, dir_fd: int, name: str) -> None:
+    """Create the missing file ``name`` of the folder ``dir_fd`` with its content
+    (VolumeMapping.content), mode 0644 and the mount's owner, as app_secrets.create writes a
+    password file: a temporary file beside it, synced and then linked to its name, so that no
+    partial file is ever there. A file that appeared at its name meanwhile is kept."""
+    temporary = f".{name}.{os.urandom(8).hex()}.tmp"
+    try:
+        fd = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=dir_fd
+        )
+        try:
+            os.fchmod(fd, 0o644)
+            if m.uid is not None or m.gid is not None:
+                os.fchown(fd, m.uid if m.uid is not None else -1, m.gid if m.gid is not None else -1)
+            view = memoryview((m.content or "").encode())
+            while view:
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        with contextlib.suppress(FileExistsError):
+            os.link(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd, follow_symlinks=False)
+        os.unlink(temporary, dir_fd=dir_fd)
+        os.fsync(dir_fd)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary, dir_fd=dir_fd)
+        raise
 
 
 def _prepare_sources(
@@ -2378,6 +2414,7 @@ def _plan_installed_binds(container: Any, pools: list[AppPool]) -> list[_Planned
                 creatable=known is not None and not secret and app_pool is not None and pool.name == app_pool,
                 uid=known.uid if known is not None else None,
                 gid=known.gid if known is not None else None,
+                content=known.content if known is not None else None,
                 generated_secret=secret,
                 secret_for=(
                     _on_same_pool(bind.source, known.host, known.secret_for)

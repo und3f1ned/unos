@@ -81,7 +81,14 @@ class VolumeMapping(BaseModel):
     is_file: bool = Field(
         default=False,
         description="Whether it is one file (a database, a configuration file), not a folder; a missing one "
-                           "on the pool is created empty."
+                           "on the pool is created empty, or with its content."
+    )
+    # The configuration that an image ships in a folder and needs at its start (Mosquitto's
+    # mosquitto.conf, Prometheus's prometheus.yml): a bind of an empty folder there would hide it.
+    content: str | None = Field(
+        default=None,
+        description="For a file (is_file): the text that a missing one on the pool is created with, such as the "
+                    "configuration that the image ships at that path; an existing one is kept. null: created empty."
     )
     # Set it for images that run as a fixed non-root user: they cannot write to the root-owned folders
     # the supervisor creates, and crash-loop.
@@ -120,6 +127,12 @@ class VolumeMapping(BaseModel):
         description="Whether an app update makes a database copy of this folder beside it on the pool before "
                            "the new version starts, which an app rollback puts back."
     )
+
+    @model_validator(mode="after")
+    def _content_only_for_a_file_on_the_pool(self) -> "VolumeMapping":
+        if self.content is not None and (not self.is_file or self.generated_secret or not is_pool_path(self.host)):
+            raise ValueError(f"{self.container}: content is only for a file on the pool that is no generated secret")
+        return self
 
     @computed_field  # type: ignore[prop-decorator]  # mypy takes no decorator above @property
     @property
@@ -269,10 +282,10 @@ class AppTemplate(ContainerSpec):
                  "bd5b9e25937cc592ebd34f13e7f35f278a14717469adb04f10f355ba05bf177c",
         "volumes": [
             {"host": "{pool}/apps/jellyfin/config", "container": "/config", "readonly": False, "is_file": False,
-             "uid": None, "gid": None, "generated_secret": False, "secret_digits": 64, "secret_for": None,
+             "content": None, "uid": None, "gid": None, "generated_secret": False, "secret_digits": 64, "secret_for": None,
              "copy_before_update": False, "on_pool": True},
-            {"host": "{pool}/media", "container": "/media", "readonly": True, "is_file": False, "uid": None,
-             "gid": None, "generated_secret": False, "secret_digits": 64, "secret_for": None,
+            {"host": "{pool}/media", "container": "/media", "readonly": True, "is_file": False, "content": None,
+             "uid": None, "gid": None, "generated_secret": False, "secret_digits": 64, "secret_for": None,
              "copy_before_update": False, "on_pool": True},
         ],
         "environment": [
