@@ -72,7 +72,8 @@ logger = logging.getLogger(__name__)
 # itself at its --max-time: ADR-0336) and shares/iscsi.py (modprobe, mount and mountpoint for LIO's
 # modules and configfs; lsattr and chattr, which keep the folder of the LUN files immutable: ADR-0418)
 # and health/system_disk.py (mmc of mmc-utils, which reads an eMMC system disk's wear, and journalctl and
-# dd under timeout, cat and readlink: ADR-0471).
+# dd under timeout, cat and readlink: ADR-0471; sh with stat and rm, the write probe of a root that ext4 may
+# have made read-only: ADR-0476).
 # cat, od (the export files: shares/nfs.py), stat, truncate, grep and find (shares/iscsi.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
 # scheduler/router.py, ADR-0266), df (apps/preflight.py) and sh (also

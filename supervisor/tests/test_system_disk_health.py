@@ -14,8 +14,10 @@ import asyncio
 import importlib
 import json
 import logging
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,6 +67,18 @@ OTHER_LINES = [
     "I/O error, dev mmcblk1, sector 8 op 0x0:(READ) flags 0x0 phys_seg 1 prio class 2",
 ]
 READ_ONLY_PROGRAMS = {"cat", "readlink", "mmc", "journalctl", "dd"}
+# What the BPI-W3's kernel (6.1.172-vendor-rk35xx) logged on 2026-11-23 after
+# `echo 1 > /sys/fs/ext4/mmcblk0p1/trigger_fs_error`, while /proc/1/mountinfo kept "rw" in the mount's and
+# in the superblock's options (MOUNTINFO) and writes to / failed with EROFS. The remount line is as recorded;
+# the tail of the first line after "trigger_test_error" and the aborted journal's line are reconstructed
+# in the form of the kernel's __ext4_error and __ext4_std_error.
+W3_TRIGGERED = [
+    "EXT4-fs error (device mmcblk0p1): trigger_test_error:146: comm bash: 1",
+    "EXT4-fs (mmcblk0p1): Remounting filesystem read-only",
+]
+W3_JOURNAL_ABORTED = "EXT4-fs error (device mmcblk0p1) in ext4_reserve_inode_write:5718: Journal has aborted"
+# The probe's folder on the root: the updater's backups, bind-mounted into the supervisor at the same path.
+PROBE_DIR = "/var/lib/unos/backups"
 
 
 class FakeHost:
@@ -80,6 +94,9 @@ class FakeHost:
             "/sys/block/mmcblk0/device/life_time": "0x01 0x01\n",
             "/sys/block/mmcblk0/device/pre_eol_info": "0x01\n",
             "/sys/fs/ext4/mmcblk0p1/errors_count": "0\n",
+            # ext4's last error: none (0), and the time of the boot.
+            "/sys/fs/ext4/mmcblk0p1/last_error_time": "0\n",
+            "/proc/stat": "cpu  1 2 3 4\nbtime 1795424400\nprocesses 4242\n",
         }
         self.links = {"/sys/dev/block/179:1": W3_LINK}
         self.wear = {"a": 1, "b": 1, "eol": 1}
@@ -91,6 +108,15 @@ class FakeHost:
         # "cannot run": nsenter fails before dd starts.
         self.direct_read: object = True
         self.readlink_fails = False
+        # The kernel's lines of this boot before the supervisor started (kernel_log: since then).
+        self.boot_log: list[str] = []
+        # True: the root takes the probe's file; False: EROFS; "elsewhere": the folder is on another
+        # filesystem; "hang": the probe never ends.
+        self.root_writable: object = True
+        # The device number of the probe's folder, as stat -c %D prints it: the root's, 179:1.
+        self.probe_dir_device = "b301"
+        # How the create of the probe is refused when the root is not writable.
+        self.refusal = "Read-only file system"
         self.calls: list[list[str]] = []
 
     def run(self, cmd, *, timeout=60, check=False, input=None, errors=None):
@@ -130,13 +156,27 @@ class FakeHost:
             return host.HostResult(0, EXTCSD.format(**self.wear), "")
         if program == "journalctl":
             assert "--dmesg" in args and "--output=cat" in args, cmd
-            assert any(re.fullmatch(r"--since=@[0-9]+", arg) for arg in args), cmd
+            since = [arg for arg in args if arg.startswith("--since=")]
+            assert all(re.fullmatch(r"--since=@[0-9]+", arg) for arg in since), cmd
             if self.journal_fails:
                 return host.HostResult(1, "", "Failed to open journal: Input/output error\n")
             [pattern] = [arg.removeprefix("--grep=") for arg in args if arg.startswith("--grep=")]
-            found = [line for line in self.kernel_log if re.search(pattern, line)]
+            # --dmesg is this boot; --since, from the supervisor's start.
+            lines = self.kernel_log if since else [*self.boot_log, *self.kernel_log]
+            found = [line for line in lines if re.search(pattern, line)]
             # journalctl --grep exits with status 1, saying nothing, when no entry matched.
             return host.HostResult(0 if found else 1, "".join(f"{line}\n" for line in found), "")
+        if program == "sh":
+            assert args[:1] == ["-c"] and args[2:] == ["sh", PROBE_DIR, "b301"], cmd
+            probe = f"{PROBE_DIR}/.unos-write-probe"
+            assert '.unos-write-probe"; : > "$p" && rm -f -- "$p"' in args[1], args[1]
+            if self.root_writable == "hang":
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            if self.probe_dir_device != args[-1] or self.root_writable == "elsewhere":
+                return host.HostResult(3, "", f"{PROBE_DIR} is not on the root filesystem\n")
+            if self.root_writable:
+                return host.HostResult(0, "", "")
+            return host.HostResult(2, "", f"sh: 1: cannot create {probe}: {self.refusal}\n")
         if program == "dd":
             assert args == ["if=/dev/mmcblk0p1", "of=/dev/null", "bs=1M", "count=1", "iflag=direct",
                             "status=none"], cmd
@@ -148,6 +188,10 @@ class FakeHost:
                 return host.HostResult(0, "", "")
             return host.HostResult(1, "", "dd: error reading '/dev/mmcblk0p1': Input/output error\n")
         raise AssertionError(f"a host command the fake does not know: {cmd}")
+
+
+# subprocess.run as it is, for the one test that runs the probe's script itself.
+REAL_SUBPROCESS_RUN = subprocess.run
 
 
 def _forbidden_subprocess(*args, **kwargs):
@@ -281,7 +325,8 @@ class TestTheReadings:
         clock.value += 23 * 3600
         await system_disk.monitor_pass()
         assert len(fake.runs_of("mmc")) == 1
-        assert len(fake.runs_of("journalctl")) == 3
+        # The kernel's I/O errors since the start at each pass (and its log of the boot once).
+        assert len([call for call in fake.runs_of("journalctl") if any(a.startswith("--since") for a in call)]) == 3
 
         fake.wear = {"a": 2, "b": 1, "eol": 1}
         clock.value += 3600
@@ -300,6 +345,7 @@ class TestTheReadings:
         fake.kernel_log = [IO_ERROR]
         await system_disk.monitor_pass()
         assert fake.programs() <= READ_ONLY_PROGRAMS
+        assert fake.runs_of("sh") == []
         [dd] = fake.runs_of("dd")
         assert "of=/dev/null" in dd and "iflag=direct" in dd
 
@@ -398,6 +444,194 @@ class TestTheWear:
         fake.wear = {"a": 8, "b": 1, "eol": 1}
         await system_disk.monitor_pass()
         assert (await _health())["problems"] == [{"kind": "emmc_worn", "severity": "warning"}]
+
+
+class TestTheReadOnlyRoot:
+    """ext4 of the BPI-W3's kernel takes the root read-only after an error without the superblock's ro
+    in /proc/1/mountinfo (ADR-0476): the kernel's log of the boot, and after a new ext4 error a probe
+    that writes, tell it."""
+
+    async def test_the_w3s_triggered_error_is_a_failure_from_the_kernels_log(self, fake, alerts, clock):
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "20\n"
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "24\n"
+        fake.kernel_log += [*W3_TRIGGERED, W3_JOURNAL_ABORTED]
+        clock.value += 300
+        await system_disk.monitor_pass()
+
+        emmc = (await _health())["emmc"]
+        assert (emmc["read_only"], emmc["ext4_errors"]) == (True, 4)
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+        assert [alert.title for alert in alerts] == ["The system disk /dev/mmcblk0 is failing"]
+        assert "read-only" in alerts[0].message
+        # The log said it: nothing was written to find out.
+        assert fake.runs_of("sh") == []
+
+    async def test_an_aborted_journal_alone_makes_the_root_read_only(self, fake, clock):
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        fake.kernel_log.append(W3_JOURNAL_ABORTED)
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert (await _health())["emmc"]["read_only"] is True
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+
+    async def test_after_a_restart_of_the_supervisor_the_remount_of_the_boot_is_still_a_failure(self, fake, alerts):
+        # The error and the remount came before the supervisor started: no new ext4 error since then, but
+        # the log of the boot proves ext4's error.
+        fake.boot_log = [*W3_TRIGGERED]
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "24\n"
+        await system_disk.monitor_pass()
+        emmc = (await _health())["emmc"]
+        assert (emmc["read_only"], emmc["ext4_errors"]) == (True, 0)
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+        assert "read-only after an error in this boot" in alerts[0].message
+        assert fake.runs_of("sh") == []
+
+    async def test_an_error_of_this_boot_before_the_start_is_probed_once_when_the_log_is_silent(self, fake, clock):
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "24\n"
+        fake.files["/sys/fs/ext4/mmcblk0p1/last_error_time"] = "1795434560\n"  # after the boot's btime
+        fake.root_writable = False
+        await system_disk.monitor_pass()
+        assert (await _health())["emmc"]["read_only"] is True
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert len(fake.runs_of("sh")) == 1
+
+    async def test_an_error_of_an_earlier_boot_is_not_probed(self, fake):
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "24\n"
+        fake.files["/sys/fs/ext4/mmcblk0p1/last_error_time"] = "1795000000\n"  # before the boot's btime
+        fake.root_writable = False
+        await system_disk.monitor_pass()
+        assert fake.runs_of("sh") == []
+        assert (await _health())["emmc"]["read_only"] is False and _problems() == {}
+
+    async def test_a_line_that_journald_stores_after_a_probe_that_wrote_still_counts(self, fake, clock):
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert (await _health())["emmc"]["read_only"] is False
+        fake.kernel_log.append(W3_TRIGGERED[1])
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert (await _health())["emmc"]["read_only"] is True
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+        assert len(fake.runs_of("sh")) == 1
+
+    async def test_an_io_error_of_the_create_counts_too(self, fake, clock):
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        fake.root_writable, fake.refusal = False, "Input/output error"
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+
+    async def test_a_root_mounted_read_only_by_a_bind_is_not_probed(self, fake, alerts, clock):
+        # mount -o remount,ro,bind /: the mount is read-only, the superblock is not; a refused write would
+        # tell nothing of ext4.
+        await system_disk.monitor_pass()
+        fake.files["/proc/1/mountinfo"] = MOUNTINFO.replace("/ / rw,noatime", "/ / ro,noatime")
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        fake.root_writable = False
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert fake.runs_of("sh") == []
+        emmc = (await _health())["emmc"]
+        assert emmc["read_only"] is False and "mounted read-only" in emmc["check_error"]
+        assert _problems() == {"system_disk_errors:/dev/mmcblk0": ("system_disk_errors", "warning")}
+
+    async def test_the_lines_of_other_devices_do_not_count(self, fake, clock):
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        fake.kernel_log += [
+            "EXT4-fs (mmcblk1p1): Remounting filesystem read-only",
+            "EXT4-fs error (device mmcblk0p11) in ext4_reserve_inode_write:5718: Journal has aborted",
+            "EXT4-fs (sda1): Remounting filesystem read-only",
+        ]
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert (await _health())["emmc"]["read_only"] is False
+        assert _problems() == {"system_disk_errors:/dev/mmcblk0": ("system_disk_errors", "warning")}
+
+    async def test_without_the_log_a_probe_after_a_new_error_finds_the_root_read_only(self, fake, alerts, clock):
+        await system_disk.monitor_pass()
+        # The journal lost the lines, or never got them.
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        fake.root_writable = False
+        clock.value += 300
+        await system_disk.monitor_pass()
+
+        assert (await _health())["emmc"]["read_only"] is True
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+        [probe] = fake.runs_of("sh")
+        assert probe[:3] == ["timeout", "--kill-after=5", "20"]
+        # Read-only for good: neither probed nor looked for again.
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert len(fake.runs_of("sh")) == 1
+        assert (await _health())["emmc"]["read_only"] is True
+
+    async def test_a_root_that_takes_the_probe_is_probed_again_only_after_a_further_error(self, fake, alerts, clock):
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        clock.value += 300
+        await system_disk.monitor_pass()
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert len(fake.runs_of("sh")) == 1
+        assert (await _health())["emmc"]["read_only"] is False
+        assert _problems() == {"system_disk_errors:/dev/mmcblk0": ("system_disk_errors", "warning")}
+
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "2\n"
+        fake.root_writable = False
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert len(fake.runs_of("sh")) == 2
+        assert _problems() == {"system_disk_failed:/dev/mmcblk0": ("system_disk_failed", "error")}
+
+    async def test_no_error_no_probe(self, fake, clock):
+        fake.root_writable = False
+        for _ in range(3):
+            await system_disk.monitor_pass()
+            clock.value += 300
+        assert fake.runs_of("sh") == []
+        # The log of the boot is looked at once, at the first pass.
+        assert len([call for call in fake.runs_of("journalctl") if not any("--since" in a for a in call)]) == 1
+
+    @pytest.mark.parametrize("writable", ["elsewhere", "hang"])
+    async def test_a_probe_that_cannot_tell_is_no_verdict_and_says_why(self, fake, alerts, clock, writable):
+        await system_disk.monitor_pass()
+        fake.files["/sys/fs/ext4/mmcblk0p1/errors_count"] = "1\n"
+        fake.root_writable = writable
+        clock.value += 300
+        await system_disk.monitor_pass()
+        emmc = (await _health())["emmc"]
+        assert emmc["read_only"] is False
+        assert "probe" in emmc["check_error"]
+        assert _problems() == {"system_disk_errors:/dev/mmcblk0": ("system_disk_errors", "warning")}
+        # The card keeps saying it until the next probe, which waits for a further error.
+        clock.value += 300
+        await system_disk.monitor_pass()
+        assert "probe" in (await _health())["emmc"]["check_error"]
+        assert len(fake.runs_of("sh")) == 1
+
+    @pytest.mark.parametrize(("majmin", "hex_number"), [("179:1", "b301"), ("259:0", "10300"), ("179:256", "10b300")])
+    def test_the_device_number_is_as_stat_prints_it(self, majmin, hex_number):
+        assert system_disk._linux_dev_hex(majmin) == hex_number
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="GNU stat -c %D and Linux's st_dev encoding")
+    def test_the_probe_script_writes_and_removes_its_file_only_on_the_root(self, tmp_path):
+        device = format(os.stat(tmp_path).st_dev, "x")
+        run = REAL_SUBPROCESS_RUN
+        done = run(["sh", "-c", system_disk._PROBE_SCRIPT, "sh", str(tmp_path), device],
+                   capture_output=True, text=True, timeout=30)
+        assert (done.returncode, list(tmp_path.iterdir())) == (0, [])
+        elsewhere = run(["sh", "-c", system_disk._PROBE_SCRIPT, "sh", str(tmp_path), "ffff"],
+                        capture_output=True, text=True, timeout=30)
+        assert elsewhere.returncode == 3 and "not on the root filesystem" in elsewhere.stderr
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestTheErrors:
