@@ -149,19 +149,65 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 - A time of what the NAS runs by its clock is shown on it (`formatDateTime(v, $intlLocale, { zone:
   $nasTimeZone })`), the zone named once on the page.
 
-## Loading (ADR-0430)
+## Loading (ADR-0430, ADR-0469)
 
 - The boot screen of `src/app.html` covers the page until the root layout calls `finishBoot` of
   `$lib/boot.ts`: once the account is known (or the page needs none) and the page has drawn. The
   shell is drawn with the account's role; while the account is unknown the sidebar draws skeletons.
-- A page's first load shows a `Skeleton` of its final layout (`line`, `block`, `circle`, `row`,
-  `tile`, `card`, `table`) in place of everything that load brings, under `aria-busy="true"`, and
-  swaps it for the data at once: nothing drawn before is pushed down. No "Loading…" text. A part
+- A page with a load (below) shows its skeleton only as the tab's first page, and only when its
+  data take longer than 300 ms (`FIRST_LOAD_SKELETON_DELAY_MS`); a navigation keeps the open page
+  until the next one has its data, with a thin bar at the top after 200 ms (`.navigation-progress`
+  of `app.css`) and `<main aria-busy="true">`, and never draws a skeleton. A page not converted yet
+  reads in `onMount` and shows a `Skeleton` of its final layout (`line`, `block`, `circle`, `row`,
+  `tile`, `card`, `table`) in place of everything that load brings, under `aria-busy="true"`,
+  swapped for the data at once: nothing drawn before is pushed down. No "Loading…" text. A part
   that loads on its own later sits last or keeps its height. A refresh, or a reload after an
-  action, keeps what is shown (a `loaded` flag; the skeleton only before the first answer). What a
-  page needs at once is fetched in parallel. A skeleton has no text and no role, so that the specs'
-  roles and texts find only the page. `tests/loading.spec.ts` checks the main pages with the API
-  slowed: no "Loading", no empty frame, the navigation drawn once, a layout shift below 0.05.
+  action, keeps what is shown (a `loaded` flag). What a page needs at once is fetched in parallel. A
+  skeleton has no text and no role, so that the specs' roles and texts find only the page.
+  `tests/loading.spec.ts` checks the main pages with the API slowed: no "Loading", no empty frame,
+  the navigation drawn once, a layout shift below 0.05; `tests/page-loads.spec.ts` the navigations.
+
+### Page loads: the recipe for a page (Dashboard, Storage and Shares are done)
+
+1. **The reader**, `src/lib/pages/<page>.ts`: the page's API reads through `$lib/api`, as one
+   snapshot type that holds each read's value or its failure (`settle` of `$lib/pages/read`, the
+   server's message), never a throw; in the order and with the role checks the page had (an
+   administrator's API only for an administrator). Export a `PageReader`: `key` (the page, and
+   what it reads by its URL: `files:<folder>`), `areas` (the first part of every API path it reads,
+   `storage` of `/storage/pools`, and of what those answers show: Shares lists pools and users),
+   `adminOnly`, `cache: false` when the snapshot holds a secret (a new token, a TOTP secret,
+   recovery codes), and `read(account)`. A read that is slow and not the page's point is a
+   `later(request, fallback)` part, which the page shows waiting in its place (the dashboard's
+   containers, `ContainersWidget`'s `pending`).
+2. **The load**, `src/routes/<page>/+page.ts`:
+   `export const load: PageLoad = (event) => readPage(event, <page>Reader);` and nothing else
+   (`supervisor/tests/test_webui_page_loads.py`). It registers `depends('unos:account',
+   'unos:page:<key>')`, reads for the signed-in account, keeps the snapshot in the tab's cache
+   (`$lib/pages/cache`) and says whom it read for (`readFor`, which the root layout checks).
+3. **The page**: `let { data }: PageProps = $props();` and, after the state it fills, `followPage(()
+   => data, (snapshot) => apply(snapshot))` of `$lib/pages/follow.svelte`; `apply` sets the page's
+   state from a snapshot as its old `onMount` read did, and runs once at once (before the first
+   frame) and again for the fresh snapshot. Remove the `onMount` read; keep the skeleton for
+   `!loaded` (the tab's first page). A Refresh button calls `refreshPage(<key>)`; the page's own
+   reloads after its changes stay. State that a card of the page reads and changes (Shares'
+   interfaces) lives in the page, so that the card shows it again at once when it is drawn again.
+4. **Invalidations** need no code: every request but GET and HEAD (`apiFetch`) changes the area
+   of its path, and the cache forgets the entries of that area; a read of the area that started
+   before the change is old: not kept, read again for a navigation, and not shown as a fresh
+   snapshot (the page's own reload after its change shows it). A change sent outside `apiFetch`
+   calls `changed(<area>)` of `$lib/pages/cache`. A class like `StorageLists` whose own loads are
+   numbered drops a fresh snapshot after a load of its own started, and while a dialog is open.
+5. **Preloading**: links preload a page's data on tap (`app.html`, `preloadOf` of
+   `$lib/pages/preload` on the sidebar's links). A page joins `HOVER_PAGES` only when its load
+   reads no data disk and answers within a moment: its reader asks only the API modules of
+   `HOVER_SAFE_API` in `supervisor/tests/test_webui_page_loads.py` (the database: auth, groups,
+   audit, notifications, dashboard, theme), and a module joins that list only after its server code
+   was read for disk access (ADR-0378) and its time on the BPI-W3.
+6. **Tests**: the page's spec still passes (its fakes answer the load's reads, also on a hard
+   load), and gains one that a revisit appears at once from the cache (hold a read, see the page,
+   release it, see the fresh answer); the page joins the loop of `tests/page-loads.spec.ts` when
+   the sidebar links it; a page whose reads take longer than 300 ms on the stand-in keeps its row
+   of `PAGES` in `tests/loading.spec.ts`. `make check` and the specs of the page.
 
 ## Data
 

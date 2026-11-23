@@ -54,7 +54,13 @@ alone, then fades out and is removed (ADR-0430). Avoid: splash, loader, spinner.
 **Skeleton**: The grey shapes, without text, that stand where a page's cards, tables, lines and
 values will be until its first load has answered, in the page's final layout, so that the data
 take their places without moving the page (`Skeleton` of `webui/src/lib/components/ui`,
-ADR-0430). Avoid: placeholder, loading state, shimmer.
+ADR-0430). A page with a page load shows it only as the tab's first page, when its data take
+longer than a moment (ADR-0469). Avoid: placeholder, loading state, shimmer.
+
+**Page load**: What a page of the web UI reads before SvelteKit shows it, its `+page.ts` through a
+page reader of `webui/src/lib/pages`, so that a navigation keeps the open page until the next one
+has its data; the tab keeps each page's last data in memory and shows them at once on a revisit,
+while a fresh read replaces them (ADR-0469). Avoid: prefetch, fetch on mount.
 
 **Confirmation**: The dialog in which the web UI asks before an action that deletes, removes or
 cannot be undone: the question as its title, what will happen, Cancel and the action named by its

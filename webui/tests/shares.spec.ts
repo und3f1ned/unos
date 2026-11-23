@@ -2340,3 +2340,48 @@ test.describe('Deleting several shares (stand-in)', () => {
     expect((await request.get(SEED_URL, { headers })).status()).toBe(200);
   });
 });
+
+// webui.navigation-without-skeletons (ADR-0469): the page reads its lists, the interfaces of SMB
+// among them, in its load. The interfaces card shows them again at once after another tab, and a
+// revisit shows the last lists at once while the fresh read is on its way.
+test.describe('Shares from its load (fake data)', () => {
+  test('the interfaces show again at once after another tab, and a revisit shows the last shares at once', async ({
+    authenticatedPage: page,
+  }) => {
+    const fake = await fakeSmbApi(page, { shares: [fakeShare('e2e-docs')] });
+    const interfaceReads: string[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === '/api/v1/shares/smb-interfaces') interfaceReads.push(request.method());
+    });
+    await page.goto('/shares');
+    const card = page.getByTestId('smb-interfaces');
+    await expect(card.getByText('SMB listens on every network interface of the NAS.')).toBeVisible();
+    await page.getByRole('tab', { name: 'NFS' }).click();
+    await page.getByRole('tab', { name: 'SMB' }).click();
+    await expect(card.getByText('SMB listens on every network interface of the NAS.')).toBeVisible();
+    await expect(card.locator('[data-skeleton]')).toHaveCount(0);
+    expect(interfaceReads).toEqual(['GET']);
+
+    // To the dashboard and back: the shares at once, while their fresh read waits; it then shows the
+    // share made meanwhile.
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    fake.shares.push(fakeShare('e2e-fresh'));
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === '/api/v1/shares/smb',
+      async (route) => {
+        if (route.request().method() === 'GET') await held;
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    await page.locator('aside nav a[href="/shares"]').click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Shares' })).toBeVisible({ timeout: 1000 });
+    await expect(page.locator('main').getByText('e2e-docs').first()).toBeVisible();
+    await expect(page.locator('main').getByText('e2e-fresh')).toHaveCount(0);
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    release();
+    await expect(page.locator('main').getByText('e2e-fresh').first()).toBeVisible();
+  });
+});

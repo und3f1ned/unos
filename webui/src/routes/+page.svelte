@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { SlidersHorizontal } from 'lucide-svelte';
 	import { Alert, EmptyState, Skeleton } from '$lib/components/ui';
 	import {
@@ -12,12 +12,16 @@
 	import { dashboardIssues } from '$lib/components/dashboard/issues';
 	import ProblemsBanner from '$lib/components/ProblemsBanner.svelte';
 
-	import { getSystemInfo, type SystemInfo } from '$lib/api/system';
-	import { getPools, type Pool } from '$lib/api/storage';
-	import { getContainers, type Container } from '$lib/api/containers';
-	import { getLogs, type NotificationLog } from '$lib/api/notifications';
-	import { getDiskPredictions, replaceSoon, type DiskPrediction } from '$lib/api/health';
-	import { getDashboardLayout, saveDashboardLayout, resetDashboardLayout, type LayoutEntry } from '$lib/api/dashboard';
+	import type { SystemInfo } from '$lib/api/system';
+	import type { Pool } from '$lib/api/storage';
+	import type { Container } from '$lib/api/containers';
+	import type { NotificationLog } from '$lib/api/notifications';
+	import { replaceSoon, type DiskPrediction } from '$lib/api/health';
+	import { saveDashboardLayout, resetDashboardLayout, type LayoutEntry } from '$lib/api/dashboard';
+	import { dashboardReader, type DashboardSnapshot } from '$lib/pages/dashboard';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import type { Later } from '$lib/pages/read';
 	import {
 		defaultLayout,
 		isDefaultLayout,
@@ -31,15 +35,20 @@
 	import { user } from '$lib/stores/auth';
 	import { problems } from '$lib/stores/problems';
 	import { t } from '$lib/i18n';
-	import { messageOf } from '$lib/errors';
+	import type { PageProps } from './$types';
 
-	// The dashboard (ADR-0395): it reads its data on opening and on Refresh, and keeps the user's
-	// layout of the widgets, which the user arranges here.
+	let { data }: PageProps = $props();
+
+	// The dashboard (ADR-0395): its load reads its data ($lib/pages/dashboard), and Refresh reads
+	// them again; it keeps the user's layout of the widgets, which the user arranges here.
 
 	// The answers of the API, each only ever replaced whole.
 	let systemInfo = $state.raw<SystemInfo | null>(null);
 	let pools = $state.raw<Pool[]>([]);
 	let containers = $state.raw<Container[]>([]);
+	// The containers come after the rest (Docker answers last): until the first list, their card
+	// waits in its place.
+	let containersPending = $state(true);
 	let notificationLogs = $state.raw<NotificationLog[]>([]);
 	// The disks whose SMART trend says replace soon (ADR-0235).
 	let toReplace = $state.raw<DiskPrediction[]>([]);
@@ -48,8 +57,8 @@
 	// "No problems" about pools it does not know.
 	let poolsError = $state('');
 	let loading = $state(true);
-	// The first load has answered: until then the page is its skeleton, in the default layout of the
-	// widgets; a refresh keeps what is shown (ADR-0430).
+	// The load has answered: until then (the tab's first page, when it takes a while) the page is its
+	// skeleton, in the default layout of the widgets; a refresh keeps what is shown (ADR-0430).
 	let loaded = $state(false);
 
 	// Subscribe to WebSocket stats
@@ -68,10 +77,6 @@
 	let draggedId = $state<string | null>(null);
 	let overId = $state<string | null>(null);
 
-	onMount(async () => {
-		await loadData();
-	});
-
 	// The layout renders this page only after the user is known. Pools,
 	// containers and notifications are administrator-only APIs; regular
 	// accounts get the system overview and the live stats only.
@@ -87,67 +92,56 @@
 	// loaded. "No problems" also waits for the socket's list (the header reads problemsKnown).
 	const issueCount = $derived(isAdmin && loaded ? $problems.length + extraIssues.length : null);
 
-	// The predictions read the stored SMART history only: no disk is woken. A
-	// failure is shown, unlike those of the widgets, so that a disk to replace is
-	// not taken for one without a mark.
-	async function loadPredictions() {
-		if (!isAdmin) return;
-		try {
-			toReplace = replaceSoon((await getDiskPredictions()).predictions);
-			predictionsError = '';
-		} catch (e) {
-			toReplace = [];
-			predictionsError = e instanceof Error && e.message ? e.message : $t('dashboard.replace.loadFailed');
+	function applySnapshot(snapshot: DashboardSnapshot) {
+		const { pools: poolsRead, predictions } = snapshot;
+		poolsError = poolsRead.ok ? '' : poolsRead.error || $t('dashboard.issue.poolsFailed');
+		// A failure of the predictions is shown, unlike those of the widgets, so that a disk to
+		// replace is not taken for one without a mark.
+		toReplace = predictions.ok ? replaceSoon(predictions.value) : [];
+		predictionsError = predictions.ok ? '' : predictions.error || $t('dashboard.replace.loadFailed');
+		// A layout that cannot be read shows the default and cannot be changed, so that the stored one
+		// is not overwritten by a guess. One being arranged or saved stays as the user has it.
+		if (!arranging && !saving) {
+			layoutFailed = snapshot.layout === null;
+			layout = resolveLayout(snapshot.layout ?? [], snapshot.admin);
 		}
+		systemInfo = snapshot.info;
+		pools = poolsRead.ok && Array.isArray(poolsRead.value) ? poolsRead.value : [];
+		notificationLogs = Array.isArray(snapshot.logs) ? snapshot.logs : [];
+		takeContainers(snapshot.containers);
+		loading = false;
+		loaded = true;
 	}
 
-	async function loadData() {
-		loading = true;
-		try {
-			const [infoData, poolsData, containersData, logsData, , layoutData] = await Promise.all([
-				getSystemInfo().catch((e) => {
-					console.error('Failed to load system info:', e);
-					return null;
-				}),
-				isAdmin
-					? getPools().then(
-							(answer) => {
-								poolsError = '';
-								return answer;
-							},
-							(e) => {
-								poolsError = messageOf(e) || $t('dashboard.issue.poolsFailed');
-								return [];
-							}
-						)
-					: [],
-				isAdmin ? getContainers().catch(() => []) : [],
-				isAdmin ? getLogs().catch(() => []) : [],
-				loadPredictions(),
-				getDashboardLayout().catch((e) => {
-					console.error('Failed to load the dashboard layout:', e);
-					return null;
-				})
-			]);
-
-			// A layout that cannot be read shows the default and cannot be changed, so that the stored one
-			// is not overwritten by a guess.
-			layoutFailed = layoutData === null;
-			layout = resolveLayout(layoutData ?? [], isAdmin);
-			if (layoutFailed) arranging = false;
-
-			systemInfo = infoData;
-			pools = Array.isArray(poolsData) ? poolsData : [];
-			containers = Array.isArray(containersData) ? containersData : [];
-			notificationLogs = Array.isArray(logsData) ? logsData : [];
-		} finally {
-			loading = false;
-			loaded = true;
-		}
+	// The containers of the last snapshot: a newer one's list replaces the shown one when it comes.
+	let containersFrom: Later<Container[]> | null = null;
+	function takeContainers(part: Later<Container[]>) {
+		containersFrom = part;
+		const show = (list: Container[]) => {
+			containers = Array.isArray(list) ? list : [];
+			containersPending = false;
+		};
+		if (part.value !== undefined) show(part.value);
+		else
+			void part.promise.then((list) => {
+				if (containersFrom === part) show(list);
+			});
 	}
+
+	// What the page's load read: shown before the page is drawn, and replaced by a fresh read when
+	// the load gave the last visit's, or on Refresh.
+	followPage(
+		() => data,
+		(snapshot) => applySnapshot(snapshot)
+	);
 
 	async function handleRefresh() {
-		await loadData();
+		loading = true;
+		try {
+			await refreshPage(dashboardReader.key);
+		} finally {
+			loading = false;
+		}
 	}
 
 	// A stats card waits for the live stats as a skeleton of its tile, so that they arrive in its
@@ -280,8 +274,9 @@
 	/>
 
 	{#if !loaded}
-		<!-- The first load (ADR-0430): the widgets of the default layout as skeletons, in their places;
-         the page's data replaces them all at once. -->
+		<!-- The tab's first page, when its data take longer than a moment (ADR-0430): the widgets of the
+         default layout as skeletons, in their places; the page's data replaces them all at once. A
+         navigation keeps the page before until they are in. -->
 		<div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4" aria-busy="true">
 			{#each skeleton as size, index (index)}
 				{#if size === 'wide'}
@@ -368,6 +363,7 @@
 						{pools}
 						poolsFailed={poolsError !== ''}
 						{containers}
+						{containersPending}
 						{notificationLogs}
 						stats={currentStats}
 					/>

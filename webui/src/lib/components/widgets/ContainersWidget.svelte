@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Container, ExternalLink } from 'lucide-svelte';
-	import { Badge, Card, CardAction, EmptyState } from '$lib/components/ui';
+	import { Badge, Card, CardAction, EmptyState, Skeleton } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -13,9 +13,11 @@
 		}>;
 		compact?: boolean;
 		limit?: number;
+		/** The containers have not come yet (the dashboard shows without them): the card waits in place. */
+		pending?: boolean;
 	};
 
-	let { containers = [], compact = false, limit = 5 }: Props = $props();
+	let { containers = [], compact = false, limit = 5, pending = false }: Props = $props();
 
 	// Docker's states, as GET /containers reports them: keys of the catalog, by state.
 	const STATES: Record<string, string> = {
@@ -80,64 +82,85 @@
 			<CardAction href="/containers">{$t('dashboard.manage')}</CardAction>
 		</div>
 
-		<!-- The counts, which add up to the total: Other only when there is one. -->
-		<dl class="grid {other > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 mb-3">
-			<div class="px-3 py-2 rounded-lg bg-surface-muted">
-				<dt class="text-xs text-secondary">{$t('dashboard.containers.running')}</dt>
-				<dd class="text-xl font-semibold tabular">{running}</dd>
-			</div>
-			<div class="px-3 py-2 rounded-lg bg-surface-muted">
-				<dt class="text-xs text-secondary">{$t('dashboard.containers.stopped')}</dt>
-				<dd class="text-xl font-semibold tabular">{stopped}</dd>
-			</div>
-			{#if other > 0}
-				<div class="px-3 py-2 rounded-lg bg-surface-muted">
-					<dt class="text-xs text-secondary">{$t('dashboard.containers.other')}</dt>
-					<dd class="text-xl font-semibold tabular">{other}</dd>
+		{#if pending}
+			<!-- The containers come after the rest of the dashboard (Docker answers last): the counts' boxes
+			     and the rows of a full card wait in their places, so that what comes pushes nothing down. -->
+			<div aria-busy="true" data-containers-pending>
+				<div class="grid grid-cols-2 gap-2 mb-3">
+					{#each [0, 1] as box (box)}
+						<div class="px-3 py-2 rounded-lg bg-surface-muted">
+							<Skeleton size="xs" class="w-16" />
+							<Skeleton size="xl" class="w-8" />
+						</div>
+					{/each}
 				</div>
-			{/if}
-		</dl>
-
-		{#if containers.length === 0}
-			<EmptyState compact icon={Container} title={$t('dashboard.containers.none')} />
-		{:else}
-			<!-- A row per container: its name and image, then its state as a badge with a dot. No
-			     state icon: the play and stop icons are the Containers page's buttons. -->
-			<div class="flex flex-col">
-				{#each displayContainers as container}
-					{@const webUrl = getWebUrl(container)}
-					<!-- A row, not a link: the card's one link is Manage, to the Containers page (ADR-0431). -->
-					<div class="flex items-center justify-between gap-3 py-2 border-b border-border-muted last:border-b-0">
-						<div class="min-w-0">
-							<p class="font-medium text-sm truncate" title={container.name}>{container.name}</p>
-							<p class="text-xs text-muted truncate" title={container.image}>{container.image.split(':')[0]}</p>
-						</div>
-						<div class="flex items-center gap-2 shrink-0">
-							{#if webUrl}
-								<a
-									href={webUrl}
-									target="_blank"
-									rel="noopener"
-									onclick={(event) => event.stopPropagation()}
-									class="p-1 rounded hover:bg-surface-hover text-content-link"
-									title={$t('dashboard.containers.open')}
-									aria-label={$t('dashboard.containers.open')}
-								>
-									<ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />
-								</a>
-							{/if}
-							<Badge variant={getStatusDotVariant(container.state)} dot>
-								{stateLabel(container.state)}
-							</Badge>
-						</div>
+				{#each Array.from({ length: limit }, (_, i) => i) as row (row)}
+					<div class="py-2">
+						<Skeleton size="sm" class="w-32" />
+						<Skeleton size="xs" class="w-20" />
 					</div>
 				{/each}
-				{#if containers.length > limit}
-					<p class="text-xs text-content-muted text-center pt-2.5">
-						{$t('dashboard.containers.shown', { shown: limit, n: containers.length })}
-					</p>
-				{/if}
 			</div>
+		{:else}
+			<!-- The counts, which add up to the total: Other only when there is one. -->
+			<dl class="grid {other > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 mb-3">
+				<div class="px-3 py-2 rounded-lg bg-surface-muted">
+					<dt class="text-xs text-secondary">{$t('dashboard.containers.running')}</dt>
+					<dd class="text-xl font-semibold tabular">{running}</dd>
+				</div>
+				<div class="px-3 py-2 rounded-lg bg-surface-muted">
+					<dt class="text-xs text-secondary">{$t('dashboard.containers.stopped')}</dt>
+					<dd class="text-xl font-semibold tabular">{stopped}</dd>
+				</div>
+				{#if other > 0}
+					<div class="px-3 py-2 rounded-lg bg-surface-muted">
+						<dt class="text-xs text-secondary">{$t('dashboard.containers.other')}</dt>
+						<dd class="text-xl font-semibold tabular">{other}</dd>
+					</div>
+				{/if}
+			</dl>
+
+			{#if containers.length === 0}
+				<EmptyState compact icon={Container} title={$t('dashboard.containers.none')} />
+			{:else}
+				<!-- A row per container: its name and image, then its state as a badge with a dot. No
+			     state icon: the play and stop icons are the Containers page's buttons. -->
+				<div class="flex flex-col">
+					{#each displayContainers as container}
+						{@const webUrl = getWebUrl(container)}
+						<!-- A row, not a link: the card's one link is Manage, to the Containers page (ADR-0431). -->
+						<div class="flex items-center justify-between gap-3 py-2 border-b border-border-muted last:border-b-0">
+							<div class="min-w-0">
+								<p class="font-medium text-sm truncate" title={container.name}>{container.name}</p>
+								<p class="text-xs text-muted truncate" title={container.image}>{container.image.split(':')[0]}</p>
+							</div>
+							<div class="flex items-center gap-2 shrink-0">
+								{#if webUrl}
+									<a
+										href={webUrl}
+										target="_blank"
+										rel="noopener"
+										onclick={(event) => event.stopPropagation()}
+										class="p-1 rounded hover:bg-surface-hover text-content-link"
+										title={$t('dashboard.containers.open')}
+										aria-label={$t('dashboard.containers.open')}
+									>
+										<ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />
+									</a>
+								{/if}
+								<Badge variant={getStatusDotVariant(container.state)} dot>
+									{stateLabel(container.state)}
+								</Badge>
+							</div>
+						</div>
+					{/each}
+					{#if containers.length > limit}
+						<p class="text-xs text-content-muted text-center pt-2.5">
+							{$t('dashboard.containers.shown', { shown: limit, n: containers.length })}
+						</p>
+					{/if}
+				</div>
+			{/if}
 		{/if}
 	</Card>
 {/if}

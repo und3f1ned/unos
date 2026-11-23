@@ -30,6 +30,10 @@
 	import { PoolVolumes } from '$lib/components/storage/volumes.svelte';
 	import type { PoolAction, PoolHandlers } from '$lib/components/storage/pools';
 	import { usableForPool } from '$lib/components/storage/pools';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	const lists = new StorageLists(() => dialogOpen);
 	const jobs = lists.jobs;
@@ -62,10 +66,14 @@
 			removeDiskPool !== null
 	);
 
-	onMount(async () => {
-		await lists.loadData();
-		lists.reloadForDevices();
-	});
+	// The lists come from the page's load ($lib/pages/storage): shown before the page is drawn, and
+	// replaced by a fresh read when the load gave the last visit's.
+	followPage(
+		() => data,
+		(snapshot) => lists.apply(snapshot)
+	);
+
+	onMount(() => lists.reloadForDevices());
 
 	// A disk attached or removed while the page is open (ADR-0360): each message of the stats
 	// stream, and nothing else; what the reload reads is its own business.
@@ -261,7 +269,8 @@
 	{/if}
 
 	{#if lists.loading}
-		<!-- The first load (ADR-0430): the pools and the disks' table, swapped for them at once. -->
+		<!-- The tab's first page, when its data take longer than a moment: the pools and the disks'
+		     table, swapped for them at once. A navigation keeps the page before until they are in. -->
 		<div class="space-y-6" aria-busy="true">
 			<Skeleton shape="card" count={2} />
 			<Skeleton shape="table" columns={7} count={3} />

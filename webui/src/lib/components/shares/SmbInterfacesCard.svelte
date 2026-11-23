@@ -2,18 +2,28 @@
 	// The network interfaces that SMB listens on (ADR-0391): every one by default, or the chosen
 	// ones and the loopback. A change, and Restart SMB, restart smbd, which closes every open SMB
 	// connection: both dialogs say so first. The server compares smbd's listeners with the choice;
-	// its problems are shown as they come.
-	import { onMount } from 'svelte';
+	// its problems are shown as they come. The page holds what was read (its load reads it with the
+	// rest, $lib/pages/shares), so that the card shows it again at once when the SMB tab comes back;
+	// the card's own reads and changes give the page the answer.
 	import { Network, RotateCw } from 'lucide-svelte';
 	import { getSmbInterfaces, type SmbInterfaces } from '$lib/api/shares';
 	import { Alert, Button, Card, ErrorState, Skeleton, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
-	import { messageOf } from './errors';
+	import { settle, type Settled } from '$lib/pages/read';
 	import SmbInterfacesDialog from './SmbInterfacesDialog.svelte';
 	import SmbRestartDialog from './SmbRestartDialog.svelte';
 
-	let current = $state<SmbInterfaces | null>(null);
-	let loadError = $state('');
+	type Props = {
+		/** The interfaces as last read, or why they could not be; null until the page has read them. */
+		interfaces: Settled<SmbInterfaces> | null;
+		/** A read, a change or a restart answered. */
+		onchange: (interfaces: Settled<SmbInterfaces>) => void;
+	};
+
+	let { interfaces, onchange }: Props = $props();
+
+	const current = $derived(interfaces?.ok ? interfaces.value : null);
+	const loadError = $derived(interfaces && !interfaces.ok ? interfaces.error : '');
 	let retrying = $state(false);
 	let warnings: string[] = $state([]);
 
@@ -21,8 +31,6 @@
 	let editing = $state(false);
 	let choiceDialog: ReturnType<typeof SmbInterfacesDialog> | undefined = $state();
 	let restartDialog: ReturnType<typeof SmbRestartDialog> | undefined;
-
-	onMount(load);
 
 	async function retry() {
 		retrying = true;
@@ -34,12 +42,7 @@
 	}
 
 	async function load() {
-		try {
-			current = await getSmbInterfaces();
-			loadError = '';
-		} catch (e) {
-			loadError = messageOf(e);
-		}
+		onchange(await settle(getSmbInterfaces()));
 	}
 
 	/** An address of smbd's listeners, with the wildcards as words. */
@@ -62,7 +65,7 @@
 	}
 
 	function saved(answer: SmbInterfaces) {
-		current = answer;
+		onchange({ ok: true, value: answer });
 		editing = false;
 		toast.success(
 			answer.chosen.length > 0
@@ -73,7 +76,7 @@
 	}
 
 	function restarted(answer: SmbInterfaces) {
-		current = answer;
+		onchange({ ok: true, value: answer });
 		toast.success($t('shares.interfaces.restarted'));
 		warnings = [];
 	}

@@ -2845,3 +2845,30 @@ test.describe('The Storage page in Russian', () => {
     expect(volumeWrites).toEqual([]);
   });
 });
+
+// webui.navigation-without-skeletons (ADR-0469): the page reads its lists in its load. A visit after
+// another page shows the lists it read last at once, and the fresh read replaces them.
+test.describe('Storage from its load (fake data)', () => {
+  test('a revisit shows the last lists at once, and the fresh read replaces them', async ({ authenticatedPage: page }) => {
+    const added = { ...FAKE_DISKS[2], name: 'e2e-new1', path: '/dev/e2e-new1', serial: 'E2ENEW1', wwn: '0x5000e2e0000000a1' };
+    let disks: ReturnType<NonNullable<FakeStorageOptions['disks']>> = FAKE_DISKS;
+    let held: Promise<void> | undefined;
+    let release = () => {};
+    await fakeStorageApi(page, { disks: () => disks, holdReads: () => held });
+    await page.goto('/storage');
+    await expect(page.locator('main').getByText('/dev/e2e-hd2').first()).toBeVisible();
+    await page.locator('aside nav a[href="/"]').click();
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+
+    // A disk is attached meanwhile; the next reads wait.
+    disks = [...FAKE_DISKS, added];
+    held = new Promise<void>((resolve) => (release = resolve));
+    await page.locator('aside nav a[href="/storage"]').click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Storage' })).toBeVisible({ timeout: 1000 });
+    await expect(page.locator('main').getByText('/dev/e2e-hd2').first()).toBeVisible();
+    await expect(page.locator('main').getByText('/dev/e2e-new1')).toHaveCount(0);
+    await expect(page.locator('main [data-skeleton]')).toHaveCount(0);
+    release();
+    await expect(page.locator('main').getByText('/dev/e2e-new1').first()).toBeVisible();
+  });
+});

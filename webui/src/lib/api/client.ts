@@ -229,6 +229,20 @@ export function handleSetupRequired(): void {
 	setupRequiredHandler?.();
 }
 
+// The methods that change nothing on the server.
+const READ_METHODS = ['GET', 'HEAD'];
+const changeListeners = new Set<(path: string) => void>();
+
+/**
+ * Call `listener` with the path of every request of this tab that may have changed something on the
+ * server (any method but GET and HEAD), once it has been answered or has failed: the pages' cache
+ * forgets what the change made old ($lib/pages/cache). Returns a function that stops listening.
+ */
+export function onApiChange(listener: (path: string) => void): () => void {
+	changeListeners.add(listener);
+	return () => changeListeners.delete(listener);
+}
+
 // These endpoints answer 401 for wrong credentials, not for an expired session.
 const CREDENTIAL_ENDPOINTS = ['/auth/login'];
 
@@ -266,7 +280,14 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 	// Origin, which the server requires with the cookie; the page adds the session key (ADR-0397).
 	const headers = new Headers(init.headers);
 	if (sessionKey) headers.set(SESSION_KEY_HEADER, sessionKey);
-	const response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'same-origin' });
+	const reads = READ_METHODS.includes((init.method ?? 'GET').toUpperCase());
+	let response: Response;
+	try {
+		response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'same-origin' });
+	} finally {
+		// Whatever the answer, even none: the server may have made the change.
+		if (!reads) for (const listener of changeListeners) listener(path);
+	}
 
 	if (!response.ok) {
 		const payload = await response.json().catch(() => null);
