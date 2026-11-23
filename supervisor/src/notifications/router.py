@@ -88,13 +88,13 @@ _SHORTEST_SECRET = 8
 # (webui/tests/notifications-fakes.ts answers with the same texts, from a host named nas).
 TEST_TITLE = "Test Notification"
 TEST_MESSAGE = "This is a test notification from UNOS on {host}."
-# The test notification before UNOS read the host's name (ADR-0476).
+# The test notification before UNOS read the host's name (ADR-0482).
 TEST_MESSAGE_WITHOUT_HOST = "This is a test notification from UNOS."
 SEND_FAILED = "Failed to send notification: {error}"
 NOT_FOUND = "Config not found: {id}"
 SAVE_FAILED = "Could not save the notification channels: {error}"
 
-# Every message names the NAS that sends it by the host's name (ADR-0476): what `hostname` prints on
+# Every message names the NAS that sends it by the host's name (ADR-0482): what `hostname` prints on
 # the host, through src/host.py as GET /system/info reads it, never the container's name. It is read
 # when a message is built, so that a new name shows in the next one; the messages built within
 # HOST_NAME_REUSE seconds of a read's start (a test's text and its footer, the channels of an alert)
@@ -698,7 +698,7 @@ async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple
                 host=name or "UNOS",
             )
         else:
-            # Default JSON body; host is null before UNOS read the host's name (ADR-0476).
+            # Default JSON body; host is null before UNOS read the host's name (ADR-0482).
             body = json.dumps({
                 "title": event.title,
                 "message": event.message,
@@ -917,7 +917,7 @@ async def test_notification(config_id: ConfigId, _: dict = Depends(verify_token)
     """Send a test notification through one channel, enabled or not, and wait for the channel's
     answer; the notification history records it, sent or not. Its text names the host.
     \f
-    ADR-0476.
+    ADR-0482.
     """
     config = next((c for c in load_configs() if c.id == config_id), None)
     if not config:

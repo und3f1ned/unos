@@ -34,7 +34,7 @@ export interface WebhookConfig {
 
 export interface DiscordConfig {
 	webhook_url: string;
-	/** Null: UNOS and the host's name (ADR-0476). */
+	/** Null: UNOS and the host's name (ADR-0482). */
 	username?: string | null;
 	avatar_url?: string | null;
 }
@@ -42,7 +42,7 @@ export interface DiscordConfig {
 export interface SlackConfig {
 	webhook_url: string;
 	channel?: string | null;
-	/** Null: UNOS and the host's name (ADR-0476). */
+	/** Null: UNOS and the host's name (ADR-0482). */
 	username?: string | null;
 	icon_emoji?: string;
 }

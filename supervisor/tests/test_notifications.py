@@ -48,7 +48,7 @@ notifications = importlib.import_module("src.notifications.router")
 health_router = importlib.import_module("src.health.router")
 
 REPO = Path(__file__).resolve().parents[2]
-# The read of the host's name that the messages give (ADR-0476), which conftest replaces by a host
+# The read of the host's name that the messages give (ADR-0482), which conftest replaces by a host
 # named nas-test.
 READ_HOST_NAME = notifications._read_host_name
 API = "/api/v1/notifications"
@@ -977,7 +977,7 @@ def _webhook_bodies(monkeypatch) -> list[dict]:
 class TestTheHostsName:
     """system.notifications-host-name: every message names the NAS by the host's name, read through
     src/host.py when the message is built; after a read that fails, by the last name read, and by
-    UNOS alone before any (ADR-0476)."""
+    UNOS alone before any (ADR-0482)."""
 
     @pytest.fixture
     def host(self, monkeypatch):

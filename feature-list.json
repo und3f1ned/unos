@@ -5740,7 +5740,7 @@
         "supervisor/tests/test_notifications.py"
       ],
       "adr": [
-        "ADR-0476",
+        "ADR-0482",
         "ADR-0475",
         "ADR-0331"
       ],

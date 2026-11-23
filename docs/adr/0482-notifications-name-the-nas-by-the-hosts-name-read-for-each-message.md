@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0476: Notifications name the NAS by the host's name, read for each message, with the last name read as a fallback
+# ADR-0482: Notifications name the NAS by the host's name, read for each message, with the last name read as a fallback
 
 ## Context
 

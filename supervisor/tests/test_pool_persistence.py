@@ -285,7 +285,7 @@ class FakeHost:
         self.network = None
         # The requests that curl was given, in order.
         self.http_requests: list[SimpleNamespace] = []
-        # The host's name, as `hostname` prints it (the notifications name the host by it, ADR-0476).
+        # The host's name, as `hostname` prints it (the notifications name the host by it, ADR-0482).
         self.hostname = "nas-fake"
         self.docker = FakeDocker()
         # Whether a directory of the host is the root of a btrfs subvolume (stat prints its inode

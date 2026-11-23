@@ -40,7 +40,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   has a new field `host` and its body template a new placeholder `{host}`; the test notification
   says "from UNOS on nas-w3". The name is read from the host when a notification is sent; when
   that read fails or takes over 6 s, as on a failing system disk, the name read last, and `UNOS`
-  alone before any (ADR-0476).
+  alone before any (ADR-0482).
 - System → Disk Health shows a **System disk** card for a system disk that is an eMMC (the BPI-W3,
   the BPI-F3): its life-time estimates A and B and its pre-EOL state from `mmc extcsd read`, read
   at the start and once a day (as of boot without mmc-utils), the kernel's I/O errors of the eMMC
