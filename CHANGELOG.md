@@ -12,6 +12,18 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- **The first pool takes Docker's data**: when an administrator makes the host's first managed pool
+  and Docker's data root or containerd's root is on the system disk, UNOS moves both into the
+  pool's subvolumes `.docker` and `.containerd` in the transient unit `unos-docker-move` of the host:
+  it stops UNOS and the apps, copies with `rsync -aHAX --numeric-ids`, sets daemon.json's
+  `data-root` and containerd's `root`, adds drop-ins that keep Docker and containerd down while the
+  pool is missing, starts Docker and the containers that ran, and deletes the old copies once Docker
+  answers from the pool. A failed step puts the old configuration back and starts Docker from the
+  system disk as before. The outcome is alerted, naming the failed step, and audited (**Docker's
+  data moved**); the create dialog says it first and a toast that the move started. **System →
+  General** shows the pool that holds Docker's data, and Unmount and Remove pool answer 409 naming
+  Docker for it. Hosts already on a pool, such as the BPI-W3 and the BPI-F3, are left alone
+  (ADR-0486, ADR-0487).
 - **System → SD Standby**: on a BPI-W3 whose system is on its eMMC, a free SD card becomes a standby
   of the system after its model is typed: its own loader from Armbian's package, a FAT partition
   with the chooser `boot.scr` and a btrfs partition with generations of the system's copy (the

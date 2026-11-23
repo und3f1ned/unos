@@ -69,6 +69,8 @@ DATA_PATHS = {
     "src.updates.updater.UPDATE_STATE_FILE": "update_state.json",
     "src.updates.updater.UPDATE_HISTORY_FILE": "update_history.json",
     "src.updates.updater.UPDATE_CONFIG_FILE": "update_config.json",
+    # The move of Docker's data while it runs (ADR-0487).
+    "src.system.docker_data.STATE_FILE": "docker_move.json",
 }
 
 # The settings of the host paths, and of the container's paths outside its data directory, and their

@@ -1565,6 +1565,7 @@ def unmount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
         mounts = disks.host_mounts()
         if not _pool_filesystems(name, mounts):
             raise PoolNotFoundError(f"Pool '{name}' not found")
+        _refuse_dockers_pool(name)
         mounted = any(m.target == target for m in mounts)
         _unmount_pool_target(name, target, mounts)
         forgotten = _forget_fstab_entry(name)
@@ -1572,12 +1573,31 @@ def unmount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
         return get_pool(name), mounted or forgotten
 
 
+def _refuse_dockers_pool(name: str) -> None:
+    """PoolBusyError while Docker's configuration keeps its data on the pool, also while Docker is
+    down, or a move of it there runs (ADR-0487): its drop-ins need the pool mounted at every start, so
+    neither an unmount nor a removal of its fstab entry may happen. RuntimeError (HTTP 500) when that
+    configuration cannot be read: nothing is changed then."""
+    from ..system import docker_data
+
+    try:
+        holder = docker_data.pool_user(name)
+    except docker_data.DockerDataError as exc:
+        raise RuntimeError(f"Whether Docker keeps its data on the pool {name} cannot be told: {exc}") from exc
+    if holder:
+        raise PoolBusyError(
+            f"Pool '{name}' holds {holder}: Docker, and with it UNOS and the apps, runs from it, so it stays "
+            "mounted and managed."
+        )
+
+
 def delete_pool(name: str) -> bool:
     """Forget a pool: unmount it, drop its fstab entry and its empty mountpoint.
 
     The disks are not touched. The filesystem keeps its label and is listed
     again as an unmounted pool that can be mounted later. PoolBusyError
-    (HTTP 409) while host processes or containers use the pool, and
+    (HTTP 409) while Docker keeps its data on the pool (ADR-0487) or host
+    processes or containers use it, and
     DockerUnavailableError (HTTP 503) when it is mounted and Docker cannot be
     asked about the containers: nothing is changed then. Returns whether it
     changed anything: False when the pool was neither mounted nor in the
@@ -1589,6 +1609,7 @@ def delete_pool(name: str) -> bool:
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
     with _lock:
+        _refuse_dockers_pool(name)
         mounts = disks.host_mounts()
         mounted = any(m.target == target for m in mounts)
         unmounted = forgotten = False

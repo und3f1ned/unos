@@ -2368,12 +2368,23 @@ def _find_upload_leftovers(
     return found, problems
 
 
+def _containerd_root() -> str | None:
+    """containerd's root as its config.toml names it, or None when that cannot be read. With Docker's
+    containerd image store it holds Docker's image layers, on a pool beside the data root (ADR-0487)."""
+    from ..system import docker_data
+
+    try:
+        return docker_data.configured_containerd_root()
+    except docker_data.DockerDataError:
+        return None
+
+
 def _find_upload_leftovers_outside_docker(now: datetime) -> tuple[list[_FoundLeftover], list[str]]:
-    """_find_upload_leftovers without Docker's data root (ADR-0421)."""
-    root = _docker_data_root()
-    if root is None:
+    """_find_upload_leftovers without Docker's data root (ADR-0421) and containerd's root (ADR-0487)."""
+    roots = frozenset(os.path.normpath(root) for root in (_docker_data_root(), _containerd_root()) if root is not None)
+    if not roots:
         return _find_upload_leftovers(now)
-    return _find_upload_leftovers(now, frozenset({os.path.normpath(root)}))
+    return _find_upload_leftovers(now, roots)
 
 
 async def _run_upload_leftover_check() -> None:

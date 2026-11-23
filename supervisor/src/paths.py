@@ -78,3 +78,5 @@ SCHEDULED_BACKUP_KEYS = DATA_DIR / "scheduled_backup_keys.json"
 UPDATE_STATE = DATA_DIR / "update_state.json"
 UPDATE_HISTORY = DATA_DIR / "update_history.json"
 UPDATE_CONFIG = DATA_DIR / "update_config.json"
+# The move of Docker's data onto a pool while it runs (src/system/docker_data.py, ADR-0487).
+DOCKER_MOVE = DATA_DIR / "docker_move.json"

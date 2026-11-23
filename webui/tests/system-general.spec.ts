@@ -43,6 +43,62 @@ async function fakeHostApi(page: Page, options: HostOptions = {}): Promise<Sent[
   return sent;
 }
 
+// Where Docker keeps its data (system.docker-root-on-pool, ADR-0487): the stand-in runs no Docker, so
+// GET /system/docker-data is answered by a fake with what the supervisor answers.
+async function fakeDockerData(page: Page, status: number, body: unknown) {
+  await page.route('**/api/v1/system/docker-data', (route) =>
+    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }),
+  );
+}
+
+test.describe("System > General: where Docker keeps its data", () => {
+  test("System information shows the pool that holds Docker's data", async ({ authenticatedPage: page }) => {
+    await fakeHostApi(page);
+    await fakeDockerData(page, 200, {
+      data_root: '/mnt/pools/data/.docker', containerd_root: '/mnt/pools/data/.containerd', pool: 'data',
+      moving_to: null,
+    });
+    await page.goto('/system');
+
+    const fact = page.getByTestId('docker-data');
+    await expect(fact.locator('.kv-label')).toHaveText("Docker's data");
+    await expect(fact.locator('.kv-value')).toHaveText('Pool data');
+    await expect(fact).toContainText('/mnt/pools/data/.docker');
+  });
+
+  test('Docker on the system disk is not on a pool, and a move says where it goes', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeHostApi(page);
+    let moving: string | null = null;
+    await page.route('**/api/v1/system/docker-data', (route) =>
+      route.fulfill({
+        json: { data_root: '/var/lib/docker', containerd_root: '/var/lib/containerd', pool: null, moving_to: moving },
+      }),
+    );
+    await page.goto('/system');
+    const fact = page.getByTestId('docker-data');
+    await expect(fact.locator('.kv-value')).toHaveText('Not on a pool');
+    await expect(fact).toContainText('/var/lib/docker');
+
+    moving = 'data';
+    await page.reload();
+    await expect(fact.locator('.kv-value')).toHaveText('Moving to pool data');
+  });
+
+  test('a Docker that does not answer leaves the fact unknown, with why', async ({ authenticatedPage: page }) => {
+    await fakeHostApi(page);
+    await fakeDockerData(page, 503, { detail: 'Docker is not available: connection refused' });
+    await page.goto('/system');
+
+    const fact = page.getByTestId('docker-data');
+    await expect(fact.locator('.kv-value')).toHaveText('Unknown');
+    await expect(fact).toContainText('Docker is not available: connection refused');
+    // The other facts are shown as before.
+    await expect(page.getByText('Kernel', { exact: true })).toBeVisible();
+  });
+});
+
 test.describe('System > General: the name and time zone of the NAS', () => {
   test('the hostname is set on the host', async ({ authenticatedPage: page }) => {
     const sent = await fakeHostApi(page);

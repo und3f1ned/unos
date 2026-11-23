@@ -176,6 +176,25 @@ def _no_web_ui_to_ask(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_docker_data_moved_yet(monkeypatch, tmp_path_factory):
+    """The move of Docker's data (ADR-0487): no move runs when a test starts, its record is in a folder
+    of the test, and Docker is never asked where it keeps its data: it keeps it on a pool of its own,
+    in Docker's classic store, so that a test that makes the first pool moves nothing. A test of the
+    move gives docker_data._docker_info its own answer."""
+    docker_data = sys.modules.get("src.system.docker_data")
+    if docker_data is not None:
+        monkeypatch.setattr(docker_data, "_state", docker_data._State())
+        monkeypatch.setattr(docker_data, "STATE_FILE", tmp_path_factory.mktemp("docker-move") / "docker_move.json")
+
+        def on_a_pool():
+            from src.config import get_settings
+
+            return {"DockerRootDir": f"{get_settings().pools_base_path}/unos-tests/.docker", "DriverStatus": []}
+
+        monkeypatch.setattr(docker_data, "_docker_info", on_a_pool)
+
+
+@pytest.fixture(autouse=True)
 def _no_app_names_volume(monkeypatch, tmp_path_factory):
     """The volume of the app names (ADR-0420) is a folder of each test that does not exist yet, never
     /app-names of this machine: a test that gives apps names makes it."""

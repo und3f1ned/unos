@@ -533,6 +533,28 @@ opened.
 UNOS mounts the new pool at `/mnt/pools/<name>` and adds it to the host's
 `/etc/fstab`, so it is mounted again after a reboot.
 
+#### The first pool takes Docker's data
+
+UNOS keeps Docker's data on a pool, never on the system disk (ADR-0486): the
+images, containers and volumes of UNOS and its apps, in Docker's data root
+and, with Docker's containerd image store, containerd's root. On a host
+without a managed pool, the **Create a pool** dialog says so, and once the
+first pool is made UNOS moves both into its hidden subvolumes `.docker` and
+`.containerd` (ADR-0487). A toast says that the move started: UNOS and every
+container stop for a few minutes, Docker's data is copied onto the pool,
+Docker starts from it with the containers that ran, and the copies on the
+system disk are deleted. Open the page again when UNOS is back. Every
+notification channel gets the outcome, and the audit log records it
+(**Docker's data moved**). When a step fails, UNOS puts Docker's old
+configuration back, starts Docker and the containers from the system disk as
+before, and the alert names the step that failed; UNOS does not try again
+(see `docs/INSTALL.md` for the move by hand). A pool made later, or one that
+is imported or mounted, takes nothing. **System** → **General** shows where
+Docker's data is.
+
+From then on Docker, and with it UNOS, starts only while that pool is
+mounted, and **Unmount…** and **Remove pool…** refuse for it, naming Docker.
+
 ### Importing an Existing Pool
 
 Disks that already hold a btrfs filesystem, from an earlier UNOS installation or
@@ -760,6 +782,8 @@ pool, you can:
   the pool, removes it from `/etc/fstab` and deletes its empty mountpoint. The disks are not wiped: the
   data stays on them, and the pool is listed again as **Not mounted**, ready
   to be mounted later. Like Unmount, it is refused while the pool is in use,
+  and for the pool that holds Docker's data (see
+  [The first pool takes Docker's data](#the-first-pool-takes-dockers-data)),
   and the dialog says why. As after an unmount, its SMB shares are no longer
   served; NFS exports of the pool are not checked: remove them first.
 
@@ -2817,7 +2841,12 @@ fact has one place: the dashboard summarizes some of them and links there.
 
 ### General
 
-- Shows the operating system, the kernel, the architecture and the uptime
+- Shows the operating system, the kernel, the architecture and the uptime,
+  and **Docker's data**: the pool that holds Docker's data root and
+  containerd's root, with the data root's path; **Not on a pool** while
+  either is elsewhere, as on the system disk; **Moving to pool …** while
+  the move of the first pool runs (see
+  [The first pool takes Docker's data](#the-first-pool-takes-dockers-data))
 - **Name and time zone**: the host's name and time zone, set on the host.
   **Save hostname** sets the name (letters, digits and hyphens, at most 63);
   **Save time zone** sets one of the zones the host lists, and scheduled tasks

@@ -304,6 +304,13 @@ export const en = {
 	'storage.create.reloaded':
 		'The disk list has been reloaded and the selection cleared. Check the disks and select them again.',
 	'storage.create.submit': 'Erase disks and create pool',
+	// The first pool takes Docker's data (ADR-0487).
+	'storage.create.dockerTitle': "Docker's data moves to this pool",
+	'storage.create.docker':
+		"This is the first pool: once it is made, UNOS stops itself and the apps for a few minutes, moves Docker's data onto it and starts them again.",
+	'storage.create.dockerMoves':
+		"Docker's data moves to the pool {pool}. UNOS and the apps stop for a few minutes; open this page again when they are back.",
+	'storage.create.dockerStays': "Docker's data stays on the system disk",
 
 	// The RAID levels of a new pool, and what each of them does.
 	'storage.raid.single': 'Single (No RAID) — 1+ disk',
@@ -705,6 +712,12 @@ export const ru: Translation<typeof en> = {
 	'storage.create.cleared': 'Выбор сброшен. Закройте это окно и откройте его снова, чтобы заново загрузить диски.',
 	'storage.create.reloaded': 'Список дисков загружен заново, а выбор сброшен. Проверьте диски и выберите их снова.',
 	'storage.create.submit': 'Стереть диски и создать пул',
+	'storage.create.dockerTitle': 'Данные Docker переедут на этот пул',
+	'storage.create.docker':
+		'Это первый пул: после его создания UNOS на несколько минут остановит себя и приложения, перенесёт на него данные Docker и запустит их снова.',
+	'storage.create.dockerMoves':
+		'Данные Docker переносятся на пул {pool}. UNOS и приложения остановятся на несколько минут; откройте эту страницу снова, когда они вернутся.',
+	'storage.create.dockerStays': 'Данные Docker остаются на системном диске',
 
 	'storage.raid.single': 'Single (без RAID) — от 1 диска',
 	'storage.raid.raid0': 'RAID 0 (чередование) — от 2 дисков',

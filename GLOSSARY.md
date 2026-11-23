@@ -256,6 +256,12 @@ permissions, an update of UNOS (ADR-0407). Avoid: task (a scheduled task is one 
 next wake time of the power settings while the wake is on; whether the board powers on from it is
 the board's (ADR-0407). Avoid: alert (a notification), rtcwake (a tool UNOS does not run).
 
+**Docker's data**: Docker's data root and, with Docker's containerd image store, containerd's root:
+the images, containers and volumes of UNOS and its apps. On a pool, in its subvolumes `.docker` and
+`.containerd`, which daemon.json's `data-root` and config.toml's `root` name, never on the system
+disk (ADR-0486); the first pool takes it in the unit `unos-docker-move` of the host (ADR-0487).
+Avoid: Docker volume (one of its parts), data directory (the supervisor's).
+
 **Notification channel**: Where UNOS sends notifications: e-mail through a mail server, a Telegram
 chat, or the URL of a webhook, Discord or Slack, set up in System > Notifications (ADR-0326).
 Avoid: notifier, integration.

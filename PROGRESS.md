@@ -805,6 +805,63 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-23: The first pool takes Docker's data (system.docker-root-on-pool, ADR-0487)
+
+- Built on the branch `system.docker-root-on-pool` (base main 8328a9e7) as ADR-0486 decided:
+  Create Pool of the host's first managed pool, when Docker's data is not on a pool, moves Docker's
+  data root and containerd's root into the pool's subvolumes `.docker` and `.containerd` in the
+  transient unit `unos-docker-move` (`supervisor/src/system/docker_data.py`,
+  `supervisor/src/system/host/unos-docker-move.sh`): its files in `/run/unos-docker-move`, a record
+  in `docker_move.json`, then stop, copy (`rsync -aHAXx --numeric-ids`), configure (daemon.json's
+  `data-root`, config.toml's `root`, the two drop-ins), start, verify, restart, delete; a failure up
+  to verify, or a stop of the unit, restores. The supervisor follows the unit across its own
+  restart and alerts and audits the outcome (`docker_data_moved`). GET /system/docker-data and
+  System > General show the pool; Unmount and Remove pool answer 409 naming Docker for it, also
+  while Docker is down. The upload-leftover walk leaves containerd's root out too (ADR-0421).
+- Checks: `make check` passed; `test_docker_data.py` (70 tests) runs the unit's script on a fake host
+  of stub programs, every failure path and a SIGTERM of the unit during the copy, also under dash;
+  the E2E specs of General, Storage, the Audit Log, System, page loads, loading, language and the
+  phone layout passed on the stand-in (426, chromium).
+- The Lima VM, 23:14 to 23:23 CET, with no download: the idle `unos-host` (Debian 12, UNOS v0.1.1
+  from GHCR, Docker 29.1 with the containerd image store, containerd 2.4.2) was stopped for a moment
+  and cloned to `unos-move` with two raw disks of 1 and 8 GiB, and started again as it was. The clone
+  ran a supervisor image built from v0.1.1's with the branch's `src` (the requirements are those of
+  v0.1.1); the pools were made and the move started by `pools.create_pool` and
+  `docker_data.after_pool_created` in its container, as the endpoint calls them, since the clone's
+  administrator password is not known here. The 1 GiB pool: the copy failed with "No space left on
+  device", and the restore put Docker back on `/var/lib/docker` with both containers healthy, no
+  daemon.json, no drop-in and the subvolumes deleted; the supervisor that started again recorded it
+  (`docker_data_moved`, failed). It named rsync's last line, the sender's broken pipe, as the
+  cause: fixed, the first rsync error is named. With that pool removed, the 8 GiB pool `data`:
+  moved in 20 s, `docker info` names `/mnt/pools/data/.docker`, `containerd config dump`
+  `'/mnt/pools/data/.containerd'`, daemon.json, config.toml and both drop-ins as ADR-0486 says, the
+  old folders gone, the audit entry by system, and Remove and Unmount of `data` refused naming
+  Docker. 31.1 MiB were written to the clone's system disk during the move, mostly ext4's metadata
+  of deleting the 2.3 GiB of the old copies. After a reboot Docker and UNOS ran from the pool,
+  healthy; booted without the pool's disk, `Dependency failed for docker.service` and
+  `containerd.service`, UNOS down; with the disk again, healthy. The clone and its disks were
+  deleted; `unos-host` runs as before. Seen: on a host booted without the pool, a `docker` command
+  hangs on docker.socket's activation.
+- The review in a fresh context found no blocking fault. Fixed: layers that are btrfs subvolumes
+  (Docker's btrfs driver or snapshotter) are not moved (only overlay2, overlayfs, fuse-overlayfs and
+  vfs); a Docker that answers too late or an unexpected error no longer fails Create Pool; a stop of
+  the unit before Docker answers from the pool restores (a trap, `TimeoutStopSec=1200`); a restore
+  that partly failed keeps the pool's copies, which Docker may still name; an image that came
+  meanwhile no longer fails the verify (every image listed before must be listed after); a move
+  whose container did not start again, or whose old copy stays, is alerted as a warning; a unit
+  that ended without a result says what the move may have left; no move starts while an update of
+  UNOS runs; a root with something mounted below it is neither copied (`-x` too) nor deleted. Left
+  with their reasons: two administrators who make two pools in the same second on a new NAS both see
+  the other's and move nothing (Create Pool is rate-limited, and both moves would race anyway); the dialog's note shows
+  while no pool is managed, also on a host whose Docker's data is on a pool that UNOS does not
+  manage (such a host is made by hand); a container that ran and no longer exists after the stop (a
+  `--rm` one, or one that compose down removed) is not named.
+- Left: the board check of the steps' last item (a fresh install on a board: the first pool, a
+  reboot, a boot without the pool's disk) with `sd.sh measure` of the move's writes (step 5), the
+  SD standby's part of step 4 (`system.sd-standby-boot`, another builder), and the App Store's
+  free-space check, which still calls the place of Docker's images the system disk
+  (`apps/preflight.py`). `passes` stays false.
+
 ### 2026-11-23: The BPI-W3 runs from its eMMC, its SD card wiped (ADR-0470)
 
 - At the owner's word (in translation: "W3: move the system from SD to eMMC"; asked about the

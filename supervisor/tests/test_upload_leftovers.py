@@ -65,6 +65,7 @@ def env(tmp_path, monkeypatch):
     # No Docker of the machine that runs the tests: a test that keeps Docker's data root on a pool
     # sets its own.
     monkeypatch.setattr(files_router, "_docker_data_root", lambda: None)
+    monkeypatch.setattr(files_router, "_containerd_root", lambda: None)
     app.dependency_overrides[verify_token] = lambda: ADMIN
     try:
         yield SimpleNamespace(
@@ -245,11 +246,39 @@ def test_the_check_leaves_out_dockers_data_root_on_a_pool(env, monkeypatch):
     assert ".docker" not in entered and "overlay2" not in entered
 
 
+def test_the_check_leaves_out_containerds_root_on_a_pool(env, monkeypatch):
+    """Docker's data on a pool includes containerd's root, which holds the image layers of Docker's
+    containerd image store (ADR-0486, ADR-0487): the walk leaves it out as it leaves out the data root."""
+    containerd_root = env.pool / ".containerd"
+    layer = containerd_root / "io.containerd.snapshotter.v1.overlayfs" / "snapshots" / "1" / "fs" / "tmp"
+    layer.mkdir(parents=True)
+    _hidden(layer, "aaaaaaaaaaaaaaaa")
+    photos = env.pool / "photos"
+    photos.mkdir()
+    kept = _hidden(photos)
+    monkeypatch.setattr(files_router, "_docker_data_root", lambda: str(env.pool / ".docker"))
+    monkeypatch.setattr(files_router, "_containerd_root", lambda: str(containerd_root))
+
+    assert _paths(_check(env)) == [str(kept)]
+
+
+def test_containerds_root_comes_from_its_configuration_and_none_when_it_cannot_be_read(monkeypatch):
+    from src import host
+    from src.host import HostResult
+
+    answers = {"/etc/containerd/config.toml": HostResult(0, 'root = "/mnt/pools/data/.containerd"\n', "")}
+    monkeypatch.setattr(host, "run_on_host", lambda cmd, **kwargs: answers[cmd[-1]])
+    assert files_router._containerd_root() == "/mnt/pools/data/.containerd"
+    answers["/etc/containerd/config.toml"] = HostResult(1, "", "cat: /etc/containerd/config.toml: Permission denied")
+    assert files_router._containerd_root() is None
+
+
 def test_without_docker_the_check_walks_every_folder(env, monkeypatch):
     other = env.pool / ".docker" / "x"
     other.mkdir(parents=True)
     found = _hidden(other)
     monkeypatch.setattr(files_router, "_docker_data_root", lambda: None)
+    monkeypatch.setattr(files_router, "_containerd_root", lambda: None)
 
     assert _paths(_check(env)) == [str(found)]
 

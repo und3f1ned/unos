@@ -304,6 +304,27 @@ class PoolInfo(BaseModel):
     )
 
 
+class PoolCreated(PoolInfo):
+    """A new pool, and whether Docker's data moves onto it (ADR-0487)."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "name": "data", "uuid": "0f8e6c52-3b1d-4a7e-9c2f-5d6e7f8a9b0c", "devices": ["/dev/sda"],
+        "total_size": _DISK_SIZE, "used_size": 3407872, "mountpoint": "/mnt/pools/data", "raid_level": "single",
+        "mounted": True, "persistent": True, "health": "healthy", "missing_devices": 0, "device_errors": 0,
+        "read_only": False, "forced_read_only": False, "docker_move": "started", "docker_move_error": None,
+    }]})
+
+    docker_move: Literal["started", "not_started"] | None = Field(
+        default=None,
+        description="For the first managed pool of a host whose Docker's data is not on a pool: started, the move "
+        "of Docker's and containerd's data onto it, which stops UNOS and the apps for a while; not_started, with "
+        "docker_move_error. Null when no move was due.",
+    )
+    docker_move_error: str | None = Field(
+        default=None, description="Why the move of Docker's data did not start; null otherwise.",
+    )
+
+
 # Why a btrfs filesystem is not the pool its label names (ADR-0283): it has none, it is
 # not a valid pool name, or another btrfs filesystem of the host has it too, and the pool
 # of that name is the other one (mounted or managed under it) or neither.

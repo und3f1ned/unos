@@ -42,6 +42,7 @@ volume_usage = importlib.import_module("src.storage.volume_usage")
 power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
 updates = importlib.import_module("src.updates.updater")
+docker_data = importlib.import_module("src.system.docker_data")
 
 SUPERVISOR = Path(__file__).resolve().parents[1]
 SRC = SUPERVISOR / "src"
@@ -284,6 +285,11 @@ STATE_FILES = [
     # The history of the volumes' use, written only at shutdown (storage.volume_usage).
     StateFile("volume_usage.json", volume_usage, "HISTORY_FILE", _save_volume_usage,
               lambda: volume_usage.history_of("3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d", 256), []),
+    # The move of Docker's data onto the first pool while it runs (ADR-0487).
+    StateFile("docker_move.json", docker_data, "STATE_FILE",
+              lambda: docker_data._save_record({"pool": "data", "started_at": _NOW.isoformat(), "by": "admin",
+                                                "docker_old": "/var/lib/docker", "containerd_old": ""}),
+              docker_data._load_record, None),
     StateFile("offsite_status.json", offsite, "STATUS_FILE",
               lambda: offsite.write_status(offsite.Status(last_copy=offsite.CopyResult(
                   started=_NOW.isoformat(), trigger="task"))),

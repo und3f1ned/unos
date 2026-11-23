@@ -1902,6 +1902,62 @@ test.describe('Storage pools (fake data)', () => {
     ]);
   });
 
+  // The host's first managed pool takes Docker's data (system.docker-root-on-pool, ADR-0487): the dialog
+  // says so, and a toast whether the move started, which stops UNOS for a few minutes.
+  async function createOnTheFreeDisk(page: Page) {
+    await page.locator('main .page-header').getByRole('button', { name: 'Create pool', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create a pool' });
+    await dialog.getByLabel(/^Pool name/).fill('e2e_new');
+    await dialog.getByLabel(/^Type (the pool name|\S+) to confirm/).fill('e2e_new');
+    await dialog.getByRole('checkbox', { name: /\/dev\/e2e-hd2/ }).check();
+    return dialog;
+  }
+
+  const CREATED = { ...FAKE_POOLS[0], name: 'e2e_new', devices: ['/dev/e2e-hd2'], mounted: true, persistent: true };
+
+  test("the first pool says that Docker's data moves to it, and the toast that the move started", async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeStorageApi(page, {
+      pools: [],
+      createPoolResponse: { status: 200, json: { ...CREATED, docker_move: 'started', docker_move_error: null } },
+    });
+    await page.goto('/storage');
+
+    const dialog = await createOnTheFreeDisk(page);
+    await expect(dialog.getByText("Docker's data moves to this pool")).toBeVisible();
+    await expect(dialog.getByText(/This is the first pool: once it is made, UNOS stops itself and the apps/)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Erase disks and create pool' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(
+      page.getByText("Docker's data moves to the pool e2e_new. UNOS and the apps stop for a few minutes; open this page again when they are back."),
+    ).toBeVisible();
+  });
+
+  test("a move of Docker's data that did not start says why", async ({ authenticatedPage: page }) => {
+    const detail = 'Docker is not available: connection refused';
+    await fakeStorageApi(page, {
+      pools: [],
+      createPoolResponse: { status: 200, json: { ...CREATED, docker_move: 'not_started', docker_move_error: detail } },
+    });
+    await page.goto('/storage');
+
+    const dialog = await createOnTheFreeDisk(page);
+    await dialog.getByRole('button', { name: 'Erase disks and create pool' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText("Docker's data stays on the system disk")).toBeVisible();
+    await expect(page.getByText(detail)).toBeVisible();
+  });
+
+  test("a further pool says nothing of Docker's data", async ({ authenticatedPage: page }) => {
+    await fakeStorageApi(page);
+    await page.goto('/storage');
+
+    const dialog = await createOnTheFreeDisk(page);
+    await expect(dialog.getByRole('checkbox', { name: /\/dev\/e2e-hd2/ })).toBeChecked();
+    await expect(dialog.getByText("Docker's data moves to this pool")).toHaveCount(0);
+  });
+
   test('a disk that changed since it was selected is refused and the list reloaded', async ({
     authenticatedPage: page,
   }) => {

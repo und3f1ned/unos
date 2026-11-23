@@ -97,6 +97,7 @@ from .health.router import start_health_monitors, stop_health_monitors
 from .power.router import reapply_wol_settings, start_ups_monitor, stop_ups_monitor
 from .power.schedule import start_power_schedule, stop_power_schedule
 from .standby import service as standby_service
+from .system import docker_data
 from .standby.router import router as standby_router
 from .storage import pools as storage_pools
 from .storage.pools import reconcile_pools_on_startup
@@ -158,6 +159,9 @@ async def lifespan(app: FastAPI):
     # An update or rollback of UNOS that a stop interrupted has ended, failed (ADR-0443), and is
     # audited so.
     await get_updater().recover_after_start()
+    # A move of Docker's data onto the first pool that a supervisor before this one started is followed
+    # until the unit of the host says how it ended, which is then alerted and audited (ADR-0487).
+    await docker_data.recover_after_start()
     # UNOS_DISABLE_BACKGROUND_TASKS=1 (tests, development) also skips the pool
     # mount check below, because it mounts filesystems on the host.
     run_background = os.environ.get("UNOS_DISABLE_BACKGROUND_TASKS") != "1"
@@ -232,6 +236,8 @@ async def lifespan(app: FastAPI):
             await stop_power_schedule()
             await stop_ups_monitor()
             await stop_health_monitors()
+        # Always: the follow of a move of Docker's data ends; its record stays for the next start.
+        await docker_data.stop()
         # Always: the runs that Run now of a task started end with it and are recorded, also when the
         # background tasks are off (UNOS_DISABLE_BACKGROUND_TASKS=1), where the scheduler never started.
         await stop_scheduler()
