@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0468]
 ---
 
-# ADR-0476: The pages' slowest reads ask Docker only for the images they show and run the host reads that do not depend on each other at once
+# ADR-0478: The pages' slowest reads ask Docker only for the images they show and run the host reads that do not depend on each other at once
 
 ## Context
 

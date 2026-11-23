@@ -3,14 +3,14 @@ status: superseded
 date: 2026-11-23
 area: architecture
 decided-by: agent
-superseded-by: ADR-0476
+superseded-by: ADR-0478
 ---
 
 # ADR-0468: The pages' slowest reads ask Docker for its lists and run the host reads that do not depend on each other at once
 
 ## Context
 
-Superseded by ADR-0476: the container list asks Docker only for the images it shows.
+Superseded by ADR-0478: the container list asks Docker only for the images it shows.
 
 On the dev device (BPI-W3, RK3588) on 2026-11-23 the reads that the web UI's pages wait for took,
 p50: `GET /api/v1/containers?all=true` 417 ms (the Dashboard), `/shares/paths` 181,

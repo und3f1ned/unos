@@ -1951,7 +1951,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
-- The container list no longer waits for Docker's list of every image (ADR-0476, which supersedes
+- The container list no longer waits for Docker's list of every image (ADR-0478, which supersedes
   ADR-0468): it asks only for the images of the repositories that its containers name, or, once a
   container names its image by its ID, for the images that have a name, and for none without a
   container. On the BPI-W3, with 104 untagged leftovers of builds among 117 images, the full list
