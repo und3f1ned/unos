@@ -545,7 +545,7 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable unos.service
+sudo systemctl enable --now unos.service
 ```
 
 `docker compose up` starts the web interface only once the supervisor answers
