@@ -7,7 +7,7 @@ disable-model-invocation: true
 # Deploy to the dev device
 
 The dev device is one shared board. It runs from its eMMC, a soldered chip that wears with
-every write, and its SD card is wiped and unused: every write counts (ADR-0214, ADR-0470).
+every write, and its SD card is wiped and unused: every write counts (ADR-0214, ADR-0470), and Docker keeps its data on the pool (ADR-0486).
 `scripts/dev/deploy.sh` does the deploy in scripted, measured, reversible steps, and keeps the
 backups and rollback copies on this workstation (ADR-0223).
 Each step holds the device lock (`/run/unos-dev.lock` on the device, ADR-0210) and ends with a

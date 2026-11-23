@@ -113,7 +113,7 @@ the desktop app's terminal tool, and this project denies the Desktop Commander t
 A denial by the guard or the permission system is an answer: ask the owner how to go on.
 
 - The dev device runs from its eMMC, a soldered chip that wears with every write, and its SD card
-  is wiped and unused (ADR-0214, ADR-0470). Reach the device only through `scripts/dev/`
+  is wiped and unused (ADR-0214, ADR-0470), and Docker keeps its data on the pool (ADR-0486). Reach the device only through `scripts/dev/`
   (ADR-0016), scratch files in its `/dev/shm`. `deploy.sh`, `linux-tests.sh`, `ipv6-filter.sh`
   (install, remove) and `scenario.sh` hold the device lock (ADR-0210) and print `SD writes`, the
   system disk's writes; `sd.sh measure` measures any command. Builds, `up` and `rollback` go through `deploy.sh`, and

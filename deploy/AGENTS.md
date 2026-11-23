@@ -54,7 +54,7 @@
 ## The dev device
 
 One shared board. It runs from its eMMC, a soldered chip that wears with every write, so every
-write counts; its SD card is wiped and unused (ADR-0214, ADR-0470).
+write counts; its SD card is wiped and unused (ADR-0214, ADR-0470), and Docker keeps its data on the pool (ADR-0486).
 
 - Every action goes through `scripts/dev/`, with the settings of `dev.env`: the deploy-device
   skill for deploys, the device-checks skill for checks. `deploy.sh`, `linux-tests.sh`,

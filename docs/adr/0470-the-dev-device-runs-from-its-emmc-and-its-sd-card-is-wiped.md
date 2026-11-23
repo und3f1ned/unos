@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0486
 date: 2026-11-23
 area: device
 decided-by: owner
@@ -9,6 +10,8 @@ supersedes: [ADR-0225, ADR-0228]
 # ADR-0470: The dev device runs from its eMMC, which also holds Docker's data root, and its SD card is wiped
 
 ## Context
+
+Superseded by ADR-0486: Docker and containerd keep their data on a pool, never on the eMMC.
 
 ADR-0225 ran the dev device, a Banana Pi BPI-W3 (ADR-0376), from its 32 GB SanDisk SD card
 (`mmcblk1`) and never wrote its soldered 29.1 GB Samsung eMMC (`mmcblk0`), which held UGREEN's

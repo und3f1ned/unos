@@ -210,12 +210,16 @@ board (ADR-0376).
 - **Docker's data and the system disk.** `update.sh` pulls both images of each
   release: about their size in writes, without the build's layers (installing
   the supervisor's Python packages alone wrote about 440 MiB to the dev
-  device's system disk). Keep Docker's data root on another disk where you can, and make Docker
-  wait for that disk with a drop-in
-  `/etc/systemd/system/docker.service.d/data-root.conf` that says `[Unit]` and
-  `RequiresMountsFor=<the data root>`, as on the BPI-F3. Docker, and with it
-  UNOS, then does not start while that disk is missing; the dev device keeps
-  its data root on its system disk, the eMMC, for that reason (ADR-0470).
+  device's system disk). Keep Docker's data off the eMMC (ADR-0486): stop
+  Docker and containerd, copy `/var/lib/docker` and `/var/lib/containerd` with
+  `rsync -aHAX --numeric-ids` into the btrfs subvolumes `.docker` and
+  `.containerd` of a pool, set `{"data-root": "/mnt/pools/data/.docker"}` in
+  `/etc/docker/daemon.json` and `root = "/mnt/pools/data/.containerd"` in
+  `/etc/containerd/config.toml`, and make both wait for the pool with drop-ins
+  `docker.service.d/data-root-on-pool.conf` and
+  `containerd.service.d/root-on-pool.conf` that say `[Unit]` and
+  `RequiresMountsFor=` the subvolumes. Docker, and with it UNOS, then does not
+  start while the pool is missing; the dev device runs so since 2026-11-23.
 - **Disks for pools.** SATA disks behind an AHCI controller (the dev device has
   a JMicron JMB58x on a PCIe 2.0 x1 link), NVMe drives in the M.2 Key M slot
   (PCIe 3.0 x4) and USB 3 disks need nothing special: UNOS makes and mounts

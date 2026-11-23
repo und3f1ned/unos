@@ -297,7 +297,7 @@ Armbian's community image for `armsom-w3`, upgraded on 2026-11-15 from 26.2.0-tr
 its address and logins are in `dev.env` (ADR-0212). This journal called it a UGREEN board, after
 the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (ADR-0376).
 
-- Flash (ADR-0470): the system and Docker's data root run from the soldered eMMC `mmcblk0`
+- Flash (ADR-0470, ADR-0486): the system runs from the soldered eMMC `mmcblk0`
   (Samsung, 29.1 GB): one GPT partition `mmcblk0p1` from sector 32768 (ext4, label `armbi_emmc`,
   UUID 1ccf0051-691b-4a89-92cc-4294a651e3ed) and U-Boot of Armbian's package
   `linux-u-boot-vendor-armsom-w3` (fwver uboot-rmbian 11/12/2026) at sectors 64 and 16384. UGREEN's
@@ -305,6 +305,10 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   slot; a card with a loader would boot before the eMMC. No SPI flash. `UNOS_DEV_SYSTEM_DISK` is
   `mmcblk0` in `dev.env`, so the `SD writes` lines count the eMMC: 12.0 MiB since the boot from it
   on 2026-11-23.
+- Docker (ADR-0486): its data root and containerd's root are the subvolumes `.docker` and
+  `.containerd` of the pool `data` on the hard disk `/dev/sda` since 2026-11-23 (`daemon.json`,
+  containerd's `config.toml` `root`, the drop-ins `data-root-on-pool.conf` and
+  `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
 - Runs `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
