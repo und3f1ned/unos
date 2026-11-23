@@ -136,9 +136,9 @@ use the main checkout's. Output shows secrets as `<redacted>`.
   `scripts/dev/api.py DELETE /storage/pools/<pool>/volumes/<name>`;
   a subvolume `<folder>/nest/sub` that the files check made, which no API route removes,
   `scripts/dev/ssh.sh 'btrfs subvolume delete /mnt/pools/<pool>/<folder>/nest/sub'`; items of
-  the trash, `echo '["<path from GET /files/trash>"]' | scripts/dev/api.py DELETE /files/trash -`;
-  folders, `echo '["/mnt/pools/<pool>/<folder>"]' | scripts/dev/api.py DELETE /files/delete - --param permanent=true`
-  (the `-` before `--param`); a Scheduler task, `scripts/dev/api.py DELETE /scheduler/tasks/<id>`
+  the trash, `echo '["<path from GET /files/trash>"]' | scripts/dev/sd.sh measure clean -- scripts/dev/api.py DELETE /files/trash -`;
+  folders, `echo '["/mnt/pools/<pool>/<folder>"]' | scripts/dev/sd.sh measure clean -- scripts/dev/api.py DELETE /files/delete - --param permanent=true`
+  (the pipe into `sd.sh`, which gives the command its standard input; the `-` before `--param`); a Scheduler task, `scripts/dev/api.py DELETE /scheduler/tasks/<id>`
   (the id from `GET /scheduler/tasks`); a balance that the balance check left running or paused,
   `scripts/dev/api.py DELETE /storage/pools/<pool>/balance`; the scrub and balance checks' empty folder right below the pools'
   base, which the files API does not delete, `scripts/dev/ssh.sh 'rmdir /mnt/pools/<folder>'`. A marked host account or Samba account `unoscheck<6 hex digits>`

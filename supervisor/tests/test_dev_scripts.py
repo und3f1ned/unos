@@ -181,7 +181,8 @@ class Device:
 
 # The stub ssh. FAKE_SSH_MODE: record (default) records argv, the environment and standard
 # input, asks SSH_ASKPASS like ssh, and prints FAKE_SSH_LOG/reply; sectors answers growing
-# sector counts; local runs the remote command here with bash.
+# sector counts and, as ssh without -n, reads all of its standard input; local runs the remote
+# command here with bash.
 STUB_SSH = textwrap.dedent(
     """\
     #!@PYTHON@
@@ -193,6 +194,8 @@ STUB_SSH = textwrap.dedent(
     if mode == "local":
         os.execvp("bash", ["bash", "-c", command])
     if mode == "sectors":
+        if "-n" not in args[:args.index("--")]:
+            sys.stdin.buffer.read()
         path = os.path.join(log, "sectors")
         n = int(open(path).read()) if os.path.exists(path) else 1000
         open(path, "w").write(str(n + 100))
@@ -783,6 +786,17 @@ def test_sd_sh_measures_and_keeps_the_status_of_the_command(device):
     failed = device.run(DEV / "sd.sh", "measure", "x", "--", "sh", "-c", "exit 7", FAKE_SSH_MODE="sectors")
     assert failed.returncode == 7 and "SD writes x:" in failed.stderr
     assert device.run(DEV / "sd.sh", "measure", "x", "true").returncode == 2
+
+
+def test_sd_sh_measure_gives_the_command_the_callers_standard_input(device):
+    """The sector reads before and after it read none (the device-checks skill pipes a body into
+    scripts/dev/api.py ... - under sd.sh measure)."""
+    result = device.run(DEV / "sd.sh", "measure", "a body", "--", "sh", "-c", "cat", input="the body\n",
+                        FAKE_SSH_MODE="sectors")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "the body\n"
+    assert "SD writes a body: 0.049 MiB (100 sectors)" in result.stderr
 
 
 # --- the device lock ------------------------------------------------------------------------

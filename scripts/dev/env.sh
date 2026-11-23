@@ -320,10 +320,11 @@ d=$1
 [ -n "$d" ] || d=$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
 awk "{print \$7}" "/sys/block/$d/stat"'
 
-# dev_sd_sectors: the sectors written to UNOS_DEV_SYSTEM_DISK since boot.
+# dev_sd_sectors: the sectors written to UNOS_DEV_SYSTEM_DISK since boot. Its ssh reads no standard
+# input, which stays for the command that sd.sh measure runs between two reads.
 dev_sd_sectors() {
     local out
-    out=$(dev_ssh "unshare --mount --propagation private sh -c $(dev_quote "$dev__sd_script") sh $(dev_quote "$UNOS_DEV_SYSTEM_DISK")") || return 1
+    out=$(dev_ssh "unshare --mount --propagation private sh -c $(dev_quote "$dev__sd_script") sh $(dev_quote "$UNOS_DEV_SYSTEM_DISK")" < /dev/null) || return 1
     [[ $out =~ ^[0-9]+$ ]] || { dev_warn "unexpected answer for the system disk's sectors"; return 1; }
     printf '%s\n' "$out"
 }
