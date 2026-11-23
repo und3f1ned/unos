@@ -436,13 +436,14 @@ def disk_device(target_disk: str | None) -> str:
     """Return ``/dev/<disk>`` for a whole disk of the host given as ``sda`` or ``/dev/sda``.
 
     Blocking (lsblk runs on the host): call it in a worker thread.
-    HTTPException 400 for anything but one of the host's whole disks, 500
-    when the host's disks cannot be listed (storage.disks.whole_disk_device,
-    which the SMART endpoints of the health API use as well).
+    HTTPException 400 for anything but one of the host's whole disks, and for
+    an SD card or eMMC, which has no SMART (storage.free-mmc-as-data-disk); 500 when the host's
+    disks cannot be listed (storage.disks.smart_disk_device, which the SMART
+    self-test endpoint of the health API uses as well).
     """
     if not target_disk:
         raise _bad_task("No target disk specified")
-    return storage_disks.whole_disk_device(target_disk)
+    return storage_disks.smart_disk_device(target_disk)
 
 
 def _command_problem(command: str | None) -> str | None:

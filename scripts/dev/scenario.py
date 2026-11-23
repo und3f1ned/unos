@@ -2540,9 +2540,10 @@ def smart_check(c: Check) -> None:
             data = c.get(f"/storage/disks/{disk['name']}/smart")
             c.expect(info.get("device") == disk["path"] and data.get("device") == disk["path"],
                      f"they are of {info.get('device')} and {data.get('device')}")
-            # STANDBY: the disk sleeps, and the reads left it asleep (ADR-0378).
-            c.expect(info.get("health_status") in ("PASSED", "FAILED", "UNKNOWN", "STANDBY"),
-                     f"health {info.get('health_status')}")
+            # STANDBY: the disk sleeps, and the reads left it asleep (ADR-0378). An SD card or eMMC has
+            # no SMART: NO_SMART, and smartctl did not run (storage.free-mmc-as-data-disk).
+            expected = ("NO_SMART",) if disk.get("mmc_type") else ("PASSED", "FAILED", "UNKNOWN", "STANDBY")
+            c.expect(info.get("health_status") in expected, f"health {info.get('health_status')}")
             s.text += f": {disk['name']}: {info.get('health_status')}, {info.get('temperature')} C, " \
                       f"{len(info.get('attributes') or [])} attributes"
 
@@ -2573,6 +2574,11 @@ def smart_check(c: Check) -> None:
         spindown_steps(c, data, conf["hdparm"])
 
     for disk in disks:
+        if disk.get("mmc_type"):  # an SD card or eMMC has no SMART self-tests (storage.free-mmc-as-data-disk)
+            with c.step(f"no self-test starts on {disk['name']}, which has no SMART") as s:
+                answer = c.post(f"/health/disk/{disk['name']}/test", params={"test_type": "short"}, expect=400)
+                s.text += f": {answer.get('detail') if isinstance(answer, dict) else answer}"
+            continue
         with c.step(f"a short self-test starts on {disk['name']}"):
             answer = c.post(f"/health/disk/{disk['name']}/test", params={"test_type": "short"})
             c.expect(answer.get("status") == "started", f"the answer is {answer}")

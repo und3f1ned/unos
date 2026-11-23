@@ -29,11 +29,14 @@ export const en = {
 	'health.status.failed': 'Failed',
 	'health.status.unknown': 'Unknown',
 	'health.status.standby': 'Asleep',
+	// An SD card or eMMC, which has no SMART (storage.free-mmc-as-data-disk).
+	'health.status.noSmart': 'No SMART',
 	// The one badge of a disk in the list (diskState of components/system/health/texts.ts).
 	'health.state.healthy': 'Healthy',
 	'health.state.failing': 'Failing',
 	'health.state.unknown': 'Not read',
 	'health.state.asleep': 'Asleep',
+	'health.state.noSmart': 'No SMART',
 	'health.why': 'Why',
 	'health.noDisksHint': 'Connect a disk to the NAS and refresh.',
 
@@ -68,6 +71,8 @@ export const en = {
 	'health.noAttributes': 'smartctl reported no SMART attributes for this disk.',
 	// A disk in standby, whose SMART data is not read so as not to spin it up (ADR-0378).
 	'health.asleep': 'The disk sleeps: its SMART data is read once it is awake, so as not to spin it up.',
+	// An SD card or eMMC (storage.free-mmc-as-data-disk).
+	'health.noSmart': 'An SD card or eMMC has no SMART: its health cannot be read, and no self-test runs on it.',
 
 	'health.nvmeLog': 'NVMe SMART/Health Information log',
 	'health.nvmeField': 'Health information',
@@ -114,10 +119,12 @@ export const ru: Translation<typeof en> = {
 	'health.status.failed': 'Неисправен',
 	'health.status.unknown': 'Неизвестно',
 	'health.status.standby': 'Спит',
+	'health.status.noSmart': 'Без SMART',
 	'health.state.healthy': 'Исправен',
 	'health.state.failing': 'Неисправен',
 	'health.state.unknown': 'Не прочитан',
 	'health.state.asleep': 'Спит',
+	'health.state.noSmart': 'Без SMART',
 	'health.why': 'Почему',
 	'health.noDisksHint': 'Подключите диск к NAS и обновите страницу.',
 
@@ -148,6 +155,7 @@ export const ru: Translation<typeof en> = {
 	'health.attribute.critical': 'Сбой',
 	'health.noAttributes': 'smartctl не сообщил атрибутов SMART для этого диска.',
 	'health.asleep': 'Диск спит: данные SMART читаются, когда он работает, чтобы не раскручивать его.',
+	'health.noSmart': 'У SD-карты и eMMC нет SMART: их состояние не прочитать, и самотестирование на них не запускается.',
 
 	'health.nvmeLog': 'Журнал состояния NVMe (SMART/Health Information)',
 	'health.nvmeField': 'Сведения о состоянии',

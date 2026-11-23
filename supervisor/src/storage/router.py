@@ -112,10 +112,11 @@ async def _change_pools(func: Callable[..., T], *args: Any) -> T:
 )
 async def list_disks_endpoint(_=Depends(verify_token)):
     """The host's whole disks, the system disk included, with what they hold and whether they are in
-    use, their power state, read without waking them, and their idle timeout. The boot SD card or
-    eMMC and virtual devices are left out.
+    use, their power state, read without waking them, and their idle timeout. An SD card or eMMC
+    that holds part of the system or is mounted or used as swap outside a pool, an eMMC's boot and
+    RPMB areas, and virtual devices are left out; a free SD card or eMMC is listed with its type.
     \f
-    ADR-0378.
+    ADR-0378, storage.free-mmc-as-data-disk.
     """
     return await _call(disks.list_disks)
 
@@ -124,7 +125,8 @@ async def list_disks_endpoint(_=Depends(verify_token)):
     "/disks/{name}/spindown", response_model=DiskSpindown, summary="Set a disk's idle timeout",
     responses=errors(BODY, {
         400: "The name is no disk of this system, or a boot or virtual device or a partition.",
-        409: "The disk can have no idle timeout: the system disk, an NVMe disk, a disk without a serial that a "
+        409: "The disk can have no idle timeout: the system disk, an NVMe disk, an SD card or eMMC, a disk without "
+             "a serial that a "
              "udev rule can match or whose serial another disk reports too, one that udev knows by another "
              "serial, or a host without hdparm.",
         500: "The disks or the udev rule cannot be read or hdparm fails, and nothing changed; or the rule cannot "
@@ -178,9 +180,11 @@ async def get_disk_smart(name: DiskName, _=Depends(verify_token)):
     """SMART data of a whole disk of the host, by its name in GET /storage/disks.
 
     A disk in standby stays asleep: its answer has the power state standby and no data. A
-    smartctl that does not answer in time gives healthy false and the error in raw_data.
+    smartctl that does not answer in time gives healthy false and the error in raw_data. An SD
+    card or eMMC has no SMART: healthy null, the power state active and no data, and smartctl
+    does not run.
     \f
-    ADR-0378.
+    ADR-0378, storage.free-mmc-as-data-disk.
     """
     # Both block, off the event loop: lsblk on the host, and smartctl, which
     # can take many seconds; get_smart_data bounds it with a timeout.

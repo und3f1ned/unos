@@ -90,6 +90,8 @@
 	let hasEnoughDevices = $derived(poolForm.devices.length >= requiredDevices);
 	let selectedDisks = $derived(disks.filter((d) => poolForm.devices.includes(d.path)));
 	let selectedWithData = $derived(selectedDisks.filter((d) => d.has_data));
+	// The selected SD cards and eMMC, which wear with writes (storage.free-mmc-as-data-disk).
+	let selectedFlash = $derived(selectedDisks.filter((d) => d.mmc_type));
 	let confirmNameMatches = $derived(poolForm.name !== '' && poolForm.confirm_name === poolForm.name);
 	// The disks a pool can take, and the others with their reasons.
 	let usable = $derived(disks.filter((d) => unavailableReason(d) === null));
@@ -296,6 +298,12 @@
 				</Alert>
 			{/if}
 		</div>
+
+		{#if selectedFlash.length > 0}
+			<Alert variant="warning" size="sm" title={$t('storage.create.flashTitle')}>
+				{$t('storage.create.flash')}
+			</Alert>
+		{/if}
 
 		{#if selectedWithData.length > 0}
 			<Alert variant="warning" title={$t('storage.create.dataTitle')}>

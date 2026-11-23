@@ -11,8 +11,10 @@ import {
 } from './shares-fakes';
 import {
   FAKE_DISKS,
+  FAKE_EMMC,
   FAKE_IMPORTABLE,
   FAKE_POOLS,
+  FAKE_SD_CARD,
   HEALTHY_POOL,
   NO_HDPARM,
   SWAPPED_DISKS,
@@ -2020,6 +2022,87 @@ test.describe('Storage pools (fake data)', () => {
     await create.click();
     await expect(dialog.getByText('Supervisor is restarting')).toBeVisible();
     await expect(dialog.getByText('Too many attempts. Wait a minute and try again.')).toHaveCount(0);
+  });
+});
+
+// storage.free-mmc-as-data-disk: an SD card or eMMC that holds no part of the system is
+// a data disk, listed by its type, without an idle timeout; a pool on it is created like on any disk,
+// after the Create pool dialog says that it wears with writes.
+test.describe('An SD card or eMMC as a data disk (fake data)', () => {
+  const disksCard = (page: Page) =>
+    page.locator('.card').filter({ has: page.getByRole('heading', { name: /^(Disks|Диски)$/ }) });
+  const cells = (page: Page, path: string) =>
+    disksCard(page).getByRole('row').filter({ has: page.getByRole('cell', { name: path, exact: true }) }).getByRole('cell');
+
+  test('the card is listed by its type, and the pool dialog says it wears before the pool is created', async ({
+    authenticatedPage: page,
+  }) => {
+    const writes = await fakeStorageApi(page, { disks: () => [...FAKE_DISKS, FAKE_SD_CARD, FAKE_EMMC] });
+    await page.goto('/storage');
+
+    await expect(cells(page, '/dev/mmcblk1')).toHaveText([
+      '/dev/mmcblk1', 'SC32G 0x8f3a1b2c', '29.7 GB', 'SD card', 'Empty', 'Free',
+      'Awake /dev/mmcblk1 is an SD card or eMMC, which has no disk that spins down: hdparm sets idle timeouts of ' +
+        'SATA disks',
+    ]);
+    await expect(cells(page, '/dev/mmcblk0').nth(3)).toHaveText('eMMC');
+    // No idle timeout to set: the card has no button for one.
+    await expect(cells(page, '/dev/mmcblk1').getByRole('button')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Create pool', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create a pool' });
+    const disk = (path: string) => dialog.getByRole('checkbox', { name: new RegExp(path) });
+    const wears = dialog.locator('.alert').filter({ hasText: 'An SD card or eMMC wears with writes' });
+    const warning =
+      'Each write wears its flash, and it has no SMART to warn before it fails. Keep a copy of the pool elsewhere.';
+
+    await disk('/dev/e2e-hd2').check();
+    await expect(dialog.getByText('Erase disks and create pool')).toBeVisible();
+    await expect(wears).toHaveCount(0);
+    await disk('/dev/mmcblk1').check();
+    await expect(wears).toBeVisible();
+    await expect(wears).toContainText(warning);
+    await disk('/dev/e2e-hd2').uncheck();
+    await expect(wears).toBeVisible();
+    await disk('/dev/mmcblk1').uncheck();
+    await expect(wears).toHaveCount(0);
+
+    await disk('/dev/mmcblk1').check();
+    await dialog.getByLabel(/^Pool name/).fill('e2e_card');
+    await dialog.getByLabel(/^Type (the pool name|\S+) to confirm/).fill('e2e_card');
+    await dialog.getByRole('button', { name: 'Erase disks and create pool' }).click();
+    await expect(dialog).toBeHidden();
+    expect(writes).toEqual([
+      {
+        method: 'POST',
+        path: '/pools',
+        body: {
+          name: 'e2e_card',
+          devices: ['/dev/mmcblk1'],
+          raid_level: 'single',
+          confirm_name: 'e2e_card',
+          force: false,
+          device_identities: [{ path: '/dev/mmcblk1', serial: '0x8f3a1b2c', wwn: null, size: 31_914_983_424 }],
+        },
+      },
+    ]);
+  });
+
+  test('in Russian: the type of the card and the warning of the pool dialog', async ({ authenticatedPage: page }) => {
+    await fakeStorageApi(page, { disks: () => [...FAKE_DISKS, FAKE_SD_CARD, FAKE_EMMC] });
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), 'unos-locale');
+    await page.goto('/storage');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+
+    await expect(cells(page, '/dev/mmcblk1').nth(3)).toHaveText('SD-карта');
+    await expect(cells(page, '/dev/mmcblk0').nth(3)).toHaveText('eMMC');
+    await page.getByRole('button', { name: 'Создать пул', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Новый пул' });
+    await dialog.getByRole('checkbox', { name: /\/dev\/mmcblk1/ }).check();
+    await expect(dialog.locator('.alert').filter({ hasText: 'SD-карта и eMMC изнашиваются от записи' })).toContainText(
+      'Каждая запись изнашивает их флеш-память, а SMART, который предупредил бы о сбое, у них нет. ' +
+        'Храните копию пула в другом месте.',
+    );
   });
 });
 

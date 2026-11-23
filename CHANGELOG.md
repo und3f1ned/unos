@@ -20,6 +20,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   without waiting for its containers, whose card waits in its place. Links preload a page's data
   on the press of the pointer, not on hover, so that no hover wakes a sleeping disk.
   `webui/AGENTS.md` has the recipe for the other pages.
+- An SD card or eMMC that holds no part of the running system is a data disk (ADR-0472): the
+  Storage page lists it with its type (**SD card** or **eMMC**), its own model and serial, and
+  offers it for pools, and the Create pool dialog says that it wears with writes. One that holds
+  the root filesystem or `/boot`, is mounted outside a pool, is active swap or is the device that
+  `root=` or `ubootpart=` names stays hidden, as do an eMMC's boot and RPMB areas. It has no SMART
+  (Disk Health lists it as **No SMART**, `GET /health/overview` counts it in `no_smart`, and no
+  self-test runs on it) and no idle timeout; the idle shutdown counts its reads and writes once a
+  listing found it free. Every card stays hidden while the mount table or the kernel's command
+  line cannot be read. GET /storage/disks gains `mmc_type`, and `scripts/dev/scenario.sh smart`
+  expects NO_SMART and a refused self-test of a listed card.
 - `scripts/prune-merged-branches.py` (ADR-0465), for the end of a batch: after `git fetch --prune`
   it removes the clean worktrees of branches merged into `origin/main` and deletes those local
   branches with `git branch -d`, as a dry run unless `--apply`. It keeps the main checkout, detached,

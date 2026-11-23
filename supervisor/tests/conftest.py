@@ -123,6 +123,11 @@ def _no_disk_nodes_of_this_machine(monkeypatch, tmp_path_factory):
         monkeypatch.setattr(host, "CONTAINER_DEV", str(folder / "no-dev"))
         monkeypatch.setattr(host, "HOST_DEV", str(folder / "no-host-dev"))
         monkeypatch.setattr(host, "_disk_node_problems", set())
+    # The SD cards and eMMC that the last read of the host's state found free (storage.free-mmc-as-data-disk), kept in
+    # RAM for the idle shutdown: every test starts before such a read.
+    disks = sys.modules.get("src.storage.disks")
+    if disks is not None:
+        monkeypatch.setattr(disks, "_free_cards", frozenset())
 
 
 @pytest.fixture(autouse=True)

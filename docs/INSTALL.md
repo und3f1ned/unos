@@ -202,8 +202,11 @@ board (ADR-0376).
 - **The eMMC or a microSD card.** Armbian's image boots from a microSD card:
   the board's boot ROM starts the loader of a card in the slot before the
   eMMC's. The dev device runs from its eMMC (ADR-0470). UNOS neither lists nor
-  formats the eMMC (`mmcblk0`), its boot partitions, the microSD card or zram,
-  so no pool takes them.
+  formats the eMMC's boot partitions, zram, or the eMMC or microSD card that
+  holds the running system. An eMMC or card that holds none of it is a data
+  disk (ADR-0472), and a pool on it erases it, a loader in its first sectors
+  included, after you confirm the erase: make no pool of the one whose loader
+  starts the board.
 - **Docker's data and the system disk.** `update.sh` pulls both images of each
   release: about their size in writes, without the build's layers (installing
   the supervisor's Python packages alone wrote about 440 MiB to the dev

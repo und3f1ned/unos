@@ -54,7 +54,7 @@ class DiskInfo(BaseModel):
         "type": "disk", "fstype": "btrfs", "label": "data", "pttype": None, "partitions": [],
         "mountpoints": ["/mnt/pools/data"], "has_data": True, "is_system": False, "in_use": True,
         "in_use_reason": "Mounted at /mnt/pools/data", "pool": "data", "power_state": "active",
-        "spindown": 20, "spindown_problem": None,
+        "mmc_type": None, "spindown": 20, "spindown_problem": None,
     }]})
 
     name: str = Field(description="The disk's name, such as sda or nvme0n1.")
@@ -108,7 +108,14 @@ class DiskInfo(BaseModel):
     power_state: PowerState = Field(
         default="unknown",
         description="Its power state, read without waking it: active (spinning or idle), standby (asleep), or "
-        "unknown when the disk cannot tell.",
+        "unknown when the disk cannot tell. An SD card or eMMC is always active.",
+    )
+    # storage.free-mmc-as-data-disk: an SD card or eMMC that holds no part of the running system is a data disk.
+    mmc_type: str | None = Field(
+        default=None,
+        description="For an SD card or eMMC, the kernel's type of it: SD, MMC (an eMMC), or unknown when the host's "
+        "sysfs cannot tell; such a disk has no SMART and no idle timeout, and wears with writes. Null for every "
+        "other disk.",
     )
     # The idle timeout in minutes that UNOS's udev rule sets for the disk (by its serial), 0 for none.
     spindown: int = Field(
@@ -169,12 +176,12 @@ class SmartData(BaseModel):
     # None when smartctl left the disk alone because it sleeps (power_state "standby", ADR-0378).
     healthy: bool | None = Field(
         description="Whether the disk's own SMART health check passed; false also when smartctl gave no answer; "
-        "null for a disk in standby, which was not read.",
+        "null for a disk in standby, which was not read, and for an SD card or eMMC, which has no SMART.",
     )
     power_state: PowerState = Field(
         default="unknown",
-        description="active when smartctl read the disk, standby when it left a sleeping disk alone, unknown "
-        "otherwise.",
+        description="active when smartctl read the disk, and for an SD card or eMMC, which it does not read; standby "
+        "when it left a sleeping disk alone; unknown otherwise.",
     )
     temperature: int | None = Field(default=None, description="Its temperature in degrees Celsius; null when not read.")
     power_on_hours: int | None = Field(

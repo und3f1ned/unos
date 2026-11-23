@@ -607,12 +607,19 @@ def _jobs(now: datetime, zone: tzinfo) -> list[Finding]:
 
 
 def _disk_counters() -> dict[str, int]:
-    """The bytes read and written since boot by each disk of /proc/diskstats, without the boot SD card
-    or eMMC, partitions and virtual devices (storage.disks.HIDDEN_DISK_PREFIXES)."""
+    """The bytes read and written since boot by each disk of /proc/diskstats, without partitions and
+    virtual devices (storage.disks.HIDDEN_DISK_PREFIXES) and without the SD card or eMMC of the
+    system: a card counts only when the last read of the host's state found it free, a data disk
+    (storage.disks.free_cards; whether a card holds the system needs lsblk and the mount table,
+    which this read every minute does not run, storage.free-mmc-as-data-disk)."""
     events = _module("..websocket.events")
     disks = _module("..storage.disks")
     physical = events.physical_disk_counters(psutil.disk_io_counters(perdisk=True) or {})
-    return {name: read + written for name, (read, written) in physical.items() if not disks.is_hidden_disk(name)}
+    return {
+        name: read + written
+        for name, (read, written) in physical.items()
+        if not disks.is_hidden_disk(name) and (not disks.is_mmc_disk(name) or name in disks.free_cards())
+    }
 
 
 def _sample_disks(mono: float) -> None:

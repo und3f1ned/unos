@@ -585,6 +585,8 @@ class FakeNas:
         self.unreadable: set[str] = set()  # sources that the scan cannot read
         self.injected = False  # whether fail_at or fail_after answered a call
         self.partitions: list[str] = []  # the partitions of the disk
+        # A free SD card beside the disk, a data disk without SMART or an idle timeout (storage.free-mmc-as-data-disk).
+        self.card = False
         self.guest_shares: list[str] = []
         self.refuse_device: str | None = None
         self.refuse_after: str | None = None
@@ -1023,7 +1025,9 @@ class FakeNas:
                      "used_size": self.pool_used}]
         if parts == ["disks"]:
             return [{"name": DISK, "path": f"/dev/{DISK}", "model": "WDC", "serial": "W1", "size": 640, "rotational": True,
-                     "type": "disk", "partitions": [], "is_system": False, **self.power()}]
+                     "type": "disk", "partitions": [], "is_system": False, **self.power()}, *self.cards()]
+        if parts[:1] == ["disks"] and parts[1] in [card["name"] for card in self.cards()] and parts[2:] == ["smart"]:
+            return {"device": f"/dev/{parts[1]}", "healthy": None, "power_state": "active"}
         if parts[0] == "disks" and parts[2:] == ["spindown"] and method == "PUT":
             return self.set_spindown(parts[1], body)
         if parts[0] == "disks" and parts[2:] == ["smart"]:
@@ -1368,7 +1372,11 @@ class FakeNas:
 
     def api_health(self, method, parts, body, params, upload):
         if parts == ["disks"]:
-            return {"disks": [self.smart_info()]}
+            return {"disks": [self.smart_info(), *(self.card_info(card["name"]) for card in self.cards())]}
+        if parts[0] == "disk" and parts[1] in [card["name"] for card in self.cards()]:
+            if parts[2:] == ["test"]:
+                raise Refused(400, f"/dev/{parts[1]} is an SD card or eMMC, which has no SMART self-tests")
+            return self.card_info(parts[1])
         if parts[0] == "disk":
             if parts[1] != DISK:
                 raise Refused(400, f"Not a disk of this system: {parts[1]}")
@@ -1377,6 +1385,19 @@ class FakeNas:
                 return {"status": "started", "message": f"Short test started on /dev/{DISK}"}
             return self.smart_info()
         raise AssertionError(f"the fake does not know {method} /health/{'/'.join(parts)}")
+
+    def cards(self) -> list[dict]:
+        """The free SD card of GET /storage/disks, when card is set: no SMART, always awake (storage.free-mmc-as-data-disk)."""
+        return [{"name": "mmcblk2", "path": "/dev/mmcblk2", "model": "SC32G", "serial": "0x8f3a1b2c", "size": 32,
+                 "rotational": False, "type": "disk", "partitions": [], "is_system": False, "mmc_type": "SD",
+                 "power_state": "active", "spindown": 0,
+                 "spindown_problem": "/dev/mmcblk2 is an SD card or eMMC, which has no disk that spins down"}] \
+            if self.card else []
+
+    def card_info(self, name: str) -> dict:
+        return {"device": f"/dev/{name}", "model": "SC32G", "serial": "0x8f3a1b2c", "firmware": "Unknown",
+                "capacity": "29.72 GB", "temperature": None, "power_on_hours": None, "power_cycle_count": None,
+                "health_status": "NO_SMART", "attributes": [], "self_test_status": None, "last_test_result": None}
 
     def smart_info(self) -> dict:
         self.read_smart()
@@ -4128,6 +4149,19 @@ def test_the_smart_check_refuses_what_is_not_a_disk_and_starts_a_short_test(nas)
     assert f"/health/disk/{DISK}1" not in paths and "(no listed disk has a partition)" in output
     assert ("POST", f"/health/disk/{DISK}/test", None, {"test_type": "short"}) in nas.calls
     assert "sda: PASSED, 33 C, 2 attributes" in output
+
+
+def test_the_smart_check_takes_a_free_sd_card_without_smart_and_without_a_self_test(nas):
+    # storage.free-mmc-as-data-disk: a free SD card is listed, its SMART reads answer
+    # NO_SMART, and its self-test is refused with 400; the hard disk's test still starts.
+    nas.card = True
+    status, output = run_check("smart", nas)
+    assert status == 0, output
+    assert "mmcblk2: NO_SMART, None C, 0 attributes" in output
+    assert re.search(r"^PASS  \d+\. no self-test starts on mmcblk2, which has no SMART: /dev/mmcblk2 is an SD card",
+                     output, re.MULTILINE), output
+    assert ("POST", "/health/disk/mmcblk2/test", None, {"test_type": "short"}) in nas.calls
+    assert ("POST", f"/health/disk/{DISK}/test", None, {"test_type": "short"}) in nas.calls
 
 
 # --- the smart check's idle timeout (storage.disk-spindown, ADR-0378) ----------------------------

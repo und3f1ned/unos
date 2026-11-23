@@ -61,7 +61,8 @@ class SmartInfo(BaseModel):
     # ADR-0378: smartctl -n standby leaves a disk that sleeps alone.
     health_status: str = Field(description=(
         "PASSED or FAILED: the disk's overall health self-assessment; UNKNOWN when smartctl cannot tell; "
-        "STANDBY when the disk sleeps: it is left asleep, and no SMART data is read."))
+        "STANDBY when the disk sleeps: it is left asleep, and no SMART data is read; NO_SMART for an SD card or "
+        "eMMC, which has no SMART: smartctl does not run."))
     attributes: list[SmartAttribute] = Field(description="The disk's ATA SMART attributes; none for NVMe disks.")
     nvme_health: dict[str, int] | None = Field(default=None, description=(
         "An NVMe disk's SMART/Health Information log: its numbers by smartctl's names and in its order, such as "
@@ -689,7 +690,8 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     """One round of the SMART monitor (blocking: lsblk on the host, smartctl per disk).
 
     Records a snapshot of every whole disk of the host that is awake (the
-    disks of GET /health/disks, storage.disks.host_disks) and returns the
+    disks of GET /health/disks, storage.disks.host_disks, but an SD card or
+    eMMC, which has no SMART: storage.free-mmc-as-data-disk) and returns the
     trend alerts of the counters that rose since the disk's previous
     snapshot. When the host's disks cannot be listed, the pass is logged
     and skipped. The history stays in RAM, and SMART_HISTORY_FILE is written
@@ -715,6 +717,8 @@ def _smart_monitor_pass() -> list[SmartTrendAlert]:
     io_at_read: dict[str, tuple[int, int]] = {}
     read: list[storage_disks.HostDisk] = []
     for disk in disks:
+        if storage_disks.is_mmc_disk(disk.name):  # an SD card or eMMC has no SMART (storage.free-mmc-as-data-disk)
+            continue
         earlier = _disk_verdicts.get(disk.path)
         io = counts.get(disk.name)
         if (
@@ -1197,6 +1201,19 @@ async def raid_monitor_loop():
         await asyncio.sleep(RAID_CHECK_INTERVAL)
 
 
+# The health status of an SD card or eMMC, which has no SMART (storage.free-mmc-as-data-disk).
+NO_SMART = "NO_SMART"
+
+
+def _without_smart_data(device: str, health_status: str) -> SmartInfo:
+    """A disk's SmartInfo without SMART data: one that sleeps (STANDBY) or has no SMART (NO_SMART)."""
+    return SmartInfo(
+        device=device, model="Unknown", serial="Unknown", firmware="Unknown", capacity="Unknown",
+        temperature=None, power_on_hours=None, power_cycle_count=None, health_status=health_status,
+        attributes=[], self_test_status=None, last_test_result=None,
+    )
+
+
 def _format_capacity(size: int) -> str:
     """A size in bytes as the Health page shows it ("3.64 TB", "476.94 GB"); "Unknown" for 0."""
     if not size:
@@ -1209,16 +1226,16 @@ def _format_capacity(size: int) -> str:
 def parse_smart_data(device: str) -> SmartInfo:
     """The SMART data of a whole disk, from ``smartctl -n standby -j -a``.
 
-    A disk that sleeps is left asleep (ADR-0378): its health status is STANDBY, without data.
+    A disk that sleeps is left asleep (ADR-0378): its health status is STANDBY, without data. An SD
+    card or eMMC has no SMART: its health status is NO_SMART, without data, and smartctl does not
+    run (storage.free-mmc-as-data-disk).
     """
+    if storage_disks.is_mmc_disk(device.removeprefix("/dev/")):
+        return _without_smart_data(device, NO_SMART)
     try:
         result = host.run_smartctl(["-n", "standby", "-j", "-a"], device, timeout=SMARTCTL_TIMEOUT)
         if storage_disks.smartctl_found_it_asleep(result):
-            return SmartInfo(
-                device=device, model="Unknown", serial="Unknown", firmware="Unknown", capacity="Unknown",
-                temperature=None, power_on_hours=None, power_cycle_count=None, health_status="STANDBY",
-                attributes=[], self_test_status=None, last_test_result=None,
-            )
+            return _without_smart_data(device, "STANDBY")
         data = json.loads(result.stdout)
     except host.NoHostDisk as e:  # it left the host after it was listed (ADR-0414)
         raise HTTPException(400, e.strerror)
@@ -1354,7 +1371,8 @@ def _disk_health(disk: storage_disks.HostDisk) -> SmartInfo:
     The model and the capacity that lsblk reports stand in for those that
     smartctl does not report: with -j it prints JSON without them when it
     cannot open or identify the disk, such as one behind a USB bridge it
-    does not know. A disk that sleeps (STANDBY) gets lsblk's serial too.
+    does not know. A disk that sleeps (STANDBY), and an SD card or eMMC
+    (NO_SMART, storage.free-mmc-as-data-disk), get lsblk's serial too.
     """
     try:
         info = parse_smart_data(disk.path)
@@ -1378,7 +1396,7 @@ def _disk_health(disk: storage_disks.HostDisk) -> SmartInfo:
         from_lsblk["model"] = disk.model
     if info.capacity == "Unknown":
         from_lsblk["capacity"] = _format_capacity(disk.size)
-    if info.health_status == "STANDBY" and disk.serial:
+    if info.health_status in ("STANDBY", NO_SMART) and disk.serial:
         from_lsblk["serial"] = disk.serial
     return info.model_copy(update=from_lsblk)
 
@@ -1403,8 +1421,9 @@ _SMART_INFO_EXAMPLE = {
 }
 _SMART_INFO = (
     "device, model, serial, firmware, capacity; temperature in degrees Celsius, power_on_hours, power_cycle_count "
-    "(null when the disk reports none); health_status: PASSED, FAILED, UNKNOWN when smartctl cannot tell, or "
-    "STANDBY for a disk that sleeps, left asleep and without data; attributes: the ATA SMART attributes (id, name, "
+    "(null when the disk reports none); health_status: PASSED, FAILED, UNKNOWN when smartctl cannot tell, "
+    "STANDBY for a disk that sleeps, left asleep and without data, or NO_SMART for an SD card or eMMC, which has "
+    "no SMART, without data; attributes: the ATA SMART attributes (id, name, "
     "value, worst, thresh, raw_value, status: ok, warning within 10 of thresh, critical at or below it), none for "
     "NVMe disks; nvme_health: an NVMe disk's SMART/Health Information log by smartctl's names, null for other disks; "
     "self_test_status and last_test_result: the type and the result of the newest self-test, null without one."
@@ -1425,7 +1444,8 @@ _POOL_NAME = Annotated[str, PathParam(description="The pool's name.")]
             "health_status": "STANDBY", "attributes": [], "nvme_health": None, "self_test_status": None,
             "last_test_result": None,
         }]}, "disks: the SMART data of each whole disk of the host, as GET /health/disk/{device} answers it, but "
-             "that lsblk's model, size and, for a disk in standby, serial stand in for those smartctl does not "
+             "that lsblk's model, size and, for a disk in standby or without SMART, serial stand in for those "
+             "smartctl does not "
              "report, and a disk that smartctl cannot read has health_status UNKNOWN. Each disk has " + _SMART_INFO),
         **errors({500: _DISKS_UNLISTED}),
     },
@@ -1433,11 +1453,11 @@ _POOL_NAME = Annotated[str, PathParam(description="The pool's name.")]
 def get_disk_health(_: dict = Depends(verify_token)):
     """SMART health of the host's whole disks, as the Storage page lists them.
 
-    A system disk on NVMe, SATA or USB is included; the boot SD card or eMMC and virtual devices
-    are not. Every disk listed here answers on GET /health/disk/{device}. A disk that sleeps is
-    left asleep.
+    A system disk on NVMe, SATA or USB is included; the SD card or eMMC that holds the system and
+    virtual devices are not, and a free SD card or eMMC is listed without SMART data. Every disk
+    listed here answers on GET /health/disk/{device}. A disk that sleeps is left asleep.
     \f
-    storage.disks.host_disks; ADR-0378.
+    storage.disks.host_disks; ADR-0378, storage.free-mmc-as-data-disk.
     """
     return {"disks": [_disk_health(disk) for disk in storage_disks.host_disks_or_500()]}
 
@@ -1468,7 +1488,8 @@ def get_disk_smart(device: _DISK_DEVICE, _: dict = Depends(verify_token)):
         **answer({"status": "started", "message": "Short test started on /dev/sda"},
                  "status started, and a message that names the test and the disk."),
         **errors({
-            400: f"test_type is not short, long or conveyance, or {_NOT_A_DISK}",
+            400: f"test_type is not short, long or conveyance, the disk is an SD card or eMMC, which has no SMART "
+                 f"self-tests, or {_NOT_A_DISK}",
             500: f"{_DISKS_UNLISTED[:-1]}, the container's node of the disk cannot be made, or smartctl failed or "
                  f"did not answer within {SMARTCTL_TIMEOUT} seconds.",
         }),
@@ -1482,7 +1503,8 @@ def start_smart_test(
     """Start a SMART self-test on a whole disk of the host, given as ``sda`` or ``/dev/sda``. The
     disk runs the test on its own; its result shows in the disk's SMART data when it ends.
     \f
-    400 for another device or test type, also for a disk that left the host after it was listed;
+    400 for another device or test type, an SD card or eMMC (storage.free-mmc-as-data-disk), and a disk that left the
+    host after it was listed;
     500 when the host's disks cannot be listed, smartctl fails, the container's node of the disk
     cannot be made (ADR-0414), and when smartctl does not answer within SMARTCTL_TIMEOUT: it is
     killed then (ADR-0290).
@@ -1490,7 +1512,7 @@ def start_smart_test(
     if test_type not in ["short", "long", "conveyance"]:
         raise HTTPException(400, "Invalid test type. Use: short, long, or conveyance")
 
-    device = storage_disks.whole_disk_device(device)
+    device = storage_disks.smart_disk_device(device)
 
     try:
         result = host.run_smartctl(["-t", test_type], device, timeout=SMARTCTL_TIMEOUT)
@@ -1516,19 +1538,21 @@ def start_smart_test(
     "/overview", summary="Count the disks by SMART health",
     responses={
         **answer({"total_disks": 3, "healthy": 1, "warning": 0, "failed": 0, "unknown": 0, "standby": 2,
-                  "average_temperature": 34},
+                  "no_smart": 0, "average_temperature": 34},
                  "total_disks: the disks of GET /health/disks; healthy: PASSED with no attribute at warning or "
                  "critical; warning: PASSED with one; failed: FAILED; unknown: smartctl could not tell; standby: "
-                 "asleep; average_temperature: the rounded average in degrees Celsius of the disks that report one, "
+                 "asleep; no_smart: SD cards and eMMC, which have no SMART; average_temperature: the rounded "
+                 "average in degrees Celsius of the disks that report one, "
                  "null when none does."),
         **errors({500: _DISKS_UNLISTED}),
     },
 )
 def get_health_overview(_: dict = Depends(verify_token)):
-    """How many disks of GET /health/disks are healthy, warn, fail, cannot be read or sleep, and
-    their average temperature. A disk that sleeps is left asleep and counts as standby.
+    """How many disks of GET /health/disks are healthy, warn, fail, cannot be read, sleep or have no
+    SMART (SD cards and eMMC), and their average temperature. A disk that sleeps is left asleep and
+    counts as standby.
     \f
-    ADR-0378.
+    ADR-0378, storage.free-mmc-as-data-disk.
     """
     disks = storage_disks.host_disks_or_500()
 
@@ -1538,6 +1562,7 @@ def get_health_overview(_: dict = Depends(verify_token)):
     failed_disks = 0
     unknown_disks = 0
     standby_disks = 0
+    no_smart_disks = 0
     total_temp = 0
     temp_count = 0
 
@@ -1553,6 +1578,8 @@ def get_health_overview(_: dict = Depends(verify_token)):
             failed_disks += 1
         elif smart_info.health_status == "STANDBY":
             standby_disks += 1
+        elif smart_info.health_status == NO_SMART:
+            no_smart_disks += 1
         else:  # also when smartctl failed
             unknown_disks += 1
 
@@ -1569,6 +1596,7 @@ def get_health_overview(_: dict = Depends(verify_token)):
         "failed": failed_disks,
         "unknown": unknown_disks,
         "standby": standby_disks,
+        "no_smart": no_smart_disks,
         "average_temperature": avg_temp
     }
 

@@ -6,6 +6,7 @@ import {
   MONITOR_CLOSELY,
   REPLACE_SOON,
   REPLACE_SOON_HDD_2,
+  SD_CARD_DISK,
   SLEEPING_DISK,
   fakeHealthApi,
   predictionsAnswer,
@@ -218,6 +219,22 @@ test.describe('Disk Health', () => {
     await expect(field(dialog, 'Serial')).toHaveText('E2E-HDD-3');
     await expect(dialog).toContainText(
       'The disk sleeps: its SMART data is read once it is awake, so as not to spin it up.',
+    );
+    await expect(dialog.getByRole('table')).toHaveCount(0);
+  });
+
+  // storage.free-mmc-as-data-disk: an SD card or eMMC has no SMART.
+  test('an SD card is listed without SMART, and its dialog says why', async ({ authenticatedPage: page }) => {
+    await fakeHealthApi(page, { disks: () => ({ json: { disks: [...FAKE_SMART_DISKS, SD_CARD_DISK] } }) });
+    await page.goto('/system#health');
+    await expect(disk(page, '/dev/mmcblk1').locator('.badge')).toHaveText('No SMART');
+    await expect(disk(page, '/dev/mmcblk1').locator('.badge')).toHaveClass(/badge-neutral/);
+    await disk(page, '/dev/mmcblk1').getByRole('button', { name: 'SMART data of /dev/mmcblk1' }).click();
+    const dialog = page.getByRole('dialog', { name: 'SC32G (/dev/mmcblk1)' });
+    await expect(field(dialog, 'Overall health')).toHaveText('No SMART');
+    await expect(field(dialog, 'Serial')).toHaveText('0x8f3a1b2c');
+    await expect(dialog).toContainText(
+      'An SD card or eMMC has no SMART: its health cannot be read, and no self-test runs on it.',
     );
     await expect(dialog.getByRole('table')).toHaveCount(0);
   });
