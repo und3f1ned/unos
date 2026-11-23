@@ -12,6 +12,18 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- System → Disk Health shows a **System disk** card for a system disk that is an eMMC (the BPI-W3,
+  the BPI-F3): its life-time estimates A and B and its pre-EOL state from `mmc extcsd read`, read
+  at the start and once a day (as of boot without mmc-utils), the kernel's I/O errors of the eMMC
+  and ext4's errors on the root since UNOS started, and whether the root is read-only, every 5
+  minutes; on another system disk it says why it shows none. The problems `emmc_worn` (a warning
+  at 70% of the life or pre-EOL warning, an error, alerted again, at 90% or pre-EOL urgent),
+  `system_disk_errors` and `system_disk_failed` (a read-only root after a new ext4 error, or I/O
+  errors and a failed direct read) reach every channel and the banner; the alert needs no write
+  to the failing disk, nor a read of it: when the channels' file cannot be read, the alerts go to the
+  channels that UNOS read at its start or last saved. UNOS acts on none of them yet.
+  `GET /api/v1/health/system-disk`;
+  `install.sh` installs mmc-utils (ADR-0471, ADR-0472).
 - The web UI's Dashboard, Storage and Shares read their data in SvelteKit load functions
   (ADR-0469): a navigation keeps the open page, its link marked, until the next page has its data,
   with a thin bar at the top after 200 ms, and shows no skeleton; a page visited before in the tab

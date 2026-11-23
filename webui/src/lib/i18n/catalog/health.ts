@@ -94,7 +94,51 @@ export const en = {
 	'health.nvme.mediaErrors': 'Media errors',
 	'health.nvme.errorLogEntries': 'Num err log entries',
 	'health.nvme.warningTempTime': 'Warning temp time',
-	'health.nvme.criticalCompTime': 'Critical comp time'
+	'health.nvme.criticalCompTime': 'Critical comp time',
+
+	// The System disk card (components/system/health/SystemDiskCard.svelte, ADR-0471): an eMMC system
+	// disk's wear and errors. The server's technical texts (why a read failed) stay as they come.
+	'health.systemDisk.title': 'System disk',
+	'health.systemDisk.loadError': 'Could not load the system disk',
+	'health.systemDisk.lifeA': 'Life used, estimate A',
+	'health.systemDisk.lifeB': 'Life used, estimate B',
+	'health.systemDisk.preEol': 'Reserve blocks (pre-EOL)',
+	'health.systemDisk.wearRead': 'Wear read',
+	'health.systemDisk.asOfBoot': 'As of boot',
+	'health.systemDisk.ioErrors': 'I/O errors since UNOS started',
+	'health.systemDisk.ext4Errors': 'ext4 errors since UNOS started',
+	'health.systemDisk.root': 'Root filesystem',
+	'health.systemDisk.readWrite': '{filesystem}, read-write',
+	'health.systemDisk.readOnly': '{filesystem}, read-only',
+	'health.systemDisk.stateNotRead': '{filesystem}, state not read yet',
+	'health.systemDisk.notRead': 'Not read yet',
+	'health.systemDisk.notExt4': 'Not counted: no ext4',
+	// An estimate of the eMMC (1 to 10): the share of its life used, {from} and {to} as percentages.
+	'health.systemDisk.lifeUsed': '{from} to {to} used',
+	'health.systemDisk.lifeExceeded': 'Past its rated life',
+	'health.systemDisk.notReported': 'Not reported',
+	'health.systemDisk.preEol.normal': 'Normal',
+	'health.systemDisk.preEol.warning': 'Warning',
+	'health.systemDisk.preEol.urgent': 'Urgent',
+	// The card's badge: its worst problem (systemDiskState of components/system/health/texts.ts).
+	'health.systemDisk.state.failing': 'Failing',
+	'health.systemDisk.state.nearlyWornOut': 'Nearly worn out',
+	'health.systemDisk.state.errors': 'Errors',
+	'health.systemDisk.state.wearing': 'Wearing out',
+	'health.systemDisk.noMmc':
+		'The host has no mmc-utils: these are the values that the kernel read when the host started. Install mmc-utils on the host for a daily reading.',
+	'health.systemDisk.mmcFailed':
+		'mmc-utils could not read the eMMC: these are the values that the kernel read when the host started.',
+	'health.systemDisk.wearStale':
+		'The last daily reading of the wear failed: the values are those of the reading before.',
+	'health.systemDisk.wearUnreadable': 'The wear of the eMMC could not be read.',
+	'health.systemDisk.checkFailed': 'Part of the last check could not be read: what it found before is shown.',
+	'health.systemDisk.help':
+		'The eMMC estimates how much of its life its writes have used: A for its fast SLC area, B for the rest, and pre-EOL for its reserve of spare blocks. UNOS reads them once a day and the errors every 5 minutes, and alerts what it finds; it changes nothing.',
+	'health.systemDisk.notEmmc':
+		'The system is on {disk}, which is no eMMC: UNOS reads the wear of an eMMC system disk only.',
+	'health.systemDisk.noDisk': 'The system is on no disk of the host that UNOS can read, so no wear is shown.',
+	'health.systemDisk.unreadable': 'UNOS could not read which disk holds the system. It tries again in 5 minutes.'
 };
 
 export const ru: Translation<typeof en> = {
@@ -175,5 +219,46 @@ export const ru: Translation<typeof en> = {
 	'health.nvme.mediaErrors': 'Ошибки носителя',
 	'health.nvme.errorLogEntries': 'Записи в журнале ошибок',
 	'health.nvme.warningTempTime': 'Время при повышенной температуре',
-	'health.nvme.criticalCompTime': 'Время при критической температуре'
+	'health.nvme.criticalCompTime': 'Время при критической температуре',
+
+	'health.systemDisk.title': 'Системный диск',
+	'health.systemDisk.loadError': 'Не удалось загрузить состояние системного диска',
+	'health.systemDisk.lifeA': 'Израсходованный ресурс, оценка A',
+	'health.systemDisk.lifeB': 'Израсходованный ресурс, оценка B',
+	'health.systemDisk.preEol': 'Резервные блоки (pre-EOL)',
+	'health.systemDisk.wearRead': 'Износ прочитан',
+	'health.systemDisk.asOfBoot': 'На момент загрузки',
+	'health.systemDisk.ioErrors': 'Ошибки ввода-вывода с запуска UNOS',
+	'health.systemDisk.ext4Errors': 'Ошибки ext4 с запуска UNOS',
+	'health.systemDisk.root': 'Корневая файловая система',
+	'health.systemDisk.readWrite': '{filesystem}, чтение и запись',
+	'health.systemDisk.readOnly': '{filesystem}, только чтение',
+	'health.systemDisk.stateNotRead': '{filesystem}, состояние ещё не прочитано',
+	'health.systemDisk.notRead': 'Ещё не прочитано',
+	'health.systemDisk.notExt4': 'Не считаются: не ext4',
+	'health.systemDisk.lifeUsed': 'Израсходовано от {from} до {to}',
+	'health.systemDisk.lifeExceeded': 'Расчётный ресурс превышен',
+	'health.systemDisk.notReported': 'Не сообщается',
+	'health.systemDisk.preEol.normal': 'Норма',
+	'health.systemDisk.preEol.warning': 'Внимание',
+	'health.systemDisk.preEol.urgent': 'Срочно',
+	'health.systemDisk.state.failing': 'Отказывает',
+	'health.systemDisk.state.nearlyWornOut': 'Почти изношен',
+	'health.systemDisk.state.errors': 'Есть ошибки',
+	'health.systemDisk.state.wearing': 'Изнашивается',
+	'health.systemDisk.noMmc':
+		'На хосте нет mmc-utils: показаны значения, которые ядро прочитало при запуске хоста. Установите на хост mmc-utils, чтобы износ читался ежедневно.',
+	'health.systemDisk.mmcFailed':
+		'mmc-utils не смог прочитать eMMC: показаны значения, которые ядро прочитало при запуске хоста.',
+	'health.systemDisk.wearStale': 'Последнее ежедневное чтение износа не удалось: показаны значения предыдущего чтения.',
+	'health.systemDisk.wearUnreadable': 'Не удалось прочитать износ eMMC.',
+	'health.systemDisk.checkFailed': 'Часть последней проверки не удалось прочитать: показано найденное ранее.',
+	'health.systemDisk.help':
+		'eMMC сама оценивает, какая доля её ресурса израсходована записью: A — для быстрой области SLC, B — для остальной памяти, pre-EOL — для запаса резервных блоков. UNOS читает их раз в сутки, а ошибки — каждые 5 минут, и сообщает о найденном; сам он ничего не меняет.',
+	'health.systemDisk.notEmmc':
+		'Система находится на {disk}, а это не eMMC: UNOS читает износ только системного диска eMMC.',
+	'health.systemDisk.noDisk':
+		'Система находится не на диске хоста, который UNOS может прочитать, поэтому износ не показан.',
+	'health.systemDisk.unreadable':
+		'UNOS не смог определить, на каком диске находится система. Он попробует снова через 5 минут.'
 };

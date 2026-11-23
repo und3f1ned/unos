@@ -34,6 +34,42 @@ const MISSED = {
   since: '2026-11-10T10:05:00+00:00',
 };
 
+// The system disk's problems (system.emmc-health-monitoring, ADR-0471), as health/system_disk.py words them.
+const FAILED = {
+  key: 'system_disk_failed:/dev/mmcblk0',
+  severity: 'error',
+  kind: 'system_disk_failed',
+  subject: '/dev/mmcblk0',
+  title: 'The system disk /dev/mmcblk0 is failing',
+  detail:
+    'ext4 counted 1 new error(s) on the root filesystem /dev/mmcblk0p1 and made it read-only: the host and UNOS ' +
+    'can no longer save changes. Check the kernel log (System > Logs, Kernel), and replace the eMMC if the ' +
+    'errors come back after a restart.',
+  since: '2026-11-23T10:05:04+00:00',
+};
+const WORN = {
+  key: 'emmc_worn:/dev/mmcblk0',
+  severity: 'warning',
+  kind: 'emmc_worn',
+  subject: '/dev/mmcblk0',
+  title: "The system's eMMC /dev/mmcblk0 is wearing out",
+  detail:
+    'The eMMC /dev/mmcblk0 that holds the system estimates that 70 to 80% of its life is used (life-time ' +
+    'estimates A 0x08, B 0x01; pre-EOL normal). Plan its replacement, and keep the off-device copies current.',
+  since: '2026-11-23T08:00:04+00:00',
+};
+const ERRORS = {
+  key: 'system_disk_errors:/dev/mmcblk0',
+  severity: 'warning',
+  kind: 'system_disk_errors',
+  subject: '/dev/mmcblk0',
+  title: 'The system disk /dev/mmcblk0 reports errors',
+  detail:
+    'Since the supervisor started, the kernel logged 2 I/O error(s) of the eMMC and ext4 counted 0 new error(s) ' +
+    'on the root filesystem /dev/mmcblk0p1. Check the kernel log (System > Logs, Kernel).',
+  since: '2026-11-23T10:00:04+00:00',
+};
+
 /**
  * Stand in for the events socket: auth_ok to the page's first message, then a problems message
  * with `problems`. Returns the sockets that the page opened, to send more through them.
@@ -97,6 +133,30 @@ test.describe('The health banner', () => {
     await expect(page.locator('main').getByText('Nightly backup')).toHaveCount(0);
   });
 
+  test("names the system disk's problems, each a link to Disk Health", async ({ authenticatedPage: page }) => {
+    const sockets = await fakeEvents(page, [WORN, ERRORS]);
+    await fakeHealthApi(page);
+    await page.goto('/users');
+
+    let shown = banner(page, '2 problems need attention');
+    await expect(shown.getByRole('listitem')).toHaveText([
+      'The eMMC /dev/mmcblk0 that holds the system has used most of its life',
+      'The system disk /dev/mmcblk0 reports I/O or filesystem errors',
+    ]);
+    // The failure takes the place of the errors (ADR-0472), first as an error.
+    sockets[0].send(JSON.stringify({ type: 'problems', data: [WORN, FAILED] }));
+    shown = banner(page, '2 problems need attention');
+    await expect(shown.getByRole('listitem')).toHaveText([
+      'The system disk /dev/mmcblk0 is failing',
+      'The eMMC /dev/mmcblk0 that holds the system has used most of its life',
+    ]);
+    for (const item of await shown.getByRole('listitem').all()) {
+      await expect(item.getByRole('link')).toHaveAttribute('href', '/system/health');
+    }
+    await shown.getByRole('link', { name: 'The system disk /dev/mmcblk0 is failing' }).click();
+    await expect(page.getByRole('heading', { name: 'System disk', exact: true })).toBeVisible();
+  });
+
   test.describe('in Russian', () => {
     // Without a language chosen in it, the web UI takes the browser's (ADR-0287).
     test.use({ locale: 'ru-RU' });
@@ -117,6 +177,21 @@ test.describe('The health banner', () => {
 
       sockets[0].send(JSON.stringify({ type: 'problems', data: [] }));
       await expect(banner(page, /требу/)).toHaveCount(0);
+    });
+
+    test("says the system disk's problems", async ({ authenticatedPage: page }) => {
+      const sockets = await fakeEvents(page, [WORN, ERRORS]);
+      await fakeHealthApi(page);
+      await page.goto('/users');
+
+      await expect(banner(page, '2 проблемы требуют внимания').getByRole('listitem')).toHaveText([
+        'eMMC /dev/mmcblk0, на которой находится система, израсходовала большую часть ресурса',
+        'Системный диск /dev/mmcblk0 сообщает об ошибках ввода-вывода или файловой системы',
+      ]);
+      sockets[0].send(JSON.stringify({ type: 'problems', data: [FAILED] }));
+      await expect(banner(page, '1 проблема требует внимания').getByRole('listitem')).toHaveText([
+        'Системный диск /dev/mmcblk0 отказывает',
+      ]);
     });
   });
 

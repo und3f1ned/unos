@@ -26,6 +26,7 @@ power = importlib.import_module("src.power.router")
 power_schedule = importlib.import_module("src.power.schedule")
 app_usage = importlib.import_module("src.apps.usage")
 monitor_history = importlib.import_module("src.monitor.history")
+system_disk = importlib.import_module("src.health.system_disk")
 scheduler = importlib.import_module("src.scheduler.router")
 updater = importlib.import_module("src.updates.updater")
 
@@ -35,6 +36,8 @@ LOOPS = {
     "task_checks": (scheduler, "task_check_loop", "_task_check_task"),
     "raid_monitor": (health, "raid_monitor_loop", "_raid_monitor_task"),
     "smart_monitor": (health, "smart_monitor_loop", "_smart_monitor_task"),
+    # The wear and failure signs of an eMMC system disk, beside the RAID monitor (ADR-0471, ADR-0472).
+    "system_disk": (system_disk, "system_disk_loop", "_loop_task"),
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),
     # The scheduled shutdown, the wake alarm and the idle shutdown of the power settings (ADR-0407).
     "power_schedule": (power_schedule, "power_schedule_loop", "_loop_task"),

@@ -1,21 +1,31 @@
 // System > Disk Health's reads (routes/system/health/+page.ts, ADR-0235): every disk's SMART data,
 // which smartctl reads from each disk and may wake a sleeping one, and the failure predictions of
 // the stored history, at once.
-import { getDiskHealth, getDiskPredictions, type DiskPrediction, type SmartInfo } from '$lib/api/health';
+import {
+	getDiskHealth,
+	getDiskPredictions,
+	getSystemDiskHealth,
+	type DiskPrediction,
+	type SmartInfo,
+	type SystemDiskHealth
+} from '$lib/api/health';
 import type { PageReader } from '$lib/pages/load';
 import { settle, type Settled } from '$lib/pages/read';
 
 export type HealthSnapshot = {
 	disks: Settled<SmartInfo[]>;
 	predictions: Settled<DiskPrediction[]>;
+	// The system disk's wear and errors when it is an eMMC (ADR-0471).
+	systemDisk: Settled<SystemDiskHealth>;
 };
 
 async function readHealth(): Promise<HealthSnapshot> {
-	const [disks, predictions] = await Promise.all([
+	const [disks, predictions, systemDisk] = await Promise.all([
 		settle(getDiskHealth().then((answer) => answer.disks)),
-		settle(getDiskPredictions().then((answer) => answer.predictions))
+		settle(getDiskPredictions().then((answer) => answer.predictions)),
+		settle(getSystemDiskHealth())
 	]);
-	return { disks, predictions };
+	return { disks, predictions, systemDisk };
 }
 
 export const healthReader: PageReader<HealthSnapshot> = {

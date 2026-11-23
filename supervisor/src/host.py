@@ -70,7 +70,9 @@ logger = logging.getLogger(__name__)
 # notifications/router.py (curl, which sends a notification channel's
 # request from the host's network when the container connects nowhere, and ends
 # itself at its --max-time: ADR-0336) and shares/iscsi.py (modprobe, mount and mountpoint for LIO's
-# modules and configfs; lsattr and chattr, which keep the folder of the LUN files immutable: ADR-0418).
+# modules and configfs; lsattr and chattr, which keep the folder of the LUN files immutable: ADR-0418)
+# and health/system_disk.py (mmc of mmc-utils, which reads an eMMC system disk's wear, and journalctl and
+# dd under timeout, cat and readlink: ADR-0471).
 # cat, od (the export files: shares/nfs.py), stat, truncate, grep and find (shares/iscsi.py), test,
 # mkdir, rmdir, rm, find, sync, sleep, timeout, hostname, readlink (the time zone:
 # scheduler/router.py, ADR-0266), df (apps/preflight.py) and sh (also
@@ -116,6 +118,7 @@ HOST_TOOLS: dict[str, str] = {
     "ethtool": "ethtool",
     "journalctl": "systemd",
     "curl": "curl",
+    "mmc": "mmc-utils",
 }
 
 # Programs of host services that deploy/install.sh does not install, with their

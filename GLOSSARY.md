@@ -112,6 +112,12 @@ device it is the eMMC `mmcblk0` (ADR-0470), whose writes are measured and kept m
 the scripts of `scripts/dev/` print them as `SD writes`, a label from the time when the dev device
 ran from an SD card. Avoid: SD card, eMMC (media that a system disk may be), boot disk.
 
+**eMMC wear**: How much of its life an eMMC system disk's writes have used, as the eMMC itself
+estimates it: the life-time estimates A (its SLC area) and B (the rest), each in tenths of its life
+with 0x0B past it, and the pre-EOL state of its reserve blocks (normal, warning, urgent). UNOS reads
+it with `mmc extcsd read` once a day, or as of boot from sysfs (ADR-0471, ADR-0472). Avoid: health
+(the SMART word), lifetime.
+
 **Supervisor log**: What `unos-supervisor` writes to Docker's container log (`docker logs
 unos-supervisor`): one JSON object per line with `time`, `level`, `logger` and `message`, set up in
 `supervisor/src/logging_setup.py` at the level of `UNOS_LOG_LEVEL` (INFO by default) and silent
@@ -242,8 +248,10 @@ Avoid: alarm.
 **Problem**: A condition of the NAS that needs an administrator while it lasts: a managed pool
 that is not mounted, degraded, read-only after an error or almost full, a volume at 80, 90 or 95
 percent of its quota, a failing disk, a scheduled task whose last run failed or that missed a run,
-a container of an app at its memory or CPU limit or out of memory (ADR-0390).
-It is alerted once when it is found (a volume's again at each further level) and shown in
+a container of an app at its memory or CPU limit or out of memory (ADR-0390), a worn, erring or
+failing eMMC system disk (ADR-0471).
+It is alerted once when it is found (a volume's again at each further level, a worn eMMC's again
+as an error) and shown in
 the health banner until it is gone; UNOS keeps it in RAM only (ADR-0332). Avoid: issue, incident,
 event.
 

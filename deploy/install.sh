@@ -148,6 +148,7 @@ install_dependencies() {
         hdparm \
         ethtool \
         iproute2 \
+        mmc-utils \
         >/dev/null 2>&1
     
     log_success "System dependencies installed"

@@ -1,5 +1,5 @@
-import type { DiskPrediction, SmartInfo } from '$lib/api/health';
-import { formatNumber, sizeUnitKey } from '$lib/format';
+import type { DiskPrediction, SmartInfo, SystemDiskHealth } from '$lib/api/health';
+import { formatNumber, formatPercent, sizeUnitKey } from '$lib/format';
 import type { Translate } from '$lib/i18n';
 
 // What System > Health shows of a disk's health, in the language of the page (ADR-0287). The
@@ -79,4 +79,40 @@ export function capacityText(t: Translate, locale: string, capacity: string): st
 	if (rest.length > 0 || !key || !/^\d+(\.\d+)?$/.test(number)) return orUnknown(t, capacity);
 	const digits = number.split('.')[1]?.length ?? 0;
 	return t(key, { size: formatNumber(Number(number), locale, { digits, fixed: true }) });
+}
+
+// The values of an eMMC's life-time estimates (JEDEC eMMC 5.0): 1 to 10 each a tenth of its life used,
+// 11 past its rated life; 0 is not defined and higher values are reserved (ADR-0471).
+const LIFE_EXCEEDED = 11;
+
+/** A life-time estimate as the share of the life used: "0% to 10% used", "Past its rated life". */
+export function lifeTimeText(t: Translate, locale: string, value: number | null): string {
+	if (value === null || value < 1 || value > LIFE_EXCEEDED) return t('health.systemDisk.notReported');
+	if (value === LIFE_EXCEEDED) return t('health.systemDisk.lifeExceeded');
+	return t('health.systemDisk.lifeUsed', {
+		from: formatPercent((value - 1) * 10, locale),
+		to: formatPercent(value * 10, locale)
+	});
+}
+
+/** The pre-EOL state (1 normal, 2 warning, 3 urgent) as a key of the catalog. */
+export function preEolKey(value: number | null): string {
+	if (value === 1) return 'health.systemDisk.preEol.normal';
+	if (value === 2) return 'health.systemDisk.preEol.warning';
+	if (value === 3) return 'health.systemDisk.preEol.urgent';
+	return 'health.systemDisk.notReported';
+}
+
+/**
+ * The badge of the system disk: its worst problem (a failure, then nearly worn out, then errors, then
+ * wearing), else healthy. Keys of the catalog and the badge's look.
+ */
+export function systemDiskState(health: SystemDiskHealth): { key: string; variant: 'success' | 'warning' | 'error' } {
+	const has = (kind: string, severity?: string) =>
+		health.problems.some((problem) => problem.kind === kind && (!severity || problem.severity === severity));
+	if (has('system_disk_failed')) return { key: 'health.systemDisk.state.failing', variant: 'error' };
+	if (has('emmc_worn', 'error')) return { key: 'health.systemDisk.state.nearlyWornOut', variant: 'error' };
+	if (has('system_disk_errors')) return { key: 'health.systemDisk.state.errors', variant: 'warning' };
+	if (has('emmc_worn')) return { key: 'health.systemDisk.state.wearing', variant: 'warning' };
+	return { key: 'health.state.healthy', variant: 'success' };
 }

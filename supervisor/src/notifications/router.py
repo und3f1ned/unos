@@ -122,14 +122,60 @@ def load_configs() -> list[NotificationConfig]:
         return []
 
 
+# The channels as UNOS last read them at its start or wrote them, for the alerts alone (ADR-0472, which
+# amends ADR-0324 for them): an alert of a failing system disk must not depend on reading that disk.
+# None until the first of those. _fallback_logged: whether the alerts' fall back to it was logged since
+# their last read that worked.
+_known_channels: list[NotificationConfig] | None = None
+_fallback_logged = False
+
+
+def remember_channels() -> None:
+    """Keep the channels in RAM for the alerts (blocking: run it in a worker thread): at the start, through
+    health.router.start_health_monitors. A file that cannot be opened keeps what was kept."""
+    global _known_channels
+    try:
+        configs: list[NotificationConfig] = state_files.load_json(
+            Path(CONFIG_FILE), _CHANNELS.validate_python, list, what="the notification channels")
+    except OSError as error:
+        logger.warning("Could not read the notification channels %s: %s", CONFIG_FILE, error)
+        return
+    _known_channels = configs
+
+
+def alert_channels() -> list[NotificationConfig]:
+    """The channels that an alert goes to (blocking): the file's, read now, as load_configs reads it. When
+    it cannot be opened, the copy kept in RAM, logged once until a read works again; without a copy, none,
+    and the reason is logged."""
+    global _fallback_logged
+    path = Path(CONFIG_FILE)
+    try:
+        configs: list[NotificationConfig] = state_files.load_json(
+            path, _CHANNELS.validate_python, list, what="the notification channels")
+    except OSError as error:
+        if _known_channels is None:
+            logger.warning("Could not read the notification channels %s, and none are kept in RAM: the alert "
+                           "reaches no channel: %s", path, error)
+            return []
+        if not _fallback_logged:
+            _fallback_logged = True
+            logger.warning("Could not read the notification channels %s: the alerts go to the %d channel(s) "
+                           "kept in RAM since UNOS last read or saved them: %s", path, len(_known_channels), error)
+        return list(_known_channels)
+    _fallback_logged = False
+    return configs
+
+
 def _replace_file(path: Path, text: str) -> None:
     """Replace the file at ``path`` with ``text`` (blocking: fsync): state_files.replace_file (ADR-0324)."""
     state_files.replace_file(path, text.encode("utf-8"), sync=True)
 
 
 def save_configs(configs: list[NotificationConfig]) -> None:
-    """Replace the channels' file with ``configs`` (blocking: fsync)."""
+    """Replace the channels' file with ``configs`` (blocking: fsync), and keep them in RAM for the alerts."""
+    global _known_channels
     _replace_file(Path(CONFIG_FILE), json.dumps([c.model_dump() for c in configs], indent=2))
+    _known_channels = list(configs)
 
 
 def _change_configs(change: Callable[[list[NotificationConfig]], list[NotificationConfig]]) -> bool:

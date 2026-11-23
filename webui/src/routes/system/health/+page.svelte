@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { replaceSoon, type DiskPrediction, type SmartInfo } from '$lib/api/health';
+	import { replaceSoon, type DiskPrediction, type SmartInfo, type SystemDiskHealth } from '$lib/api/health';
 	import { Alert, Badge, Button, EmptyState, ErrorState, Skeleton, TechDetails } from '$lib/components/ui';
-	import { SmartDataDialog } from '$lib/components/system/health';
+	import { SmartDataDialog, SystemDiskCard } from '$lib/components/system/health';
 	import {
 		RECOMMENDATION,
 		capacityText,
@@ -29,6 +29,9 @@
 	let loaded = $state(false);
 	let error = $state('');
 	let predictionsError = $state('');
+	// The system disk's wear and errors when it is an eMMC (ADR-0471): a card of its own after the list.
+	let systemDisk = $state<SystemDiskHealth | null>(null);
+	let systemDiskError = $state('');
 	// The disk whose SMART data the dialog shows: the data of GET /health/disks,
 	// so that opening a disk runs no smartctl.
 	let openDisk = $state<SmartInfo | null>(null);
@@ -56,6 +59,13 @@
 			// replace is not taken for one without a mark.
 			toReplace = [];
 			predictionsError = snapshot.predictions.error || $t('health.predictionsError');
+		}
+		if (snapshot.systemDisk.ok) {
+			systemDisk = snapshot.systemDisk.value;
+			systemDiskError = '';
+		} else {
+			systemDisk = null;
+			systemDiskError = snapshot.systemDisk.error || $t('health.systemDisk.loadError');
 		}
 		loaded = true;
 	}
@@ -168,6 +178,10 @@
 				</li>
 			{/each}
 		</ul>
+	{/if}
+
+	{#if loaded}
+		<SystemDiskCard health={systemDisk} error={systemDiskError} />
 	{/if}
 </div>
 
