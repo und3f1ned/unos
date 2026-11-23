@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getSystemInfo, type SystemInfo } from '$lib/api/system';
+	import { getSystemInfo, type DockerData, type SystemInfo } from '$lib/api/system';
 	import { Card, ErrorState, Skeleton } from '$lib/components/ui';
 	import { messageOf } from '$lib/errors';
 	import { HostSettings, HostSettingsCard } from '$lib/components/system/general';
@@ -19,6 +19,9 @@
 	let loaded = $state(false);
 	// Why the system information could not be read.
 	let infoError = $state('');
+	// Where Docker keeps its data (ADR-0487), and why that could not be read.
+	let dockerData = $state<DockerData | null>(null);
+	let dockerError = $state('');
 
 	// The name and time zone of the host (ADR-0331).
 	const host = new HostSettings();
@@ -31,6 +34,8 @@
 	function apply(snapshot: GeneralSnapshot) {
 		systemInfo = valueOr(snapshot.info, null);
 		infoError = errorOf(snapshot.info);
+		dockerData = valueOr(snapshot.docker, null);
+		dockerError = errorOf(snapshot.docker);
 		host.apply(snapshot.hostname, snapshot.zone, snapshot.zones);
 		loaded = true;
 	}
@@ -44,6 +49,17 @@
 			infoError = messageOf(e);
 		}
 	}
+
+	// The pool that holds Docker's data, a move to one, or neither (ADR-0487).
+	let dockerPlace = $derived(
+		!dockerData
+			? $t('general.info.dockerUnknown')
+			: dockerData.moving_to
+				? $t('general.info.dockerMoving', { pool: dockerData.moving_to })
+				: dockerData.pool
+					? $t('general.info.dockerPool', { pool: dockerData.pool })
+					: $t('general.info.dockerNoPool')
+	);
 
 	// Reactive, so that the uptime follows a change of the language.
 	let formatUptime = $derived((bootTime: string): string => {
@@ -70,7 +86,7 @@
 			<div class="card">
 				<Skeleton size="base" class="w-40 mb-4" />
 				<div class="kv">
-					{#each [0, 1, 2, 3] as fact (fact)}
+					{#each [0, 1, 2, 3, 4] as fact (fact)}
 						<div>
 							<Skeleton size="xs" class="w-16" />
 							<Skeleton class="w-28" />
@@ -100,6 +116,16 @@
 					{@render info($t('general.info.kernel'), systemInfo.kernel, 'font-mono text-xs')}
 					{@render info($t('general.info.architecture'), systemInfo.architecture, '')}
 					{@render info($t('general.info.uptime'), formatUptime(systemInfo.boot_time), 'tabular')}
+					<!-- Where Docker keeps its data: its pool, with the data root's path; why it is not known. -->
+					<div data-testid="docker-data">
+						<span class="kv-label">{$t('general.info.docker')}</span>
+						<span class="kv-value">{dockerPlace}</span>
+						{#if dockerData}
+							<span class="block mono-xs text-muted break-all">{dockerData.data_root}</span>
+						{:else if dockerError}
+							<span class="block text-xs text-muted">{dockerError}</span>
+						{/if}
+					</div>
 				</div>
 			{:else}
 				<ErrorState title={$t('general.info.loadFailed')} message={infoError} onretry={loadInfo} />

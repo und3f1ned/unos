@@ -26,7 +26,13 @@ export const en = {
 	'general.info.kernel': 'Kernel',
 	'general.info.architecture': 'Architecture',
 	'general.info.uptime': 'Uptime',
-	'general.info.loadFailed': 'The system information could not be read.'
+	'general.info.loadFailed': 'The system information could not be read.',
+	// Where Docker keeps its data (ADR-0486, ADR-0487).
+	'general.info.docker': "Docker's data",
+	'general.info.dockerPool': 'Pool {pool}',
+	'general.info.dockerNoPool': 'Not on a pool',
+	'general.info.dockerMoving': 'Moving to pool {pool}',
+	'general.info.dockerUnknown': 'Unknown'
 };
 
 export const ru: Translation<typeof en> = {
@@ -53,5 +59,10 @@ export const ru: Translation<typeof en> = {
 	'general.info.kernel': 'Ядро',
 	'general.info.architecture': 'Архитектура',
 	'general.info.uptime': 'Время работы',
-	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.'
+	'general.info.loadFailed': 'Не удалось прочитать сведения о системе.',
+	'general.info.docker': 'Данные Docker',
+	'general.info.dockerPool': 'Пул {pool}',
+	'general.info.dockerNoPool': 'Не на пуле',
+	'general.info.dockerMoving': 'Переносятся на пул {pool}',
+	'general.info.dockerUnknown': 'Неизвестно'
 };

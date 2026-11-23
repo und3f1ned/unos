@@ -157,6 +157,9 @@ class AuditAction(str, Enum):
     STANDBY_RETURNED = "standby_returned"
     STANDBY_DISCARDED = "standby_discarded"
     STANDBY_SWITCHED = "standby_switched"
+    # How the move of Docker's data onto the first pool ended, by the system (ADR-0487); its start is
+    # part of the administrator's pool_created
+    DOCKER_DATA_MOVED = "docker_data_moved"
 
     # Generic
     OTHER = "other"

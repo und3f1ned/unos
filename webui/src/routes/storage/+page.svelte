@@ -320,6 +320,7 @@
 	disksError={lists.disksError}
 	{formatBytes}
 	{describeContents}
+	firstPool={!lists.pools.some((pool) => pool.persistent)}
 	reloadDisks={() => lists.reloadModalDisks()}
 	onclose={() => (showCreateModal = false)}
 	oncreated={poolCreated}

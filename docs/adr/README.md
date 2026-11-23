@@ -419,6 +419,7 @@ and this index, and `make check-fast` runs it.
 | [0479](0479-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner-and-a-removed-pool-is-not-alerted.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool the administrator removed is not alerted | accepted | 2026-11-23 |
 | [0481](0481-the-sd-standby-boots-through-a-checked-chooser-syncs-through-a-killable-unit-and-dry-runs-every-host-action.md) | The SD standby boots through a chooser checked against the eMMC's boot script, syncs through a unit it can kill, and dry-runs every host action | accepted | 2026-11-23 |
 | [0482](0482-notifications-name-the-nas-by-the-hosts-name-read-for-each-message.md) | Notifications name the NAS by the host's name, read for each message, with the last name read as a fallback | accepted | 2026-11-23 |
+| [0487](0487-the-first-pool-takes-dockers-data-through-a-transient-unit-that-leaves-its-result-in-ram.md) | The first pool takes Docker's data through a transient unit of the host that restores the old configuration on any failure and leaves its result in RAM | accepted | 2026-11-23 |
 
 ## Web UI
 

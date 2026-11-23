@@ -543,7 +543,7 @@ def test_shellcheck_checks_the_shell_scripts_with_the_settings_of_shellcheckrc(t
     assert passed.returncode == 0, passed.stdout + passed.stderr
     pinned = re.search(r"^shellcheck-py==(\d+\.\d+\.\d+)", (REPO_ROOT / ".github" / "lint-requirements.in").read_text(),
                        re.M)
-    assert passed.stdout.splitlines() == [f"shellcheck {pinned.group(1)}: 3 shell scripts in deploy scripts .claude/hooks supervisor/src/standby/host"]
+    assert passed.stdout.splitlines() == [f"shellcheck {pinned.group(1)}: 3 shell scripts in deploy scripts .claude/hooks supervisor/src/standby/host supervisor/src/system/host"]
 
 
 def test_shellcheckrc_is_the_only_one_and_a_kept_finding_says_why():

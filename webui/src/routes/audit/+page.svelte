@@ -162,6 +162,7 @@
 		standby_returned: 'audit.action.standbyReturned',
 		standby_discarded: 'audit.action.standbyDiscarded',
 		standby_switched: 'audit.action.standbySwitched',
+		docker_data_moved: 'audit.action.dockerDataMoved',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.

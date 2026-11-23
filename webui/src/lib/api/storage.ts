@@ -342,8 +342,16 @@ export async function getPool(name: string): Promise<Pool> {
 	return api.get<Pool>(`/storage/pools/${name}`);
 }
 
-export async function createPool(pool: PoolCreate): Promise<Pool> {
-	return api.post<Pool>('/storage/pools', pool);
+/** A new pool, and whether Docker's data moves onto it (ADR-0487). */
+export interface PoolCreated extends Pool {
+	/** For the host's first managed pool when Docker's data is not on a pool: the move started, or not. */
+	docker_move: 'started' | 'not_started' | null;
+	/** Why the move did not start. */
+	docker_move_error: string | null;
+}
+
+export async function createPool(pool: PoolCreate): Promise<PoolCreated> {
+	return api.post<PoolCreated>('/storage/pools', pool);
 }
 
 export async function deletePool(name: string): Promise<void> {

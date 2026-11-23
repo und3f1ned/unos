@@ -1,3 +1,4 @@
+import asyncio
 import platform
 import subprocess
 import psutil
@@ -11,6 +12,7 @@ from ..auth.utils import require_admin, verify_token
 from ..host import HostResult
 from ..openapi import ADMIN, BODY, SIGNED_IN, answer, errors
 from ..security.validators import validate_timezone
+from . import docker_data
 
 # Read-only endpoints are available to every signed-in user;
 # anything that changes the host requires an administrator. Host commands go through
@@ -75,6 +77,48 @@ async def get_system_info(_=Depends(verify_token)):
         architecture=platform.machine(),
         boot_time=from_epoch(psutil.boot_time()),
     )
+
+
+class DockerData(BaseModel):
+    """Where Docker keeps its data (ADR-0486): its data root and containerd's root, on a pool or not."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "data_root": "/mnt/pools/data/.docker", "containerd_root": "/mnt/pools/data/.containerd", "pool": "data",
+        "moving_to": None,
+    }]})
+
+    data_root: str = Field(description="Docker's data root, as Docker names it.")
+    containerd_root: str | None = Field(
+        description="containerd's root, where Docker keeps its images in containerd's image store; null when "
+        "Docker keeps them itself (the classic overlay2 store).",
+    )
+    pool: str | None = Field(
+        description="The pool that holds both, by its name; null when one is not on a pool, as on the system disk.",
+    )
+    moving_to: str | None = Field(
+        description="The pool that a move of Docker's data goes to while it runs (ADR-0487); null otherwise.",
+    )
+
+
+@router.get(
+    "/docker-data", response_model=DockerData, summary="Read where Docker keeps its data",
+    responses=errors(ADMIN, {
+        500: "containerd's configuration or the host's services cannot be read.",
+        503: "Docker does not answer.",
+    }),
+)
+async def get_docker_data(_=Depends(require_admin)):
+    """Docker's data root and containerd's root, and the pool that holds them: System > General shows
+    it. Administrators only.
+    \f
+    ADR-0486, ADR-0487.
+    """
+    try:
+        where = await asyncio.to_thread(docker_data.placement)
+    except docker_data.DockerDataError as e:
+        raise HTTPException(e.status, detail=str(e)) from e
+    return DockerData(data_root=where.docker_root, containerd_root=where.containerd_root, pool=where.pool,
+                      moving_to=docker_data.moving_to())
 
 
 class TimezoneUpdate(BaseModel):

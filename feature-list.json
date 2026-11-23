@@ -4101,10 +4101,11 @@
       "passes": false,
       "adr": [
         "ADR-0486",
+        "ADR-0487",
         "ADR-0372",
         "ADR-0471"
       ],
-      "notes": "Owner decision 2026-11-23: \"Docker is always on the pool; only in an emergency it is not\" (in translation). Host-level. The dev boards were moved by hand (ADR-0372, ADR-0486)."
+      "notes": "Owner decision 2026-11-23: \"Docker is always on the pool; only in an emergency it is not\" (in translation). Host-level. The dev boards were moved by hand (ADR-0372, ADR-0486). Built 2026-11-23 on the branch system.docker-root-on-pool (ADR-0487): Create Pool of the host's first managed pool starts the move in the transient unit unos-docker-move (supervisor/src/system/docker_data.py, host/unos-docker-move.sh); the supervisor follows it across its restart, alerts and audits docker_data_moved; GET /system/docker-data and System > General show the pool; Unmount and Remove pool answer 409 naming Docker (tests/test_docker_data.py, webui/tests/system-general.spec.ts and storage.spec.ts). Steps 1 to 3 and the General and 409 parts of step 4 were checked in a clone of the Lima VM unos-host (a supervisor of the branch over v0.1.1's image): a move that ran out of space on a 1 GiB pool restored, the move onto an 8 GiB pool took 20 s, a reboot ran UNOS from the pool, a boot without the pool's disk kept Docker and UNOS down; 31.1 MiB were written to its system disk during the move, mostly by the deletion of 2.3 GiB of old copies (PROGRESS.md, Log). passes stays false: the board's check of the last step with sd.sh (step 5) and the SD standby's part of step 4 (system.sd-standby-boot) are open."
     },
     {
       "id": "device.scenario-checks-in-repo",

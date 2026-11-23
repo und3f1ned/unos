@@ -101,12 +101,10 @@ ADR-0456).
   (nodejs/node#66845), and the supervisor's Python packages that publish no
   RISCV64 wheel (cryptography, bcrypt, cffi, psutil, uvloop, PyYAML) took about
   35 minutes to compile on the board; the release's wheels are built on GitHub
-  instead. **System → Updates** installs releases there too. Keep Docker's data
-  on a disk other than a microSD card where you can, and make Docker wait for
-  that disk: with a drop-in `/etc/systemd/system/docker.service.d/data-root.conf`
-  that says `[Unit]` and `RequiresMountsFor=<the data root>`, a disk missing at
-  boot keeps Docker down instead of letting it start on an empty data root on
-  the card.
+  instead. **System → Updates** installs releases there too. The first pool
+  takes Docker's data off the microSD card ([Add Storage](#5-add-storage)),
+  and a disk missing at boot keeps Docker down instead of letting it start on
+  an empty data root on the card.
 - **Disks for pools.** An NVMe drive in the M.2 slot, SATA disks behind an
   M.2-to-SATA adapter there (a JMB582, which the kernel drives as AHCI, ran two
   SATA SSDs with TRIM) or USB SSDs. Their pools get TRIM as on every host
@@ -210,16 +208,11 @@ board (ADR-0376).
 - **Docker's data and the system disk.** `update.sh` pulls both images of each
   release: about their size in writes, without the build's layers (installing
   the supervisor's Python packages alone wrote about 440 MiB to the dev
-  device's system disk). Keep Docker's data off the eMMC (ADR-0486): stop
-  Docker and containerd, copy `/var/lib/docker` and `/var/lib/containerd` with
-  `rsync -aHAX --numeric-ids` into the btrfs subvolumes `.docker` and
-  `.containerd` of a pool, set `{"data-root": "/mnt/pools/data/.docker"}` in
-  `/etc/docker/daemon.json` and `root = "/mnt/pools/data/.containerd"` in
-  `/etc/containerd/config.toml`, and make both wait for the pool with drop-ins
-  `docker.service.d/data-root-on-pool.conf` and
-  `containerd.service.d/root-on-pool.conf` that say `[Unit]` and
-  `RequiresMountsFor=` the subvolumes. Docker, and with it UNOS, then does not
-  start while the pool is missing; the dev device runs so since 2026-11-23.
+  device's system disk). The first pool takes Docker's data off the eMMC
+  (ADR-0486, ADR-0487; [Add Storage](#5-add-storage)). The dev device was
+  moved by hand on 2026-11-23, before UNOS did it: its pool `data` holds
+  `.docker` and `.containerd`, and Docker, and with it UNOS, does not start
+  while the pool is missing.
 - **Disks for pools.** SATA disks behind an AHCI controller (the dev device has
   a JMicron JMB58x on a PCIe 2.0 x1 link), NVMe drives in the M.2 Key M slot
   (PCIe 3.0 x4) and USB 3 disks need nothing special: UNOS makes and mounts
@@ -643,6 +636,33 @@ shows the addresses, DNS servers, gateway and routes the host uses.
 3. UNOS formats the disks with btrfs, mounts the pool at `/mnt/pools/<name>`
    and adds an entry (by filesystem UUID) to the host's `/etc/fstab`, so the
    pool is mounted again after a reboot.
+4. The first pool takes Docker's data (ADR-0486, ADR-0487): UNOS stops itself
+   and every container for a few minutes, copies Docker's data root and
+   containerd's root (`/var/lib/docker`, `/var/lib/containerd`) into the
+   pool's subvolumes `.docker` and `.containerd` in the transient unit
+   `unos-docker-move`, sets `data-root` in `/etc/docker/daemon.json` and
+   `root` in `/etc/containerd/config.toml`, adds the drop-ins
+   `/etc/systemd/system/docker.service.d/data-root-on-pool.conf` and
+   `containerd.service.d/root-on-pool.conf` (`RequiresMountsFor=` the
+   subvolumes), starts Docker and the containers again and, once Docker
+   answers from the pool, deletes the old copies. `journalctl -u
+   unos-docker-move` shows its steps. From then on Docker, and UNOS with it,
+   does not start while that pool is missing.
+
+#### Docker's data by hand
+
+When the move fails, UNOS puts the old configuration back and Docker runs from
+the system disk as before; the alert names the step that failed, and UNOS
+does not try again. Once the cause is fixed, move it by hand, as on the dev
+boards: stop `unos.service` (or the containers), Docker and containerd
+(`systemctl stop docker.socket docker containerd`), delete the subvolumes that
+the move left on the pool if any, make `.docker` and `.containerd` with
+`btrfs subvolume create`, copy with `rsync -aHAX --numeric-ids
+/var/lib/docker/ /mnt/pools/<pool>/.docker/` and the same for containerd,
+write the two settings and the two drop-ins above, run `systemctl
+daemon-reload`, start containerd, Docker and `unos.service`, check that
+`docker info --format '{{.DockerRootDir}}'` names the pool, and only then
+delete the old folders.
 
 ### 6. Create Shares
 

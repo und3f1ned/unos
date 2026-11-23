@@ -163,6 +163,7 @@ export const en = {
 	'audit.action.standbyReturned': 'Standby returned',
 	'audit.action.standbyDiscarded': 'Standby discarded',
 	'audit.action.standbySwitched': 'Standby switched',
+	'audit.action.dockerDataMoved': 'Docker data moved',
 	'audit.action.other': 'Other',
 
 	// The types of resource that the server records, in words, never as its identifiers.
@@ -360,6 +361,7 @@ export const ru: Translation<typeof en> = {
 	'audit.action.standbyReturned': 'Возврат с резерва на SD',
 	'audit.action.standbyDiscarded': 'Изменения резерва на SD отброшены',
 	'audit.action.standbySwitched': 'Переключение на резерв на SD',
+	'audit.action.dockerDataMoved': 'Перенос данных Docker',
 	'audit.action.other': 'Другое',
 
 	'audit.resource.user': 'пользователь',

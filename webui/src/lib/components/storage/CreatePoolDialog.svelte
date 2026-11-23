@@ -4,7 +4,8 @@
 	// disk list again when it opens the dialog, and again here after a disk changed under its path.
 	// It lists the disks a pool can take; the others wait behind "N disks not available", each with
 	// its reason. The dialog scrolls as a whole, with no box that scrolls inside it, and says what is
-	// still missing while Create is disabled.
+	// still missing while Create is disabled. The host's first pool takes Docker's data (ADR-0487): the
+	// dialog says so, and after the create a toast says whether the move started.
 	import { untrack } from 'svelte';
 	import { ChevronDown, HardDrive } from 'lucide-svelte';
 	import {
@@ -17,7 +18,8 @@
 		Input,
 		Select,
 		Sheet,
-		Skeleton
+		Skeleton,
+		toast
 	} from '$lib/components/ui';
 	import { ApiError } from '$lib/api/client';
 	import {
@@ -41,6 +43,8 @@
 		formatBytes: (bytes: number) => string;
 		/** What a disk holds, in words. */
 		describeContents: (disk: Disk) => string;
+		/** The host has no managed pool yet: the new one takes Docker's data. */
+		firstPool?: boolean;
 		/** Load the disk list again. */
 		reloadDisks: () => Promise<void>;
 		onclose: () => void;
@@ -48,8 +52,18 @@
 		oncreated: () => void | Promise<void>;
 	};
 
-	let { open, disks, disksLoading, disksError, formatBytes, describeContents, reloadDisks, onclose, oncreated }: Props =
-		$props();
+	let {
+		open,
+		disks,
+		disksLoading,
+		disksError,
+		formatBytes,
+		describeContents,
+		firstPool = false,
+		reloadDisks,
+		onclose,
+		oncreated
+	}: Props = $props();
 
 	let saving = $state(false);
 	let createError = $state('');
@@ -161,7 +175,7 @@
 		createError = '';
 		selectionCleared = false;
 		try {
-			await createPool({
+			const created = await createPool({
 				name: poolForm.name,
 				devices: poolForm.devices,
 				// The Select only offers RaidLevel values.
@@ -172,6 +186,11 @@
 			});
 			saving = false;
 			reset();
+			if (created.docker_move === 'started') {
+				toast.warning($t('storage.create.dockerMoves', { pool: created.name }), { duration: 30000 });
+			} else if (created.docker_move === 'not_started') {
+				toast.error(created.docker_move_error ?? '', { title: $t('storage.create.dockerStays') });
+			}
 			await oncreated();
 		} catch (e) {
 			// 409: a disk is in use, holds data or is no longer the disk that
@@ -298,6 +317,12 @@
 				</Alert>
 			{/if}
 		</div>
+
+		{#if firstPool}
+			<Alert variant="info" size="sm" title={$t('storage.create.dockerTitle')}>
+				{$t('storage.create.docker')}
+			</Alert>
+		{/if}
 
 		{#if selectedFlash.length > 0}
 			<Alert variant="warning" size="sm" title={$t('storage.create.flashTitle')}>

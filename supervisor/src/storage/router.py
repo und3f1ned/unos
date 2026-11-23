@@ -19,6 +19,7 @@ from ..security.validators import (
 )
 from ..shares import iscsi
 from ..shares import service as shares_service
+from ..system import docker_data
 from . import balances, devices, disks, pools, scrubs, spindown, volume_usage
 from .schemas import (
     BalanceStart,
@@ -30,6 +31,7 @@ from .schemas import (
     DiskSpindown,
     ImportableFilesystem,
     PoolCreate,
+    PoolCreated,
     PoolDevices,
     PoolImport,
     PoolInfo,
@@ -209,7 +211,7 @@ async def list_pools_endpoint(_=Depends(verify_token)):
 
 
 @router.post(
-    "/pools", response_model=PoolInfo, summary="Create a pool",
+    "/pools", response_model=PoolCreated, summary="Create a pool",
     responses=errors(RATE_LIMITED, BODY, {
         400: "Invalid input, such as an invalid name or device path, confirm_name other than name, too few "
              "devices for raid_level, a device that is no disk or partition of the host or a boot or virtual "
@@ -226,10 +228,12 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, user: User = 
     the host's fstab: a managed pool. The devices are checked again right before they are formatted.
 
     Then smb.conf is applied again: SMB shares that a forgotten pool of this name kept are served.
-    The audit log gets pool_created; as failed, with the formatted devices, when a step after mkfs
-    fails.
+    The first managed pool of a host whose Docker's data is not on a pool gets it: the move starts in
+    a unit of the host, which stops UNOS and the apps until Docker answers from the pool
+    (docker_move). The audit log gets pool_created, which says whether the move started; as failed,
+    with the formatted devices, when a step after mkfs fails.
     \f
-    ADR-0248, ADR-0350.
+    ADR-0248, ADR-0350, ADR-0487.
     """
     validate_pool_name(pool.name)
     if pool.confirm_name != pool.name:
@@ -246,11 +250,17 @@ async def create_pool_endpoint(request: Request, pool: PoolCreate, user: User = 
                 success=False,
             )
         raise
+    move = await docker_data.after_pool_created(info.name, user.username)
+    details = f"Created the pool {info.name} ({pool.raid_level}) on {', '.join(pool.devices)}"
     await audit_change(
         AuditAction.POOL_CREATED, request, user.username, resource_type="pool", resource_id=info.name,
-        details=f"Created the pool {info.name} ({pool.raid_level}) on {', '.join(pool.devices)}",
+        details=details if move is None else f"{details}; {move.audit_text()}",
     )
-    return info
+    return PoolCreated(
+        **info.model_dump(),
+        docker_move=None if move is None else "started" if move.started else "not_started",
+        docker_move_error=None if move is None else move.error,
+    )
 
 
 @router.get(
@@ -270,10 +280,12 @@ async def get_pool_endpoint(name: PoolName, _=Depends(verify_token)):
     responses={
         **answer({"status": "deleted"}, "Always deleted, also for a name that is no pool, which changes nothing."),
         **errors(RATE_LIMITED, _POOL_400, {
-            409: "Host processes, running containers or the off-device copy use the pool, or it is still mounted "
+            409: "Docker keeps its data on the pool, or a move of it there runs (the detail names Docker); host "
+                 "processes, running containers or the off-device copy use the pool, or it is still mounted "
                  "elsewhere after the host's umount; nothing changed, or it is mounted again (or left unmounted "
                  "when that fails).",
-            500: "The host's mount table cannot be read, or umount, the fstab or another host command fails.",
+            500: "The host's mount table, or Docker's or containerd's configuration, cannot be read, or umount, "
+                 "the fstab or another host command fails.",
             503: "The pool is mounted, and Docker cannot be asked which running containers use it; nothing "
                  "changed.",
         }),
@@ -422,11 +434,12 @@ async def mount_pool_endpoint(request: Request, name: PoolName, user: User = Dep
 @router.post(
     "/pools/{name}/unmount", response_model=PoolInfo, summary="Unmount a pool",
     responses=errors(RATE_LIMITED, _POOL_400, _POOL_404, {
-        409: "Host processes, running containers or the off-device copy use the pool, such as smbd for an SMB "
-             "client with one of its shares open; or another mount namespace still has it mounted after the "
-             "host's umount, and it is mounted again (or left unmounted when that fails).",
-        500: "The host's mount table or filesystems cannot be read, or umount, the fstab or another host command "
-             "fails.",
+        409: "Docker keeps its data on the pool, or a move of it there runs (the detail names Docker); host "
+             "processes, running containers or the off-device copy use the pool, such as smbd for an SMB client "
+             "with one of its shares open; or another mount namespace still has it mounted after the host's "
+             "umount, and it is mounted again (or left unmounted when that fails).",
+        500: "The host's mount table or filesystems, or Docker's or containerd's configuration, cannot be read, "
+             "or umount, the fstab or another host command fails.",
         503: "The pool is mounted, and Docker cannot be asked which running containers use it; nothing changed.",
     }),
 )
