@@ -32,6 +32,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   `running_on_standby` and `standby_has_changes` reach the channels and the banner. Elsewhere the
   tab names the unmet conditions. `/api/v1/system/standby`; `install.sh` installs rsync,
   dosfstools and fdisk (ADR-0471, ADR-0481).
+- Notifications name the NAS that sends them by the host's name (here `nas-w3`), so that several
+  NASes can be told apart: an e-mail's subject starts with `[nas-w3]`; the footer of e-mail,
+  Telegram, Discord and Slack, the sender's name of Discord and Slack (unless the channel sets
+  `username`, now null by default; a channel stored with the former default `UNOS` keeps it) and a
+  webhook's `source` say `UNOS · nas-w3`; a webhook's JSON
+  has a new field `host` and its body template a new placeholder `{host}`; the test notification
+  says "from UNOS on nas-w3". The name is read from the host when a notification is sent; when
+  that read fails or takes over 6 s, as on a failing system disk, the name read last, and `UNOS`
+  alone before any (ADR-0476).
 - System → Disk Health shows a **System disk** card for a system disk that is an eMMC (the BPI-W3,
   the BPI-F3): its life-time estimates A and B and its pre-EOL state from `mmc extcsd read`, read
   at the start and once a day (as of boot without mmc-utils), the kernel's I/O errors of the eMMC

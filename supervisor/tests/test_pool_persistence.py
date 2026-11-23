@@ -285,6 +285,8 @@ class FakeHost:
         self.network = None
         # The requests that curl was given, in order.
         self.http_requests: list[SimpleNamespace] = []
+        # The host's name, as `hostname` prints it (the notifications name the host by it, ADR-0476).
+        self.hostname = "nas-fake"
         self.docker = FakeDocker()
         # Whether a directory of the host is the root of a btrfs subvolume (stat prints its inode
         # number, 256): test_volumes.FakeSubvolumes knows them.
@@ -889,6 +891,9 @@ class FakeHost:
             return getattr(self, "_" + prog.replace(".", "_"))(cmd)
         if prog == "curl":
             return self._curl(cmd, input)
+        if prog == "hostname":
+            assert cmd == ["hostname"], cmd
+            return self._result(stdout=f"{self.hostname}\n")
         raise AssertionError(f"unexpected host command: {cmd}")
 
     # The options of curl's command line that the fake knows: those with a value, and the flags.

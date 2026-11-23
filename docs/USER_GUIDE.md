@@ -3870,7 +3870,8 @@ nothing.
      certificate to check;
    - for Telegram the bot token and the chat ID;
    - for Webhook the URL, and POST or PUT: UNOS sends JSON with `title`,
-     `message`, `type`, `timestamp` and `source`;
+     `message`, `type`, `timestamp`, `source` and `host` (see
+     [The NAS's name](#the-nass-name));
    - for Discord and Slack the webhook URL of the channel.
 4. Leave **Enable channel** on and click **Add Channel**
 5. Click the channel's **Send test**; it works for a disabled channel too,
@@ -3890,6 +3891,27 @@ lets the service through over IPv6 only (the containers have no IPv6), UNOS
 sends the same message once more from the host's own network with the host's
 `curl`, after about 5 seconds; a message that fails both ways names both tries.
 E-mail always leaves from the container.
+
+### The NAS's name
+
+Every notification names the NAS that sends it by the host's name, the one
+under **System** → **General** (here `nas-w3`), so that the messages of
+several NASes can be told apart:
+
+| Channel | Where the name shows |
+| --- | --- |
+| E-mail | the subject starts with `[nas-w3]`; the last line is `UNOS · nas-w3` |
+| Telegram | the last line, `UNOS · nas-w3` |
+| Discord, Slack | the footer and the sender's name, `UNOS · nas-w3`, unless the channel has a sender's name of its own (`username`, set through the API, which editing the channel keeps) |
+| Webhook | `"source": "UNOS · nas-w3"` and `"host": "nas-w3"`; a body template writes the name for `{host}` |
+
+The test notification reads "This is a test notification from UNOS on
+nas-w3." UNOS asks the host for its name when it sends, so a new name shows in
+the next notification. When the host cannot answer within 6 seconds, as on a
+failing system disk, the message names the NAS by the name read last, and the
+supervisor's log says so once; UNOS asks again a minute later. Before UNOS has
+read a name at all, the messages say `UNOS` alone (the subject `[UNOS]`, a
+webhook's `host` null).
 
 The list shows a webhook's URL by its host only, since the rest of the URL
 is its key. Editing a channel keeps the settings that only the API sets: a

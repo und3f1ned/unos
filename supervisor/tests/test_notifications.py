@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import ssl
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -47,6 +48,9 @@ notifications = importlib.import_module("src.notifications.router")
 health_router = importlib.import_module("src.health.router")
 
 REPO = Path(__file__).resolve().parents[2]
+# The read of the host's name that the messages give (ADR-0476), which conftest replaces by a host
+# named nas-test.
+READ_HOST_NAME = notifications._read_host_name
 API = "/api/v1/notifications"
 
 EMAIL = EmailConfig(smtp_host="mail.example", smtp_port=587, smtp_user="nas", smtp_password="pw",
@@ -112,6 +116,12 @@ def trusted(tmp_path, monkeypatch):
 def _mail_config(server: MailServer, **changes) -> EmailConfig:
     """EMAIL, sent to ``server``."""
     return EMAIL.model_copy(update={"smtp_host": "127.0.0.1", "smtp_port": server.port, **changes})
+
+
+def _mail_text(message: email.message.Message) -> str:
+    """The text of a mail that send_email wrote: its one plain part, decoded."""
+    [part] = [part for part in message.walk() if part.get_content_type() == "text/plain"]
+    return part.get_payload(decode=True).decode(part.get_content_charset())
 
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -220,7 +230,7 @@ class TestSendEmail:
         assert server.closed
         from_addr, to_addrs, message = server.sent
         assert (from_addr, to_addrs) == ("nas@example", ["me@example", "you@example"])
-        assert "Subject: [UNOS] Disk warning" in message
+        assert "Subject: [nas-test] Disk warning" in message
 
     async def test_starttls_checks_the_certificate_and_host_name(self, smtp):
         assert await notifications.send_email(EMAIL, EVENT) == (True, None)
@@ -320,7 +330,7 @@ class TestTheMailServersCertificate:
         assert server.logins == [("nas", "pw", True)]
         [(sender, recipients, text)] = server.messages
         assert (sender, recipients) == ("nas@example", ["me@example", "you@example"])
-        assert "Subject: [UNOS] Disk warning" in text
+        assert "Subject: [nas-test] Disk warning" in text
         # RFC 5322 requires a Date, and providers junk or refuse a message without a Message-ID.
         # Before, the message had neither: only a relay that adds them made it acceptable.
         message = email.message_from_string(text)
@@ -375,7 +385,7 @@ class TestAMailServerWithoutALogin:
         assert server.logins == []
         [(sender, recipients, text)] = server.messages
         assert (sender, recipients) == ("nas@example", ["me@example", "you@example"])
-        assert "Subject: [UNOS] Disk warning" in text
+        assert "Subject: [nas-test] Disk warning" in text
 
     async def test_a_channel_with_a_username_does_not_send_without_its_login(self, trusted, smtp_tls):
         with MailServer(*trusted, auth=False) as server:
@@ -465,7 +475,7 @@ class TestSendTelegram:
         [body] = seen
         assert body["parse_mode"] == "HTML"
         assert body["text"] == (
-            "❌ <b>Pool e2e_tank &lt;degraded&gt;</b>\n\nsdb_1 &amp; *sdc* [x](y) `z`\n\n<i>UNOS NAS</i>"
+            "❌ <b>Pool e2e_tank &lt;degraded&gt;</b>\n\nsdb_1 &amp; *sdc* [x](y) `z`\n\n<i>UNOS · nas-test</i>"
         )
 
 
@@ -509,15 +519,16 @@ class TestWebhookDelivery:
         assert request.headers["X-Unos-Test"] == "yes"
         body = json.loads(request.body)
         assert body.pop("timestamp")
-        assert body == {"title": "Disk warning", "message": "sda is hot", "type": "warning", "source": "UNOS NAS"}
+        assert body == {"title": "Disk warning", "message": "sda is hot", "type": "warning", "source": "UNOS · nas-test",
+                        "host": "nas-test"}
 
     async def test_a_webhook_can_put_a_body_of_its_own(self):
         with HookServer(204) as hook:
             config = WebhookConfig(url=hook.url, method="PUT", content_type="text/plain",
-                                   body_template="{type}: {title} - {message}")
+                                   body_template="{type}: {title} - {message} ({host})")
             assert await notifications.send_webhook(config, EVENT) == (True, None)
         [request] = hook.requests
-        assert (request.method, request.body) == ("PUT", b"warning: Disk warning - sda is hot")
+        assert (request.method, request.body) == ("PUT", b"warning: Disk warning - sda is hot (nas-test)")
         assert request.headers["Content-Type"] == "text/plain"
 
     async def test_discord_gets_an_embed(self):
@@ -526,10 +537,10 @@ class TestWebhookDelivery:
         [request] = hook.requests
         body = json.loads(request.body)
         [embed] = body["embeds"]
-        assert body["username"] == "UNOS"
+        assert body["username"] == "UNOS · nas-test"
         assert embed.pop("timestamp")
         assert embed == {"title": "Disk warning", "description": "sda is hot", "color": 16776960,
-                         "footer": {"text": "UNOS NAS"}}
+                         "footer": {"text": "UNOS · nas-test"}}
 
     async def test_slack_gets_an_attachment(self):
         with HookServer(200, b"ok") as hook:
@@ -537,10 +548,10 @@ class TestWebhookDelivery:
         [request] = hook.requests
         body = json.loads(request.body)
         [attachment] = body["attachments"]
-        assert (body["username"], body["icon_emoji"]) == ("UNOS", ":server:")
+        assert (body["username"], body["icon_emoji"]) == ("UNOS · nas-test", ":server:")
         assert attachment.pop("ts")
         assert attachment == {"color": "#f2c744", "title": "Disk warning", "text": "sda is hot",
-                              "footer": "UNOS NAS"}
+                              "footer": "UNOS · nas-test"}
 
     @pytest.mark.parametrize("sender,config_for", HOOK_CONFIGS)
     @pytest.mark.parametrize("answer,error", [
@@ -876,7 +887,9 @@ class TestAlertDelivery:
         await health_router.send_raid_alert("data", "degraded", 0, "1 device(s) missing.")
 
         [server] = smtp.instances
-        assert "Subject: [UNOS] RAID Pool 'data' DEGRADED" in server.sent[2]
+        message = email.message_from_string(server.sent[2])
+        assert message["Subject"] == "[nas-test] RAID Pool 'data' DEGRADED"
+        assert _mail_text(message).endswith("\n--\nUNOS · nas-test\n")
         assert all(thread.startswith("unos-smtp") for _, thread in server.calls)
         assert "Could not send alert" not in caplog.text
 
@@ -947,6 +960,253 @@ class TestAlertDelivery:
         await alerting
         [entry] = notifications.load_logs()
         assert (entry.event.title, entry.success) == ("RAID Pool 'data' DEGRADED", True)
+
+
+def _webhook_bodies(monkeypatch) -> list[dict]:
+    """The JSON bodies that the senders post, which every service takes; in the order sent."""
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True})
+
+    _route_httpx_to(monkeypatch, handler)
+    return bodies
+
+
+class TestTheHostsName:
+    """system.notifications-host-name: every message names the NAS by the host's name, read through
+    src/host.py when the message is built; after a read that fails, by the last name read, and by
+    UNOS alone before any (ADR-0476)."""
+
+    @pytest.fixture
+    def host(self, monkeypatch):
+        """The host behind src.host.run_on_host, named nas-w3, which the real read asks."""
+        monkeypatch.setattr(notifications, "_read_host_name", READ_HOST_NAME)
+        fake = install_fake_host(monkeypatch)
+        fake.hostname = "nas-w3"
+        return fake
+
+    @staticmethod
+    def _fail_the_read(monkeypatch, host, failure):
+        """Make `hostname` on the host fail as ``failure`` says."""
+        if failure == "status":
+            monkeypatch.setitem(host.fail, ("hostname",), (1, "hostname: Input/output error"))
+            return
+        if failure == "no-name":
+            monkeypatch.setattr(host, "hostname", "")
+            return
+        error = {
+            "no-nsenter": FileNotFoundError(2, "No such file or directory", "nsenter"),
+            "timeout": subprocess.TimeoutExpired(["hostname"], notifications.HOST_NAME_TIMEOUT),
+        }[failure]
+        answer = host.run
+
+        def run(cmd, **kwargs):
+            if cmd == ["hostname"]:
+                raise error
+            return answer(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+
+    async def test_each_message_names_the_host_by_the_name_it_has_now(self, monkeypatch, host):
+        monkeypatch.setattr(notifications, "HOST_NAME_REUSE", 0)
+        bodies = _webhook_bodies(monkeypatch)
+        assert await notifications.send_webhook(WEBHOOK, EVENT) == (True, None)
+        host.hostname = "nas-w3b"  # renamed on the Network page, or on the host itself
+        assert await notifications.send_webhook(WEBHOOK, EVENT) == (True, None)
+
+        assert [(body["source"], body["host"]) for body in bodies] == [
+            ("UNOS · nas-w3", "nas-w3"), ("UNOS · nas-w3b", "nas-w3b"),
+        ]
+        assert [cmd for cmd in host.calls if cmd[0] == "hostname"] == [["hostname"], ["hostname"]]
+
+    async def test_the_messages_built_together_share_one_read(self, monkeypatch, host):
+        # The test notification's text and its channel's footer, and the channels of one alert:
+        # one name, and one nsenter.
+        bodies = _webhook_bodies(monkeypatch)
+        notifications.save_configs([NotificationConfig(id="hook", channel=NotificationChannel.WEBHOOK,
+                                                       webhook_config=WEBHOOK)])
+        await notifications.test_notification("hook", {})
+        configs = [NotificationConfig(channel=NotificationChannel.WEBHOOK, webhook_config=WEBHOOK)] * 3
+        monkeypatch.setattr(health_router, "load_notification_configs", lambda: configs)
+        await health_router.send_raid_alert("data", "degraded", 0, "details")
+
+        assert [body["host"] for body in bodies] == ["nas-w3"] * 4
+        assert bodies[0]["message"] == "This is a test notification from UNOS on nas-w3."
+        assert [cmd for cmd in host.calls if cmd[0] == "hostname"] == [["hostname"]]
+
+    @pytest.mark.parametrize("failure", ["status", "no-nsenter", "timeout", "no-name"])
+    async def test_a_read_that_fails_names_the_host_by_the_last_name_read(self, monkeypatch, host, caplog, failure):
+        # On a failing system disk the host may not start hostname (ADR-0475): the message still
+        # names the NAS, by its name as last read, and never by the container's name.
+        monkeypatch.setattr(notifications, "HOST_NAME_REUSE", 0)
+        monkeypatch.setattr(notifications, "HOST_NAME_RETRY", 0)
+        bodies = _webhook_bodies(monkeypatch)
+        await notifications.send_webhook(WEBHOOK, EVENT)
+        with monkeypatch.context() as failing:
+            self._fail_the_read(failing, host, failure)
+            await notifications.send_webhook(WEBHOOK, EVENT)
+            await notifications.send_telegram(TELEGRAM, EVENT)
+        assert caplog.text.count("Could not read the host's name") == 1  # once until a read works
+        assert "the notifications name it nas-w3, the name read last" in caplog.text
+        host.hostname = "nas-w3b"
+        await notifications.send_webhook(WEBHOOK, EVENT)
+
+        assert [(body.get("source"), body.get("host")) for body in bodies] == [
+            ("UNOS · nas-w3", "nas-w3"), ("UNOS · nas-w3", "nas-w3"), (None, None), ("UNOS · nas-w3b", "nas-w3b"),
+        ]
+        assert bodies[2]["text"].endswith("\n\n<i>UNOS · nas-w3</i>")
+        with monkeypatch.context() as failing:
+            self._fail_the_read(failing, host, failure)
+            await notifications.send_webhook(WEBHOOK, EVENT)
+        assert caplog.text.count("Could not read the host's name") == 2  # a new run of failures
+        assert bodies[-1]["host"] == "nas-w3b"
+        if failure == "no-name":
+            assert "the name read last: hostname printed no name" in caplog.text
+
+    async def test_after_a_read_that_failed_the_messages_wait_for_no_new_one_for_a_while(self, monkeypatch, host):
+        # A hostname stuck on the host while nsenter is killed at its timeout: the read fails after
+        # HOST_NAME_TIMEOUT. The next messages, such as the other channels of the same alert, go
+        # out at once with the last name read, and the host is asked again after HOST_NAME_RETRY.
+        monkeypatch.setattr(notifications, "HOST_NAME_REUSE", 0)
+        monkeypatch.setattr(notifications, "HOST_NAME_RETRY", 2.0)
+        bodies = _webhook_bodies(monkeypatch)
+        await notifications.send_webhook(WEBHOOK, EVENT)
+        answer = host.run
+
+        def run(cmd, **kwargs):
+            if cmd == ["hostname"]:
+                host.calls.append(cmd)
+                time.sleep(0.4)
+                raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+            return answer(cmd, **kwargs)
+
+        monkeypatch.setattr(host_module, "run_on_host", run)
+        started = time.monotonic()
+        for _ in range(3):
+            await notifications.send_webhook(WEBHOOK, EVENT)
+        elapsed = time.monotonic() - started
+        assert 0.4 <= elapsed < 0.9, elapsed  # a read for each message would take 1.2 s
+        assert [body["host"] for body in bodies] == ["nas-w3"] * 4
+        assert len([cmd for cmd in host.calls if cmd[0] == "hostname"]) == 2
+        monkeypatch.setattr(host_module, "run_on_host", answer)
+        host.hostname = "nas-w3b"
+        await asyncio.sleep(2.0 - (time.monotonic() - started) + 0.1)
+        await notifications.send_webhook(WEBHOOK, EVENT)
+        assert bodies[-1]["host"] == "nas-w3b"
+
+    def test_a_message_waits_6_s_at_most_for_the_host(self):
+        assert notifications.HOST_NAME_TIMEOUT < notifications.HOST_NAME_WAIT <= 6
+
+    async def test_before_any_name_was_read_the_messages_name_unos_alone(self, monkeypatch, host, smtp, caplog):
+        host.fail[("hostname",)] = (1, "hostname: Input/output error")
+        bodies = _webhook_bodies(monkeypatch)
+        template = WebhookConfig(url="https://hooks.example/t", content_type="text/plain",
+                                 body_template='{{"text": "{title} on {host}"}}')
+
+        for sender, config in [("send_telegram", TELEGRAM), ("send_webhook", WEBHOOK), ("send_webhook", template),
+                               ("send_discord", DISCORD), ("send_slack", SLACK), ("send_email", EMAIL)]:
+            assert await getattr(notifications, sender)(config, EVENT) == (True, None), sender
+        notifications.save_configs([NotificationConfig(id="hook", channel=NotificationChannel.WEBHOOK,
+                                                       webhook_config=WEBHOOK)])
+        assert await notifications.test_notification("hook", {}) == {"status": "sent", "channel": "webhook"}
+
+        telegram, webhook, templated, discord, slack, test = bodies
+        assert telegram["text"].endswith("\n\n<i>UNOS</i>")
+        assert (webhook["source"], webhook["host"]) == ("UNOS", None)
+        assert templated == {"text": "Disk warning on UNOS"}
+        assert (discord["username"], discord["embeds"][0]["footer"]) == ("UNOS", {"text": "UNOS"})
+        assert (slack["username"], slack["attachments"][0]["footer"]) == ("UNOS", "UNOS")
+        assert test["message"] == "This is a test notification from UNOS."
+        [server] = smtp.instances
+        message = email.message_from_string(server.sent[2])
+        assert message["Subject"] == "[UNOS] Disk warning"
+        assert _mail_text(message).endswith("\n--\nUNOS\n")
+        assert "Could not read the host's name, and none was read before: the notifications name UNOS alone: " \
+               "hostname: Input/output error" in caplog.text
+
+    async def test_every_channel_names_the_host(self, monkeypatch, host, smtp):
+        bodies = _webhook_bodies(monkeypatch)
+        template = WebhookConfig(url="https://hooks.example/t", content_type="text/plain",
+                                 body_template='{{"text": "{title} on {host}"}}')
+
+        for sender, config in [("send_telegram", TELEGRAM), ("send_webhook", WEBHOOK), ("send_webhook", template),
+                               ("send_discord", DISCORD), ("send_slack", SLACK), ("send_email", EMAIL)]:
+            assert await getattr(notifications, sender)(config, EVENT) == (True, None), sender
+        notifications.save_configs([NotificationConfig(id="hook", channel=NotificationChannel.WEBHOOK,
+                                                       webhook_config=WEBHOOK)])
+        assert await notifications.test_notification("hook", {}) == {"status": "sent", "channel": "webhook"}
+
+        telegram, webhook, templated, discord, slack, test = bodies
+        assert telegram["text"] == "⚠️ <b>Disk warning</b>\n\nsda is hot\n\n<i>UNOS · nas-w3</i>"
+        assert (webhook["source"], webhook["host"]) == ("UNOS · nas-w3", "nas-w3")
+        assert templated == {"text": "Disk warning on nas-w3"}
+        assert (discord["username"], discord["embeds"][0]["footer"]) == ("UNOS · nas-w3", {"text": "UNOS · nas-w3"})
+        assert (slack["username"], slack["attachments"][0]["footer"]) == ("UNOS · nas-w3", "UNOS · nas-w3")
+        assert test["message"] == "This is a test notification from UNOS on nas-w3."
+        [server] = smtp.instances
+        message = email.message_from_string(server.sent[2])
+        assert message["Subject"] == "[nas-w3] Disk warning"
+        assert _mail_text(message).endswith("\n--\nUNOS · nas-w3\n")
+
+    async def test_a_sender_name_of_its_own_is_kept(self, monkeypatch):
+        bodies = _webhook_bodies(monkeypatch)
+        await notifications.send_discord(DISCORD.model_copy(update={"username": "Rack 2"}), EVENT)
+        await notifications.send_slack(SLACK.model_copy(update={"username": "Rack 2"}), EVENT)
+
+        discord, slack = bodies
+        assert (discord["username"], discord["embeds"][0]["footer"]) == ("Rack 2", {"text": "UNOS · nas-test"})
+        assert (slack["username"], slack["attachments"][0]["footer"]) == ("Rack 2", "UNOS · nas-test")
+
+    async def test_a_read_that_hangs_holds_up_one_wait_at_most(self, monkeypatch):
+        # A hostname stuck on a failing disk: one read runs at a time, the messages wait for it
+        # until HOST_NAME_WAIT after its start, and then go out with the last name read.
+        monkeypatch.setattr(notifications, "HOST_NAME_WAIT", 0.5)
+        monkeypatch.setattr(notifications, "HOST_NAME_REUSE", 0)
+        bodies = _webhook_bodies(monkeypatch)
+        await notifications.send_webhook(WEBHOOK, EVENT)
+        release, reads = threading.Event(), []
+
+        def hangs():
+            reads.append(threading.current_thread().name)
+            release.wait(10)
+            return "nas-late"
+
+        monkeypatch.setattr(notifications, "_read_host_name", hangs)
+        try:
+            started = time.monotonic()
+            for _ in range(3):
+                assert await notifications.send_webhook(WEBHOOK, EVENT) == (True, None)
+            elapsed = time.monotonic() - started
+        finally:
+            release.set()
+        assert 0.5 <= elapsed < 1.2, elapsed  # each message waiting its own 0.5 s would take 1.5 s
+        assert len(reads) == 1
+        assert [body["host"] for body in bodies] == ["nas-test"] * 4
+        assert notifications._host_name_read.result.result(timeout=5) == "nas-late"
+        await notifications.send_webhook(WEBHOOK, EVENT)  # the read ended: the next one asks again
+        assert bodies[-1]["host"] == "nas-late"
+        assert len(reads) == 2
+
+    async def test_an_email_alert_is_not_held_by_a_read_that_hangs(self, monkeypatch, smtp):
+        # The alerts send e-mail in a loop of their own (asyncio.run in a thread of the alerts),
+        # which waits at its end for the threads of its default executor: a read stuck there would
+        # hold the alert past ALERT_TIMEOUT, and the history would call a delivered alert failed.
+        monkeypatch.setattr(notifications, "HOST_NAME_WAIT", 0.3)
+        config = NotificationConfig(channel=NotificationChannel.EMAIL, email_config=EMAIL)
+        monkeypatch.setattr(health_router, "load_notification_configs", lambda: [config])
+        release = threading.Event()
+        monkeypatch.setattr(notifications, "_read_host_name", lambda: release.wait(30) and "nas-late")
+        try:
+            await asyncio.wait_for(health_router.send_raid_alert("data", "degraded", 0, "details"), 5)
+        finally:
+            release.set()
+            notifications._host_name_read.result.result(timeout=5)  # no read left to the next test
+        [server] = smtp.instances
+        assert email.message_from_string(server.sent[2])["Subject"] == "[UNOS] RAID Pool 'data' DEGRADED"
+        [entry] = notifications.load_logs()
+        assert (entry.success, entry.error) == (True, None)
 
 
 class TestEndpoints:
@@ -1239,7 +1499,7 @@ class TestChannelsThroughTheApi:
         hooked, discorded = hook.requests
         assert hooked.path == "/unos"
         assert json.loads(hooked.body)["title"] == notifications.TEST_TITLE == "Test Notification"
-        assert json.loads(hooked.body)["message"] == notifications.TEST_MESSAGE
+        assert json.loads(hooked.body)["message"] == "This is a test notification from UNOS on nas-test."
         assert discorded.path == "/discord"
         assert json.loads(discorded.body)["embeds"][0]["title"] == "Test Notification"
 
@@ -1279,7 +1539,7 @@ class TestChannelsThroughTheApi:
         assert server.logins == [("nas", "pw", True)]
         [(_, recipients, text)] = server.messages
         assert recipients == ["me@example"]
-        assert "Subject: [UNOS] Test Notification" in text
+        assert "Subject: [nas-test] Test Notification" in text
         newest, oldest = self._history(api)
         assert (newest["channel_name"], newest["success"]) == ("Self-signed", True)
         assert (oldest["channel_name"], oldest["success"]) == ("Checked", False)
@@ -1480,7 +1740,7 @@ class TestChannelsThroughTheApi:
         assert server.logins == []
         [(_, recipients, text)] = server.messages
         assert recipients == ["me@example"]
-        assert "Subject: [UNOS] Test Notification" in text
+        assert "Subject: [nas-test] Test Notification" in text
         [entry] = self._history(api)
         assert (entry["channel_name"], entry["success"]) == ("LAN relay", True)
 
@@ -1514,7 +1774,7 @@ class TestTheFakes:
         """webui/tests/notifications-fakes.ts answers as the server does, word for word (ADR-0189)."""
         fakes = (REPO / "webui" / "tests" / "notifications-fakes.ts").read_text(encoding="utf-8")
         assert f"export const TEST_TITLE = '{notifications.TEST_TITLE}';" in fakes
-        assert f"export const TEST_MESSAGE = '{notifications.TEST_MESSAGE}';" in fakes
+        assert f"export const TEST_MESSAGE = '{notifications.TEST_MESSAGE.format(host='nas')}';" in fakes
         assert f"`{notifications.SEND_FAILED.format(error='${error}')}`" in fakes
         assert f"`{notifications.NOT_FOUND.format(id='${id}')}`" in fakes
         events = asyncio.run(notifications.list_event_types())

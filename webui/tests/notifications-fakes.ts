@@ -7,10 +7,10 @@ import type { Page } from '@playwright/test';
 // recorded in the history, which lists the newest first; unknown requests are aborted, and
 // nothing reaches the supervisor.
 
-// The texts of supervisor/src/notifications/router.py, word for word
+// The texts of supervisor/src/notifications/router.py, word for word, from a host named nas
 // (supervisor/tests/test_notifications.py checks them).
 export const TEST_TITLE = 'Test Notification';
-export const TEST_MESSAGE = 'This is a test notification from your UNOS NAS system.';
+export const TEST_MESSAGE = 'This is a test notification from UNOS on nas.';
 export const sendFailed = (error: string) => `Failed to send notification: ${error}`;
 export const notFound = (id: string) => `Config not found: ${id}`;
 export const EVENT_TYPES = [

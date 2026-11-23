@@ -63,11 +63,13 @@ class WebhookConfig(BaseModel):
     headers: dict[str, str] = Field(
         default={}, description="More headers of the request, such as one with a key.",
     )
-    # Template for body - uses {title}, {message}, {type}, {timestamp} placeholders
+    # Template for body - uses {title}, {message}, {type}, {timestamp}, {host} placeholders
     body_template: str | None = Field(
-        default=None, description="The body of the request, in which {title}, {message}, {type} and {timestamp} are "
-                          "replaced, and other braces are written doubled. Null: a JSON object of title, message, "
-                          "type, timestamp and source.",
+        default=None, description="The body of the request, in which {title}, {message}, {type}, {timestamp} and "
+                          "{host} (the host's name; UNOS before UNOS read it) are replaced, and other braces are "
+                          "written doubled. Null: a JSON object of title, message, type, timestamp, source (UNOS "
+                          "and the host's name, such as \"UNOS · nas\") and host (the host's name; null before "
+                          "UNOS read it).",
     )
     content_type: str = Field(default="application/json", description="The Content-Type header of the request.")
 
@@ -76,7 +78,11 @@ class DiscordConfig(BaseModel):
     """The settings of a Discord channel: a webhook of a Discord channel."""
 
     webhook_url: str = Field(description="The URL of the Discord webhook, which holds its key.")
-    username: str = Field(default="UNOS", description="The name that the messages show as their sender.")
+    username: str | None = Field(
+        default=None,
+        description="The name that the messages show as their sender; null: UNOS and the host's name, as their "
+                    "footer shows it, such as \"UNOS · nas\".",
+    )
     avatar_url: str | None = Field(
         default=None,
         description="The URL of the picture that the messages show for their sender; null: the webhook's.",
@@ -92,7 +98,11 @@ class SlackConfig(BaseModel):
         description="The Slack channel that the message names, such as #alerts; null: none, the webhook's "
                           "own.",
     )  # Optional override
-    username: str = Field(default="UNOS", description="The name that the messages show as their sender.")
+    username: str | None = Field(
+        default=None,
+        description="The name that the messages show as their sender; null: UNOS and the host's name, as their "
+                    "footer shows it, such as \"UNOS · nas\".",
+    )
     icon_emoji: str = Field(default=":server:", description="The emoji that the messages show for their sender.")
 
 
@@ -150,7 +160,7 @@ class NotificationEvent(BaseModel):
     type: NotificationType = Field(
         description="info, warning, error or success: the channels show it as an emoji, a color or a word.",
     )
-    title: str = Field(description="The title; an e-mail's subject is [UNOS] and the title.")
+    title: str = Field(description="The title; an e-mail's subject is the host's name in brackets and the title.")
     message: str = Field(description="The text of the notification.")
     timestamp: UtcDatetime | None = Field(
         default=None,
@@ -166,7 +176,7 @@ class NotificationLog(BaseModel):
         "id": "log_5d1e8f0a9b7c4e2d8a6f3b1c0e9d7a5b",
         "event": {
             "type": "info", "title": "Test Notification",
-            "message": "This is a test notification from your UNOS NAS system.",
+            "message": "This is a test notification from UNOS on nas.",
             "timestamp": "2026-11-19T08:30:00.412345Z",
         },
         "channel": "telegram", "channel_name": "Phone", "sent_at": "2026-11-19T08:30:01.207731+00:00",
