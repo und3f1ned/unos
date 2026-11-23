@@ -63,6 +63,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
+from functools import partial
 from typing import Any, Literal
 
 import docker
@@ -462,24 +463,12 @@ def btrfs_filesystems(*, scan: bool = True) -> list[BtrfsFilesystem]:
 
     With ``scan`` btrfs reads the superblock of every block device that libblkid finds, which
     spins up a sleeping disk that no mounted filesystem holds open (ADR-0378). Without it no disk
-    is read: the mounted filesystems as the kernel reports them (``--mounted``), and the others as
-    udev recorded them when their devices appeared (lsblk), with the devices that are present,
-    without a count of missing ones or of the bytes used.
+    is read: the mounted filesystems as the kernel reports them (mounted_btrfs_filesystems), and
+    the others as udev recorded them when their devices appeared (lsblk), with the devices that are
+    present, without a count of missing ones or of the bytes used.
     """
-    # The labels are printed as they are: one that is not UTF-8 (a filesystem
-    # formatted elsewhere) must not keep the pools from being listed. It is
-    # not a valid pool name either way.
-    cmd = ["btrfs", "filesystem", "show", "--raw"] if scan else ["btrfs", "filesystem", "show", "--mounted", "--raw"]
-    result = host.run_on_host(cmd, timeout=60, errors="replace")
-    # With --mounted, btrfs-progs exits 1 without a word when no btrfs filesystem is mounted (its
-    # cmd_filesystem_show returns btrfs_scan_kernel's "none found"): none is, which is no error.
-    none_mounted = not scan and result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip()
-    if not result.ok and not none_mounted:
-        raise RuntimeError(
-            f"btrfs filesystem show failed: {result.stderr.strip() or result.returncode}"
-        )
-    found = parse_btrfs_show(result.stdout)
     if not scan:
+        found = mounted_btrfs_filesystems()
         mounted = {fs.uuid for fs in found}
         recorded: dict[str, BtrfsFilesystem] = {}
         for uuid, label, path, size in disks.udev_btrfs_devices():
@@ -491,7 +480,31 @@ def btrfs_filesystems(*, scan: bool = True) -> list[BtrfsFilesystem]:
                 fs.devices_size += size
                 fs.total_devices = len(fs.devices)
         found.extend(recorded.values())
-    return found
+        return found
+    # The labels are printed as they are: one that is not UTF-8 (a filesystem
+    # formatted elsewhere) must not keep the pools from being listed. It is
+    # not a valid pool name either way.
+    result = host.run_on_host(["btrfs", "filesystem", "show", "--raw"], timeout=60, errors="replace")
+    if not result.ok:
+        raise RuntimeError(
+            f"btrfs filesystem show failed: {result.stderr.strip() or result.returncode}"
+        )
+    return parse_btrfs_show(result.stdout)
+
+
+def mounted_btrfs_filesystems() -> list[BtrfsFilesystem]:
+    """The btrfs filesystems that are mounted, as the kernel reports them: ``btrfs filesystem show
+    --mounted``, which reads no disk (ADR-0378). RuntimeError when btrfs fails."""
+    result = host.run_on_host(["btrfs", "filesystem", "show", "--mounted", "--raw"], timeout=60, errors="replace")
+    # btrfs-progs exits 1 without a word when no btrfs filesystem is mounted (its cmd_filesystem_show
+    # returns btrfs_scan_kernel's "none found"): none is, which is no error.
+    if result.returncode == 1 and not result.stdout.strip() and not result.stderr.strip():
+        return []
+    if not result.ok:
+        raise RuntimeError(
+            f"btrfs filesystem show failed: {result.stderr.strip() or result.returncode}"
+        )
+    return parse_btrfs_show(result.stdout)
 
 
 def _btrfs_usage(target: str) -> tuple[int, int, str | None] | None:
@@ -663,12 +676,12 @@ def _pool_info(
     mounted = None if mounts is None else bool(here)
     forced_read_only = any(m.forced_read_only for m in here)
     total_size, used_size, raid_level = fs.devices_size, fs.bytes_used, None
-    device_errors = None
+    device_errors: int | None = None
     if mounted:
-        usage = _btrfs_usage(target)
+        usage: tuple[int, int, str | None] | None
+        usage, device_errors = host.at_once(partial(_btrfs_usage, target), partial(btrfs_device_errors, target))
         if usage is not None:
             total_size, used_size, raid_level = usage
-        device_errors = btrfs_device_errors(target)
     entry = (managed or {}).get(name)
     return PoolInfo(
         name=name,
@@ -714,9 +727,13 @@ def pools_and_managed_names(*, scan: bool = True) -> tuple[list[PoolInfo], set[s
     (btrfs_filesystems): a pool that is not mounted has its devices that are present, and no
     missing ones or bytes used (the RAID monitor, ADR-0378).
     """
-    filesystems = btrfs_filesystems(scan=scan)
-    mounts = _mounts_or_none()
-    managed = _managed_entries_or_none()
+    # The three reads at once; btrfs's failure raises once the others have ended.
+    filesystems: list[BtrfsFilesystem]
+    mounts: list[disks.HostMount] | None
+    managed: dict[str, ManagedFstabEntry] | None
+    filesystems, mounts, managed = host.at_once(
+        partial(btrfs_filesystems, scan=scan), _mounts_or_none, _managed_entries_or_none
+    )
     chosen = _pool_choices(filesystems, mounts, managed)
     found = [
         fs for fs in chosen.values() if not _mounted_here(fs, mounts) and not _managed_as_pool(fs, managed)
@@ -726,13 +743,35 @@ def pools_and_managed_names(*, scan: bool = True) -> tuple[list[PoolInfo], set[s
     except Exception as exc:
         logger.warning("Could not check the devices of the pools found on the disks: %s", exc)
         refused = {}
-    pools = [
-        _pool_info(fs, mounts, managed)
+    pools = host.at_once(*(
+        partial(_pool_info, fs, mounts, managed)
         for fs in filesystems
         if fs.label and chosen.get(fs.label) is fs and fs.uuid not in refused
-    ]
+    ))
     names = None if managed is None else {name for name, entry in managed.items() if entry.has_entry}
     return pools, names
+
+
+def mounted_pools() -> tuple[list[tuple[str, str]], set[str] | None]:
+    """The pools that list_pools gives a mountpoint, as (name, mountpoint) in btrfs's order, and the
+    names of the pools that UNOS manages (managed_pool_names; None when the fstab cannot be read):
+    what GET /shares/paths lists. Read without a scan of the disks, which would wake a
+    sleeping one (ADR-0378): only a mounted filesystem can be at its mountpoint, so
+    mounted_btrfs_filesystems, the host's mount table and its fstab, at once. RuntimeError when
+    btrfs or findmnt fails."""
+    filesystems: list[BtrfsFilesystem]
+    mounts: list[disks.HostMount]
+    managed: dict[str, ManagedFstabEntry] | None
+    filesystems, mounts, managed = host.at_once(
+        mounted_btrfs_filesystems, disks.host_mounts, _managed_entries_or_none
+    )
+    chosen = _pool_choices(filesystems, mounts, managed)
+    listed = [
+        (fs.label, pool_mountpoint(fs.label))
+        for fs in filesystems
+        if fs.label and chosen.get(fs.label) is fs and _mounted_here(fs, mounts)
+    ]
+    return listed, None if managed is None else set(managed)
 
 
 def get_pool(name: str) -> PoolInfo:
@@ -2978,9 +3017,10 @@ def volume_quota_group(pool_name: str, volume_name: str) -> tuple[str, int]:
 
 
 def mounted_pool_volumes(name: str, target: str) -> tuple[dict[str, int], set[int], set[int]]:
-    """The volumes of the pool ``name`` whose filesystem the RAID monitor found mounted at its
-    mountpoint ``target`` (name -> subvolume id), the ids that btrfs could not resolve, and the id
-    of every line of the pool's subvolume list, snapshots' included (storage.volume_usage).
+    """The volumes of the pool ``name`` whose filesystem the RAID monitor (storage.volume_usage) or
+    mounted_pools (GET /shares/paths) found mounted at its mountpoint ``target`` (name -> subvolume
+    id), the ids that btrfs could not resolve, and the id of every line of the pool's subvolume
+    list, snapshots' included.
 
     Without a scan of the disks, which _mounted_pool's list of the filesystems would make (ADR-0378):
     ``btrfs inspect-internal rootid`` and the pool's own subvolume list, checked against the

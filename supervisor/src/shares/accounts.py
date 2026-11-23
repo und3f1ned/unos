@@ -810,28 +810,40 @@ def host_status() -> interfaces.AccountHostStatus:
     if status.tools_missing is None:
         return status
     missing = set(status.tools_missing)
-    # None: the host's accounts are unknown, so no passdb entry can be called unmanaged.
-    accounts: dict[str, HostAccount] | None = None
-    if "getent" not in missing:
+    if "getent" in missing:
+        return status
+
+    def group_problem() -> str | None:
         try:
             by_name = read_group(_GROUP)
-            status.group_problem = _group_conflict(by_name, None if by_name else read_group(str(_GID)))
+            return _group_conflict(by_name, None if by_name else read_group(str(_GID)))
         except SmbHostError as error:
-            status.group_problem = f"The host group {_GROUP} could not be checked: {error.message}"
+            return f"The host group {_GROUP} could not be checked: {error.message}"
+
+    def host_accounts() -> dict[str, HostAccount] | None:
         try:
-            accounts = read_host_accounts()
+            return read_host_accounts()
         except SmbHostError as error:
             logger.warning("The host's accounts could not be read: %s", error.message)
-    if "pdbedit" not in missing and accounts is not None:
+            return None
+
+    def passdb_names() -> dict[str, str] | None:
+        if "pdbedit" in missing:
+            return None
         try:
-            passdb = read_passdb_names()
+            return read_passdb_names()
         except SmbHostError as error:
             logger.warning("Samba's accounts could not be listed: %s", error.message)
-        else:
-            status.unmanaged_samba_users = sorted(
-                _shown(stored) for stored in passdb.values()
-                if not (stored in accounts and accounts[stored].ours)
-            )
+            return None
+
+    # The group, the host's accounts and Samba's passdb at once. None for the accounts:
+    # they are unknown, so no passdb entry can be called unmanaged.
+    status.group_problem, accounts, passdb = host.at_once(group_problem, host_accounts, passdb_names)
+    if accounts is not None and passdb is not None:
+        status.unmanaged_samba_users = sorted(
+            _shown(stored) for stored in passdb.values()
+            if not (stored in accounts and accounts[stored].ours)
+        )
     return status
 
 

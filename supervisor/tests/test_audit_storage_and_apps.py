@@ -43,7 +43,7 @@ from src.storage import router as storage_router
 
 from .audit_helpers import audit_entries
 from .test_apps import install, pull_answer
-from .test_containers import _container
+from .test_containers import _container, answer_docker_lists
 from .test_pool_persistence import DATA_UUID
 from .test_sign_in_full_disk import ENTRY_LOST, the_audit_log_is_full
 from . import test_volumes
@@ -408,6 +408,7 @@ def docker(monkeypatch):
         c for c in by_name.values() if all or c.status == "running"
     ]
     client.containers.create.side_effect = create
+    answer_docker_lists(client, by_name)
     # A pull answers an empty stream (ADR-0384).
     client.api.post.return_value = pull_answer()
     client.add = lambda container: by_name.setdefault(container.name, container)

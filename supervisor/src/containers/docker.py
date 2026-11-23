@@ -1,6 +1,9 @@
 import contextlib
 import docker
+import re
 import threading
+from datetime import UTC, datetime
+from typing import Any
 import requests
 import urllib3
 from docker.errors import APIError, DockerException, NotFound
@@ -61,13 +64,6 @@ def _id(model: Model) -> str:
     return model_id
 
 
-def _image_label(container: Container) -> str:
-    """The first tag of the container's image, else the image's short ID (one request to Docker)."""
-    image = container.image
-    assert image is not None  # docker-py looks the image up by the container's ImageID
-    return image.tags[0] if image.tags else image.short_id
-
-
 def is_system_container(name: str) -> bool:
     """Check if container is a system container."""
     return name in SYSTEM_CONTAINERS or name.startswith("unos-")
@@ -121,93 +117,98 @@ def get_client() -> docker.DockerClient:
         raise DockerUnavailable(str(e)) from e
 
 
+def _summary_name(summary: dict[str, Any]) -> str:
+    """The container's name from its summary in Docker's list: of its Names, the one that is no
+    legacy link's (/<other container>/<alias>), without its slash."""
+    names = summary.get("Names") or []
+    return next((name[1:] for name in names if name.count("/") == 1), (names or ["/"])[0].lstrip("/"))
+
+
+# An image's ID or a prefix of it as `docker images` shows it (12 hex digits) or longer: what a
+# container created by an ID has as its image.
+_IMAGE_ID_PREFIX = re.compile(r"[0-9a-f]{12,64}")
+
+
+def _image_label_of(summary: dict[str, Any]) -> str:
+    """The container's image from its summary: the reference the container was created from, which
+    Docker gives while it still names the container's image; else the image's short ID (sha256: and
+    12 hex digits), as Docker then gives the image's ID or the container was created by an ID."""
+    image = summary.get("Image") or ""
+    image_id = summary.get("ImageID") or ""
+    digits = image.removeprefix("sha256:")
+    if image_id and (image == image_id or (
+        _IMAGE_ID_PREFIX.fullmatch(digits) and image_id.removeprefix("sha256:").startswith(digits)
+    )):
+        return image_id[:19] if image_id.startswith("sha256:") else image_id[:12]
+    return image
+
+
+def _summary_ports(summary: dict[str, Any]) -> list[PortMapping]:
+    """The container's ports from its summary: those that the host publishes, one for each address,
+    and those that it does not, sorted by the text port/protocol as Docker sorts its inspect's port
+    map (the list gives them in no order), each port's addresses in Docker's order."""
+    ports = []
+    for port in summary.get("Ports") or []:
+        container_port = int(port["PrivatePort"])
+        protocol = port.get("Type") or "tcp"
+        ports.append((
+            f"{container_port}/{protocol}",
+            PortMapping(host_port=int(port["PublicPort"]) if port.get("PublicPort") else None,
+                        container_port=container_port, protocol=protocol),
+        ))
+    ports.sort(key=lambda entry: entry[0])
+    return [mapping for _, mapping in ports]
+
+
+def _created(seconds: Any) -> str:
+    """When Docker created the container, from the list's Unix seconds: RFC 3339 in UTC, to the second."""
+    try:
+        return datetime.fromtimestamp(int(seconds), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+
+
+def _info(summary: dict[str, Any]) -> ContainerInfo:
+    """A container's answer from its summary in Docker's list: no request of its own."""
+    status = str(summary.get("State") or "")
+    try:
+        state = ContainerState(status.lower())
+    except ValueError:
+        state = ContainerState.CREATED
+    return ContainerInfo(
+        id=str(summary["Id"])[:12],
+        name=_summary_name(summary),
+        image=_image_label_of(summary),
+        status=status,
+        state=state,
+        created=_created(summary.get("Created")),
+        ports=_summary_ports(summary),
+        labels=summary.get("Labels") or {},
+    )
+
+
 def list_containers(all: bool = True) -> list[ContainerInfo]:
-    """List all containers (excluding system containers)."""
-    client = get_client()
-    containers = client.containers.list(all=all)
-
-    result = []
-    for c in containers:
-        # Skip system containers
-        if is_system_container(_name(c)):
-            continue
-
-        ports = []
-        for port_str, bindings in (c.attrs.get("NetworkSettings", {}).get("Ports") or {}).items():
-            container_port = int(port_str.split("/")[0])
-            protocol = port_str.split("/")[1] if "/" in port_str else "tcp"
-            if bindings:
-                for b in bindings:
-                    ports.append(
-                        PortMapping(
-                            host_port=int(b["HostPort"]) if b.get("HostPort") else None,
-                            container_port=container_port,
-                            protocol=protocol,
-                        )
-                    )
-            else:
-                ports.append(PortMapping(container_port=container_port, protocol=protocol))
-
-        state = c.status.lower()
-        try:
-            container_state = ContainerState(state)
-        except ValueError:
-            container_state = ContainerState.CREATED
-
-        result.append(
-            ContainerInfo(
-                id=c.short_id,
-                name=_name(c),
-                image=_image_label(c),
-                status=c.status,
-                state=container_state,
-                created=c.attrs.get("Created", ""),
-                ports=ports,
-                labels=c.labels,
-            )
-        )
-
-    return result
+    """The containers, but UNOS's own (is_system_container): after get_client's version query,
+    Docker's list alone, which holds all that the answer needs; no inspect of a container or of an
+    image."""
+    summaries = get_client().api.containers(all=all)
+    return [info for info in map(_info, summaries) if not is_system_container(info.name)]
 
 
 def get_container(container_id: str) -> ContainerInfo:
-    """Get container by ID or name."""
+    """A container by its ID, a prefix of its ID or its name, answered as list_containers answers it:
+    Docker's inspect finds it, and its summary in Docker's list, filtered by its full ID, is the
+    answer (Docker takes the filter id as an ID or a prefix of one, so the full ID names it alone).
+    ValueError when Docker has no such container."""
     client = get_client()
     try:
-        c = client.containers.get(container_id)
+        full_id = client.api.inspect_container(container_id)["Id"]
     except NotFound:
         raise ValueError(f"Container {container_id} not found")
-
-    ports = []
-    for port_str, bindings in (c.attrs.get("NetworkSettings", {}).get("Ports") or {}).items():
-        container_port = int(port_str.split("/")[0])
-        protocol = port_str.split("/")[1] if "/" in port_str else "tcp"
-        if bindings:
-            for b in bindings:
-                ports.append(
-                    PortMapping(
-                        host_port=int(b["HostPort"]) if b.get("HostPort") else None,
-                        container_port=container_port,
-                        protocol=protocol,
-                    )
-                )
-
-    state = c.status.lower()
-    try:
-        container_state = ContainerState(state)
-    except ValueError:
-        container_state = ContainerState.CREATED
-
-    return ContainerInfo(
-        id=c.short_id,
-        name=_name(c),
-        image=_image_label(c),
-        status=c.status,
-        state=container_state,
-        created=c.attrs.get("Created", ""),
-        ports=ports,
-        labels=c.labels,
-    )
+    summaries = client.api.containers(all=True, filters={"id": full_id})
+    if not summaries:  # removed in between
+        raise ValueError(f"Container {container_id} not found")
+    return _info(summaries[0])
 
 
 def create_container(config: ContainerCreate) -> ContainerInfo:

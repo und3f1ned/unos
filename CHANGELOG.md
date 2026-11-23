@@ -106,6 +106,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   but a GitHub-hosted runner, and the check one with pools.
 
 ### Changed
+- The reads that the pages wait for answer faster (ADR-0468): the container list asks Docker for its
+  list alone (and its version, as every client does), instead of an inspect of every container and
+  of its image (about 40 ms each on the dev device); a container's **image** is now the reference it
+  was created from, as `docker ps` shows it, or the image's short id when that reference names
+  another image or the container was created from an image id, and **created** is to the second; a
+  single container's answer, and those of start, stop and restart, are the same as the list's. `GET /shares/paths` reads the
+  fstab, the mounted filesystems and the mount table once and scans no disk, so a sleeping disk stays
+  asleep. The pool list, the disk list, the SMB status and the SMB interfaces run the host commands
+  that do not depend on each other at once.
 - The web UI's card headers and empty states use the shared components (ADR-0466): the dashboard's
   **Manage** (Storage pools, Containers) and **View all** (Recent activity) and Snapshots' **Schedule
   snapshots** are header links with an arrow icon (`CardAction`); an empty list's next step is a

@@ -24,12 +24,17 @@ without waiting for them (ADR-0290). So does openssl, on the certificates of
 the container's /data/certs (ADR-0416). smartctl goes through :func:`run_smartctl`,
 which first makes the container's node of the disk the host's, so that a disk
 attached after the container started is read too (ADR-0414).
+
+:func:`at_once` runs reads of the host that do not depend on each other at the
+same time, each in a thread of its own: a page's request then waits for the
+slowest of them instead of their sum.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import errno
 import logging
 import os
@@ -39,6 +44,7 @@ import signal
 import stat
 import subprocess
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import IO, Any
 
@@ -156,6 +162,50 @@ _NSENTER_PREFIX = [
     "--pid",
     "--",
 ]
+
+
+# The most reads that one call of at_once runs at the same time; its others wait for one of them to
+# end. A read that calls at_once again has a bound of its own (a shared one could deadlock).
+AT_ONCE_THREADS = 8
+
+
+def at_once(*reads: Callable[[], Any]) -> list[Any]:
+    """Run blocking reads of the host at the same time and return their results, in their order.
+    Each read runs in a thread of its own, at most AT_ONCE_THREADS of them at a time, in a copy of
+    the caller's context; at_once returns once every read has ended. When reads raised, the
+    first of them in order raises then, as when they ran one after another, but the reads after it
+    have run too: only for reads that change nothing and that do not depend on each other. A read
+    for which no thread can be started (RuntimeError) runs in the caller's thread instead. Blocking:
+    call it in a worker thread."""
+    if len(reads) < 2:
+        return [read() for read in reads]
+    results: list[Any] = [None] * len(reads)
+    errors: list[BaseException | None] = [None] * len(reads)
+    limit = threading.BoundedSemaphore(AT_ONCE_THREADS)
+
+    def run(index: int, read: Callable[[], Any], context: contextvars.Context) -> None:
+        with limit:
+            try:
+                results[index] = context.run(read)
+            except BaseException as exc:  # handed to the caller below
+                errors[index] = exc
+
+    threads = []
+    for index, read in enumerate(reads):
+        thread = threading.Thread(target=run, args=(index, read, contextvars.copy_context()),
+                                  name="unos-host-read", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError:  # no thread can be started now
+            run(index, read, contextvars.copy_context())
+            continue
+        threads.append(thread)
+    for thread in threads:
+        thread.join()
+    for error in errors:
+        if error is not None:
+            raise error
+    return results
 
 
 class HostCommandError(RuntimeError):

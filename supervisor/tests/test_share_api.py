@@ -949,19 +949,17 @@ class TestPaths:
     kind in the page's language, "data (Pool)" in English (ADR-0299).
     """
 
+    MOUNTED = [("data", "/mnt/pools/data"), ("other", "/mnt/pools/other")]  # the pool "gone" is not mounted
+
     @pytest.fixture
     def listed(self, api, monkeypatch):
-        mounted = [SimpleNamespace(name="data", mountpoint="/mnt/pools/data"),
-                   SimpleNamespace(name="other", mountpoint="/mnt/pools/other"),
-                   SimpleNamespace(name="gone", mountpoint=None)]
-        volumes = {"data": [SimpleNamespace(name="media", path="/mnt/pools/data/media")],
-                   "other": [SimpleNamespace(name="films", path="/mnt/pools/other/films")]}
-        monkeypatch.setattr(pools, "list_pools", lambda: mounted)
-        monkeypatch.setattr(pools, "list_volumes", lambda name: volumes[name])
+        volumes = {"/mnt/pools/data": {"media": 257}, "/mnt/pools/other": {"films": 258}}
+        monkeypatch.setattr(pools, "mounted_pool_volumes",
+                            lambda name, target: (volumes[target], set(), set(volumes[target].values())))
         return api
 
     def test_every_path_says_whether_its_pool_is_managed(self, listed, monkeypatch):
-        monkeypatch.setattr(pools, "managed_pool_names", lambda: {"data", "gone"})
+        monkeypatch.setattr(pools, "mounted_pools", lambda: (self.MOUNTED, {"data", "gone"}))
         response = listed.client.get(f"{API}/paths")
         assert response.status_code == 200, response.text
         assert response.json() == [
@@ -972,10 +970,7 @@ class TestPaths:
         ]
 
     def test_none_is_managed_when_the_pool_list_cannot_be_read(self, listed, monkeypatch):
-        def broken():
-            raise OSError("cat: /etc/fstab: Input/output error")
-
-        monkeypatch.setattr(pools, "managed_pool_names", broken)
+        monkeypatch.setattr(pools, "mounted_pools", lambda: (self.MOUNTED, None))  # the fstab cannot be read
         response = listed.client.get(f"{API}/paths")
         assert response.status_code == 200, response.text
         assert [(p["path"], p["managed"]) for p in response.json()] == [

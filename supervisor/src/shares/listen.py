@@ -358,10 +358,11 @@ def describe(
 
 
 def _read_now() -> tuple[list[HostInterface] | None, str | None, list[str] | None, str | None, int | None]:
-    """The host's interfaces, smbd's listeners and its sessions, in one worker thread."""
-    interfaces, host_error = _try(read_host_interfaces)
-    listening, listeners_error = _try(read_listeners)
-    sessions = accounts.read_smb_sessions()
+    """The host's interfaces, smbd's listeners and its sessions, read at once, from one
+    worker thread."""
+    (interfaces, host_error), (listening, listeners_error), sessions = host.at_once(
+        lambda: _try(read_host_interfaces), lambda: _try(read_listeners), accounts.read_smb_sessions
+    )
     return interfaces, host_error, listening, listeners_error, (len(sessions) if sessions is not None else None)
 
 

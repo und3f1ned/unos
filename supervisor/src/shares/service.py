@@ -42,7 +42,7 @@ import sqlite3
 import stat
 import struct
 import weakref
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from pathlib import Path, PurePosixPath
@@ -54,7 +54,7 @@ from sqlalchemy import DateTime, delete, select
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import database
+from .. import database, host
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
@@ -3322,21 +3322,38 @@ def _live_conf_problem() -> str | None:
     return None
 
 
+def _outcome(read: Callable[[], Any]) -> Callable[[], tuple[Any, Exception | None]]:
+    """``read`` as a read that never raises: (its result, None), or (None, what it raised)."""
+    def run() -> tuple[Any, Exception | None]:
+        try:
+            return read(), None
+        except Exception as exc:
+            return None, exc
+
+    return run
+
+
 def _host_checks() -> tuple[interfaces.AccountHostStatus | None, str | None, bool, list[str]]:
-    """accounts.host_status() and accounts.gid_problem(), in one worker thread; never raises."""
+    """accounts.host_status() and accounts.gid_problem(), at once, from one worker
+    thread; never raises."""
     problems: list[str] = []
-    try:
-        host_status: interfaces.AccountHostStatus | None = accounts.host_status()
-    except Exception as exc:
-        host_status = None
-        problems.append(f"The SMB host checks could not run: {_reason(exc)}")
-    gid_checked = True
-    try:
-        gid = accounts.gid_problem()
-    except Exception as exc:
-        gid, gid_checked = None, False
-        problems.append(f"The owner of gid {constants.SMB_GROUP_GID} could not be checked: {_reason(exc)}")
+    (host_status, status_error), (gid, gid_error) = host.at_once(
+        _outcome(accounts.host_status), _outcome(accounts.gid_problem)
+    )
+    if status_error is not None:
+        problems.append(f"The SMB host checks could not run: {_reason(status_error)}")
+    gid_checked = gid_error is None
+    if gid_error is not None:
+        problems.append(f"The owner of gid {constants.SMB_GROUP_GID} could not be checked: {_reason(gid_error)}")
     return host_status, gid, gid_checked, problems
+
+
+async def _pool_names_or_unavailable() -> frozenset[str] | PoolListUnavailable:
+    """_pool_names(), or the PoolListUnavailable that it raised."""
+    try:
+        return await _pool_names()
+    except PoolListUnavailable as exc:
+        return exc
 
 
 async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
@@ -3347,7 +3364,10 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
     except smb.SambaConfigError as exc:
         problems.append(last_import_problem() or _reason(exc))
 
-    host_status, gid, gid_checked, host_problems = await asyncio.to_thread(_host_checks)
+    # The host's SMB checks and the fstab's pool names at once.
+    (host_status, gid, gid_checked, host_problems), pool_names = await asyncio.gather(
+        asyncio.to_thread(_host_checks), _pool_names_or_unavailable()
+    )
     problems.extend(host_problems)
     group_problem = host_status.group_problem if host_status is not None else None
     if _same_gid_conflict(group_problem, gid):
@@ -3367,7 +3387,9 @@ async def service_status(db: AsyncSession) -> schemas.SmbServiceStatus:
 
     guest_shares: list[str]
     try:
-        render = await build_render_input(db, await _pool_names())
+        if isinstance(pool_names, PoolListUnavailable):
+            raise pool_names
+        render = await build_render_input(db, pool_names)
     except PoolListUnavailable as exc:
         problems.append(_reason(exc))
         rows = (
