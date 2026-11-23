@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-10
 area: system
 decided-by: agent
 supersedes: [ADR-0047]
+superseded-by: ADR-0476
 ---
 
 # ADR-0332: The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner
 
 ## Context
+
+Superseded by ADR-0476: a pool the administrator removed is not alerted as not mounted.
 
 ADR-0047 proposed an event bus for the alerts and a health banner. Until now the RAID monitor alerted each change of a pool's status, the SMART monitor a rising counter, nothing reported a pool low on space, a failing disk or a missed task, and the web UI had no banner. The feature system.alert-events asks for one alert per problem through every enabled channel, webhooks included, and a banner until the problem is gone.
 

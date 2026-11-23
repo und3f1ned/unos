@@ -15,6 +15,7 @@ import logging
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, UTC
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -363,6 +364,7 @@ def raid_rounds(monkeypatch, alerts):
         await health_router.raid_monitor_loop()
         return list(raid_alerts), [event.title for event in alerts]
 
+    one_round.status = store  # type: ignore[attr-defined]
     return one_round
 
 
@@ -448,6 +450,74 @@ class TestThePoolsOfTheRaidMonitor:
         assert await raid_rounds() == ([], ["Pool 'mirror' is 92% full"])
         [low] = problems.current()
         assert (low.key, low.severity) == ("pool_low_space:mirror", "warning")
+
+    async def test_a_pool_the_administrator_removed_is_not_alerted(self, managed_mirror, raid_rounds):
+        """Remove Pool unmounts it and drops its fstab entry, and its disks keep it: not mounted is
+        its state now, no change to alert (the BPI-W3 sent "RAID Pool 'e2e_app' UNMOUNTED")."""
+        assert await raid_rounds() == ([], [])
+
+        assert raid_rounds.status["mirror"]["managed"] is True
+
+        assert storage_pools.delete_pool("mirror") is True
+
+        assert [pool.name for pool in storage_pools.list_pools()] == ["mirror"]  # still on its disks
+        assert await raid_rounds() == ([], [])
+        assert raid_rounds.status["mirror"]["status"] == "unmounted"
+        assert raid_rounds.status["mirror"]["managed"] is False
+        assert await raid_rounds() == ([], [])
+        assert problems.current() == []
+
+    async def test_a_pool_the_administrator_unmounted_is_not_alerted(self, managed_mirror, raid_rounds):
+        assert await raid_rounds() == ([], [])
+
+        storage_pools.unmount_pool("mirror")  # drops its fstab entry too
+
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_check_that_cannot_read_the_fstab_keeps_whether_a_pool_was_managed(
+            self, managed_mirror, raid_rounds):
+        """So that a removal right after it is not alerted, and nothing is written for it."""
+        assert await raid_rounds() == ([], [])
+        managed_mirror.fail[("cat", "--", "/etc/fstab")] = (1, "cat: /etc/fstab: Input/output error")
+        await raid_rounds()
+        assert raid_rounds.status["mirror"]["managed"] is True
+        del managed_mirror.fail[("cat", "--", "/etc/fstab")]
+
+        storage_pools.delete_pool("mirror")
+
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_managed_pool_that_falls_off_is_alerted_once(self, managed_mirror, raid_rounds):
+        assert await raid_rounds() == ([], [])
+
+        managed_mirror.mounts.pop()  # unmounted behind UNOS's back: its fstab entry stays
+
+        assert await raid_rounds() == ([], ["Pool 'mirror' is not mounted"])
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_managed_pool_that_falls_off_while_its_problems_fail_is_alerted_by_the_raid_monitor_once(
+            self, managed_mirror, raid_rounds, monkeypatch):
+        assert await raid_rounds() == ([], [])
+
+        managed_mirror.mounts.pop()
+        monkeypatch.setattr(health_router, "pool_problems", Mock(side_effect=RuntimeError("broken")))
+
+        raid_alerts, problem_alerts = await raid_rounds()
+        assert [(pool, status) for pool, status, _, _ in raid_alerts] == [("mirror", "unmounted")]
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_pool_not_mounted_while_the_fstab_cannot_be_read_is_alerted_once(
+            self, managed_mirror, raid_rounds):
+        """Then removed and managed pools look alike: the RAID monitor alerts, rather than miss a
+        managed pool that fell off."""
+        assert await raid_rounds() == ([], [])
+
+        managed_mirror.mounts.pop()
+        managed_mirror.fail[("cat", "--", "/etc/fstab")] = (1, "cat: /etc/fstab: Input/output error")
+
+        raid_alerts, _ = await raid_rounds()
+        assert [(pool, status) for pool, status, _, _ in raid_alerts] == [("mirror", "unmounted")]
+        assert await raid_rounds() == ([], [])
 
     async def test_the_pools_that_unos_does_not_manage_keep_the_alerts_of_the_raid_monitor(
             self, managed_mirror, raid_rounds):
