@@ -56,7 +56,7 @@ test.describe('Navigation', () => {
       // Notifications, the configuration of channels, is a setting (ADR-0431).
       ['Settings', ['General', 'Network', 'Remote Access', 'Security', 'Notifications']],
       ['Monitoring', ['Resource Monitor', 'System Logs', 'Disk Health']],
-      ['Maintenance', ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management']],
+      ['Maintenance', ['Updates', 'Backup & Restore', 'Scheduler', 'Power Management', 'SD Standby']],
     ];
     for (const [label, names] of groups) {
       await expect(tabs.getByRole('list', { name: label, exact: true }).getByRole('link')).toHaveText(names);

@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.changes import audit_change
+from ..standby import service as standby_service
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
 from ..auth.utils import require_admin, verify_token
@@ -1716,6 +1717,7 @@ async def install_app(
     \f
     ADR-0350, ADR-0381, ADR-0384, ADR-0403.
     """
+    standby_service.refuse_on_standby("an app's install")
     template = get_app_by_id(req.template_id)
     if not template:
         raise HTTPException(404, f"App {req.template_id} not found")
@@ -2193,6 +2195,7 @@ async def uninstall_app(container_id: AppContainerId, request: Request, user: Us
     \f
     ADR-0256, ADR-0350, ADR-0408.
     """
+    standby_service.refuse_on_standby("an app's uninstall")
     # A stop waits up to the containers' stop timeouts for them to exit: keep it off the event loop.
     try:
         app, removed, left = await asyncio.to_thread(_uninstall, container_id)

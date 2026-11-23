@@ -57,6 +57,9 @@ _MMC_PARTITION = re.compile(r"mmcblk[0-9]+p[0-9]+")
 # (root=, the last one counts) and, as Armbian's boot scripts pass it, the partition that U-Boot
 # loaded the kernel from (ubootpart=, a PARTUUID).
 _BOOT_PARAMETERS = ("root=", "ubootpart=")
+# The labels of the SD card standby's partitions (ADR-0471): a card with either holds the standby and
+# is never a data disk, also while its partitions are not mounted.
+STANDBY_LABELS = ("UNOS-BOOT", "UNOS-STANDBY")
 
 LSBLK_COLUMNS = (
     "NAME,KNAME,PATH,PKNAME,TYPE,SIZE,ROTA,MODEL,SERIAL,WWN,"
@@ -601,6 +604,8 @@ def _mmc_use(top: dict[str, Any], state: _HostState) -> str | None:
     if state.boot_specs is None:
         return "The kernel's command line cannot be read"
     subtree = list(_walk(top))
+    if any(node.get("label") in STANDBY_LABELS for node in subtree):
+        return "The SD card standby"
     reason = _system_reason(subtree, state)
     if reason is not None:
         return reason
@@ -1087,6 +1092,51 @@ def disk_models(paths: list[str]) -> dict[str, tuple[str | None, str | None]]:
             for path in _node_paths(node) & set(paths):
                 found.setdefault(path, (disk_id(disk.get("model")), disk_id(disk.get("serial"))))
     return found
+
+
+@dataclass(frozen=True)
+class MmcCard:
+    """An SD card or eMMC of the host as the SD card standby judges it (ADR-0471, ADR-0472)."""
+
+    name: str
+    path: str
+    model: str | None
+    serial: str | None
+    size: int
+    mmc_type: str  # SD, MMC or unknown
+    # Why it is part of the running system or used by the host (_mmc_use); None for a free card.
+    use: str | None
+    labels: tuple[str, ...]
+    # Something on it is mounted (at a pool's mountpoint too), or it has a filesystem that the
+    # host's fstab names by its UUID.
+    mounted: bool
+    uuids: frozenset[str]
+
+
+def mmc_cards() -> list[MmcCard]:
+    """Every whole SD card or eMMC of the host, with its identity from sysfs, whether ADR-0472 offers it
+    as free and what is on it. Blocking: lsblk, findmnt, swapon and /proc/cmdline on the host, at once.
+    RuntimeError when lsblk fails."""
+    state = _collect_host_state()
+    cards = []
+    for top in state.tree:
+        name = str(top.get("name") or "")
+        if not is_mmc_disk(name):
+            continue
+        subtree = list(_walk(top))
+        cards.append(MmcCard(
+            name=name,
+            path=top.get("path") or f"/dev/{name}",
+            model=disk_id(top.get("model")),
+            serial=disk_id(top.get("serial")),
+            size=_to_int(top.get("size")),
+            mmc_type=str(top.get("mmc_type") or "unknown"),
+            use=state.hidden_mmc.get(name),
+            labels=tuple(str(node["label"]) for node in subtree if node.get("label")),
+            mounted=any(_mountpoints(node) for node in subtree),
+            uuids=frozenset(str(node["uuid"]).lower() for node in subtree if node.get("uuid")),
+        ))
+    return cards
 
 
 def host_disks() -> list[HostDisk]:

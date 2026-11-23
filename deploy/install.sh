@@ -149,6 +149,9 @@ install_dependencies() {
         ethtool \
         iproute2 \
         mmc-utils \
+        rsync \
+        dosfstools \
+        fdisk \
         >/dev/null 2>&1
     
     log_success "System dependencies installed"

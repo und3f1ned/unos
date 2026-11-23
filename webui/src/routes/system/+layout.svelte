@@ -15,7 +15,8 @@
 		Network,
 		Shield,
 		Globe,
-		ArrowUpCircle
+		ArrowUpCircle,
+		LifeBuoy
 	} from 'lucide-svelte';
 
 	type Props = {
@@ -43,7 +44,8 @@
 			{ id: 'updates', group: 'maintenance', icon: ArrowUpCircle, label: $t('system.tabs.updates'), form: true },
 			{ id: 'backup', group: 'maintenance', icon: Database, label: $t('system.tabs.backup'), form: true },
 			{ id: 'scheduler', group: 'maintenance', icon: Calendar, label: $t('system.tabs.scheduler'), form: false },
-			{ id: 'power', group: 'maintenance', icon: Power, label: $t('system.tabs.power'), form: true }
+			{ id: 'power', group: 'maintenance', icon: Power, label: $t('system.tabs.power'), form: true },
+			{ id: 'standby', group: 'maintenance', icon: LifeBuoy, label: $t('system.tabs.standby'), form: true }
 		].map((tab) => ({ ...tab, href: tab.id === 'general' ? '/system' : `/system/${tab.id}` }))
 	);
 

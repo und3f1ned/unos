@@ -29,7 +29,8 @@ import {
 	UserCog,
 	UserPlus,
 	Users,
-	Wrench
+	Wrench,
+	LifeBuoy
 } from 'lucide-svelte';
 import type { IconComponent } from '$lib/components/ui';
 import { LANGUAGES, translateIn } from '$lib/i18n';
@@ -211,6 +212,14 @@ export const ADMIN_PAGES: Choice[] = [
 		kindKey: SYSTEM,
 		icon: Power,
 		run: { go: '/system/power' }
+	},
+	{
+		id: 'standby',
+		nameKey: 'system.tabs.standby',
+		keywordsKey: 'palette.keywords.standby',
+		kindKey: SYSTEM,
+		icon: LifeBuoy,
+		run: { go: '/system/standby' }
 	},
 	ACCOUNT_PAGE,
 	APPEARANCE_TAB

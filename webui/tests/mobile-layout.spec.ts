@@ -464,6 +464,22 @@ const LOGS = {
   },
 };
 
+// System > Standby once set up, its last sync failed with the server's long message (ADR-0471), and
+// the free card that it would take.
+const STANDBY_ARMED = {
+  available: true, unavailable_reason: null, profile: 'BPI-W3', armed: true,
+  conditions: [{ id: 'docker_root', met: true, detail: "Docker's data root /var/lib/docker is on the system disk" }],
+  card: { device: '/dev/mmcblk1', model: 'SC32G', serial: '0x8f3a1b2c', size: 31914983424 },
+  card_present: true, in_boot_path: true, root: 'emmc', boot_reason: 'emmc', generation: 12, marked_failed: false,
+  drill_pending: true, syncing: false, sync_time: '04:00', next_sync_at: '2026-11-24T03:00:00Z',
+  last_sync: { at: '2026-11-23T04:00:41Z', trigger: 'daily', result: 'failed', mib: null, parts: [], generation: 12,
+    error: 'The copy of the system: rsync: [sender] read errors mapping "/var/lib/samba/private/passdb.tdb": Input/output error (5) (exit status 23)' },
+  last_complete_at: '2026-11-22T04:00:41Z', standby_ran: null, switch_ready: true,
+  problems: [{ kind: 'standby_sync_failed', severity: 'warning' }],
+};
+const STANDBY_FREE = { ...STANDBY_ARMED, armed: false, card_present: null, in_boot_path: null, root: null, generation: null,
+  drill_pending: false, last_sync: null, last_complete_at: null, switch_ready: false, problems: [] };
+
 const POWER = {
   '/api/v1/power/pending': { action: 'reboot', at: '2026-11-08T23:00:00+00:00' },
   '/api/v1/power/config': {
@@ -1395,6 +1411,21 @@ const VIEWS: View[] = [
     fake: (page) => fakeNetworkApi(page),
     open: (page) => page.locator('main').getByRole('tab', { name: /^(Connections|Подключения)$/ }).click(),
     shows: (page) => page.getByText('192.168.1.20:51515'),
+  },
+  {
+    name: 'System: Standby',
+    path: '/system/standby',
+    fake: (page) => serve(page, { '/api/v1/system/standby': STANDBY_ARMED, '/api/v1/scheduler/timezone': { timezone: 'Europe/Berlin' } }),
+    shows: (page) => page.getByTestId('standby-drills'),
+  },
+  {
+    name: 'Dialog: set up the SD standby',
+    path: '/system/standby',
+    fake: (page) => serve(page, { '/api/v1/system/standby': STANDBY_FREE, '/api/v1/scheduler/timezone': { timezone: 'Europe/Berlin' } }),
+    open: (page) => page.getByRole('button', { name: /^(Set up the standby|Настроить резерв)$/ }).click(),
+    shows: (page) => page.getByRole('dialog'),
+    start: dialogTitle,
+    end: dialogEnd,
   },
   {
     name: 'System: Power',

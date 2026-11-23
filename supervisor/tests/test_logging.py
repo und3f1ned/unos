@@ -381,7 +381,7 @@ class TestIdleWritesNothing:
         loops_that_log_failures = {
             "app_resources_loop", "scheduler_loop", "task_check_loop", "raid_monitor_loop", "smart_monitor_loop",
             "ups_monitor_loop", "check_host_tools", "first_upload_leftover_check", "power_schedule_loop",
-            "automatic_install_loop", "system_disk_loop",
+            "automatic_install_loop", "system_disk_loop", "standby_loop",
         }
         # What a pass logs when it changed something or found a problem, each behind an `if`: the
         # shutdown by the UPS monitor, the items the trash expiry deleted and what it could not, the

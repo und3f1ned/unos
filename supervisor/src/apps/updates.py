@@ -44,6 +44,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import host
+from ..standby import service as standby_service
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
@@ -900,6 +901,7 @@ async def update_app(container_id: base.AppContainerId, request: Request, user: 
     \f
     ADR-0408.
     """
+    standby_service.refuse_on_standby("an app's update")
     shares = await base._share_folders(db)
     await db.close()
     _, app = await asyncio.to_thread(base._get_app, container_id)
@@ -1105,6 +1107,7 @@ async def rollback_app(container_id: base.AppContainerId, request: Request,
     \f
     ADR-0408.
     """
+    standby_service.refuse_on_standby("an app's rollback")
     _, app = await asyncio.to_thread(base._get_app, container_id)
     if not app.previous:
         _refuse(f"{app.name} has no earlier version to roll back to")

@@ -213,6 +213,7 @@ test.describe('System tabs read their data in their loads', () => {
       ['Backup & Restore', 'Backup & Restore', '/system/backup'],
       ['Scheduler', 'Scheduler', '/system/scheduler'],
       ['Power Management', 'Power Management', '/system/power'],
+      ['SD Standby', 'SD card standby', '/system/standby'],
     ];
     for (let i = 1; i < tabs.length; i++) {
       const [fromLink, fromTitle, from] = tabs[i - 1];
@@ -270,7 +271,7 @@ test.describe('System tabs read their data in their loads', () => {
     await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0, { timeout: 15000 });
     await page.waitForTimeout(300);
     const links = page.locator('main nav a');
-    await expect(links).toHaveCount(12);
+    await expect(links).toHaveCount(13);
     for (const href of await links.evaluateAll((all) => all.map((a) => a.getAttribute('href')))) {
       const preload = href === '/system/notifications' ? 'hover' : 'tap';
       await expect(page.locator(`main nav a[href="${href}"]`)).toHaveAttribute('data-sveltekit-preload-data', preload);

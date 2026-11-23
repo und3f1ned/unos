@@ -154,6 +154,14 @@
 		network_interface_created: 'audit.action.networkInterfaceCreated',
 		network_interface_deleted: 'audit.action.networkInterfaceDeleted',
 		network_change_kept: 'audit.action.networkChangeKept',
+		standby_armed: 'audit.action.standbyArmed',
+		standby_removed: 'audit.action.standbyRemoved',
+		standby_synced: 'audit.action.standbySynced',
+		standby_settings_changed: 'audit.action.standbySettingsChanged',
+		standby_drill: 'audit.action.standbyDrill',
+		standby_returned: 'audit.action.standbyReturned',
+		standby_discarded: 'audit.action.standbyDiscarded',
+		standby_switched: 'audit.action.standbySwitched',
 		other: 'audit.action.other'
 	};
 	// An info entry shows no severity.
@@ -195,7 +203,8 @@
 		remote_peer: 'audit.resource.remotePeer',
 		app_name: 'audit.resource.appName',
 		release: 'audit.resource.release',
-		automatic_install: 'audit.resource.automaticInstall'
+		automatic_install: 'audit.resource.automaticInstall',
+		standby: 'audit.resource.standby'
 	};
 
 	const actionOptions = $derived([
