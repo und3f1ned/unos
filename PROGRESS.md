@@ -816,6 +816,10 @@ Open owner actions:
   tests/test_smbconf_testparm.py; merged as ef7f04e8, the entry passes.
 - `ci.btrfs-loop-device-tests` was cut off before its review and commit; its builder resumes in
   its worktree.
+- `process.prune-merged-branches`: all three steps seen (GitHub deleted pull request 109's branch
+  two seconds after its merge by itself, mvp.batch-21, equal to main, is deleted, and only
+  origin/main is merged on GitHub), but no test can name them, so it stays open. `ci.actions-pinned-by-sha` waits only for Dependabot's first github-actions
+  pull request.
 - Open for the owner: public GHCR packages for v0.1.0, `make setup` in the main checkout (the
   Dependabot pins and Playwright 1.65.1 since 89ca9fca).
 
