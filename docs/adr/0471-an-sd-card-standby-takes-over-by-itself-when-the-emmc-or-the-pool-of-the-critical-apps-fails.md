@@ -34,6 +34,16 @@ on its eMMC (`mmcblk2`, type MMC, 14.6 GB, with boot0 and boot1), an SD card (`m
 (ADR-0372). Another entry, storage.free-mmc-as-data-disk (on its branch), makes free SD cards
 offerable as data disks.
 
+The first version of this ADR left four questions, settled the same day. The lead read the W3's
+loader (`/usr/lib/linux-u-boot-vendor-armsom-w3/u-boot.itb`, Armbian's vendor U-Boot built on
+2026-11-12, now on the eMMC). It has `mmc read`, `mmc write`, `env import`, `env export`, `test`,
+`env exists`, `load`, `fatwrite` and `saveenv`, and no `setexpr`, `itest`, `bootcount`, `bootlimit`
+or `wdt`, so UNOS builds no U-Boot of its own. The owner answered the other three:
+- only the BPI-W3 for now, the F3 staying as it is;
+- a planned repair of a pool moves the critical apps to the card first and brings them back after;
+- the sync's interval is configurable: by default daily plus 10 minutes after a change, and per
+  critical app down to every hour, with the writes it costs shown before it is saved.
+
 ## Decision
 
 Four phases, each an entry of `feature-list.json`: `system.emmc-health-monitoring` (1),
@@ -44,15 +54,15 @@ Four phases, each an entry of `feature-list.json`: `system.emmc-health-monitorin
 the System page's Standby tab shows the unmet ones as the reason and offers no action (on x86: "this
 NAS does not boot through U-Boot"); the Apps page then offers no critical mark. The conditions: the
 host runs Armbian (`/etc/armbian-release`) of a family that has a board profile in
-`standby/profiles.py` (the first: the BPI-W3's RK3588 families, measured in phase 2; another only
-after the drills passed on such a board), with Armbian's loader package
+`standby/profiles.py` (only the BPI-W3's RK3588 families, at the owner's word, measured in phase 2;
+another only at the owner's word, after the drills passed on that board), with Armbian's loader package
 (`/usr/lib/u-boot/platform_install.sh` with `write_uboot_platform`); the root filesystem is ext4 on
 an eMMC (the disk of `/` is `mmcblk<N>` whose `device/type` is `MMC`), mounted with
 `errors=remount-ro`; an SD card sold as 16 GB or larger (at least 14 GiB;
 the F3's card has 14.8 GB) is in a slot (`device/type` `SD`) and holds no
 pool and no mounted filesystem; Docker's data root is on the system disk (as ADR-0470 keeps
-it on the dev device), since a data root on a pool, as on the BPI-F3 (ADR-0372), stops UNOS itself with the
-pool; the host has rsync and dosfstools, which `deploy/install.sh` installs. A profile names the
+it on the dev device), since a data root on a pool stops UNOS itself with the pool. The BPI-F3 keeps
+its data root on its pool (ADR-0372), so its Standby tab names that and its missing profile; the host has rsync and dosfstools, which `deploy/install.sh` installs. A profile names the
 board's U-Boot device numbers of the eMMC and the card (from the device tree's `mmc0` and `mmc1`
 aliases, which U-Boot follows), where the first partition may start, a free sector before it for
 the tries counter, and the variables of Armbian's boot script that the chooser sets. Every endpoint
@@ -130,9 +140,13 @@ switch. Any rsync status other than 0, a partial transfer from a failing eMMC in
 sync before the switch. A sync cut off leaves the previous complete generation in use, and the
 switch from the eMMC (below) kills a sync that runs.
 
-The sync runs daily at 04:00 host time, 10 minutes after the last audited change (each change
-restarts the wait), after a start of the supervisor whose images differ from the card's, and at
-"Sync now". A part skipped for a sleeping pool is synced at the first pass of the RAID monitor
+The system's copy is synced daily at the time that the Standby tab sets (04:00 host time by
+default), 10 minutes after the last audited change (each change restarts the wait), after a start
+of the supervisor whose images differ from the card's, and at "Sync now". Each critical app has its
+own interval, kept in `standby_apps`: 1, 2, 4, 6, 12 or 24 hours, 24 by default, at the system's
+daily sync. Before an interval is saved, the dialog shows the writes to the card a week that it
+costs (ADR-0214): the app's average MiB a sync over its recent syncs times the syncs a week, or,
+before its first sync, that it cannot tell yet. A part skipped for a sleeping pool is synced at the first pass of the RAID monitor
 that finds the pool's disks awake. Its result is kept in RAM and in the card's `state.json` on the
 btrfs top level, written only when it changes, and logged only when the sync wrote or failed. The
 result holds the time, the MiB written to the card (from `/sys/block/<card>/stat` after a `sync`),
@@ -148,16 +162,24 @@ the eMMC's partition and path of its own boot script. It imports `unos/current.t
 (`env import`). It then takes the first case that applies, and passes its reason as
 `unos.reason=<case>` on the kernel's command line:
 1. `unos/emmc-failed` exists: the card's root.
-2. The tries counter, one byte in the free sector before partition 1 that the profile names
-   (`mmc read`, `setexpr`, `mw`, `mmc write`), holds 3: the card's root.
-3. The eMMC's own boot script loads: it is handed over. The script first adds one to the tries
-   counter, then sets `devtype`, `devnum`, `distro_bootpart` and `prefix` as U-Boot's standard boot
+2. The tries counter (below) holds 3: the card's root.
+3. The eMMC's own boot script loads: it is handed over. The script first steps the tries counter,
+   then sets `devtype`, `devnum`, `distro_bootpart` and `prefix` as U-Boot's standard boot
    would for the eMMC. It puts `unos.chooser=card unos.root=emmc panic=10` into the variable that
    Armbian's boot script appends to the kernel's command line (`extraboardargs` per the profile),
    and sources the eMMC's script. The eMMC then boots with its own kernel, initrd and overlays.
    `panic=10` makes an initramfs that finds no root reboot, so the next boot counts again.
 4. Otherwise: the card's root. The script sources `unos/boot-<gen>/boot.scr` the same way, with
    `unos.chooser=card unos.root=card rootflags=subvolid=<id>`.
+
+The tries counter is the text `unos_tries=<n>`, ended by a NUL byte, in the free sector before
+partition 1 that the profile names. The W3's loader has no arithmetic and no `bootcount`. So the
+script reads the sector into memory (`mmc read`) and imports it (`env import -t`). It steps the
+counter with unrolled `test` branches: missing or 0 becomes 1, 1 becomes 2, 2 becomes 3. Then it
+exports the variable (`env export -t`) and writes it back (`mmc write`). It writes neither the FAT
+partition (`fatwrite`, which a cut-off write could leave unreadable) nor U-Boot's own environment
+(`saveenv`). A board's profile lists the loader's commands that the chooser needs: `mmc read`,
+`mmc write`, `env import`, `env export`, `test` and `load`.
 
 The card's root makes every later boot stay on the card: its `unos-standby.service` writes
 `unos/emmc-failed` at once, with the reason from `unos.reason`, unless the file exists. It also
@@ -223,8 +245,9 @@ Each of them then reboots.
   (Alembic migration, ADR-0444). The dialog lists what is copied, the app's folders under
   `{pool}/apps/<app>/`, and what is not: its other pool folders (media, downloads, shares), its
   caches (a catalog `VolumeMapping` gets `cache=True`) and the `.previous` copies of ADR-0408. It
-  shows their sizes, its images' size and the card's space. The mark is refused (409) when the
-  standby would leave less than the reserve: 10% of the card, at least 2 GiB.
+  shows their sizes, its images' size and the card's space, and sets its sync interval (above). The
+  mark is refused (409) when the standby would leave less than the reserve: 10% of the card, at
+  least 2 GiB.
 - **The sync of an app.** It passes over a pool whose disks sleep (`spindown.pool_sleeps`, ADR-0378).
   It copies from a read-only snapshot `.unos-standby-snapshot` of the subvolume that holds
   `{pool}/apps/<app>`, consistent while the app runs, into a new generation `@app-<app>-<n>`, made
@@ -262,6 +285,13 @@ Each of them then reboots.
 - **Drill.** "Move the critical apps to the card" on the Standby tab does the same with the reason
   drill. Until phase 4, "Return to the pool, discarding the card's changes" (typed confirmation)
   recreates the pool-bound containers.
+- **Planned repair.** The Storage page may refuse to unmount or remove a pool because containers use
+  it (409). When critical apps are among them, the dialog offers to move those apps to the card
+  first. The move is the failover above with the reason planned, alerted and on the banner as
+  every switch. The unmount or remove then goes on when no other container blocks it, and
+  otherwise names those that still do. Once the repaired pool is mounted again under its name, the
+  Standby tab offers to bring the apps back: in phase 3 by the discarding return, from phase 4 by
+  the pool return below.
 
 **Return (phase 4).**
 - **Pool.** The return is offered once the pool is mounted read-write and healthy, and asked with
@@ -344,9 +374,8 @@ the card. `docs/RECOVERY.md` says how to mark the eMMC failed from any computer:
   Phase 2 measures the root's copy and records it.
 - **Gaps.** Some cases leave the owner the manual mark: creating `unos/emmc-failed` on the card's
   FAT partition from any computer (`docs/RECOVERY.md`). They are a system that hangs while its kernel
-  still serves the watchdog, a board without a hardware watchdog, a card loader without
-  `mmc write` or `setexpr` (phase 2 reads the W3's), and a failure that takes the supervisor down
-  before it acts. Docker may restart a failed-over app's old pool-bound container at boot, for
+  still serves the watchdog, a board without a hardware watchdog, and a failure that takes the
+  supervisor down before it acts. Docker may restart a failed-over app's old pool-bound container at boot, for
   the moments until the supervisor applies the failover; the pool's return keeps whatever that
   container changed in the backup folder.
 - **Dev device.** ADR-0470 leaves the dev device's card wiped and unused; phase 2's device check
@@ -356,18 +385,6 @@ the card. `docs/RECOVERY.md` says how to mark the eMMC failed from any computer:
   that holds a test pool, never the data pool.
 - **New host packages:** rsync, dosfstools and mmc-utils in `deploy/install.sh` and
   `docs/INSTALL.md`.
-- **Open questions for the owner:**
-  - If the W3's loader lacks `mmc write` or `setexpr`, should UNOS build and write a U-Boot of its
-    own, a new build dependency, for the tries counter?
-  - The BPI-F3 has its system on its eMMC and a card in its slot, but Docker's data root is on its
-    pool (ADR-0372), and its K1 loader has no profile yet (the boot ROM's order and the loader's
-    layout, measured on the board). So the feature stays hidden there. Should Docker's data root
-    move to its 14.6 GB eMMC, where the stack's images and Frigate's rebuilds (ADR-0372) leave
-    little room, and should the K1's profile be measured?
-  - The Storage page refuses to unmount a pool while containers use it. Should it offer to move the
-    critical apps to the card first, for a planned repair?
-  - Is a daily sync enough for an app like Home Assistant, or should the owner set a shorter
-    interval at the cost of more card writes?
 
 ## Considered options
 
