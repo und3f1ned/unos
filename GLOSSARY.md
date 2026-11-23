@@ -739,7 +739,7 @@ hold, so that one agent at a time changes or loads the device (ADR-0210). Avoid:
 **Scenario check**: A check of one area's user scenario on the dev device,
 `scripts/dev/scenario.sh <area>`: through the API and on the host, with a temporary user, share,
 volume, Scheduler task, folders or backups that it removes again (the smbconf check also edits smb.conf by hand
-and restarts the supervisor, ADR-0309; the shares check turns guest access on for its share, ADR-0340; the scrub check scrubs the pool, ADR-0314; the offsite check
+and restarts the supervisor, ADR-0309; the shares check turns guest access on for its share, ADR-0340; the scrub check scrubs the pool, ADR-0470; the offsite check
 sets up an off-device copy and forgets it, ADR-0337; the restore check restores a backup it made moments before, twice,
 which puts the device's database back as it was then and ends the web sessions, ADR-0341), PASS or FAIL
 and the SD writes of each step,

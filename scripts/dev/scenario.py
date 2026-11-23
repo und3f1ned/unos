@@ -115,27 +115,31 @@ SD writes of each check (ADR-0214). The areas:
            reported), and the Delete of that last guest share, after which signing is mandatory
            again (where the device has other guest shares, that step says so instead); no
            password of the check in an answer or a log; and the user's Delete.
-  scrub    Scrubs of the pool (ADR-0314): its last scrub as found (none after a restart of the
-           supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted
-           on it refused with 409, and a scheduled scrub of that folder failing with the same
-           text (ADR-0311); Start Scrub answered running, and so the status right after it
-           (ADR-0313); the scrub reported, its bytes scrubbed growing, until it finished without
-           errors; Cancel Scrub of a scrub that btrfs has recorded, which ends aborted; a disabled
-           scheduled scrub task whose Run now starts a scrub ("Scrub started") that runs to its
-           end; and the task deleted, its run left in the Scheduler's history. On a pool with more
-           than 32 GiB of data the scrubs are cancelled instead of waited for. The pool's last
-           scrub result is the check's afterwards.
+  scrub    Scrubs of the pool (ADR-0470): its last scrub as found (none after a restart of the
+           supervisor, ADR-0171); a scrub of a folder below the pools' base with nothing mounted on
+           it refused with 409, and a scheduled scrub of that folder failing with the same text
+           (ADR-0311); Start Scrub answered running, and so the status right after it (ADR-0313);
+           the scrub reported until it finished without errors, its bytes scrubbed growing over the
+           looks after btrfs recorded it, as far as a fast disk lets the check see them, and never
+           past the bytes to scrub; Cancel Scrub of a scrub that btrfs has recorded, which ends
+           aborted; a disabled scheduled scrub task whose Run now starts a scrub ("Scrub started")
+           that runs to its end; and the task deleted, its run left in the Scheduler's history. On a
+           pool with more than 32 GiB of data the scrubs are cancelled instead of waited for. The
+           pool's last scrub result is the check's afterwards.
   balance  A balance of the pool (ADR-0379): one of a folder below the pools' base with nothing
-           mounted on it refused with 409; a folder of the pool with chunks about 12% full, made
-           of files that fallocate allocates and of which most are deleted again; Start Balance
-           with the usage limit of 20% answered running, and so the status right after it, its
-           btrfs in the host's unit unos-balance-<pool>; a scrub and a second balance refused with
-           409 while it runs; its chunks balanced growing, with the time left; Pause Balance, after
-           which the status says paused and the unit has ended; Resume Balance, which runs it in
-           the unit again; Cancel Balance, after which the status says that it was cancelled. The
-           clean-up cancels a balance that still runs or is paused, once a pause that waits for
-           the chunk being moved has paused it, and removes the folder. The pool's last balance
-           result is the check's, cancelled, until the host restarts.
+           mounted on it refused with 409; a folder of the pool with 24 chunks about 12% full, made
+           of files that fallocate allocates and of which most are deleted again, for a trial
+           balance that measures the seconds a chunk and an API call take; in their place as many
+           such chunks as keep the check's balance running through its steps, 12 at least
+           (ADR-0470); Start Balance with the usage limit of 20% answered running, and so the status
+           right after it, its btrfs in the host's unit unos-balance-<pool>; a scrub and a second
+           balance refused with 409 while it runs, because it runs; its chunks balanced growing,
+           with the time left; Pause Balance, after which the status says paused and the unit has
+           ended; Resume Balance, which runs it in the unit again; Cancel Balance, after which the
+           status says that it was cancelled. The clean-up cancels a balance that still runs or is
+           paused, once a pause that waits for the chunk being moved has paused it, and removes the
+           folder. The pool's last balance result is the check's, cancelled, until the host
+           restarts.
   offsite  The off-device copy (ADR-0337), on a device where none is set up: a folder of the
            pool with two files as the source and another as the disk target; Save and test, which
            makes the copy repository there (700 root:root) and says that it lies on the disk it
@@ -204,7 +208,7 @@ pool (which the namespace leaves writable), the balance check's files on the poo
 at its unit's state (systemctl is-active), and getfacl; only pdbedit runs without that namespace,
 since tdbsam opens passdb.tdb read-write, and the smbconf check's edit
 of smb.conf by hand, which writes /etc/samba (ADR-0309), the scrub and balance checks' folder below the pools'
-base, on the root filesystem (ADR-0314), and the restore check's removal of the copies of the
+base, on the root filesystem (ADR-0470), and the restore check's removal of the copies of the
 database that its restores keep in the supervisor's data volume (ADR-0341). The restore check lists
 a backup's members with python in the supervisor's running container (docker exec, as deploy.sh's
 checks after up do, ADR-0183), which reads the backup in memory and writes nothing. The passwords of
@@ -227,6 +231,7 @@ import base64
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -3826,22 +3831,26 @@ SCRUB_POLL = 2
 # A pool with more data than this is scrubbed only until btrfs reports the scrub running, and the
 # scrub is then cancelled: the steps that let a scrub run to its end need a small pool.
 SCRUB_TO_THE_END = 32 * GIB
+# A scrub that the check saw running this many times has run long enough for btrfs to record it
+# (about 5 s after its start, ADR-0313) at two of them at least: each look is an API call and a
+# pause of SCRUB_POLL seconds (ADR-0470).
+SCRUB_LOOKS = 5
 
 
 def scrub_of(c: Check, pool: str) -> dict:
     return c.get(f"/storage/pools/{pool}/scrub")
 
 
-def scrub_until_it_ends(c: Check, pool: str, progress: list[int] | None = None) -> dict:
-    """The pool's scrub once btrfs no longer reports it running; PROGRESS gets the bytes scrubbed
-    of each answer that said running."""
+def scrub_until_it_ends(c: Check, pool: str, progress: list[dict] | None = None) -> dict:
+    """The pool's scrub once btrfs no longer reports it running; PROGRESS gets each answer that
+    said running."""
     deadline = time.monotonic() + SCRUB_WAIT
     while True:
         status = scrub_of(c, pool)
         if status.get("status") != "running":
             return status
         if progress is not None:
-            progress.append(status.get("bytes_scrubbed") or 0)
+            progress.append(status)
         c.expect(time.monotonic() < deadline, f"the scrub of {pool} still runs after {SCRUB_WAIT} s")
         time.sleep(SCRUB_POLL)
 
@@ -3931,15 +3940,40 @@ def scrub_check(c: Check) -> None:
     if to_the_end:
         with c.step(f"btrfs reports the scrub of {name}, its progress moving, until it ends, finished without "
                     "errors") as s:
-            progress: list[int] = []
-            ended = scrub_until_it_ends(c, name, progress)
-            moved = [b for b in progress if b]
+            # What a look can see (ADR-0470): the bytes scrubbed of each answer that said running once
+            # btrfs had recorded this scrub (its start time), and the end's counters. A fast disk ends
+            # the scrub after one such look or none; a scrub seen running SCRUB_LOOKS times was
+            # recorded at two of them.
+            seen: list[dict] = []
+            ended = scrub_until_it_ends(c, name, seen)
+            start = ended.get("last_run")
+            recorded = [a.get("bytes_scrubbed") or 0 for a in seen if start and a.get("last_run") == start]
+            moved = [b for b in recorded if b]
+            total = ended.get("total_bytes") or 0
+            # btrfs's Rate of a finished scrub is its bytes scrubbed over its Duration (or over one second).
+            scrubbed = (ended.get("rate") or 0) * max(ended.get("duration") or 0, 1)
             c.expect(ended.get("status") == "finished", f"it ended {ended.get('status')}")
             c.expect(ended.get("errors") == 0, f"it found {ended.get('errors')} errors")
-            c.expect(ended.get("last_run"), "it names no start time")
-            c.expect(len(set(moved)) >= 2 and moved == sorted(moved), f"the bytes scrubbed while it ran: {progress}")
-            s.text += (f": {ended.get('duration')} s, started {ended.get('last_run')}, "
-                       f"{moved[0] / GIB:.2f} to {moved[-1] / GIB:.2f} GiB scrubbed while it ran")
+            c.expect(start and start != first_before,
+                     f"it names the start {start}, and the scrub before it {first_before}")
+            c.expect(scrubbed > 0 and total > 0, f"its end names {scrubbed} bytes scrubbed (rate and duration) of "
+                                                 f"{total} to scrub")
+            c.expect(recorded == sorted(recorded) and all(b <= total for b in recorded),
+                     f"the bytes scrubbed while it ran went back or past the {total} to scrub: {recorded}")
+            c.expect(not recorded or moved, f"it reported no bytes scrubbed while it ran: {recorded}")
+            c.expect(len(recorded) < 2 or len(set(moved)) >= 2,
+                     f"the bytes scrubbed did not move while it ran: {recorded}")
+            c.expect(len(seen) < SCRUB_LOOKS or len(recorded) >= 2,
+                     f"btrfs did not record it while it ran: {len(seen)} looks, {len(recorded)} recorded")
+            if len(set(moved)) >= 2:
+                saw = f"{moved[0] / GIB:.2f} to {moved[-1] / GIB:.2f} GiB scrubbed while it ran"
+            elif moved:
+                saw = f"{moved[0] / GIB:.2f} GiB scrubbed while it ran"
+            else:
+                saw = "btrfs recorded it after the check's last look"
+            looks = f"{len(seen)} look" + ("" if len(seen) == 1 else "s")
+            s.text += (f": {ended.get('duration')} s, started {start}, {saw} ({looks}), {scrubbed / GIB:.2f} GiB "
+                       f"scrubbed in all, of {total / GIB:.2f} GiB to scrub")
     else:
         c.skip(f"btrfs reports the scrub of {name} until it ends", f"{used / GIB:.0f} GiB used: it is cancelled instead")
 
@@ -3997,13 +4031,30 @@ BALANCE_WAIT = 300
 BALANCE_POLL = 1
 # The usage limit of the check's balance: the dialog's default (BALANCE_DEFAULT_USAGE, ADR-0379).
 BALANCE_USAGE = 20
-# The check's chunks with little in them: BALLAST_FILES files of BALLAST_MIB MiB, of which every
-# BALLAST_KEEP-th stays, leave the data chunks (1 GiB on a pool of more than 50 GiB) that held them
-# about 12% full: 12 of them, 1.5 GiB to move, some seconds each on a hard disk. The pool needs
-# twice the space of the files free.
-BALLAST_FILES = 96
+# The check's chunks with little in them: files of BALLAST_MIB MiB, of which every BALLAST_KEEP-th
+# stays, leave the data chunks (1 GiB on a pool of more than 50 GiB) that held them about 12% full,
+# one kept file in each. The pool needs twice the space of the files free.
 BALLAST_MIB = 128
 BALLAST_KEEP = 8
+# A trial balance of BALLAST_TRIAL_CHUNKS of them (some seconds each on a hard disk) measures how
+# long the pool's disk takes for a chunk, and the relay for an API call and ssh.sh for a device
+# call (ADR-0470). It asks until the supervisor's time left rests on BALANCE_TRIAL_MOVED chunks
+# balanced since its first look, or it ends, and cancels it: that estimate is off by an eighth of a
+# chunk's time at most, and with as many chunks left its rounding up to the second by little. The
+# check's balance then gets enough chunks to run through the API and the device calls that its
+# steps make while it runs (BALANCE_RUNNING_API_CALLS: the halves of the start, the pause, the
+# resume and the cancel, the status right after the start, the two refused requests and the time
+# left; BALANCE_RUNNING_DEVICE_CALLS: the unit's state twice and the SD card's counter at the end
+# of four steps), with the waits of the step of the time left, by BALANCE_MARGIN, and
+# BALLAST_CHUNKS at least: some seconds a chunk on a hard disk need no more, the BPI-F3's NVMe
+# drive (0.83 s a chunk, 2.4 s a call) about 55.
+BALLAST_CHUNKS = 12
+BALLAST_TRIAL_CHUNKS = 24
+BALLAST_FILES = BALLAST_TRIAL_CHUNKS * BALLAST_KEEP
+BALANCE_TRIAL_MOVED = 8
+BALANCE_RUNNING_API_CALLS = 6
+BALANCE_RUNNING_DEVICE_CALLS = 6
+BALANCE_MARGIN = 1.5
 
 
 def balance_of(c: Check, pool: str) -> dict:
@@ -4023,6 +4074,53 @@ def balance_until(c: Check, pool: str, done: Callable[[dict], bool], what: str) 
         time.sleep(BALANCE_POLL)
 
 
+def balance_trial(c: Check, pool: str) -> tuple[float, float, float, str]:
+    """A balance of the trial's chunks, ended: the seconds a chunk took, an API call and a device
+    call took, and what the first rests on (ADR-0470). The seconds a chunk come from the time left
+    that the supervisor estimates (ADR-0379: the chunks left at the rate since it first saw the
+    balance run), less the second that it rounds up, over the chunks left: its last estimate, which
+    rests on BALANCE_TRIAL_MOVED chunks or more when the trial ran that long. A trial that ends
+    before the supervisor showed a time left fails: the disk is too fast for its chunks."""
+    calls: list[float] = []
+
+    def timed(method: str, body: Any = None) -> dict:
+        at = time.monotonic()
+        answer = c.call(method, f"/storage/pools/{pool}/balance", body)
+        calls.append(time.monotonic() - at)
+        return answer
+
+    deadline = time.monotonic() + BALANCE_WAIT
+    timed("POST", {"usage": BALANCE_USAGE})
+    at = time.monotonic()
+    c.device.balance_unit(pool)  # a device call, timed: the steps make as many as API calls
+    per_device = time.monotonic() - at
+    first: int | None = None  # the chunks balanced at the first read that saw it run
+    estimate: tuple[float, int] | None = None  # the seconds a chunk, and the chunks balanced then
+    while True:
+        found = timed("GET")
+        if found.get("status") != "running":
+            break
+        done = found.get("completed") or 0
+        first = done if first is None else first
+        left = (found.get("expected") or 0) - done
+        if (found.get("seconds_left") or 0) > 1 and left > 0:
+            estimate = ((found["seconds_left"] - 1) / left, done)
+        if estimate is not None and done - first >= BALANCE_TRIAL_MOVED:
+            break
+        c.expect(time.monotonic() < deadline, f"the trial balance did not balance {BALANCE_TRIAL_MOVED} chunks "
+                                              f"within {BALANCE_WAIT} s: it is {found.get('status')} at {done} chunks")
+        time.sleep(BALANCE_POLL)
+    if found.get("status") == "running":
+        timed("DELETE")
+        balance_until(c, pool, lambda b: b.get("status") == "idle", "the cancel of the trial balance")
+    c.expect(estimate is not None, f"the trial balance ended {found.get('result')} after {found.get('completed')} "
+                                   "chunks before the supervisor showed a time left: the disk balances too fast for a "
+                                   f"trial of {BALLAST_TRIAL_CHUNKS} chunks")
+    assert estimate is not None
+    basis = f"the supervisor's time left at {estimate[1]} chunks"
+    return estimate[0], sum(calls) / len(calls), per_device, basis
+
+
 def balance_check(c: Check) -> None:
     with c.step("a pool is mounted read-write and managed by UNOS, no balance or scrub of it runs, and it has room "
                 "for the check's chunks") as s:
@@ -4035,7 +4133,7 @@ def balance_check(c: Check) -> None:
         c.expect(scrub_of(c, name).get("status") != "running", f"a scrub of {name} runs: wait for its end, or cancel it")
         free = (pool.get("total_size") or 0) - (pool.get("used_size") or 0)
         need = 2 * BALLAST_FILES * BALLAST_MIB << 20
-        c.expect(free >= need, f"{free / GIB:.1f} GiB free, and the check needs {need / GIB:.0f} GiB")
+        c.expect(free >= need, f"{free / GIB:.1f} GiB free, and the check needs {need / GIB:.0f} GiB at least")
         s.text += f": {name} at {root}, {free / GIB:.0f} GiB free, its last balance {found.get('result') or 'not known'}"
     folder = f"{root}/{c.run}"
     outside = f"{base}/{c.run}"
@@ -4065,16 +4163,35 @@ def balance_check(c: Check) -> None:
         s.text += f": {want!r}"
 
     with c.step(f"{folder} gets {BALLAST_FILES} files of {BALLAST_MIB} MiB, of which every {BALLAST_KEEP}th stays: "
-                f"chunks about {100 // BALLAST_KEEP}% full") as s:
+                f"chunks about {100 // BALLAST_KEEP}% full, for a trial balance") as s:
         c.on_cleanup(f"remove {folder}", lambda: c.expect(c.device.ballast("remove", folder) == "removed",
                                                           f"{folder} was not removed"))
         kept = c.device.ballast("make", folder, BALLAST_FILES, BALLAST_MIB, BALLAST_KEEP)
-        c.expect(kept == f"kept {BALLAST_FILES // BALLAST_KEEP}", f"the device answered {kept!r}")
+        c.expect(kept == f"kept {BALLAST_TRIAL_CHUNKS}", f"the device answered {kept!r}")
+        s.text += f": {kept} files"
+
+    with c.step(f"a trial balance of {name} with the usage limit of {BALANCE_USAGE}% measures how long the disk takes "
+                "for a chunk and the relay for a call, and the check's balance gets the chunks for its steps") as s:
+        c.on_cleanup(f"cancel a balance of {name} that still runs or is paused", cancel)
+        per_chunk, per_call, per_device, basis = balance_trial(c, name)
+        window = (BALANCE_RUNNING_API_CALLS * per_call + BALANCE_RUNNING_DEVICE_CALLS * per_device
+                  + 2 * BALANCE_POLL)
+        chunks = max(BALLAST_CHUNKS, math.ceil(BALANCE_MARGIN * window / max(per_chunk, 0.01)))
+        s.text += (f": {per_chunk:.2f} s a chunk ({basis}), {per_call:.1f} s an API call, {per_device:.1f} s a "
+                   f"device call: the check's balance gets {chunks} chunks")
+
+    with c.step(f"{folder} gets, in place of the trial's files, {chunks * BALLAST_KEEP} files of {BALLAST_MIB} MiB, of "
+                f"which every {BALLAST_KEEP}th stays: chunks about {100 // BALLAST_KEEP}% full") as s:
+        need = 2 * chunks * BALLAST_KEEP * BALLAST_MIB << 20
+        c.expect(free >= need, f"the check's balance needs {chunks} chunks, {need / GIB:.0f} GiB free, and {name} "
+                               f"has {free / GIB:.1f} GiB")
+        c.expect(c.device.ballast("remove", folder) == "removed", f"{folder} was not removed")
+        kept = c.device.ballast("make", folder, chunks * BALLAST_KEEP, BALLAST_MIB, BALLAST_KEEP)
+        c.expect(kept == f"kept {chunks}", f"the device answered {kept!r}")
         s.text += f": {kept} files"
 
     with c.step(f"Start Balance of {name} with the usage limit of {BALANCE_USAGE}% answers running, and so does the "
                 f"status right after it; btrfs runs it in the host's unit unos-balance-{name}") as s:
-        c.on_cleanup(f"cancel a balance of {name} that still runs or is paused", cancel)
         started = c.post(f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE})
         right_after = balance_of(c, name)
         unit = c.device.balance_unit(name)
@@ -4088,9 +4205,23 @@ def balance_check(c: Check) -> None:
     with c.step(f"while it runs, a scrub of {name} and a second balance are refused with 409") as s:
         c.on_cleanup(f"cancel a scrub of {name} that the balance did not refuse", lambda: (
             c.call("DELETE", f"/storage/pools/{name}/scrub"), scrub_until_it_ends(c, name)))
-        scrub = c.call("POST", f"/storage/pools/{name}/scrub", expect=409)
-        second = c.call("POST", f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE}, expect=409)
-        s.text += f": {scrub.get('detail')!r}; {second.get('detail')!r}"
+
+        def refused(path: str, body: Any = None) -> str:
+            """The refusal's reason. A request that was not refused names the balance's state: one
+            that had ended makes the refusals prove nothing, and the trial measured the disk too
+            slow (ADR-0470)."""
+            answer = c.call("POST", path, body, expect=(409, 200))
+            if "detail" not in answer:
+                now = balance_of(c, name)
+                c.expect(False, f"POST {path} answered {answer.get('status')}, not 409, and the balance is "
+                                f"{now.get('status')} ({now.get('result')})")
+            return answer["detail"]
+
+        scrub = refused(f"/storage/pools/{name}/scrub")
+        second = refused(f"/storage/pools/{name}/balance", {"usage": BALANCE_USAGE})
+        for detail, want in ((scrub, f"A balance of pool {name} runs: "), (second, f"A balance of pool {name} runs already")):
+            c.expect(detail.startswith(want), f"the refusal says {detail!r}, not that the balance runs")
+        s.text += f": {scrub!r}; {second!r}"
 
     with c.step(f"the status of {name}'s balance shows the chunks balanced growing, and the time left") as s:
         moving = balance_until(c, name, lambda b: b.get("status") != "running" or ((b.get("completed") or 0) >= 1

@@ -59,7 +59,8 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   reported and fails the check; signals wait while the clean-up runs;
 * the check refuses to start beside leftovers of an earlier one, and scenario.py refuses to run
   without the lock of scenario.sh;
-* the defects the checks exist for fail them: a share access that shrinks without closing the
+* the defects the checks exist for fail them (a scrub's bytes scrubbed that do not move or are
+  never reported among them): a share access that shrinks without closing the
   open tree connects, a password change that leaves the sessions open, a share folder or an
   upload with the wrong mode, a volume that the File Manager deletes, a password in a log, an
   apply that drops a section added by hand without a copy or overwrites the first copy, access
@@ -91,6 +92,12 @@ Covered (the steps of the ledger entry device.scenario-checks-in-repo):
   refused only with a status of smbd's, not one that says the connection, the session or the tree
   connect broke, and only while the same session lists the file afterwards; the Snapshots
   page names a snapshot to the second of the device's clock and refuses a second one of that name;
+* the scrub and balance checks hold on the fake on a clock of its own (TimedNas, ADR-0470) with the
+  times measured on the BPI-F3's NVMe pool and the BPI-W3's hard disk: the scrub step takes the
+  progress that it sees, two looks, one or none after btrfs recorded the scrub, with the end's
+  total, and still asks a scrub seen running many times to move; the balance check sizes its
+  chunks by a trial balance, keeps 12 on the hard disk, refuses to make more than the pool has
+  room for, and names the balance's state when a refusal it asks for does not come;
 * no temporary password reaches the output, a command line or the environment: scenario.Device
   sends them on standard input, and the SMB helper keeps them in a file of mode 600 in RAM that
   it deletes, or gives them to smbpasswd -r on its standard input;
@@ -113,6 +120,7 @@ import grp
 import hashlib
 import io
 import json
+import math
 import os
 import pwd
 import re
@@ -149,6 +157,9 @@ def load_scenario() -> types.ModuleType:
 
 
 scenario = load_scenario()
+# The waits of the scrub and balance checks on the device, which the fixture _checks_without_pauses
+# shortens for the fakes that move at each request.
+ON_THE_DEVICE = {name: getattr(scenario, name) for name in ("SCRUB_POLL", "SCRUB_WAIT", "BALANCE_POLL", "BALANCE_WAIT")}
 Answer = scenario.relay.Answer
 
 ROOT = "/mnt/pools/data"
@@ -621,6 +632,7 @@ class FakeNas:
         self.balance: dict | None = None
         self.balance_result: str | None = None
         self.balances = 0
+        self.relocated = 0  # the chunks that the last balance which finished moved
         self.pause_takes = 0.0
         self.tasks: dict[str, dict] = {}
         self.runs: list[dict] = []
@@ -1166,6 +1178,10 @@ class FakeNas:
             return {"pool": "data", "status": "idle" if "unrecorded-is-idle" in self.bugs else "running",
                     "duration": None, "bytes_scrubbed": 0, "total_bytes": scenario.GIB, "rate": 0, "errors": 0, "last_run": None}
         scrubbed = (3 - self.scrub_left) * scenario.GIB // 4 if s["status"] == "running" else None
+        if scrubbed is not None and "scrub-progress-stuck" in self.bugs:
+            scrubbed = scenario.GIB // 4
+        if "scrub-progress-none" in self.bugs:
+            scrubbed = None
         return {"pool": "data", "status": s["status"], "duration": s.get("duration"), "bytes_scrubbed": scrubbed,
                 "total_bytes": scenario.GIB, "rate": scenario.GIB // 19, "errors": s.get("errors", 0), "last_run": s.get("last_run")}
 
@@ -1201,15 +1217,21 @@ class FakeNas:
                 self.scrub = {**self.scrub, "status": "aborted", "duration": 2, "errors": 0}
             return self.scrub_answer()
         answer = self.scrub_answer()
-        if self.scrub["status"] == "running":  # each request is a moment later
-            if self.scrub_unrecorded:
-                self.scrub_unrecorded -= 1
-            else:
-                self.scrub_left -= 1
-                if self.scrub_left <= 0:
-                    self.scrub = {**self.scrub, "status": "finished", "duration": 19,
-                                  "errors": 2 if "scrub-errors" in self.bugs else 0}
+        self.scrub_moves()
         return answer
+
+    def scrub_moves(self) -> None:
+        """Each request is a moment later: btrfs records the running scrub, which then moves on and
+        ends."""
+        if self.scrub["status"] != "running":
+            return
+        if self.scrub_unrecorded:
+            self.scrub_unrecorded -= 1
+        else:
+            self.scrub_left -= 1
+            if self.scrub_left <= 0:
+                self.scrub = {**self.scrub, "status": "finished", "duration": 19,
+                              "errors": 2 if "scrub-errors" in self.bugs else 0}
 
     BALANCE_EXPECTED = 12
 
@@ -1219,7 +1241,8 @@ class FakeNas:
                   "seconds_left": None, "result": None, "error": None}
         if b is None:
             return {**answer, "result": self.balance_result,
-                    **({"completed": 0, "considered": 4} if self.balance_result == "finished" else {})}
+                    **({"completed": self.relocated, "considered": self.relocated + 4}
+                       if self.balance_result == "finished" else {})}
         left = None
         if b["status"] == "running" and b["completed"] and "no-time-left" not in self.bugs:
             left = 2 * (self.BALANCE_EXPECTED - b["completed"])
@@ -1245,7 +1268,7 @@ class FakeNas:
             if b is not None and b["status"] == "running":  # each request is a moment later
                 b["completed"] += 1
                 if b["completed"] >= self.BALANCE_EXPECTED:
-                    self.balance, self.balance_result = None, "finished"
+                    self.balance, self.balance_result, self.relocated = None, "finished", b["completed"]
             return answer
         if method == "POST" and rest == []:
             assert body == {"usage": scenario.BALANCE_USAGE}, body
@@ -1257,7 +1280,7 @@ class FakeNas:
                 raise Refused(409, "A balance of pool data is paused: resume or cancel it")
             self.balances += 1
             if not self.ballast_kept():  # no chunk below the limit: it ends at once
-                self.balance_result = "finished"
+                self.balance_result, self.relocated = "finished", 0
                 return self.balance_answer()
             self.balance, self.balance_result = {"status": "running", "completed": 0}, None
             answer = self.balance_answer()
@@ -2566,6 +2589,179 @@ class FakeNas:
         return 8
 
 
+class TimedNas(FakeNas):
+    """The fake NAS on a clock of its own, which ``timed`` makes scenario.py's: an API request takes
+    ``call_s`` seconds through the relay and is answered from its middle, a command on the device
+    takes ``device_s`` (also the read of the SD card's counter at each step's end), and a pause of
+    scenario.py as long as it says. Its scrub reads ``scrub_gib``
+    GiB in ``scrub_s`` seconds, and btrfs records it RECORDED_S seconds after its start (ADR-0313);
+    with ``old_record``, btrfs shows the earlier scrub's record, start and bytes, as running until it
+    records the new one; its balance moves a chunk in ``chunk_s`` seconds, the chunks below the usage limit being one for
+    each of the check's files that no balance has moved yet (the trial's included), and its time
+    left is the supervisor's estimate (``balances._estimate``: the chunks left at the rate since it
+    first saw the balance run, again from a resume). A pause takes effect at once; a resume runs
+    the chunks left again, counted from 0, as the kernel does."""
+
+    RECORDED_S = 5
+
+    def __init__(self, *, call_s: float, device_s: float, scrub_s: float, scrub_gib: float, chunk_s: float,
+                 old_record: bool = False) -> None:
+        super().__init__()
+        self.old_record = old_record
+        self.before: dict = {}
+        self.now = 1000.0
+        self.call_s, self.device_s, self.chunk_s = call_s, device_s, chunk_s
+        self.scrub_s, self.scrub_bytes = scrub_s, int(scrub_gib * scenario.GIB)
+        self.pool_used = self.scrub_bytes
+        self.scrub_at = 0.0
+        self.moved = 0  # of the check's files, those in chunks that a balance moved: full ones now
+        self.since: tuple[float, int] | None = None
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    def request(self, method, path, json_body=None, params=None, auth=True, upload=None) -> Answer:
+        self.now += self.call_s / 2
+        self.follow()
+        try:
+            return super().request(method, path, json_body, params, auth, upload)
+        finally:
+            self.now += self.call_s / 2
+
+    def device_call(self, name: str) -> None:
+        self.now += self.device_s
+        self.follow()
+        super().device_call(name)
+
+    def sectors(self):
+        self.now += self.device_s  # each step reads the SD card's counter
+        self.follow()
+        return super().sectors()
+
+    def follow(self) -> None:
+        """The scrub and the balance as far as the clock has taken them."""
+        if self.scrub["status"] == "running":
+            ran = self.now - self.scrub_at
+            self.scrub_unrecorded = int(ran < self.RECORDED_S)
+            if ran >= self.scrub_s:
+                self.scrub = {**self.scrub, "status": "finished", "duration": round(self.scrub_s),
+                              "errors": 2 if "scrub-errors" in self.bugs else 0}
+        b = self.balance
+        if b is not None and b["status"] == "running":
+            b["completed"] = min(b["expected"], int((self.now - b["at"]) / self.chunk_s))
+            if b["completed"] >= b["expected"]:
+                self.moved += b["completed"]
+                self.balance, self.balance_result, self.relocated = None, "finished", b["completed"]
+
+    # the scrub
+
+    def start_scrub(self) -> None:
+        before = dict(self.scrub)
+        super().start_scrub()
+        self.before = before
+        self.scrub_at = self.now
+        self.scrub_unrecorded = 1
+
+    def scrub_moves(self) -> None:
+        pass  # the clock moves it
+
+    def scrub_answer(self) -> dict:
+        s = self.scrub
+        answer = {"pool": "data", "status": s["status"], "duration": s.get("duration"), "bytes_scrubbed": None,
+                  "total_bytes": self.scrub_bytes, "rate": int(self.scrub_bytes / self.scrub_s),
+                  "errors": s.get("errors", 0), "last_run": s.get("last_run")}
+        if s["status"] != "running":
+            return answer
+        ran = self.now - self.scrub_at
+        if ran < self.RECORDED_S:  # not recorded yet: btrfs prints the time left (ADR-0313)
+            if self.old_record and self.before.get("last_run"):  # beside the earlier scrub's record
+                return {**answer, "duration": self.before.get("duration"), "bytes_scrubbed": self.scrub_bytes,
+                        "last_run": self.before["last_run"]}
+            return {**answer, "duration": None, "bytes_scrubbed": 0, "rate": 0, "last_run": None}
+        scrubbed = int(self.scrub_bytes * ran / self.scrub_s)
+        if "scrub-progress-stuck" in self.bugs:
+            scrubbed = self.scrub_bytes // 4
+        return {**answer, "duration": int(ran), "bytes_scrubbed": scrubbed}
+
+    # the balance
+
+    def balance_answer(self) -> dict:
+        b = self.balance
+        answer = {"pool": "data", "status": "idle", "completed": None, "expected": None, "considered": None,
+                  "seconds_left": None, "result": self.balance_result, "error": None}
+        if b is None or b["status"] != "running":
+            self.since = None
+        if b is None:
+            if self.balance_result == "finished":
+                return {**answer, "completed": self.relocated, "considered": self.relocated + 4}
+            return answer
+        left = None
+        if b["status"] == "running":
+            if self.since is None or b["completed"] < self.since[1]:
+                self.since = (self.now, b["completed"])
+            elif b["completed"] > self.since[1]:
+                left = math.ceil((b["expected"] - b["completed"]) * (self.now - self.since[0])
+                                 / (b["completed"] - self.since[1]))
+        return {**answer, "status": b["status"], "result": None, "completed": b["completed"],
+                "expected": b["expected"], "considered": b["completed"], "seconds_left": left}
+
+    def api_balance(self, method, name, rest, body):
+        b = self.balance
+        if name != "data" or (method, rest) not in (("GET", []), ("POST", []), ("POST", ["pause"]),
+                                                    ("POST", ["resume"]), ("DELETE", [])):
+            return super().api_balance(method, name, rest, body)
+        if method == "POST" and rest == []:
+            assert body == {"usage": scenario.BALANCE_USAGE}, body
+            if self.scrub["status"] == "running":
+                raise Refused(409, "A scrub of pool data runs: wait for its end or cancel it, then start the balance")
+            if b is not None:
+                raise Refused(409, "A balance of pool data runs already" if b["status"] == "running"
+                              else "A balance of pool data is paused: resume or cancel it")
+            self.balances += 1
+            chunks = self.ballast_kept() - self.moved
+            if chunks <= 0:  # no chunk below the limit: it ends at once
+                self.balance_result, self.relocated = "finished", 0
+                return self.balance_answer()
+            self.balance, self.balance_result = {"status": "running", "completed": 0, "expected": chunks,
+                                                 "at": self.now}, None
+        elif rest == ["pause"]:
+            if b is not None and b["status"] == "running":
+                self.moved += b["completed"]
+                b["status"] = "paused"
+        elif rest == ["resume"]:
+            if b is None or b["status"] != "paused":
+                raise Refused(409, "No balance of pool data is paused")
+            self.balance = {"status": "running", "completed": 0, "expected": b["expected"] - b["completed"],
+                            "at": self.now}
+        elif method == "DELETE" and b is not None:
+            if b["status"] == "running":
+                self.moved += b["completed"]
+            self.balance, self.balance_result = None, "cancelled"
+        return self.balance_answer()
+
+    def ballast(self, action, path, files=0, mib=0, keep=1):
+        answer = super().ballast(action, path, files, mib, keep)
+        if action == "remove":
+            self.moved = 0
+        return answer
+
+
+# The disks of the dev devices, as the device checks of 2026-11-23 measured them: the BPI-F3's NVMe
+# pool (a scrub of 11.2 GiB in 18 s, a chunk balanced in 0.83 s, 2.4 s an API call through the
+# relay) and the BPI-W3's hard disk (ADR-0314: 1.6 GiB scrubbed in 18 to 19 s; some seconds a chunk).
+NVME = {"call_s": 2.4, "device_s": 2.0, "scrub_s": 18, "scrub_gib": 11.2, "chunk_s": 0.83}
+HARD_DISK = {"call_s": 1.0, "device_s": 0.6, "scrub_s": 19, "scrub_gib": 1.6, "chunk_s": 4.0}
+
+
+def timed(monkeypatch, disk: dict) -> TimedNas:
+    """A TimedNas whose clock is scenario.py's, which waits as long as on the device."""
+    nas = TimedNas(**disk)
+    monkeypatch.setattr(scenario, "time", types.SimpleNamespace(monotonic=lambda: nas.now, sleep=nas.sleep))
+    for name in ("SCRUB_POLL", "SCRUB_WAIT", "BALANCE_POLL", "BALANCE_WAIT"):
+        monkeypatch.setattr(scenario, name, ON_THE_DEVICE[name])
+    return nas
+
+
 @pytest.fixture
 def nas():
     return FakeNas()
@@ -3513,7 +3709,7 @@ def test_the_fake_catalog_has_the_catalog_s_profiles_and_images():
 
 
 def test_the_scrub_check_covers_storage_scrub_and_the_start_through_one_helper(nas):
-    """ADR-0314: the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
+    """ADR-0470 (after ADR-0314): the steps of storage.scrub and storage.scrub-needs-mounted-pool that were checked by
     hand on 2026-11-09, with Start Scrub's answer of ADR-0313."""
     status, output = run_check("scrub", nas)
     assert status == 0, output
@@ -3541,8 +3737,128 @@ def test_the_balance_check_starts_pauses_resumes_and_cancels_a_balance_with_a_lo
                   "'A balance of pool data runs already'", "s left", "paused, then paused", "the unit inactive",
                   "running, the unit active", "idle, then idle, cancelled"):
         assert words in output, (words, output)
-    assert nas.balances == 1 and nas.balance is None and nas.balance_result == "cancelled"
+    assert nas.balances == 2 and nas.balance is None and nas.balance_result == "cancelled"
+    assert re.search(r"1.75 s a chunk \(the supervisor's time left at 8 chunks\), [\d.]+ s an API call, [\d.]+ s a "
+                     r"device call: the check's balance gets 12 chunks", output), output
+    assert "kept 24 files" in output and "kept 12 files" in output, output
     assert not nas.ballast_kept()
+
+
+@pytest.mark.parametrize("seconds, seen", [(18, r"[\d.]+ to [\d.]+ GiB scrubbed while it ran \(3 looks\)"),
+                                           (10, r"[\d.]+ GiB scrubbed while it ran \(1 look\)")])
+def test_on_a_fast_disk_the_scrub_check_proves_the_progress_that_it_can_see(monkeypatch, seconds, seen):
+    """The BPI-F3's NVMe pool scrubs 11.2 GiB in 18 s and the relay takes 2.4 s a call: the check
+    sees the scrub running after btrfs recorded it twice, or once on a disk a little faster. Its
+    progress is what it saw and the end's total, which no sample passes."""
+    nas = timed(monkeypatch, {**NVME, "scrub_s": seconds})
+    before = nas.snapshot()
+    status, output = run_check("scrub", nas)
+    assert status == 0, output
+    line = next(line for line in step_lines(output) if "its progress moving" in line)
+    assert line.startswith("PASS ") and re.search(rf": {seconds} s, started .*, {seen}, 11.20 GiB scrubbed in all, of 11.20 GiB to scrub", line), line
+    assert nas.snapshot() == before, output
+
+
+def test_a_scrub_that_ends_before_btrfs_records_it_shows_its_progress_by_its_end(monkeypatch):
+    """A disk that scrubs the pool within about 5 s: no look sees btrfs's record of it running, so
+    the end's total is its progress. A scrub that ends so soon cannot be cancelled once recorded,
+    and the step of the cancel says so."""
+    nas = timed(monkeypatch, {**NVME, "scrub_s": 6})
+    before = nas.snapshot()
+    status, output = run_check("scrub", nas)
+    assert status == 1, output
+    lines = step_lines(output)
+    progress = next(line for line in lines if "its progress moving" in line)
+    assert progress.startswith("PASS ") and re.search(
+        r": 6 s, started .*, btrfs recorded it after the check's last look \(0 looks\), 11.20 GiB scrubbed in all", progress), progress
+    failed = [line for line in lines if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "the scrub ended finished before the cancel" in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+def test_on_a_hard_disk_the_scrub_check_still_sees_the_bytes_scrubbed_grow(monkeypatch):
+    nas = timed(monkeypatch, HARD_DISK)
+    status, output = run_check("scrub", nas)
+    assert status == 0, output
+    line = next(line for line in step_lines(output) if "its progress moving" in line)
+    looks = int(re.search(r"\((\d+) looks", line).group(1))
+    assert looks >= 3 and re.search(r"[\d.]+ to [\d.]+ GiB scrubbed while it ran", line), line
+
+
+def test_the_scrub_check_counts_only_the_looks_at_its_own_scrub(monkeypatch):
+    """Until btrfs records the new scrub, its status may show the earlier scrub's record, with that
+    scrub's start and its bytes: those looks are not the new scrub's progress."""
+    nas = timed(monkeypatch, HARD_DISK)
+    nas.old_record = True
+    status, output = run_check("scrub", nas)
+    assert status == 0, output
+    line = next(line for line in step_lines(output) if "its progress moving" in line)
+    assert re.search(r"[\d.]+ to [\d.]+ GiB scrubbed while it ran", line), line
+
+
+def test_on_a_hard_disk_bytes_scrubbed_that_do_not_move_fail_the_scrub_check(monkeypatch):
+    nas = timed(monkeypatch, HARD_DISK)
+    nas.bugs.add("scrub-progress-stuck")
+    before = nas.snapshot()
+    status, output = run_check("scrub", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "the bytes scrubbed did not move while it ran" in failed[0], output
+    assert nas.snapshot() == before, output
+
+
+def test_on_a_fast_disk_the_balance_check_gets_the_chunks_that_keep_its_balance_running(monkeypatch):
+    """The BPI-F3's NVMe pool balances a chunk in 0.83 s and the relay takes 2.4 s a call: 12 chunks
+    ended before the scrub's start that the balance should refuse. A trial balance measures both,
+    and the check's balance gets as many chunks as its steps need while it runs, with a margin."""
+    nas = timed(monkeypatch, NVME)
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 0, output
+    trial = next(line for line in step_lines(output) if "a trial balance of data" in line)
+    chunks = int(re.search(r"the check's balance gets (\d+) chunks", trial).group(1))
+    assert chunks > scenario.BALLAST_CHUNKS and f"kept {chunks} files" in output, output
+    assert re.search(r": 0.8\d s a chunk", trial), trial  # the disk's 0.83 s, measured
+    for words in ("'A balance of pool data runs: wait for its end, or pause or cancel it, then start the scrub'; "
+                  "'A balance of pool data runs already'", "s left", "paused, then paused", "idle, then idle, cancelled"):
+        assert words in output, (words, output)
+    assert nas.balances == 2 and nas.balance is None and nas.balance_result == "cancelled"
+    assert nas.snapshot() == before, output
+
+
+def test_on_a_hard_disk_the_balance_check_keeps_its_twelve_chunks(monkeypatch):
+    nas = timed(monkeypatch, HARD_DISK)
+    status, output = run_check("balance", nas)
+    assert status == 0, output
+    assert re.search(r"the check's balance gets 12 chunks", output) and "kept 12 files" in output, output
+
+
+def test_the_balance_check_does_not_make_more_chunks_than_the_pool_has_room_for(monkeypatch):
+    nas = timed(monkeypatch, NVME)
+    nas.pool_free = 60 * scenario.GIB  # room for the trial's 24 chunks, not for what the disk needs
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and re.search(r"the check's balance needs \d+ chunks, \d+ GiB free, and data has 60.0 GiB",
+                                          failed[0]), output
+    assert nas.snapshot() == before, output
+
+
+@pytest.mark.parametrize("chunk_s, started", [(0.6, "scrub answered running"), (0.85, "balance answered idle")])
+def test_a_balance_that_ends_before_the_refusals_fails_the_check_with_the_reason(monkeypatch, chunk_s, started):
+    """Too few chunks for the disk (the margin made tiny): the scrub or the second balance that the
+    balance should refuse starts, the check says that the balance had ended, and the clean-up
+    cancels the scrub."""
+    nas = timed(monkeypatch, {**NVME, "chunk_s": chunk_s})
+    monkeypatch.setattr(scenario, "BALANCE_MARGIN", 0.01)
+    before = nas.snapshot()
+    status, output = run_check("balance", nas)
+    assert status == 1, output
+    failed = [line for line in step_lines(output) if line.startswith("FAIL  ")]
+    assert len(failed) == 1 and "are refused with 409: POST /storage/pools/data/" + started + ", not 409, and the " \
+        "balance is idle (finished)" in failed[0], output
+    assert nas.scrub["status"] != "running" and nas.snapshot() == before, output
 
 
 def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its_step(nas, monkeypatch):
@@ -3566,7 +3882,7 @@ def test_the_balance_check_s_clean_up_cancels_a_balance_whose_pause_outlasts_its
 @pytest.mark.parametrize("found, why", [
     ("paused", "a balance of data is paused: wait for its end, or cancel it"),
     ("scrub", "a scrub of data runs: wait for its end, or cancel it"),
-    ("full", "20.0 GiB free, and the check needs 24 GiB"),
+    ("full", "20.0 GiB free, and the check needs 48 GiB at least"),
 ])
 def test_the_balance_check_does_not_start_beside_a_balance_or_a_scrub_or_without_room(nas, found, why):
     if found == "paused":
@@ -3662,7 +3978,7 @@ def test_the_scrub_check_does_not_start_beside_a_scrub_that_runs(nas):
 ])
 def test_the_pool_folder_helper_touches_only_a_scenario_check_s_folder(tmp_path, action, name, code):
     """REMOTE_POOL_FOLDER, which runs without the read-only namespace: it makes and removes only a
-    folder named unoscheck and six hex digits right below the pools' base (ADR-0314)."""
+    folder named unoscheck and six hex digits right below the pools' base (ADR-0470)."""
     base = tmp_path / "pools"
     (base / "data").mkdir(parents=True)
     env = {"PATH": "/usr/bin:/bin", "UNOS_DEV_POOLS": str(base)}
@@ -3769,12 +4085,14 @@ def test_the_pool_folder_helper_removes_only_an_empty_folder_that_is_no_mount_po
     ("scrub", "start-answers-idle", "Start Scrub answered idle"),
     ("scrub", "unrecorded-is-idle", "the status right after the start is idle"),
     ("scrub", "scrub-errors", "it found 2 errors"),
+    ("scrub", "scrub-progress-stuck", "the bytes scrubbed did not move while it ran"),
+    ("scrub", "scrub-progress-none", "it reported no bytes scrubbed while it ran"),
     ("scrub", "cancel-keeps-running", "the scrub ended finished"),
     ("scrub", "runs-go-with-the-task", "its run is gone"),
     ("balance", "balance-no-mount-check", "is refused with 409"),
     ("balance", "balance-in-container", "btrfs runs it in the host's unit unos-balance-data"),
     ("balance", "scrub-beside-balance", "a scrub of data and a second balance are refused with 409"),
-    ("balance", "no-time-left", "shows the chunks balanced growing, and the time left"),
+    ("balance", "no-time-left", "before the supervisor showed a time left"),
     ("balance", "pause-keeps-running", "Pause Balance pauses it"),
     ("balance", "balance-start-answers-idle", "with the usage limit of 20% answers running"),
     ("balance", "resume-outside-unit", "Resume Balance runs it again in the unit unos-balance-data"),
