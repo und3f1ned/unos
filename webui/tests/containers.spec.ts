@@ -1,7 +1,7 @@
 import type { Locator, Page, Route, WebSocketRoute } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { pageSessionKey } from './session';
-import { actionsFor, cancelConfirmation, chooseAction, confirmWith, confirmation } from './ui';
+import { actionsFor, cancelConfirmation, chooseAction, confirmWith, confirmation, expectNextStep } from './ui';
 
 // The stand-in has no Docker. The page's requests to /api/v1/containers are
 // answered from memory, and so is the log socket /ws/v1/logs/{id}: nothing
@@ -345,7 +345,8 @@ test.describe('Containers', () => {
     await segment(/^Stopped/).click();
     await expect(rows(page)).toHaveCount(0);
     await expect(page.getByText('No containers match')).toBeVisible();
-    await page.getByRole('button', { name: 'Clear filters' }).click();
+    // The empty state's next step (EmptyState's action, ADR-0432).
+    await (await expectNextStep(page, 'button', 'Clear filters')).click();
     await expect(rows(page)).toHaveCount(4);
     await expect(segment(/^All/)).toHaveAttribute('aria-pressed', 'true');
   });

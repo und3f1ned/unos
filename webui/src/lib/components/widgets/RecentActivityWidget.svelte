@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Bell, AlertTriangle, Info, CheckCircle } from 'lucide-svelte';
-	import { Card, EmptyState } from '$lib/components/ui';
+	import { Card, CardAction, EmptyState } from '$lib/components/ui';
 	import { formatAgo } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 
@@ -59,7 +59,7 @@
 			<Bell class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 			{$t('dashboard.activity.title')}
 		</h3>
-		<a href="/system#notifications" class="link text-[13px]">{$t('dashboard.activity.viewAll')}</a>
+		<CardAction href="/system#notifications">{$t('dashboard.activity.viewAll')}</CardAction>
 	</div>
 
 	{#if notifications.length === 0}

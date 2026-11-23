@@ -14,7 +14,7 @@ export const en = {
 	// Under the header's Add button while no pool can hold one.
 	'shares.noPoolsShort': 'Create a storage pool first',
 	// The empty tab's next step when the button above cannot be used yet.
-	'shares.toStorage': 'Go to Storage →',
+	'shares.toStorage': 'Go to Storage',
 
 	// The access levels (ShareAccessLevel), and none.
 	'shares.level.read': 'Read only',
@@ -421,7 +421,7 @@ export const ru: Translation<typeof en> = {
 	'shares.tabs.label': 'Виды общего доступа',
 	'shares.pathsError': 'Не удалось прочитать пулы и тома',
 	'shares.noPoolsShort': 'Сначала создайте пул хранения',
-	'shares.toStorage': 'Перейти в «Хранилище» →',
+	'shares.toStorage': 'Перейти в «Хранилище»',
 
 	'shares.level.read': 'Только чтение',
 	'shares.level.write': 'Чтение и запись',

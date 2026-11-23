@@ -126,6 +126,12 @@ test.describe('Confirmations and toasts', () => {
     await dialog.getByRole('button', { name: 'Удалить копию', exact: true }).click();
     await expect(toasts(page)).toContainText(`Резервная копия ${OTHER.filename} удалена`);
     await expect(toasts(page).getByRole('button', { name: 'Закрыть сообщение' })).toBeVisible();
+
+    // The Scheduler's outcome too.
+    await fakeScheduler(page);
+    await page.goto('/system#scheduler');
+    await page.getByRole('switch', { name: `Запускать «${TASK.name}» по расписанию` }).press('Space');
+    await expect(toasts(page)).toContainText(`Задача «${TASK.name}» выключена`);
   });
 });
 
@@ -159,6 +165,10 @@ test.describe("A row's actions", () => {
     await page.keyboard.press('ArrowDown');
     await expect(menu.getByRole('menuitem', { name: 'Restore' })).toBeFocused();
     await page.keyboard.press('End');
+    await expect(menu.getByRole('menuitem', { name: 'Download' })).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(menu.getByRole('menuitem', { name: 'Restore' })).toBeFocused();
+    await page.keyboard.press('ArrowUp');
     await expect(menu.getByRole('menuitem', { name: 'Download' })).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
@@ -319,6 +329,35 @@ test.describe('States and settings', () => {
     await expect(sheet).toHaveCount(0);
   });
 
+  test("a dialog taller than the window keeps its title and its buttons in view while its middle scrolls", async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeScheduler(page);
+    await page.setViewportSize({ width: 1024, height: 420 });
+    await page.goto('/system#scheduler');
+    await page.getByRole('button', { name: `Edit ${TASK.name}`, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit task' });
+    await expect(dialog).toBeVisible();
+    const title = dialog.getByRole('heading', { name: 'Edit task' });
+    const save = dialog.getByRole('button', { name: 'Save changes' });
+    const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true });
+
+    // Taller than the window: what scrolls is the overlay, from its top to halfway down.
+    const overlay = page.locator('.modal-overlay');
+    const [height, room] = await overlay.evaluate((box) => [box.scrollHeight, box.clientHeight]);
+    expect(height).toBeGreaterThan(room + 100);
+    await expect(title).toBeInViewport({ ratio: 1 });
+    await expect(save).toBeInViewport({ ratio: 1 });
+    await overlay.evaluate((box) => box.scrollTo({ top: (box.scrollHeight - box.clientHeight) / 2 }));
+
+    // The header and the buttons stay at the edges, each with its shadow over the content under it.
+    await expect(dialog.locator('.modal-header')).toHaveAttribute('data-stuck', '');
+    await expect(dialog.locator('.modal-footer')).toHaveAttribute('data-stuck', '');
+    await expect(title).toBeInViewport({ ratio: 1 });
+    await expect(save).toBeInViewport({ ratio: 1 });
+    await expect(cancel).toBeInViewport({ ratio: 1 });
+  });
+
   test('related fields line up with their units, and a disabled Save says why', async ({ authenticatedPage: page }) => {
     // An off-device copy that is not set up yet, as GET /offsite/settings answers.
     await page.route(
@@ -377,6 +416,11 @@ test.describe('States and settings', () => {
     page.on('request', (request) => {
       if (request.method() === 'PUT' && new URL(request.url()).pathname.startsWith('/api/v1/offsite/')) sent += 1;
     });
+    // On hover too, and gone when the pointer leaves.
+    await save.hover();
+    await expect(page.getByRole('tooltip')).toHaveText(reason);
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole('tooltip')).toBeHidden();
     await save.focus();
     await expect(save).toBeFocused();
     await expect(page.getByRole('tooltip')).toHaveText(reason);
@@ -403,5 +447,12 @@ test.describe('States and settings', () => {
       badges.map((badge) => getComputedStyle(badge).textTransform),
     );
     expect(new Set(transforms)).toEqual(new Set(['none']));
+    // Sentence case as drawn: not all capitals, and no word after the first capitalised unless it
+    // is an abbreviation ("Caddy's local CA").
+    for (const text of (await page.locator('main .badge').allInnerTexts()).map((badge) => badge.trim())) {
+      if ((text.match(/\p{L}/gu) ?? []).length < 3) continue;
+      expect(text, text).not.toBe(text.toUpperCase());
+      expect(text.split(/\s+/).slice(1).filter((word) => /^\p{Lu}\p{Ll}/u.test(word)), text).toEqual([]);
+    }
   });
 });

@@ -37,7 +37,7 @@ export const en = {
 	'dashboard.stats.temperature': 'Temperature',
 	'dashboard.stats.none': 'No reading',
 
-	'dashboard.manage': 'Manage →',
+	'dashboard.manage': 'Manage',
 
 	// Arranging the widgets (ADR-0395).
 	'dashboard.layout.customize': 'Customize',
@@ -134,7 +134,7 @@ export const ru: Translation<typeof en> = {
 	'dashboard.stats.temperature': 'Температура',
 	'dashboard.stats.none': 'Нет данных',
 
-	'dashboard.manage': 'Управление →',
+	'dashboard.manage': 'Управление',
 
 	// Раскладка виджетов (ADR-0395).
 	'dashboard.layout.customize': 'Настроить',

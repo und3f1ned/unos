@@ -47,11 +47,12 @@
 	{:else if smb.shares.length === 0}
 		<!-- Its next step is the header's Add SMB share, which it names; without a pool, Storage. -->
 		<Card>
-			<EmptyState icon={FolderOpen} title={$t('shares.smb.empty')} description={$t('shares.smb.emptyHint')}>
-				{#if noPool}
-					<a class="link" href="/storage">{$t('shares.toStorage')}</a>
-				{/if}
-			</EmptyState>
+			<EmptyState
+				icon={FolderOpen}
+				title={$t('shares.smb.empty')}
+				description={$t('shares.smb.emptyHint')}
+				action={noPool ? { label: $t('shares.toStorage'), href: '/storage' } : null}
+			/>
 		</Card>
 	{:else}
 		<!-- The selection for an action on several shares (ADR-0389): Delete selected shows only

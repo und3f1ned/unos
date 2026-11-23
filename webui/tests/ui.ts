@@ -1,5 +1,6 @@
 // What the specs do with the shared components of $lib/components/ui (ADR-0432): an object's ⋯
-// menu and the confirmations of confirm(), in English or Russian.
+// menu, the confirmations of confirm(), a card header's link and an empty state's next step, in
+// English or Russian.
 import type { Locator, Page } from '@playwright/test';
 import { expect } from './fixtures';
 
@@ -52,4 +53,31 @@ export async function answerConfirmation(
   if (!button) return;
   await dialog.getByRole('button', { name: button, exact: true }).click();
   await expect(dialog).toHaveCount(0);
+}
+
+/**
+ * A card header's link to the place where its things are managed (CardAction with `href`): named
+ * `name` alone, the arrow an icon after it, leading to `href`.
+ */
+export async function expectCardLink(scope: Page | Locator, name: string, href: string): Promise<void> {
+  const link = scope.locator('.card-header').getByRole('link', { name, exact: true });
+  await expect(link).toHaveAttribute('href', href);
+  await expect(link).toHaveClass(/card-action-link/);
+  await expect(link).toHaveText(name);
+  await expect(link.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+}
+
+/** The next step of an empty state (EmptyState's `action`): a small secondary button, or a link drawn as one. */
+export async function expectNextStep(
+  scope: Page | Locator,
+  role: 'button' | 'link',
+  name: string,
+  href?: string,
+): Promise<Locator> {
+  const step = scope.locator('.empty-state').getByRole(role, { name, exact: true });
+  await expect(step).toBeVisible();
+  await expect(step).toHaveClass(/btn-secondary/);
+  await expect(step).toHaveClass(/btn-sm/);
+  if (href !== undefined) await expect(step).toHaveAttribute('href', href);
+  return step;
 }

@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { fakeSmbApi } from './shares-fakes';
+import { FAKE_PATHS, fakeSmbApi } from './shares-fakes';
+import { expectNextStep } from './ui';
 import {
   CONFIRM_NAME,
   GENERATED,
@@ -169,6 +170,18 @@ test.describe('iSCSI targets', () => {
     await expect(targetItem(page, 'other')).toBeVisible();
     // The server's own check of the typed name, in its words, which the fake repeats.
     expect(CONFIRM_NAME).toContain('Type the target');
+  });
+
+  test('without a volume, the empty list leads to Storage', async ({ authenticatedPage: page }) => {
+    // A pool, but no volume of it: a target takes a volume.
+    await fakeSmbApi(page, { paths: FAKE_PATHS.filter((path) => path.type === 'pool') });
+    await fakeIscsiApi(page);
+    await openIscsiTab(page);
+
+    await expect(page.getByText('No iSCSI targets yet')).toBeVisible();
+    // The empty state's next step (EmptyState's action, ADR-0432).
+    await expectNextStep(page, 'link', 'Go to Storage', '/storage');
+    await expect(page.getByRole('button', { name: 'Add target' })).toBeDisabled();
   });
 
   test('a target that is not served says why, and a kernel without LIO allows no new one', async ({

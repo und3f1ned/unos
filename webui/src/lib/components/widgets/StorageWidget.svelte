@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { HardDrive, Database } from 'lucide-svelte';
-	import { Badge, Card, EmptyState, ErrorState, ProgressBar } from '$lib/components/ui';
+	import { Badge, Card, CardAction, EmptyState, ErrorState, ProgressBar } from '$lib/components/ui';
 	import { formatPercent, formatSize, ONE_DECIMAL } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 
@@ -108,7 +108,7 @@
 				<HardDrive class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 				{$t('dashboard.storage.title')}
 			</h3>
-			<a href="/storage" class="link text-[13px]">{$t('dashboard.manage')}</a>
+			<CardAction href="/storage">{$t('dashboard.manage')}</CardAction>
 		</div>
 
 		{#if failed}

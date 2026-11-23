@@ -14,7 +14,6 @@ export { default as Modal } from './Modal.svelte';
 export { default as Sheet } from './Sheet.svelte';
 export { default as ConfirmDialog } from './ConfirmDialog.svelte';
 export { default as Alert } from './Alert.svelte';
-export { default as StatusSummary, type StatusItem } from './StatusSummary.svelte';
 export { default as HelpText } from './HelpText.svelte';
 export { default as TechDetails } from './TechDetails.svelte';
 export { default as ProgressBar } from './ProgressBar.svelte';

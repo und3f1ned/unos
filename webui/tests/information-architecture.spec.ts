@@ -188,7 +188,7 @@ test.describe('Where things live', () => {
     await expect(page.locator('main a[href="/system#general"]')).toContainText('Uptime');
     // The Containers card has one link, Manage.
     const containers = page.locator('.card', { has: page.getByRole('heading', { name: 'Containers' }) });
-    await expect(containers.getByRole('link')).toHaveText(['Manage →']);
+    await expect(containers.getByRole('link')).toHaveText(['Manage']);
     await expect(page.locator('main a[href="/settings"]')).toHaveCount(0);
 
     await page.goto('/settings');

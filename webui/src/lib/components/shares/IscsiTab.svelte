@@ -159,11 +159,14 @@
 				{#if iscsiState.targets.length === 0}
 					<Card>
 						<!-- Its next step is the header's Add target; without a volume, Storage. -->
-						<EmptyState icon={HardDrive} title={$t('iscsi.empty')} description={$t('iscsi.emptyHint')}>
-							{#if iscsiState.kernel_support && volumes.length === 0}
-								<a class="link" href="/storage">{$t('shares.toStorage')}</a>
-							{/if}
-						</EmptyState>
+						<EmptyState
+							icon={HardDrive}
+							title={$t('iscsi.empty')}
+							description={$t('iscsi.emptyHint')}
+							action={iscsiState.kernel_support && volumes.length === 0
+								? { label: $t('shares.toStorage'), href: '/storage' }
+								: null}
+						/>
 					</Card>
 				{:else}
 					<ul class="space-y-4" aria-label={$t('iscsi.title')}>

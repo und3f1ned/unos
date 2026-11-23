@@ -284,7 +284,7 @@ Right after the page opens, the CPU can show 0% and the network and disk rates
 ### Storage pools
 Shows the used and total space of the mounted pools, then each pool with its
 health and its share used, a bar, and under it its problems and its used and
-total space; a pool that is not mounted has its badge only. **Manage →** opens
+total space; a pool that is not mounted has its badge only. **Manage** opens
 **Storage**, also when there is no pool yet, which the card says.
 
 ### Disks to Replace
@@ -297,7 +297,7 @@ cannot read the predictions, the banner says so, with the reason.
 Counts the running and the stopped containers, as the **Containers** page does,
 and **Other** (paused, restarting, created or dead) when there are any, so that
 the counts add up to the total; it lists the first five with their state.
-**Manage →** opens **Containers**.
+**Manage** opens **Containers**.
 
 ### Recent Activity
 Latest system events and notifications
@@ -3356,7 +3356,7 @@ when each snapshot was made in your browser's time zone.
    of its volumes. Its snapshots are listed, newest first, with the time each
    was made in your browser's time zone, to the minute; the card names the
    folder they are kept in once, and a long name ends in "…" with its full
-   path in its tooltip. **Schedule snapshots →** opens **System** →
+   path in its tooltip. **Schedule snapshots** opens **System** →
    **Scheduler**, where pools get snapshots on a schedule. When the volumes of
    a pool cannot be read (btrfs
    fails on the pool or does not answer, as after its disk dropped off), the

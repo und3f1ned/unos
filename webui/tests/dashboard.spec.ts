@@ -12,6 +12,7 @@ import {
   predictionsAnswer,
   type FakeAnswer,
 } from './health-fakes';
+import { expectCardLink } from './ui';
 
 /** Reload the dashboard with its refresh button, and wait until it is loaded. */
 async function refresh(page: Page) {
@@ -192,6 +193,18 @@ test.describe('Dashboard', () => {
     // Look for storage related elements
     const storageSection = page.locator('text=/Storage|Disk/i').first();
     await expect(storageSection).toBeVisible();
+  });
+
+  // webui.design-foundations: a card's header leads to the place where its things are managed with
+  // a CardAction link, its name and an arrow (ADR-0432, ADR-0466).
+  test("each card's header leads to the page of its things, a link with an arrow", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto('/');
+    const card = (heading: string) => page.locator('main .card', { has: page.getByRole('heading', { name: heading }) });
+    await expectCardLink(card('Storage pools'), 'Manage', '/storage');
+    await expectCardLink(card('Containers'), 'Manage', '/containers');
+    await expectCardLink(card('Recent activity'), 'View all', '/system#notifications');
   });
 
   // webui.locale-formats: the stats cards write their numbers with src/lib/format.ts, and English keeps the words

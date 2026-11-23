@@ -5,7 +5,7 @@
 	// that the About card listed are where they apply.
 	import { onMount } from 'svelte';
 	import { Archive, Copy, Plus, Trash2, RotateCcw, RefreshCw } from 'lucide-svelte';
-	import { Alert, Button, Card, EmptyState, ErrorState, Select, Skeleton } from '$lib/components/ui';
+	import { Alert, Button, Card, CardAction, EmptyState, ErrorState, Select, Skeleton } from '$lib/components/ui';
 	import {
 		deleteRestoreCopy,
 		deleteSnapshot,
@@ -145,9 +145,13 @@
 		</div>
 	{:else if lists.subvolumes.length === 0 && !lists.subvolumesError}
 		<Card>
-			<EmptyState compact icon={Archive} title={$t('snapshots.noPoolTitle')} description={$t('snapshots.noPool')}>
-				<a href="/storage" class="link text-sm">{$t('snapshots.storagePage')}</a>
-			</EmptyState>
+			<EmptyState
+				compact
+				icon={Archive}
+				title={$t('snapshots.noPoolTitle')}
+				description={$t('snapshots.noPool')}
+				action={{ label: $t('snapshots.storagePage'), href: '/storage' }}
+			/>
 		</Card>
 	{/if}
 
@@ -171,7 +175,7 @@
 					</p>
 				</div>
 				<!-- Where they are taken on a schedule: the Scheduler's snapshot tasks, of pools only. -->
-				<a href="/system#scheduler" class="link text-[13px] whitespace-nowrap">{$t('snapshots.schedule')}</a>
+				<CardAction href="/system#scheduler">{$t('snapshots.schedule')}</CardAction>
 			</div>
 			{#if lists.snapshots.loading && lists.snapshots.shownPath !== lists.selectedPath}
 				<div class="px-5 pb-5" aria-busy="true">
