@@ -51,6 +51,7 @@ and this index, and `make check-fast` runs it.
 | [0210](0210-parallel-work-in-worktrees-with-a-device-lock.md) | Parallel agents work in separate worktrees, and one agent at a time uses the device | superseded by [0439](0439-each-worktree-runs-a-compose-test-stack-of-its-own-with-a-project-ports-and-a-subnet-derived-from-its-path.md) | 2026-11-07 |
 | [0211](0211-executable-guardrails-for-agents.md) | A committed settings file and a PreToolUse guard block risky agent commands | accepted | 2026-11-07 |
 | [0335](0335-every-background-command-of-an-agent-has-a-deadline.md) | Every background command of an agent has a deadline | accepted | 2026-11-11 |
+| [0465](0465-a-script-removes-the-clean-worktrees-and-local-branches-of-merged-work-and-changes-nothing-on-github.md) | A script removes the clean worktrees and local branches of merged work, and changes nothing on GitHub | accepted | 2026-11-23 |
 
 ## Architecture
 
