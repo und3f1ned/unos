@@ -1,5 +1,5 @@
 """The wear and the failure signs of an eMMC system disk, read and alerted, never acted on (ADR-0471,
-phase 1; ADR-0472).
+phase 1; ADR-0475).
 
 The root filesystem's disk is found once per run of the supervisor: the mount of ``/`` in
 /proc/1/mountinfo (the host's own mount namespace), its device number, and the block device's
@@ -518,7 +518,7 @@ async def monitor_pass() -> None:
     await problems.update(SOURCE, _found(_state))
 
 
-# The pass runs in a loop of its own beside the RAID monitor, at its interval (ADR-0472): on a failing
+# The pass runs in a loop of its own beside the RAID monitor, at its interval (ADR-0475): on a failing
 # eMMC a pass, or the history write of its alert, can take long, and the pools' checks do not wait for it.
 CHECK_INTERVAL = 300
 _loop_task: asyncio.Task | None = None

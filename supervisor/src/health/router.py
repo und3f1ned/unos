@@ -534,7 +534,7 @@ async def _deliver_alert(event: NotificationEvent) -> None:
     """Send an alert through every enabled channel, of every kind; best effort.
 
     The channels come from their file, or, when it cannot be read, from the copy kept in RAM
-    (notifications.alert_channels, ADR-0472). The senders report failures as (False, error) instead of
+    (notifications.alert_channels, ADR-0475). The senders report failures as (False, error) instead of
     raising; those are logged like timeouts and exceptions. The history of System > Notifications
     lists each alert sent, with its result, in one write per alert, made in a
     worker thread: it is synced to the system disk (ADR-0021, ADR-0326).
@@ -1616,7 +1616,7 @@ async def get_system_disk_health(_: dict = Depends(verify_token)):
     """The health of the system disk when it is an eMMC, as the system disk monitor's passes read it: the wear
     once a day, the errors every 5 minutes. Before the first pass the disk is read now. Nothing is written.
     \f
-    health.system_disk; ADR-0471, ADR-0472.
+    health.system_disk; ADR-0471, ADR-0475.
     """
     return await system_disk.health()
 
@@ -2086,7 +2086,7 @@ async def start_health_monitors():
     global _smart_monitor_running, _smart_monitor_task
 
     # The channels in RAM for the alerts, so that an alert of a failing system disk does not depend on
-    # reading it (ADR-0472).
+    # reading it (ADR-0475).
     await asyncio.to_thread(remember_channels)
 
     _raid_monitor_running = True

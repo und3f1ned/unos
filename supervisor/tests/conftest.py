@@ -255,7 +255,7 @@ def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     notifications = importlib.import_module("src.notifications.router")
     monkeypatch.setattr(notifications, "CONFIG_FILE", str(tmp_path / "notifications.json"))
     monkeypatch.setattr(notifications, "LOGS_FILE", str(tmp_path / "notification_logs.json"))
-    # The channels that the alerts keep in RAM (ADR-0472): none before the test reads or writes them.
+    # The channels that the alerts keep in RAM (ADR-0475): none before the test reads or writes them.
     monkeypatch.setattr(notifications, "_known_channels", None)
     monkeypatch.setattr(notifications, "_fallback_logged", False)
 

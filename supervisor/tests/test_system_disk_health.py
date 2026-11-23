@@ -1,4 +1,4 @@
-"""The wear and the failure signs of an eMMC system disk (system.emmc-health-monitoring, ADR-0471, ADR-0472).
+"""The wear and the failure signs of an eMMC system disk (system.emmc-health-monitoring, ADR-0471, ADR-0475).
 
 ``src/health/system_disk.py`` finds the disk of the host's root filesystem in /proc/1/mountinfo and
 sysfs, reads the eMMC's life-time estimates A and B and its pre-EOL state with ``mmc extcsd read``

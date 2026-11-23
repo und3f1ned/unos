@@ -36,7 +36,7 @@ LOOPS = {
     "task_checks": (scheduler, "task_check_loop", "_task_check_task"),
     "raid_monitor": (health, "raid_monitor_loop", "_raid_monitor_task"),
     "smart_monitor": (health, "smart_monitor_loop", "_smart_monitor_task"),
-    # The wear and failure signs of an eMMC system disk, beside the RAID monitor (ADR-0471, ADR-0472).
+    # The wear and failure signs of an eMMC system disk, beside the RAID monitor (ADR-0471, ADR-0475).
     "system_disk": (system_disk, "system_disk_loop", "_loop_task"),
     "ups_monitor": (power, "ups_monitor_loop", "_ups_monitor_task"),
     # The scheduled shutdown, the wake alarm and the idle shutdown of the power settings (ADR-0407).

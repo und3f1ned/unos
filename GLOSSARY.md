@@ -115,7 +115,7 @@ ran from an SD card. Avoid: SD card, eMMC (media that a system disk may be), boo
 **eMMC wear**: How much of its life an eMMC system disk's writes have used, as the eMMC itself
 estimates it: the life-time estimates A (its SLC area) and B (the rest), each in tenths of its life
 with 0x0B past it, and the pre-EOL state of its reserve blocks (normal, warning, urgent). UNOS reads
-it with `mmc extcsd read` once a day, or as of boot from sysfs (ADR-0471, ADR-0472). Avoid: health
+it with `mmc extcsd read` once a day, or as of boot from sysfs (ADR-0471, ADR-0475). Avoid: health
 (the SMART word), lifetime.
 
 **Supervisor log**: What `unos-supervisor` writes to Docker's container log (`docker logs

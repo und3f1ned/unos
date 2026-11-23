@@ -122,7 +122,7 @@ def load_configs() -> list[NotificationConfig]:
         return []
 
 
-# The channels as UNOS last read them at its start or wrote them, for the alerts alone (ADR-0472, which
+# The channels as UNOS last read them at its start or wrote them, for the alerts alone (ADR-0475, which
 # amends ADR-0324 for them): an alert of a failing system disk must not depend on reading that disk.
 # None until the first of those. _fallback_logged: whether the alerts' fall back to it was logged since
 # their last read that worked.

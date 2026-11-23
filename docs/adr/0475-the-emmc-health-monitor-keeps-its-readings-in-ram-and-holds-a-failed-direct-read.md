@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0472: The eMMC health monitor finds the root's disk once, keeps its readings in RAM, counts the kernel's I/O lines of the eMMC and holds a failed direct read until a restart
+# ADR-0475: The eMMC health monitor finds the root's disk once, keeps its readings in RAM, counts the kernel's I/O lines of the eMMC and holds a failed direct read until a restart
 
 ## Context
 

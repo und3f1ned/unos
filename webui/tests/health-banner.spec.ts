@@ -143,7 +143,7 @@ test.describe('The health banner', () => {
       'The eMMC /dev/mmcblk0 that holds the system has used most of its life',
       'The system disk /dev/mmcblk0 reports I/O or filesystem errors',
     ]);
-    // The failure takes the place of the errors (ADR-0472), first as an error.
+    // The failure takes the place of the errors (ADR-0475), first as an error.
     sockets[0].send(JSON.stringify({ type: 'problems', data: [WORN, FAILED] }));
     shown = banner(page, '2 problems need attention');
     await expect(shown.getByRole('listitem')).toHaveText([

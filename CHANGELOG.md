@@ -23,7 +23,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   to the failing disk, nor a read of it: when the channels' file cannot be read, the alerts go to the
   channels that UNOS read at its start or last saved. UNOS acts on none of them yet.
   `GET /api/v1/health/system-disk`;
-  `install.sh` installs mmc-utils (ADR-0471, ADR-0472).
+  `install.sh` installs mmc-utils (ADR-0471, ADR-0475).
 - The web UI's Dashboard, Storage and Shares read their data in SvelteKit load functions
   (ADR-0469): a navigation keeps the open page, its link marked, until the next page has its data,
   with a thin bar at the top after 200 ms, and shows no skeleton; a page visited before in the tab
