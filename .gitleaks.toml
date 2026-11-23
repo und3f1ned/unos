@@ -154,3 +154,9 @@ description = "Test values of the backend tests"
 condition = "AND"
 commits = ["f342f4056ddab522cd2476ef2d77917a540b41d1"]
 paths = ['''^supervisor/tests/test_sign_in_full_disk\.py$''']
+
+[[allowlists]]
+description = "A made-up token, the-token, that a test of the CI's changed-areas script passes as GH_TOKEN; the next commit moves it into a constant (ADR-0212)"
+condition = "AND"
+commits = ["3d332758e90b1d35cf2dab29040db0841fc1e93c"]
+paths = ['''^supervisor/tests/test_ci_changed_areas\.py$''']

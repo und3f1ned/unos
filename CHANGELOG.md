@@ -114,6 +114,18 @@ manager, encrypted backup uploads, health checks, CI checks).
 - The CI workflow runs on GitHub again (ADR-0462, which supersedes ADR-0230): every push to `main`
   and every pull request against it runs its Unit Tests, Lint and Audit, Frontend Checks, Commit
   Messages and Secret Scan jobs; `make check` stays the gate before a change is done.
+- CI runs only the jobs that the changed files need (ADR-0467, which supersedes the first rule of
+  ADR-0462), to save Actions minutes: a first job, Changed paths (`scripts/ci/changed_areas.py`),
+  lists the files that the pull request or the push changed. Unit Tests run unless only documents and
+  the ledger changed (`*.md`, `docs/`, `feature-list.json`, `LICENSE`), Lint and Audit unless only
+  those and `webui/`, Frontend Checks only for `webui/` and the `Makefile`, Build Check on `main` only
+  when what the images build from changed; for documents alone a new job, Docs and Ledger, runs
+  `make test-fast` and the backend tests that read documents. A push to `main` that merges a pull
+  request whose newest run tested the same parents and tree and passed (recorded in that run's Changed
+  paths log, which the push reads through GitHub's API with `actions: read`) runs none of Unit Tests,
+  Lint, Frontend and Docs and Ledger. A push after a run of `main` that did not pass skips nothing, a
+  change of the workflow or the script runs every job, and so does a failed Changed paths. Commit
+  Messages (on pull requests) and Secret Scan run whatever changed.
 - CI's Unit Tests job checks the rendered smb.conf with Samba's real testparm (ADR-0463): it
   installs `samba-common-bin` from the runner's Ubuntu before `make test`, and
   `supervisor/tests/test_smbconf_testparm.py`, which skipped there, runs against it; where `CI=true`
