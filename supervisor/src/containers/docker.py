@@ -124,39 +124,76 @@ def _summary_name(summary: dict[str, Any]) -> str:
     return next((name[1:] for name in names if name.count("/") == 1), (names or ["/"])[0].lstrip("/"))
 
 
-# An image's ID or a prefix of it as `docker images` shows it (12 hex digits) or longer: what a
-# container created by an ID has as its image.
-_IMAGE_ID_PREFIX = re.compile(r"[0-9a-f]{12,64}")
+# An image's ID or a prefix of it, of 4 to 64 hex digits as Docker takes it: what a container
+# created by an ID has as its image.
+_IMAGE_ID_PREFIX = re.compile(r"[0-9a-f]{4,64}")
 
 
-def _image_tags(client: docker.DockerClient) -> dict[str, str]:
-    """Each image's first tag that is no digest form (name@sha256:..., which the containerd image
-    store lists among the tags of an image pulled by its digest), by the image's ID: Docker's list
-    of images, one request. An image without such a tag is not in it."""
+def _by_image_id(summary: dict[str, Any]) -> bool:
+    """Whether the summary names the container's image by its ID: Docker gives the ID once the
+    reference that the container was created from names another image, or the container was
+    created by an ID (or a prefix of one)."""
+    image = summary.get("Image") or ""
+    image_id = summary.get("ImageID") or ""
+    digits = image.removeprefix("sha256:")
+    return bool(image_id) and (image == image_id or bool(
+        _IMAGE_ID_PREFIX.fullmatch(digits) and image_id.removeprefix("sha256:").startswith(digits)))
+
+
+def _repository(reference: str) -> str:
+    """The repository of an image reference (name[:tag][@digest]), as Docker's reference filter
+    matches it in both image stores: its familiar name, without docker.io/ and library/."""
+    name = reference.split("@", 1)[0]
+    if ":" in name.rsplit("/", 1)[-1]:
+        name = name.rsplit(":", 1)[0]
+    for prefix in ("docker.io/", "index.docker.io/"):
+        name = name.removeprefix(prefix)
+    if name.startswith("library/") and name.count("/") == 1:
+        name = name.removeprefix("library/")
+    return name
+
+
+def _image_tags(client: docker.DockerClient, summaries: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """The tags that are no digest form (name@sha256:..., which the containerd image store lists
+    among the tags of an image pulled by its digest) of each image that the containers of
+    ``summaries`` may run, in Docker's order, by the image's ID; an image without such a tag is not
+    in it. One list of
+    Docker's images, which costs Docker each listed image's size with the containerd store (700 to
+    750 ms for 117 images on the BPI-W3, 2026-11-23), so only those the answer needs: the images of
+    the repositories that the containers name, or, once a container names its image by its ID
+    (_by_image_id), the images that have a name (dangling=false), which leaves out the untagged
+    leftovers of builds. No request without a container."""
+    if not summaries:
+        return {}
+    if any(_by_image_id(summary) for summary in summaries):
+        filters: dict[str, Any] = {"dangling": False}
+    else:
+        filters = {"reference": sorted({_repository(summary.get("Image") or "") for summary in summaries} - {""})}
+        if not filters["reference"]:
+            return {}
     tags = {}
-    for image in client.api.images():
-        tag = next((t for t in image.get("RepoTags") or [] if "@" not in t and t != "<none>:<none>"), None)
-        if tag is not None and image.get("Id"):
-            tags[image["Id"]] = tag
+    for image in client.api.images(filters=filters):
+        named = [t for t in image.get("RepoTags") or [] if "@" not in t and t != "<none>:<none>"]
+        if named and image.get("Id"):
+            tags[image["Id"]] = named
     return tags
 
 
-def _image_label_of(summary: dict[str, Any], tags: dict[str, str]) -> str:
+def _image_label_of(summary: dict[str, Any], tags: dict[str, list[str]]) -> str:
     """The container's image from its summary: its image's first tag that is no digest form
-    (_image_tags); else the reference the container was created from, which Docker gives while it
-    still names the container's image (a digest the app catalog created it from); else the image's
-    short ID (sha256: and 12 hex digits), as Docker then gives the image's ID or the container was
-    created by an ID."""
+    (_image_tags), of the repository that the container was created from while that reference still
+    names its image (the same whichever other containers a list holds); else that reference (a
+    digest the app catalog created it from); else, as Docker then gives the image's ID or the
+    container was created by an ID, the image's first tag, else its short ID (sha256: and 12 hex
+    digits)."""
     image = summary.get("Image") or ""
     image_id = summary.get("ImageID") or ""
-    if image_id in tags:
-        return tags[image_id]
-    digits = image.removeprefix("sha256:")
-    if image_id and (image == image_id or (
-        _IMAGE_ID_PREFIX.fullmatch(digits) and image_id.removeprefix("sha256:").startswith(digits)
-    )):
+    if _by_image_id(summary):
+        if tags.get(image_id):
+            return tags[image_id][0]
         return image_id[:19] if image_id.startswith("sha256:") else image_id[:12]
-    return image
+    repository = _repository(image)
+    return next((t for t in tags.get(image_id, []) if _repository(t) == repository), image)
 
 
 def _summary_ports(summary: dict[str, Any]) -> list[PortMapping]:
@@ -184,7 +221,7 @@ def _created(seconds: Any) -> str:
         return ""
 
 
-def _info(summary: dict[str, Any], tags: dict[str, str]) -> ContainerInfo:
+def _info(summary: dict[str, Any], tags: dict[str, list[str]]) -> ContainerInfo:
     """A container's answer from its summary in Docker's list and the images' tags (_image_tags): no
     request of its own."""
     status = str(summary.get("State") or "")
@@ -206,18 +243,18 @@ def _info(summary: dict[str, Any], tags: dict[str, str]) -> ContainerInfo:
 
 def list_containers(all: bool = True) -> list[ContainerInfo]:
     """The containers, but UNOS's own (is_system_container): after get_client's version query,
-    Docker's list of containers and its list of images, which hold all that the answer needs; no
-    inspect of a container or of an image."""
+    Docker's list of containers and its list of the images that the answer needs (_image_tags);
+    no inspect of a container or of an image."""
     client = get_client()
-    summaries = client.api.containers(all=all)
-    tags = _image_tags(client)
-    return [info for info in (_info(summary, tags) for summary in summaries) if not is_system_container(info.name)]
+    summaries = [s for s in client.api.containers(all=all) if not is_system_container(_summary_name(s))]
+    tags = _image_tags(client, summaries)
+    return [_info(summary, tags) for summary in summaries]
 
 
 def get_container(container_id: str) -> ContainerInfo:
     """A container by its ID, a prefix of its ID or its name, answered as list_containers answers it:
-    Docker's inspect finds it, and its summary in Docker's list, filtered by its full ID, with the
-    images' tags, is the answer (Docker takes the filter id as an ID or a prefix of one, so the full
+    Docker's inspect finds it, and its summary in Docker's list, filtered by its full ID, with its
+    image's tag (_image_tags), is the answer (Docker takes the filter id as an ID or a prefix of one, so the full
     ID names it alone). ValueError when Docker has no such container."""
     client = get_client()
     try:
@@ -227,7 +264,7 @@ def get_container(container_id: str) -> ContainerInfo:
     summaries = client.api.containers(all=True, filters={"id": full_id})
     if not summaries:  # removed in between
         raise ValueError(f"Container {container_id} not found")
-    return _info(summaries[0], _image_tags(client))
+    return _info(summaries[0], _image_tags(client, summaries[:1]))
 
 
 def create_container(config: ContainerCreate) -> ContainerInfo:
