@@ -1965,7 +1965,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   and a pool managed at the previous check whose fstab entry is gone is not alerted as not mounted.
   A managed pool that falls off is alerted once, as before, and a pool that turns to not mounted
   while the fstab cannot be read is alerted.
-- Mosquitto and Prometheus start on a fresh install (ADR-0476): the catalog bound an empty folder
+- Mosquitto and Prometheus start on a fresh install (ADR-0480): the catalog bound an empty folder
   over the folder of the configuration file their images ship (`/mosquitto/config/mosquitto.conf`,
   `/etc/prometheus/prometheus.yml`), so they found none and restarted in a loop (Mosquitto wrote
   about 1 MiB in 10 s to the BPI-W3's system disk). Each is now bound as that file, read-only,

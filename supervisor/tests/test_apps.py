@@ -1109,7 +1109,7 @@ class TestShippedConfiguration:
     def test_mosquitto_starts_in_its_local_only_mode(self):
         """Not with the image's own file, whose listener on port 1883 takes anonymous clients:
         Mosquitto listens inside its container until a listener and its authentication are added
-        (ADR-0476)."""
+        (ADR-0480)."""
         [conf] = [v.content for v in get_app_by_id("mosquitto").volumes if v.container.endswith("mosquitto.conf")]
         settings = [line for line in conf.splitlines() if line.strip() and not line.lstrip().startswith("#")]
         assert settings == []

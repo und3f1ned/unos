@@ -25,7 +25,7 @@ Volume host paths:
   start) writes when the file is missing: a bind of an empty folder there hides
   it, and the app restarts in a loop (Mosquitto's mosquitto.conf). The content
   is the image's own, unless that opens the app to the network without
-  authentication (ADR-0476).
+  authentication (ADR-0480).
 - Never put a pool path inside another app's (or the same app's) writable
   pool path, e.g. {pool}/downloads/watch next to {pool}/downloads. Docker
   resolves bind sources again on every start and follows symbolic links, so
@@ -598,7 +598,7 @@ LINKWARDEN_COMMAND = (
 # reads from files (FILE__*, *_FILE) among them: in RAM, where s6 must be able to run its scripts.
 S6_RUN = {"/run": "exec,size=16m"}
 
-# Mosquitto's configuration on a fresh install (ADR-0476): none of the settings of the image's own
+# Mosquitto's configuration on a fresh install (ADR-0480): none of the settings of the image's own
 # file, which opens an MQTT listener on port 1883 to anonymous clients, so Mosquitto listens only
 # inside its container, its local-only mode, until the administrator adds a listener and its
 # authentication.

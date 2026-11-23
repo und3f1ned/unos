@@ -334,7 +334,7 @@ and this index, and `make check-fast` runs it.
 | [0410](0410-every-catalog-image-is-pinned-by-a-version-tag-and-digest-and-a-weekly-audit-reports-moved-tags.md) | Every image of the catalog is pinned by a version tag and its index digest, and a weekly audit reports the tags that moved | accepted | 2026-11-18 |
 | [0415](0415-bookstack-paperless-ngx-and-linkwarden-install-with-their-database-or-broker-as-companions.md) | BookStack, Paperless-ngx and Linkwarden install with their database or broker as companions, their secrets as generated files and their databases awaited by a command | accepted | 2026-11-18 |
 | [0426](0426-the-catalogs-linuxserver-images-are-pinned-and-pulled-from-ghcr-io-not-lscr-io.md) | The catalog's LinuxServer images are pinned and pulled from ghcr.io, not lscr.io | accepted | 2026-11-19 |
-| [0476](0476-a-configuration-file-that-a-catalog-image-ships-is-bound-as-that-file-and-mosquitto-starts-local-only.md) | A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only | accepted | 2026-11-23 |
+| [0480](0480-a-configuration-file-that-a-catalog-image-ships-is-bound-as-that-file-and-mosquitto-starts-local-only.md) | A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only | accepted | 2026-11-23 |
 
 ## Backup
 

@@ -5,7 +5,7 @@ area: apps
 decided-by: agent
 ---
 
-# ADR-0476: A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only
+# ADR-0480: A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only
 
 ## Context
 
