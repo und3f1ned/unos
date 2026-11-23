@@ -678,9 +678,12 @@ WantedBy=multi-user.target
 EOF
     
     systemctl daemon-reload
-    systemctl enable unos.service
-    
-    log_success "Systemd service created and enabled"
+    # --now: the unit is active from the install on, so that `systemctl stop unos` and the
+    # first shutdown run its `docker compose down`; its `docker compose up` finds the
+    # containers that start_unos started and waited for until healthy, and changes nothing.
+    systemctl enable --now unos.service
+
+    log_success "Systemd service created, enabled and started"
 }
 
 # Wait for services to be ready

@@ -1866,6 +1866,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- `install.sh` starts the `unos` unit as it enables it (`systemctl enable --now`): it stayed
+  inactive until the first reboot, so `systemctl stop unos` did nothing and the first shutdown
+  ran no `docker compose down`. The manual installation of `docs/INSTALL.md` does the same.
 - `make setup` installs Playwright's Chromium and WebKit on Ubuntu 26.04, GitHub's ubuntu-latest,
   where the weekly bootstrap job failed ("Playwright does not support chromium on
   ubuntu26.04-x64"): `@playwright/test` is 1.65.1, pinned exactly, with the compose test stack's

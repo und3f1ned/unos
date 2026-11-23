@@ -1357,7 +1357,8 @@ def _start_install(tmp_path, *scenario, prelude="", tag="v9.9.9", compatible=Non
     bin_dir.mkdir()
     (bin_dir / "docker").write_text(DOCKER_STUB)
     (bin_dir / "uname").write_text(UNAME_STUB)
-    (bin_dir / "systemctl").write_text("#!/bin/sh\nexit 0\n")
+    # systemctl logs into a file of its own, so that the docker calls stay as they were.
+    (bin_dir / "systemctl").write_text('#!/bin/sh\necho "$*" >> "$STUB_DIR/systemctl"\n')
     for name in ("docker", "uname", "systemctl"):
         (bin_dir / name).chmod(0o755)
     stub_dir = tmp_path / "stub"
@@ -1914,6 +1915,20 @@ class TestInstallScript:
 
         assert (etc / "smb.conf").read_text() == managed
         assert not (etc / "smb.conf.original").exists()
+
+    def test_the_unos_unit_runs_once_the_install_ends(self, tmp_path):
+        # A Debian 12 host on 2026-11-23 (deploy.install-script): install.sh enabled the unit
+        # but left it inactive (dead) until the next boot, so `systemctl stop unos` did nothing
+        # and the first shutdown ran no `docker compose down`. The unit starts after the
+        # containers (test_main_checks_compose_before_it_starts_unos: start_unos before
+        # create_systemd_service), so its `docker compose up` finds them running.
+        result, _, _ = _start_install(tmp_path)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (tmp_path / "stub" / "systemctl").read_text().splitlines() == [
+            "daemon-reload",
+            "enable --now unos.service",
+        ]
 
     def test_start_and_the_unit_wait_at_most_the_start_timeout(self, tmp_path):
         # webui starts once the supervisor is healthy. Without --wait-timeout,
