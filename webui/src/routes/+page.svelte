@@ -29,7 +29,9 @@
 		resolveLayout,
 		setHidden,
 		step,
-		widgetDef
+		widgetDef,
+		WIDGET_GRID,
+		WIDGET_SPAN
 	} from '$lib/dashboard-layout';
 	import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from '$lib/stores/stats';
 	import { user } from '$lib/stores/auth';
@@ -277,10 +279,10 @@
 		<!-- The tab's first page, when its data take longer than a moment (ADR-0430): the widgets of the
          default layout as skeletons, in their places; the page's data replaces them all at once. A
          navigation keeps the page before until they are in. -->
-		<div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4" aria-busy="true">
+		<div class={WIDGET_GRID} aria-busy="true">
 			{#each skeleton as size, index (index)}
 				{#if size === 'wide'}
-					<div class="col-span-2 md:col-span-6 xl:col-span-5 card min-h-64" data-skeleton aria-hidden="true">
+					<div class="{WIDGET_SPAN.wide} card min-h-64" data-skeleton aria-hidden="true">
 						<div class="card-header">
 							<Skeleton size="base" class="w-40" />
 							<Skeleton class="w-16" />
@@ -288,7 +290,7 @@
 						<Skeleton count={3} />
 					</div>
 				{:else}
-					<div class="col-span-1 md:col-span-2 flex flex-col">
+					<div class="{WIDGET_SPAN.small} flex flex-col">
 						<Skeleton shape="tile" class="flex-1" />
 					</div>
 				{/if}
@@ -329,17 +331,15 @@
 			/>
 		{/if}
 
-		<!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row (ADR-0395).
-         While they are arranged each has a dashed outline and its toolbar in room of its own at the
-         top right, so that it covers nothing of the widget. -->
-		<div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 gap-4" aria-busy={waitingForStats ? 'true' : undefined}>
+		<!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row and three from
+         2xl (WIDGET_SPAN, ADR-0395, ADR-0476). While they are arranged each has a dashed outline and its
+         toolbar in room of its own at the top right, so that it covers nothing of the widget. -->
+		<div class={WIDGET_GRID} data-widget-grid aria-busy={waitingForStats ? 'true' : undefined}>
 			{#each shown as entry, index (entry.id)}
 				{@const def = widgetDef(entry.id)}
 				<div
 					data-widget={entry.id}
-					class="widget relative min-w-0 flex flex-col {def?.size === 'wide'
-						? 'col-span-2 md:col-span-6 xl:col-span-5'
-						: 'col-span-1 md:col-span-2'}
+					class="widget relative min-w-0 flex flex-col {WIDGET_SPAN[def?.size ?? 'small']}
             {arranging ? 'pt-10 rounded-card outline-dashed outline-1 outline-offset-[3px] outline-border-strong' : ''}
             {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"

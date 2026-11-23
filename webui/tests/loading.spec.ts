@@ -364,6 +364,42 @@ test.describe('Loading without flicker on a phone', () => {
   });
 });
 
+// webui.dashboard-three-columns (ADR-0476): on a wide screen the dashboard's skeleton has the three
+// columns of its wide widgets, so that the data arriving put each card in the column of its skeleton.
+test.describe('Loading without flicker on a wide screen', () => {
+  test('the dashboard: the skeleton in three columns, each card in its place, and no layout shift', async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.addInitScript(SAMPLER);
+    const release = await hold(page, '/api/v1/storage/pools');
+    await page.goto('/');
+    const wide = page.locator('main [aria-busy="true"] > [data-skeleton]');
+    await expect(wide).toHaveCount(3);
+    const skeletons = await wide.evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width };
+      }),
+    );
+    expect(new Set(skeletons.map((box) => Math.round(box.y))).size, 'one row').toBe(1);
+
+    release();
+    await settled(page);
+    // The health banner may come above the widgets with the data: the columns are what must hold.
+    const cards = await Promise.all(
+      ['storage', 'containers', 'recent-activity'].map(async (id) => (await page.locator(`main [data-widget="${id}"]`).boundingBox())!),
+    );
+    cards.forEach((box, index) => {
+      expect(Math.abs(box.x - skeletons[index].x), `card ${index}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.width - skeletons[index].width), `card ${index}`).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.y - cards[0].y), `card ${index}`).toBeLessThanOrEqual(1);
+    });
+    const { shifts, cls } = await recorded(page);
+    expect(cls, JSON.stringify(shifts, null, 1)).toBeLessThan(MAX_CLS);
+  });
+});
+
 test.describe('Loading without flicker, for a regular user', () => {
   const USER = { username: `e2e_loading_${Date.now().toString(36)}`, password: 'e2e-Loading-Password-1' };
   let account: Account | undefined;

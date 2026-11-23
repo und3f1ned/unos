@@ -261,6 +261,141 @@ test.describe('Dashboard layout', () => {
   });
 });
 
+// webui.dashboard-three-columns (ADR-0476): from 1536 px (2xl) the wide widgets are three to a row,
+// so that Storage pools, Containers and Recent activity fill one row of a wide screen; below it the
+// widgets keep the columns of ADR-0395.
+const SMALL = DEFAULT_ORDER.slice(0, 5);
+const WIDE = ['storage', 'containers', 'recent-activity'];
+const SCREEN_1920 = { width: 1920, height: 1080 };
+
+/** The grid of the widgets: its box and the gap between its columns. */
+async function widgetGrid(page: Page) {
+  const grid = page.locator('main [data-widget-grid]');
+  const box = (await grid.boundingBox())!;
+  const gap = await grid.evaluate((element) => parseFloat(getComputedStyle(element).columnGap));
+  return { ...box, gap };
+}
+
+/**
+ * The widgets `ids` stand side by side in one row from the grid's left edge, in this order, each
+ * one `perRow`-th of the grid's width (less the gaps) and all of one height.
+ */
+async function expectRow(page: Page, ids: string[], perRow: number) {
+  const grid = await widgetGrid(page);
+  const width = (grid.width - grid.gap * (perRow - 1)) / perRow;
+  const boxes = await Promise.all(ids.map(async (id) => (await widget(page, id).boundingBox())!));
+  boxes.forEach((box, index) => {
+    const where = `${ids[index]} at ${JSON.stringify(box)} in ${JSON.stringify(grid)}`;
+    expect(Math.abs(box.x - (grid.x + index * (width + grid.gap))), where).toBeLessThanOrEqual(2);
+    expect(Math.abs(box.width - width), where).toBeLessThanOrEqual(2);
+    expect(Math.abs(box.y - boxes[0].y), where).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.height - boxes[0].height), where).toBeLessThanOrEqual(1);
+  });
+}
+
+/** The widget `below` starts under the row of `above`. */
+async function expectBelow(page: Page, above: string, below: string) {
+  const [upper, lower] = [(await widget(page, above).boundingBox())!, (await widget(page, below).boundingBox())!];
+  expect(lower.y).toBeGreaterThan(upper.y + upper.height);
+}
+
+/** Neither the page nor its main area scrolls sideways (ADR-0302). */
+async function expectNoSidewaysScroll(page: Page) {
+  const overflow = await page.evaluate(() => {
+    const main = document.querySelector('main')!;
+    const root = document.documentElement;
+    return [main.scrollWidth - main.clientWidth, root.scrollWidth - root.clientWidth];
+  });
+  expect(overflow).toEqual([0, 0]);
+}
+
+/** The dashboard at this size, with every widget drawn and the containers in. */
+async function openAt(page: Page, size: { width: number; height: number }) {
+  await page.setViewportSize(size);
+  await page.goto('/');
+  await expectOrder(page, DEFAULT_ORDER);
+  await expect(widget(page, 'containers').locator('[data-containers-pending]')).toHaveCount(0);
+}
+
+test.describe('Dashboard columns by the width of the screen', () => {
+  test.beforeEach(async ({ authenticatedPage: page }) => {
+    await resetAdminLayout(page);
+  });
+  test.afterEach(async ({ authenticatedPage: page }) => {
+    await resetAdminLayout(page);
+  });
+
+  // Step 1: at 1920 px the three cards of the owner's screenshot sit in one row.
+  for (const size of [SCREEN_1920, { width: 2560, height: 1440 }, { width: 1536, height: 864 }]) {
+    test(`at ${size.width} px the wide widgets are three to a row and the small ones five`, async ({ authenticatedPage: page }) => {
+      await openAt(page, size);
+      await expectRow(page, WIDE, 3);
+      await expectRow(page, SMALL, 5);
+      await expectBelow(page, 'cpu', 'storage');
+      await expectNoSidewaysScroll(page);
+    });
+  }
+
+  // Step 2: a laptop's 1440 px, and up to the breakpoint, keep the two columns of ADR-0395.
+  for (const size of [{ width: 1440, height: 900 }, { width: 1535, height: 864 }]) {
+    test(`at ${size.width} px the wide widgets stay two to a row`, async ({ authenticatedPage: page }) => {
+      await openAt(page, size);
+      await expectRow(page, ['storage', 'containers'], 2);
+      await expectRow(page, ['recent-activity'], 2);
+      await expectBelow(page, 'storage', 'recent-activity');
+      await expectRow(page, SMALL, 5);
+      await expectNoSidewaysScroll(page);
+    });
+  }
+
+  // Step 2: a phone keeps its one column of wide widgets and two small cards to a row (ADR-0302).
+  test('on a phone the wide widgets keep the full width and the small cards two to a row', async ({ authenticatedPage: page }) => {
+    await openAt(page, { width: 375, height: 812 });
+    for (const id of WIDE) await expectRow(page, [id], 1);
+    await expectBelow(page, 'storage', 'containers');
+    await expectBelow(page, 'containers', 'recent-activity');
+    await expectRow(page, ['cpu', 'memory'], 2);
+    await expectRow(page, ['network', 'disk-io'], 2);
+    await expectRow(page, ['temperature'], 2);
+    await expectNoSidewaysScroll(page);
+  });
+
+  // Step 3: the user's order and hidden widgets hold in three columns, and so does arranging.
+  test("in three columns the widgets are arranged, and the user's order and hidden widgets keep their places", async ({ authenticatedPage: page }) => {
+    await page.setViewportSize(SCREEN_1920);
+    await openArranging(page);
+    await expectRow(page, WIDE, 3);
+
+    // Each change is saved before the next (the page drops a change while one is saved).
+    const status = page.locator('[data-layout-status]');
+    await page.getByRole('button', { name: 'Move Recent activity up' }).click();
+    await expect(status).toHaveText('Recent activity moved to position 7 of 8');
+    await expectOrder(page, [...SMALL, 'storage', 'recent-activity', 'containers']);
+    await expectRow(page, ['storage', 'recent-activity', 'containers'], 3);
+
+    await widget(page, 'containers').locator('[data-drag-handle]').dragTo(widget(page, 'storage'));
+    await expect(status).toHaveText('Containers moved to position 6 of 8');
+    await expectOrder(page, [...SMALL, 'containers', 'storage', 'recent-activity']);
+    await expectRow(page, ['containers', 'storage', 'recent-activity'], 3);
+
+    await page.getByRole('button', { name: 'Hide Storage pools' }).click();
+    await expect(status).toHaveText('Storage pools hidden');
+    await expectOrder(page, [...SMALL, 'containers', 'recent-activity']);
+    await expectRow(page, ['containers', 'recent-activity'], 3);
+    await expectNoSidewaysScroll(page);
+
+    await page.reload();
+    await expectOrder(page, [...SMALL, 'containers', 'recent-activity']);
+    await expectRow(page, ['containers', 'recent-activity'], 3);
+    expect(await savedLayout(page)).toEqual([
+      ...SMALL.map((id) => ({ id, hidden: false })),
+      { id: 'containers', hidden: false },
+      { id: 'storage', hidden: true },
+      { id: 'recent-activity', hidden: false },
+    ]);
+  });
+});
+
 test.describe('Dashboard layout of a regular user', () => {
   let account: Account | undefined;
 
