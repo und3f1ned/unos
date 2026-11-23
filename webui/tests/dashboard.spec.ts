@@ -204,7 +204,7 @@ test.describe('Dashboard', () => {
     const card = (heading: string) => page.locator('main .card', { has: page.getByRole('heading', { name: heading }) });
     await expectCardLink(card('Storage pools'), 'Manage', '/storage');
     await expectCardLink(card('Containers'), 'Manage', '/containers');
-    await expectCardLink(card('Recent activity'), 'View all', '/system#notifications');
+    await expectCardLink(card('Recent activity'), 'View all', '/system/notifications');
   });
 
   // webui.locale-formats: the stats cards write their numbers with src/lib/format.ts, and English keeps the words
@@ -429,7 +429,7 @@ test.describe('Dashboard', () => {
     const replaceLinks = banner.getByRole('link', { name: /^Replace disk / });
     const item = (device: string) => banner.getByRole('listitem').filter({ hasText: `Replace disk ${device} soon` });
     await expect(replaceLinks).toHaveText(['Replace disk /dev/e2e-sda soon (serial E2E-HDD-1)']);
-    await expect(replaceLinks).toHaveAttribute('href', '/system#health');
+    await expect(replaceLinks).toHaveAttribute('href', '/system/health');
     await expect(item('/dev/e2e-sda')).toContainText(
       'Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
     );
@@ -470,7 +470,7 @@ test.describe('Dashboard', () => {
       has: page.getByRole('link', { name: 'Could not check the disks for a predicted failure', exact: true }),
     });
     await expect(warning).toContainText(detail);
-    await expect(warning.getByRole('link')).toHaveAttribute('href', '/system#health');
+    await expect(warning.getByRole('link')).toHaveAttribute('href', '/system/health');
 
     predictions = predictionsAnswer(HEALTHY_HDD_2);
     await refresh(page);
@@ -539,7 +539,7 @@ test.describe('Dashboard', () => {
       has: page.getByRole('link', { name: 'Замените диск /dev/e2e-sda в ближайшее время (серийный номер E2E-HDD-1)', exact: true }),
     });
     await expect(replace).toContainText('Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly');
-    await expect(replace.getByRole('link')).toHaveAttribute('href', '/system#health');
+    await expect(replace.getByRole('link')).toHaveAttribute('href', '/system/health');
 
     // The containers: Docker's states through a map.
     const containers = main.locator('.card', { has: page.getByRole('heading', { name: 'Контейнеры' }) });
@@ -556,7 +556,7 @@ test.describe('Dashboard', () => {
     const activity = main.locator('.card', { has: page.getByRole('heading', { name: 'Последние события' }) });
     await expect(activity.getByRole('link', { name: 'Показать все', exact: true })).toHaveAttribute(
       'href',
-      '/system#notifications',
+      '/system/notifications',
     );
     await expect(activity.getByText(TEST_TITLE, { exact: true })).toBeVisible();
     await expect(activity.getByText('5 мин назад', { exact: true })).toBeVisible();

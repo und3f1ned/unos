@@ -9,7 +9,7 @@ export type PaletteDialog = 'reboot' | 'shutdown' | 'suspend' | 'add-user';
 /** The palette's request that a page open one of its dialogs: the dialog, and where it is. */
 export interface PaletteRequest {
 	dialog: PaletteDialog;
-	/** The path and hash of the page that opens it, such as /system#power. */
+	/** The path and hash of the page that opens it, such as /system/power. */
 	at: string;
 }
 

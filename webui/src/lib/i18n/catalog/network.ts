@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Network: src/routes/system/tabs/NetworkTab.svelte (ADR-0244, ADR-0246). The values that
+// System > Network: src/routes/system/network/+page.svelte (ADR-0244, ADR-0246). The values that
 // ip and ss print in the tab's tables (link types, route and socket protocols, socket states) stay
 // as they come and have no key here (ADR-0295).
 

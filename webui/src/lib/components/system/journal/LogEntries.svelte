@@ -54,7 +54,8 @@
 		<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 			<span class="text-sm text-content-secondary">
 				{#if loading && entries.length === 0}
-					<Skeleton class="w-24" />
+					<!-- The entries come after the rest of the tab (data-later): their count's place. -->
+					<span data-later><Skeleton class="w-24" /></span>
 				{:else}
 					{$t('logs.count', { n: entries.length })}
 				{/if}
@@ -75,7 +76,7 @@
 			<div class="max-h-[600px] overflow-y-auto scrollbar-thin">
 				{#if loading && entries.length === 0}
 					<!-- The first entries have not come (ADR-0430): their lines; a reload keeps them. -->
-					<div class="p-3 space-y-1" aria-busy="true"><Skeleton count={8} size="xs" /></div>
+					<div class="p-3 space-y-1" aria-busy="true" data-later><Skeleton count={8} size="xs" /></div>
 				{:else if entries.length === 0}
 					<EmptyState
 						icon={FileText}

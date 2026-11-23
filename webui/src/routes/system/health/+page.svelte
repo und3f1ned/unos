@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { getDiskHealth, getDiskPredictions, replaceSoon, type DiskPrediction, type SmartInfo } from '$lib/api/health';
+	import { replaceSoon, type DiskPrediction, type SmartInfo } from '$lib/api/health';
 	import { Alert, Badge, Button, EmptyState, ErrorState, Skeleton, TechDetails } from '$lib/components/ui';
 	import { SmartDataDialog } from '$lib/components/system/health';
 	import {
@@ -14,12 +13,19 @@
 	import { formatTemperature } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 	import { HardDrive, Thermometer, RefreshCw } from 'lucide-svelte';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { refreshPage } from '$lib/pages/load';
+	import { healthReader, type HealthSnapshot } from '$lib/pages/system/health';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	let disks = $state<SmartInfo[]>([]);
 	// The predictions that say replace soon (ADR-0235).
 	let toReplace = $state<DiskPrediction[]>([]);
-	let loading = $state(true);
-	// The first load has answered: a refresh keeps what is shown (ADR-0430).
+	// A refresh is under way: it keeps what is shown.
+	let loading = $state(false);
+	// The tab's data have come (its load, ADR-0469): until then, on the tab's first page, its skeleton.
 	let loaded = $state(false);
 	let error = $state('');
 	let predictionsError = $state('');
@@ -27,35 +33,38 @@
 	// so that opening a disk runs no smartctl.
 	let openDisk = $state<SmartInfo | null>(null);
 
-	onMount(() => loadHealth());
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
 
-	function messageOf(e: unknown, fallback: string): string {
-		return e instanceof Error && e.message ? e.message : fallback;
-	}
-
-	async function loadHealth() {
-		loading = true;
-		error = '';
-		predictionsError = '';
-		const [health, predictions] = await Promise.allSettled([getDiskHealth(), getDiskPredictions()]);
-		if (health.status === 'fulfilled') {
-			disks = health.value.disks;
+	function apply(snapshot: HealthSnapshot) {
+		if (snapshot.disks.ok) {
+			disks = snapshot.disks.value;
+			error = '';
 		} else {
 			// For example 500 "Could not list the host's disks: ..." when lsblk
 			// fails: say so instead of "No disks found", and drop the old list.
 			disks = [];
-			error = messageOf(health.reason, $t('health.loadError'));
+			error = snapshot.disks.error || $t('health.loadError');
 		}
-		if (predictions.status === 'fulfilled') {
-			toReplace = replaceSoon(predictions.value.predictions);
+		if (snapshot.predictions.ok) {
+			toReplace = replaceSoon(snapshot.predictions.value);
+			predictionsError = '';
 		} else {
 			// Without the predictions no disk is marked: say so, so that a disk to
 			// replace is not taken for one without a mark.
 			toReplace = [];
-			predictionsError = messageOf(predictions.reason, $t('health.predictionsError'));
+			predictionsError = snapshot.predictions.error || $t('health.predictionsError');
 		}
-		loading = false;
 		loaded = true;
+	}
+
+	/** Every disk read again: the tab's load runs again, and the tab keeps what it shows meanwhile. */
+	async function loadHealth() {
+		loading = true;
+		await refreshPage(healthReader.key);
+		loading = false;
 	}
 
 	// The predictions to replace soon that match no listed disk: smartctl could

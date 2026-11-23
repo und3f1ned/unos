@@ -9,7 +9,7 @@ import { fakeBridge, fakeNetworkApi, VIRTUAL_REVERT_SECONDS } from './network-fa
 // fake host's eth0 carries the connection to UNOS: a change that touches it waits to be kept.
 
 async function openCard(page: Page) {
-  await page.goto('/system#network');
+  await page.goto('/system/network');
   const card = page.getByRole('region', { name: 'Bonds, VLANs and bridges' });
   await expect(card).toBeVisible();
   return card;
@@ -217,7 +217,7 @@ test.describe('System > Network: bonds, VLANs and bridges', () => {
     await fakeNetworkApi(page, {
       virtual: { interfaces: [fakeBridge('br0', ['eth0'])], waiting: { change: { action: 'create', kind: 'bridge', name: 'br0' }, seconds: 42 } },
     });
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const card = page.getByRole('region', { name: 'Агрегаты, VLAN и мосты' });
 
     await expect(card).toContainText(/Если не сохранить это изменение \(создание: мост br0\), хост сам отменит его через \d+ с\./);

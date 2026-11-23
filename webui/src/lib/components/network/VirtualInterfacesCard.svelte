@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import {
 		createBond,
 		createBridge,
@@ -13,6 +13,7 @@
 		type WaitingChange
 	} from '$lib/api/network';
 	import { Alert, Button, EmptyState, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
+	import type { Settled } from '$lib/pages/read';
 	import { t } from '$lib/i18n';
 	import { Network, Plus } from 'lucide-svelte';
 	import CreateVirtualDialog from './CreateVirtualDialog.svelte';
@@ -26,12 +27,16 @@
 	// undoes the change by itself when the time runs out, also when this page cannot reach UNOS.
 
 	type Props = {
+		/** The state as the tab's load read it (ADR-0469); a change, its countdown and Retry read it here. */
+		read: Settled<VirtualStatus>;
+		/** When `read` answered (Date.now()): a change that waits to be kept is undone revert_in after it. */
+		readAt: number;
 		// A bond, VLAN or bridge was made or deleted, or a change was undone: the host's interfaces
 		// changed.
 		onchanged?: () => void;
 	};
 
-	let { onchanged }: Props = $props();
+	let { read, readAt, onchanged }: Props = $props();
 
 	// Seconds the host's revert may take after its time before the card reads the state again, and
 	// how often it reads again while the host still undoes the change.
@@ -50,6 +55,9 @@
 
 	// The countdown of a change that waits to be kept, in the page's clock.
 	let deadline = $state<number | null>(null);
+	// The deadline is the card's own, counted from its change; else a read's, which a newer read
+	// replaces (a revisit shows a read of before, from the tab's cache).
+	let ownDeadline = false;
 	let now = $state(Date.now());
 	let ticker: ReturnType<typeof setInterval> | null = null;
 	let check: ReturnType<typeof setTimeout> | null = null;
@@ -70,8 +78,11 @@
 	let hosts = $derived(status?.host_interfaces ?? []);
 	let protectedNames = $derived(new Set(hosts.filter((iface) => iface.protected).map((iface) => iface.name)));
 
-	onMount(() => {
-		void load();
+	// What the load read, before the card is drawn, and its fresh read when that comes.
+	$effect.pre(() => {
+		const next = read;
+		const at = readAt;
+		untrack(() => take(next, at));
 	});
 
 	onDestroy(() => {
@@ -82,9 +93,7 @@
 	async function load() {
 		loading = true;
 		try {
-			status = await getVirtualInterfaces();
-			loadError = '';
-			follow(status.revert_in);
+			take({ ok: true, value: await getVirtualInterfaces() });
 		} catch (e) {
 			loadError = messageOf(e);
 		} finally {
@@ -92,13 +101,24 @@
 		}
 	}
 
+	function take(next: Settled<VirtualStatus>, at = Date.now()) {
+		if (!next.ok) {
+			loadError = next.error;
+			return;
+		}
+		status = next.value;
+		loadError = '';
+		follow(next.value.revert_in, at);
+	}
+
 	// A change that the host still counts down: a running countdown keeps its own deadline, and one
 	// found after a reload starts one.
-	function follow(revertIn: number | null) {
+	function follow(revertIn: number | null, at = Date.now()) {
 		if (revertIn === null) {
 			if (!check) deadline = null;
-		} else if (deadline === null) {
-			deadline = Date.now() + revertIn * 1000;
+		} else if (deadline === null || !ownDeadline) {
+			deadline = at + revertIn * 1000;
+			ownDeadline = false;
 		}
 		syncTicker();
 	}
@@ -151,6 +171,7 @@
 	function startCountdown(revertIn: number) {
 		notice = '';
 		deadline = Date.now() + revertIn * 1000;
+		ownDeadline = true;
 		syncTicker();
 	}
 

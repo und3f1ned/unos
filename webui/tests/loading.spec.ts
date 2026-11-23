@@ -27,7 +27,7 @@ const PAGES: [string, string][] = [
   ['App Store', '/apps'],
   ['Users', '/users'],
   ['Audit Log', '/audit'],
-  ['System > General', '/system#general'],
+  ['System > General', '/system'],
 ];
 
 // Installed before the page's own scripts: what each frame the browser draws shows, and the layout

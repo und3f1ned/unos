@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import {
 		DEFAULT_GRACE_DAYS,
 		GRACE_DAYS_CHOICES,
@@ -12,6 +12,7 @@
 	} from '$lib/api/security';
 	import { Alert, Badge, Button, Card, Input, Select, toast } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
+	import type { Settled } from '$lib/pages/read';
 	import { formatDateTime } from '$lib/time';
 	import { UsersRound } from 'lucide-svelte';
 
@@ -23,9 +24,11 @@
 	type Props = {
 		/** Whether the administrator's own account has two-factor authentication. */
 		ownTwoFactor: boolean;
+		/** The requirement as the tab's load read it (ADR-0469); a change and Retry read it here. */
+		read: Settled<TwoFactorRequirement>;
 	};
 
-	let { ownTwoFactor }: Props = $props();
+	let { ownTwoFactor, read }: Props = $props();
 
 	let requirement = $state<TwoFactorRequirement | null>(null);
 	let loading = $state(false);
@@ -43,8 +46,13 @@
 	);
 	const since = $derived(formatDateTime(requirement?.enabled_at, $intlLocale));
 
-	onMount(() => {
-		void load();
+	// What the load read, before the card is drawn, and its fresh read when that comes.
+	$effect.pre(() => {
+		const next = read;
+		untrack(() => {
+			if (next.ok) requirement = next.value;
+			loadError = next.ok ? '' : next.error;
+		});
 	});
 
 	async function load() {

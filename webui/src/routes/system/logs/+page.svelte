@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import {
 		getLogEntries,
-		getLogSources,
 		streamLogEntries,
 		type JournalStream,
 		type LogEntry,
@@ -14,7 +13,13 @@
 	import LogFilters from '$lib/components/system/journal/LogFilters.svelte';
 	import { textOf } from '$lib/components/system/journal/logs';
 	import { t } from '$lib/i18n';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { Settled } from '$lib/pages/read';
+	import { DEFAULT_LOG_LIMIT, DEFAULT_LOG_SOURCE, type LogsSnapshot } from '$lib/pages/system/logs';
 	import { RefreshCw } from 'lucide-svelte';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// Replaced whole, never changed in place: up to 1000 entries need no deep proxy.
 	let entries = $state.raw<LogEntry[]>([]);
@@ -22,10 +27,10 @@
 	let loading = $state(true);
 	let error = $state('');
 	let search = $state('');
-	let source = $state('journal');
+	let source = $state(DEFAULT_LOG_SOURCE);
 	let priority = $state('');
 	let since = $state('');
-	let limitStr = $state('200');
+	let limitStr = $state(String(DEFAULT_LOG_LIMIT));
 
 	// The server's values, shown by the keys of their texts in the catalog (ADR-0287). The sources
 	// of GET /logs/sources by name: one without keys shows the server's label and description.
@@ -56,23 +61,44 @@
 	// before, an earlier refresh) arrives too late to be shown.
 	let latestRequest = 0;
 
-	onMount(async () => {
-		await loadSources();
-		await loadLogs();
-	});
+	// The number of the newest snapshot of the load: an older one's entries are not shown.
+	let latestSnapshot = 0;
+
+	// The sources and the entries of the default filters, as the tab's load read them (ADR-0469):
+	// the entries come after the rest, and are shown only while the page has asked for none of its
+	// own (a source, a filter, Refresh, Auto), whose answer is the one to show.
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: LogsSnapshot) {
+		if (snapshot.sources.ok) sources = snapshot.sources.value;
+		const taken = ++latestSnapshot;
+		const part = snapshot.entries;
+		if (part.value) return takeEntries(part.value);
+		// The entries shown before stay until these come.
+		void part.promise.then((read) => {
+			if (taken === latestSnapshot) takeEntries(read);
+		});
+	}
+
+	function takeEntries(read: Settled<LogEntry[]>) {
+		if (latestRequest > 0) return;
+		if (read.ok) {
+			entries = read.value;
+			error = '';
+		} else {
+			// The entries of an earlier read belong to another moment: as a failed GET /entries.
+			entries = [];
+			error = read.error;
+		}
+		loading = false;
+	}
 
 	onDestroy(() => {
 		stream?.close();
 	});
-
-	async function loadSources() {
-		try {
-			const result = await getLogSources();
-			sources = result.sources;
-		} catch (e) {
-			console.error('Failed to load log sources:', e);
-		}
-	}
 
 	// The filters of a request, read from the fields when it is sent, also right after a handler
 	// changed one of them.
@@ -135,7 +161,7 @@
 		priority = '';
 		since = '';
 		search = '';
-		limitStr = '200';
+		limitStr = String(DEFAULT_LOG_LIMIT);
 		loadLogs();
 	}
 

@@ -178,13 +178,13 @@ async function choose(page: Page, filter: string, option: string) {
 
 test.describe('System Logs', () => {
   test('should display logs tab', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(1000);
     await expect(page.locator('h2:has-text("System Logs")')).toBeVisible();
   });
 
   test('should have source filter', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(1000);
     // One button per source of GET /api/v1/logs/sources: every part of the journal the tab reads.
     for (const source of SOURCES) {
@@ -193,46 +193,46 @@ test.describe('System Logs', () => {
   });
 
   test('should have severity filter', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(1000);
     await expect(page.getByRole('combobox', { name: 'Level', exact: true })).toBeVisible();
   });
 
   test('should display log entries or empty state', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:has-text("System Logs")')).toBeVisible();
   });
 
   test('should have search functionality', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(1000);
     const searchInput = page.locator('input[placeholder*="Search" i]').first();
     await expect(searchInput).toBeVisible();
   });
 
   test('should have refresh button', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(1000);
     const refreshButton = page.locator('button:has(svg)').first();
     await expect(refreshButton).toBeVisible();
   });
 
   test('should show logs section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:has-text("System Logs")')).toBeVisible();
   });
 
   test('should have limit selector', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await page.waitForTimeout(1000);
     await expect(page.getByRole('combobox', { name: 'Limit', exact: true })).toBeVisible();
   });
 
   // Each filter's <label> names its combobox (Select: label id, aria-labelledby).
   test('filters are comboboxes named by their labels', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     for (const name of ['Level', 'Time range', 'Limit']) {
       await expect(page.getByRole('combobox', { name, exact: true })).toBeVisible();
     }
@@ -256,7 +256,7 @@ test.describe('System Logs', () => {
         },
       }),
     );
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     const table = page.locator('main table');
     await expect(table).toContainText(message);
 
@@ -274,7 +274,7 @@ test.describe('System Logs with a fake journal', () => {
 
   test('pick a source and a severity: the entries are listed, newest first', async ({ authenticatedPage: page }) => {
     const api = await fakeLogsApi(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
 
     // The whole journal first, newest first, at the browser's time.
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
@@ -303,7 +303,7 @@ test.describe('System Logs with a fake journal', () => {
 
   test('the limit and the time range reach the server with the request they change', async ({ authenticatedPage: page }) => {
     const api = await fakeLogsApi(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
 
     await choose(page, 'Limit', '50');
@@ -322,7 +322,7 @@ test.describe('System Logs with a fake journal', () => {
     await page.clock.install();
     const api = await fakeLogsApi(page);
     const sockets = await fakeJournalSocket(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
     expect(api.requests).toHaveLength(1);
 
@@ -380,7 +380,7 @@ test.describe('System Logs with a fake journal', () => {
   test('Follow stops when the journal socket ends, and says why', async ({ authenticatedPage: page }) => {
     await fakeLogsApi(page);
     const sockets = await fakeJournalSocket(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
     const auto = page.getByRole('switch', { name: 'Follow', exact: true });
 
@@ -415,7 +415,7 @@ test.describe('System Logs with a fake journal', () => {
   }) => {
     const api = await fakeLogsApi(page);
     api.hold('journal');
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect.poll(() => api.requests.length).toBe(1);
 
     await page.getByRole('button', { name: 'Kernel', exact: true }).click();
@@ -434,7 +434,7 @@ test.describe('System Logs with a fake journal', () => {
     authenticatedPage: page,
   }) => {
     const api = await fakeLogsApi(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
 
     // The source Samba: each failed sign-in is a notice of smbd with the account and the client.
@@ -467,7 +467,7 @@ test.describe('System Logs with a fake journal', () => {
     authenticatedPage: page,
   }) => {
     const api = await fakeLogsApi(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
 
     const box = page.getByPlaceholder('Search in logs');
@@ -493,7 +493,7 @@ test.describe('System Logs with a fake journal', () => {
     authenticatedPage: page,
   }) => {
     const api = await fakeLogsApi(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect(cells(page, 4)).toHaveText([OOM, FAILED_PASSWORD, NO_EXIT]);
 
     // A search through a large journal that journalctl cannot finish in time.
@@ -518,7 +518,7 @@ test.describe('System Logs with a fake journal', () => {
   test('Search waits while an answer is still coming', async ({ authenticatedPage: page }) => {
     const api = await fakeLogsApi(page);
     api.hold('journal');
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
     await expect.poll(() => api.requests.length).toBe(1);
 
     // Asking again would only add another journalctl on the host behind the one still reading.
@@ -546,7 +546,7 @@ test.describe('System Logs with a fake journal', () => {
   }) => {
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     const api = await fakeLogsApi(page);
-    await page.goto('/system#logs');
+    await page.goto('/system/logs');
 
     await expect(page.getByRole('heading', { name: 'Системные журналы' })).toBeVisible();
     for (const label of ['Системный журнал', 'Ядро', 'Docker', 'Samba', 'Аутентификация', 'Задания cron']) {

@@ -17,9 +17,11 @@ import { user } from '$lib/stores/auth';
 type Entry = { session: number; areas: readonly string[]; mark: number; value: unknown };
 
 const entries = new Map<string, Entry>();
-// The changes of this tab: their count, and the count at the last change of each area.
+// The changes of this tab: their count, and the count at the last change of each area and of
+// everything (a configuration restored).
 let changes = 0;
 const changedAt = new Map<string, number>();
+let everythingChangedAt = 0;
 
 /** The area of an API path: its first part, without the query. */
 export function areaOf(path: string): string {
@@ -33,7 +35,7 @@ export function changeMark(): number {
 
 /** Whether no change of `areas` came after `mark` (a read's changeMark when it started). */
 export function upToDate(areas: readonly string[], mark: number): boolean {
-	return areas.every((area) => (changedAt.get(area) ?? 0) <= mark);
+	return everythingChangedAt <= mark && areas.every((area) => (changedAt.get(area) ?? 0) <= mark);
 }
 
 /** The value kept under `key` for this session, with the mark of its read; undefined when there is none. */
@@ -54,6 +56,13 @@ export function remember(key: string, areas: readonly string[], mark: number, va
 /** Forget the entry of `key` (a page's Refresh reads afresh). */
 export function forget(key: string): void {
 	entries.delete(key);
+}
+
+/** Everything may have changed (a backup of the configuration restored): every entry and read is old. */
+export function changedEverything(): void {
+	changes += 1;
+	everythingChangedAt = changes;
+	entries.clear();
 }
 
 /** Something of `area` changed: the entries that read it are old. */

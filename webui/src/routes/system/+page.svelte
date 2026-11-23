@@ -1,135 +1,111 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
-	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
-	import PageTabs from '$lib/components/layout/PageTabs.svelte';
-	import { tabFromHash } from '$lib/components/layout/tabs';
-	import { t } from '$lib/i18n';
-	import {
-		Settings,
-		Gauge,
-		FileText,
-		Heart,
-		Database,
-		Power,
-		Calendar,
-		Bell,
-		Network,
-		Shield,
-		Globe,
-		ArrowUpCircle
-	} from 'lucide-svelte';
+	import { getSystemInfo, type SystemInfo } from '$lib/api/system';
+	import { Card, ErrorState, Skeleton } from '$lib/components/ui';
+	import { messageOf } from '$lib/errors';
+	import { HostSettings, HostSettingsCard } from '$lib/components/system/general';
+	import { formatDuration, secondsSince } from '$lib/format';
+	import { intlLocale, t } from '$lib/i18n';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { errorOf, valueOr } from '$lib/pages/read';
+	import type { GeneralSnapshot } from '$lib/pages/system/general';
+	import type { PageProps } from './$types';
 
-	// The System page's tabs (ADR-0428, ADR-0431), the NAS's and an administrator's only, in three
-	// groups: Settings, what the NAS is set to; Monitoring, what it does; Maintenance, what is done
-	// to it. The command palette lists them in this order (palette/choices.ts). `form`: a tab of
-	// forms, which keeps to a readable width. Reactive: the labels follow the language of the page.
-	let tabs = $derived([
-		{ id: 'general', group: 'settings', icon: Settings, label: $t('system.tabs.general'), form: true },
-		{ id: 'network', group: 'settings', icon: Network, label: $t('system.tabs.network'), form: false },
-		{ id: 'remote', group: 'settings', icon: Globe, label: $t('remote.tab'), form: true },
-		{ id: 'security', group: 'settings', icon: Shield, label: $t('system.tabs.security'), form: true },
-		{ id: 'notifications', group: 'settings', icon: Bell, label: $t('system.tabs.notifications'), form: true },
-		{ id: 'monitor', group: 'monitoring', icon: Gauge, label: $t('system.tabs.monitor'), form: false },
-		{ id: 'logs', group: 'monitoring', icon: FileText, label: $t('system.tabs.logs'), form: false },
-		{ id: 'health', group: 'monitoring', icon: Heart, label: $t('system.tabs.health'), form: false },
-		{ id: 'updates', group: 'maintenance', icon: ArrowUpCircle, label: $t('system.tabs.updates'), form: true },
-		{ id: 'backup', group: 'maintenance', icon: Database, label: $t('system.tabs.backup'), form: true },
-		{ id: 'scheduler', group: 'maintenance', icon: Calendar, label: $t('system.tabs.scheduler'), form: false },
-		{ id: 'power', group: 'maintenance', icon: Power, label: $t('system.tabs.power'), form: true }
-	]);
+	let { data }: PageProps = $props();
 
-	const GROUPS = [
-		{ id: 'settings', key: 'system.group.settings' },
-		{ id: 'monitoring', key: 'system.group.monitoring' },
-		{ id: 'maintenance', key: 'system.group.maintenance' }
-	];
-	let groups = $derived(
-		GROUPS.map((group) => ({ id: group.id, label: $t(group.key), tabs: tabs.filter((tab) => tab.group === group.id) }))
+	// System > General (ADR-0431): the facts of the host and its name and time zone. The host name is
+	// shown by its field alone, the version by Updates, the signed-in account by the sidebar.
+	let systemInfo = $state<SystemInfo | null>(null);
+	// The tab's data have come (its load, ADR-0469): until then, on the tab's first page, its skeleton.
+	let loaded = $state(false);
+	// Why the system information could not be read.
+	let infoError = $state('');
+
+	// The name and time zone of the host (ADR-0331).
+	const host = new HostSettings();
+
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
 	);
 
-	let activeTab = $state('general');
-
-	// Follow the URL hash (links such as /system#notifications, reloads, bookmarks) before the page
-	// is drawn, also the first time. It depends only on the URL and the tabs: the tab is set
-	// untracked. If it depended on activeTab, every tab click would re-run it and switch straight
-	// back to the tab named in the URL.
-	$effect.pre(() => {
-		const hash = page.url.hash;
-		const available = tabs;
-		untrack(() => (activeTab = tabFromHash(hash, available, activeTab)));
-	});
-
-	function setTab(id: string) {
-		activeTab = id;
-		// SvelteKit's goto, not history.replaceState: it updates page.url and
-		// keeps the router's state in the history entry, which Back/Forward need.
-		goto(`#${id}`, { replace: true, reset: false });
+	function apply(snapshot: GeneralSnapshot) {
+		systemInfo = valueOr(snapshot.info, null);
+		infoError = errorOf(snapshot.info);
+		host.apply(snapshot.hostname, snapshot.zone, snapshot.zones);
+		loaded = true;
 	}
+
+	/** Retry of the system information. */
+	async function loadInfo() {
+		try {
+			systemInfo = await getSystemInfo();
+			infoError = '';
+		} catch (e) {
+			infoError = messageOf(e);
+		}
+	}
+
+	// Reactive, so that the uptime follows a change of the language.
+	let formatUptime = $derived((bootTime: string): string => {
+		const seconds = secondsSince(bootTime);
+		return seconds === null ? bootTime : formatDuration(seconds, $intlLocale, $t, { parts: 3 });
+	});
 </script>
 
-<!-- The page's h1, then from xl the tabs' groups in a 220 px column beside the tab; below xl
-     three labelled rows of chips above it, so that the tab keeps the width (ADR-0428, PageTabs).
-     The page scrolls as a whole. -->
-<div class="page-container">
-	<div class="page-header">
-		<h1 id="system-title" class="page-title">{$t('system.heading.admin')}</h1>
+<!-- A fact as label over value (.kv, ADR-0428). -->
+{#snippet info(label: string, value: string, valueClass: string)}
+	<div>
+		<span class="kv-label">{label}</span>
+		<span class="kv-value {valueClass}">{value}</span>
 	</div>
+{/snippet}
 
-	<div class="grid gap-6 items-start xl:grid-cols-[220px_minmax(0,1fr)]">
-		<PageTabs labelledby="system-title" idPrefix="system" {groups} active={activeTab} onselect={setTab} />
+<div class="space-y-4">
+	<h2 class="text-xl font-semibold">{$t('general.title')}</h2>
 
-		<!-- The open tab; a tab of forms keeps to a readable width. -->
-		<div class="min-w-0 {tabs.find((tab) => tab.id === activeTab)?.form ? 'content-narrow' : ''}">
-			{#if activeTab === 'general'}
-				{#await import('./tabs/GeneralTab.svelte') then { default: GeneralTab }}
-					<GeneralTab />
-				{/await}
-			{:else if activeTab === 'updates'}
-				{#await import('./tabs/UpdateTab.svelte') then { default: UpdateTab }}
-					<UpdateTab />
-				{/await}
-			{:else if activeTab === 'security'}
-				{#await import('./tabs/SecurityTab.svelte') then { default: SecurityTab }}
-					<SecurityTab />
-				{/await}
-			{:else if activeTab === 'monitor'}
-				{#await import('./tabs/MonitorTab.svelte') then { default: MonitorTab }}
-					<MonitorTab />
-				{/await}
-			{:else if activeTab === 'logs'}
-				{#await import('./tabs/LogsTab.svelte') then { default: LogsTab }}
-					<LogsTab />
-				{/await}
-			{:else if activeTab === 'health'}
-				{#await import('./tabs/HealthTab.svelte') then { default: HealthTab }}
-					<HealthTab />
-				{/await}
-			{:else if activeTab === 'backup'}
-				{#await import('./tabs/BackupTab.svelte') then { default: BackupTab }}
-					<BackupTab />
-				{/await}
-			{:else if activeTab === 'scheduler'}
-				{#await import('./tabs/SchedulerTab.svelte') then { default: SchedulerTab }}
-					<SchedulerTab />
-				{/await}
-			{:else if activeTab === 'notifications'}
-				{#await import('./tabs/NotificationsTab.svelte') then { default: NotificationsTab }}
-					<NotificationsTab />
-				{/await}
-			{:else if activeTab === 'network'}
-				{#await import('./tabs/NetworkTab.svelte') then { default: NetworkTab }}
-					<NetworkTab />
-				{/await}
-			{:else if activeTab === 'remote'}
-				{#await import('./tabs/RemoteAccessTab.svelte') then { default: RemoteAccessTab }}
-					<RemoteAccessTab />
-				{/await}
-			{:else if activeTab === 'power'}
-				{#await import('./tabs/PowerTab.svelte') then { default: PowerTab }}
-					<PowerTab />
-				{/await}
-			{/if}
+	{#if !loaded}
+		<!-- The tab's first page while its data take longer than a moment (ADR-0469): the two cards in
+		     their places, swapped for them at once. -->
+		<div class="space-y-4" aria-busy="true">
+			<div class="card">
+				<Skeleton size="base" class="w-40 mb-4" />
+				<div class="kv">
+					{#each [0, 1, 2, 3] as fact (fact)}
+						<div>
+							<Skeleton size="xs" class="w-16" />
+							<Skeleton class="w-28" />
+						</div>
+					{/each}
+				</div>
+			</div>
+			<div class="card">
+				<Skeleton size="base" class="w-40 mb-4" />
+				<div class="space-y-4">
+					{#each [0, 1] as field (field)}
+						<div>
+							<Skeleton size="xs" class="w-24 mb-1" />
+							<Skeleton shape="block" class="h-9 w-full" />
+							<Skeleton size="xs" class="mt-1 w-2/3" />
+						</div>
+					{/each}
+				</div>
+			</div>
 		</div>
-	</div>
+	{:else}
+		<!-- System Info -->
+		<Card title={$t('general.info.title')}>
+			{#if systemInfo}
+				<div class="kv">
+					{@render info($t('general.info.os'), systemInfo.os, '')}
+					{@render info($t('general.info.kernel'), systemInfo.kernel, 'font-mono text-xs')}
+					{@render info($t('general.info.architecture'), systemInfo.architecture, '')}
+					{@render info($t('general.info.uptime'), formatUptime(systemInfo.boot_time), 'tabular')}
+				</div>
+			{:else}
+				<ErrorState title={$t('general.info.loadFailed')} message={infoError} onretry={loadInfo} />
+			{/if}
+		</Card>
+
+		<HostSettingsCard {host} />
+	{/if}
 </div>

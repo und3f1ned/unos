@@ -83,7 +83,7 @@ const encryptedMark = (page: Page, name: string) =>
 const uploadInput = (page: Page) => page.locator('input[type="file"][accept=".tar.gz,.tar.gz.enc"]');
 
 async function openBackupTab(page: Page) {
-  await page.goto('/system#backup');
+  await page.goto('/system/backup');
   await expect(page.getByRole('heading', { name: 'Backup & Restore' })).toBeVisible();
 }
 
@@ -353,7 +353,7 @@ test.describe('Restoring backups', () => {
     const before = await backupNames(page);
 
     // A backup task with a passphrase, made in System > Scheduler and run now.
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task' }).click();
     await page.getByLabel('Task name', { exact: true }).fill(taskName);
     await page.getByLabel('Task type', { exact: true }).selectOption('backup');

@@ -20,6 +20,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   without waiting for its containers, whose card waits in its place. Links preload a page's data
   on the press of the pointer, not on hover, so that no hover wakes a sleeping disk.
   `webui/AGENTS.md` has the recipe for the other pages.
+- The tabs of System read their data the same way (ADR-0470): each is a page of its own, General at
+  `/system` and the others at `/system/<tab>` (`/system/network`, `/system/power`), in place of
+  `/system#<tab>`. A switch of tabs keeps the open tab until the next one has its data, a tab
+  visited before appears at once, and Back and Forward go from tab to tab. Updates' check for the
+  newest release, Network's local names of apps, the off-device copy's snapshots, System Logs'
+  entries and the Scheduler's pools and disks come after the rest of their tab, in their places. Pointing at Notifications reads its data, UNOS's own files
+  on the system disk, and it is read afresh on every visit, since its channels hold their
+  passwords; every other tab starts reading on the press of its link. A restored configuration
+  makes every page read afresh.
 - `scripts/prune-merged-branches.py` (ADR-0465), for the end of a batch: after `git fetch --prune`
   it removes the clean worktrees of branches merged into `origin/main` and deletes those local
   branches with `git branch -d`, as a dry run unless `--apply`. It keeps the main checkout, detached,

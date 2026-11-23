@@ -145,7 +145,7 @@ test.describe('The command palette of an administrator', () => {
     // The tabs of System are the System page's own.
     await page.keyboard.press('Escape');
     await page.goto('/system');
-    await expect(page.locator('main nav button')).toHaveText(SYSTEM_TABS);
+    await expect(page.locator('main nav a')).toHaveText(SYSTEM_TABS);
 
     await openPalette(page);
     // A prefix of a name first, then a prefix of one of its words, then a part of a word.
@@ -259,14 +259,14 @@ test.describe('The command palette of an administrator', () => {
     await chosen(0);
     expect(await optionNames(page)).toEqual(['Scheduler']);
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#scheduler');
+    await expect(page).toHaveURL('/system/scheduler');
     await expect(page.getByRole('heading', { level: 2, name: 'Scheduler', exact: true })).toBeVisible();
 
     // A tab of System from another one.
     await openPalette(page);
     await search(page, 'resource');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#monitor');
+    await expect(page).toHaveURL('/system/monitor');
     await expect(page.getByRole('heading', { name: 'Resource Monitor' })).toBeVisible();
 
     // The second of the options, with the arrow.
@@ -274,7 +274,7 @@ test.describe('The command palette of an administrator', () => {
     await search(page, 'log');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#logs');
+    await expect(page).toHaveURL('/system/logs');
     await expect(page.getByRole('heading', { name: 'System Logs', exact: true })).toBeVisible();
 
     // A click opens an option as Enter does.
@@ -315,7 +315,7 @@ test.describe('The command palette of an administrator', () => {
     await openPalette(page);
     await search(page, 'reboot');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#power');
+    await expect(page).toHaveURL('/system/power');
     const reboot = page.getByRole('dialog', { name: 'Reboot the host?' });
     await expect(reboot).toBeVisible();
     await expect(reboot).toBeFocused();
@@ -336,7 +336,7 @@ test.describe('The command palette of an administrator', () => {
     await openPalette(page);
     await search(page, 'suspend');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#power');
+    await expect(page).toHaveURL('/system/power');
     const suspend = page.getByRole('dialog', { name: 'Suspend the host?' });
     await expect(suspend).toBeVisible();
     await suspend.getByRole('button', { name: 'Close modal' }).click();
@@ -350,7 +350,7 @@ test.describe('The command palette of an administrator', () => {
     await openPalette(page);
     await search(page, 'power man');
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL('/system#power');
+    await expect(page).toHaveURL('/system/power');
     await expect(page.getByRole('heading', { name: 'Power Management', level: 2 })).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
@@ -532,7 +532,7 @@ test.describe('The command palette of an administrator', () => {
     authenticatedPage: page,
   }) => {
     // Cmd+K on macOS: the key of a text field there is not the question here.
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Create task' })).toBeVisible();
     await watchKeydowns(page);
@@ -688,7 +688,7 @@ test.describe('The command palette on a phone', () => {
     await expect(field(page)).toBeFocused();
     await search(page, 'power');
     await option(page, 'Power Management').click();
-    await expect(page).toHaveURL('/system#power');
+    await expect(page).toHaveURL('/system/power');
     await expect(palette(page)).toBeHidden();
 
     // The menu button still comes right before the links.

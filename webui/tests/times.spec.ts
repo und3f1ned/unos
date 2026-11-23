@@ -85,8 +85,8 @@ test.describe('Times with their time zone', () => {
   test('the answers of the API that the pages read carry their offset', async ({ authenticatedPage: page }) => {
     const answers = watchAnswers(page);
     for (const path of ['/', '/users', '/audit', '/account', '/shares', '/storage', '/files', '/files/trash',
-      '/snapshots', '/system#general', '/system#backup', '/system#scheduler', '/system#security',
-      '/system#notifications', '/system#updates', '/system#power', '/system#health', '/system#logs']) {
+      '/snapshots', '/system', '/system/backup', '/system/scheduler', '/system/security',
+      '/system/notifications', '/system/updates', '/system/power', '/system/health', '/system/logs']) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');
     }

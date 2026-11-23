@@ -61,11 +61,14 @@ async function frames(page: Page): Promise<{ skeletons: number; empty: number; b
   return page.evaluate(() => (window as unknown as { __frames: { skeletons: number; empty: number; bar: number } }).__frames);
 }
 
+/** The title of each page but the dashboard. */
+const TITLES: Record<string, string> = { '/storage': 'Storage', '/shares': 'Shares', '/system': 'System' };
+
 /** The page has its data: its title, nothing in it busy, no skeleton. */
 async function expectShown(page: Page, path: string) {
   await expect(page).toHaveURL(path);
   if (path === '/') await expect(widget(page, 'storage')).toBeVisible({ timeout: 15000 });
-  else await expect(title(page, path === '/storage' ? 'Storage' : 'Shares')).toBeVisible({ timeout: 15000 });
+  else await expect(title(page, TITLES[path])).toBeVisible({ timeout: 15000 });
   await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0, { timeout: 15000 });
   await expect(page.locator('main')).not.toHaveAttribute('aria-busy', 'true');
 }
@@ -85,14 +88,14 @@ async function hold(page: Page, path: string, answer?: (route: Route) => Promise
 }
 
 test.describe('Navigation without skeletons', () => {
-  test('a navigation between Dashboard, Storage and Shares keeps the open page until the next one has its data', async ({
+  test('a navigation between Dashboard, Storage, Shares and System keeps the open page until the next one has its data', async ({
     authenticatedPage: page,
   }) => {
     await expectShown(page, '/');
     await slowReads(page);
     await watchFrames(page);
 
-    for (const [from, to] of [['/', '/storage'], ['/storage', '/shares'], ['/shares', '/']] as const) {
+    for (const [from, to] of [['/', '/storage'], ['/storage', '/shares'], ['/shares', '/system'], ['/system', '/']] as const) {
       await sidebarLink(page, to).click();
       // Midway: the open page is still there, its link still marked, and the page's place is busy.
       await page.waitForTimeout(DELAY / 2);

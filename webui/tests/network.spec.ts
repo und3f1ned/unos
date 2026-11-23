@@ -22,7 +22,7 @@ import {
 const TRAFFIC = { bytes_recv: 1_320_702_444, bytes_sent: 536_870_912, bytes_recv_rate: 12_800, bytes_sent_rate: 512 };
 
 async function openNetworkTab(page: Page) {
-  await page.goto('/system#network');
+  await page.goto('/system/network');
   await expect(page.getByRole('heading', { name: 'Network', exact: true })).toBeVisible();
 }
 
@@ -485,7 +485,7 @@ test.describe('System > Network', () => {
     const network = await fakeNetworkApi(page, {
       failures: { 'GET /dns': { status: 500, detail: dnsFailed } },
     });
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     await expect(page.getByRole('heading', { name: 'Сеть', exact: true })).toBeVisible();
 
     // The part that could not be loaded by its name in Russian, the server's message as it comes.
@@ -544,7 +544,7 @@ test.describe('System > Network', () => {
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await fakeNetworkApi(page);
     await fakeLiveTraffic(page, { eth0: TRAFFIC });
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
 
     // Beside the link speed, which is written the same way.
@@ -573,7 +573,7 @@ test.describe('System > Network', () => {
       eth0: { ...TRAFFIC, bytes_recv_rate: 18.89 * KIB, bytes_sent_rate: 11.31 * KIB },
       eth1: { ...TRAFFIC, bytes_recv_rate: 1023.99 * KIB * KIB, bytes_sent_rate: 999.99 * KIB * KIB },
     });
-    await page.goto('/system#network');
+    await page.goto('/system/network');
     const eth0 = page.getByRole('region', { name: 'Интерфейс eth0' });
     const eth1 = page.getByRole('region', { name: 'Интерфейс eth1' });
     await expect(eth0).toContainText('18,89 КБ/с');

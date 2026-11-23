@@ -210,7 +210,7 @@ async function fakePowerApi(page: Page, start: Partial<FakeHost> = {}): Promise<
 }
 
 async function openPowerTab(page: Page) {
-  await page.goto('/system#power');
+  await page.goto('/system/power');
   await expect(page.getByRole('heading', { name: 'Power Management' })).toBeVisible();
 }
 
@@ -512,7 +512,7 @@ test.describe('Power Management', () => {
   test('in Russian: a confirmed reboot, its cancel, and Wake-on-LAN', async ({ authenticatedPage: page }) => {
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     const host = await fakePowerApi(page);
-    await page.goto('/system#power');
+    await page.goto('/system/power');
 
     await expect(page.getByRole('heading', { level: 2, name: 'Питание', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Перезагрузка, выключение и спящий режим' })).toBeVisible();
@@ -887,7 +887,7 @@ test.describe('The power schedule', () => {
     };
     schedule.wake.rtc = { available: false, reason: NO_RTC, alarm: null };
     const host = await fakePowerApi(page, { schedule, config: { ...SETTINGS_OFF, auto_shutdown: true } });
-    await page.goto('/system#power');
+    await page.goto('/system/power');
 
     const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Расписание выключения и включения' }) });
     const status = page.locator('.card', { has: page.getByRole('heading', { name: 'Состояние', exact: true }) });

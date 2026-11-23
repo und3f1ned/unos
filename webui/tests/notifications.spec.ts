@@ -57,7 +57,7 @@ const LOWER_CASE_PUT: Channel = {
 };
 
 async function openTab(page: Page) {
-  await page.goto('/system#notifications');
+  await page.goto('/system/notifications');
   await expect(page.getByRole('heading', { level: 2, name: 'Notifications' })).toBeVisible();
 }
 
@@ -445,7 +445,7 @@ test.describe('Notifications', () => {
     // The language that the Account page keeps in this browser (ADR-0287).
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     const fake = await fakeNotificationsApi(page, [ADMIN_MAIL]);
-    await page.goto('/system#notifications');
+    await page.goto('/system/notifications');
 
     await expect(page.getByText('Каждый включённый канал любого вида получает оповещения о состоянии и объявления о питании.'))
       .toBeVisible();

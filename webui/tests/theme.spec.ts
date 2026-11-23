@@ -472,19 +472,19 @@ test.describe('Every page in each theme', () => {
     { path: '/apps' },
     { path: '/users' },
     { path: '/audit' },
-    { path: '/system#general' },
-    { path: '/system#updates' },
-    { path: '/system#security' },
+    { path: '/system' },
+    { path: '/system/updates' },
+    { path: '/system/security' },
     { path: '/account#security' },
     { path: '/account#appearance' },
-    { path: '/system#monitor' },
-    { path: '/system#logs' },
-    { path: '/system#health', fake: (page) => fakeHealthApi(page) },
-    { path: '/system#backup' },
-    { path: '/system#scheduler' },
-    { path: '/system#notifications' },
-    { path: '/system#network' },
-    { path: '/system#power' },
+    { path: '/system/monitor' },
+    { path: '/system/logs' },
+    { path: '/system/health', fake: (page) => fakeHealthApi(page) },
+    { path: '/system/backup' },
+    { path: '/system/scheduler' },
+    { path: '/system/notifications' },
+    { path: '/system/network' },
+    { path: '/system/power' },
   ];
 
   for (const theme of ['light', 'dark'] as const) {
@@ -505,7 +505,7 @@ test.describe('Every page in each theme', () => {
       expect(problems).toEqual([]);
 
       // The key colours of a page are the theme's.
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       await expect(page.getByRole('heading', { name: 'Security of the NAS' })).toBeVisible();
       expect(await background(page, 'main')).toBe(values['surface']);
       expect(await background(page, 'aside')).toBe(values['surface-elevated']);

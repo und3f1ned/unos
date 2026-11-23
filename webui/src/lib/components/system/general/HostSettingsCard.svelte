@@ -2,7 +2,7 @@
 	import { setHostname } from '$lib/api/network';
 	import { setTimezone } from '$lib/api/system';
 	import { setNasTimeZone } from '$lib/stores/nasTime';
-	import { Alert, Button, Card, ErrorState, HelpText, Input, Select, Skeleton, toast } from '$lib/components/ui';
+	import { Alert, Button, Card, ErrorState, HelpText, Input, Select, toast } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import type { HostSettings } from './host.svelte';
 
@@ -51,18 +51,7 @@
 
 <!-- The name and time zone of the host, set on the host (ADR-0331) -->
 <Card title={$t('general.host.title')}>
-	{#if host.loading}
-		<!-- Loading (ADR-0430): the two fields with their buttons and hints. -->
-		<div class="space-y-4" aria-busy="true">
-			{#each [0, 1] as field (field)}
-				<div>
-					<Skeleton size="xs" class="w-24 mb-1" />
-					<Skeleton shape="block" class="h-9 w-full" />
-					<Skeleton size="xs" class="mt-1 w-2/3" />
-				</div>
-			{/each}
-		</div>
-	{:else if host.loadFailed}
+	{#if host.loadFailed}
 		<ErrorState title={$t('general.host.loadFailed')} onretry={() => host.load()} />
 	{:else}
 		<div class="space-y-4">

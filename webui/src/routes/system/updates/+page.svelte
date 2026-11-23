@@ -1,12 +1,10 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { ArrowRight, Download, ExternalLink, RefreshCw } from 'lucide-svelte';
 	import {
 		checkForUpdates,
 		getCurrentVersion,
-		getUpdateConfig,
-		getUpdateHistory,
 		getUpdateProgress,
 		installUpdate,
 		rollbackUpdate,
@@ -35,6 +33,12 @@
 	import { nasTimeZone } from '$lib/stores/nasTime';
 	import { updateProgress } from '$lib/stores/updates';
 	import { formatDate, knownZone } from '$lib/time';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { settle, type Later, type Settled } from '$lib/pages/read';
+	import { readUpdater, type UpdaterRead, type UpdatesSnapshot } from '$lib/pages/system/updates';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// The version the supervisor image was built with, the latest release, and how to update to it
 	// (ADR-0234, ADR-0443). Install Update, Rollback, the last update, the history and the automatic
@@ -49,7 +53,8 @@
 	let currentError = $state('');
 	let check = $state<UpdateCheck | null>(null);
 	let checkError = $state('');
-	let checking = $state(false);
+	// A check for the newest release is under way: the load's, until it answers, or the page's own.
+	let checking = $state(true);
 	let includePrereleases = $state(false);
 	// What GET /updates/progress answered at the load; the events socket's steps replace it.
 	let loadedProgress = $state.raw<UpdateProgress | null>(null);
@@ -68,11 +73,24 @@
 	// The NAS's zone when this browser knows it: the history and the next look are on its clock.
 	let zone = $derived(knownZone($nasTimeZone) ? $nasTimeZone : null);
 
-	onMount(() => {
-		void loadCurrent();
-		void runCheck();
-		void loadUpdater();
-	});
+	// The number of the newest check: the answer of an older one (before a change of the
+	// prereleases' switch, or the load's after Check again) comes too late to be shown.
+	let latestCheck = 0;
+	// The page checked again itself (Check again, the prereleases' switch): the load's checks are old.
+	let checkedHere = false;
+
+	// The tab's load reads the version and the updater (ADR-0469); the check for the newest
+	// release, GitHub's, comes after it, and its place waits meanwhile.
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: UpdatesSnapshot) {
+		takeCurrent(snapshot.current);
+		takeUpdater(snapshot.updater);
+		followCheck(snapshot.check);
+	}
 
 	// A job that ended (a step of the events socket): the version, the history and the progress as
 	// the server has them now.
@@ -90,39 +108,52 @@
 	});
 
 	async function loadCurrent() {
-		try {
-			current = await getCurrentVersion();
-			currentError = '';
-		} catch (e) {
-			currentError = messageOf(e);
-		}
+		takeCurrent(await settle(getCurrentVersion()));
+	}
+
+	function takeCurrent(read: Settled<CurrentVersion>) {
+		if (read.ok) current = read.value;
+		currentError = read.ok ? '' : read.error;
 	}
 
 	async function loadUpdater() {
-		try {
-			const answered = await getUpdateProgress();
-			loadedProgress = answered;
-			if (answered.install_unavailable === null) {
-				[history, config] = await Promise.all([getUpdateHistory(), getUpdateConfig()]);
-			}
-		} catch {
-			// Without the progress the tab shows what it showed before the in-app updater: the script.
-		} finally {
-			updaterKnown = true;
+		takeUpdater(await readUpdater());
+	}
+
+	// Without the progress the tab shows what it showed before the in-app updater: the script.
+	function takeUpdater(read: UpdaterRead) {
+		if (read.progress) loadedProgress = read.progress;
+		if (read.history) history = read.history;
+		if (read.config) config = read.config;
+		updaterKnown = true;
+	}
+
+	function takeCheck(read: Settled<UpdateCheck>) {
+		check = read.ok ? read.value : null;
+		checkError = read.ok ? '' : read.error;
+		checking = false;
+	}
+
+	/** The load's check, of the stable releases: shown once it has answered, unless the page asked again. */
+	function followCheck(part: Later<Settled<UpdateCheck>>) {
+		if (checkedHere) return;
+		const request = ++latestCheck;
+		if (part.value) {
+			takeCheck(part.value);
+			return;
 		}
+		checking = true;
+		void part.promise.then((read) => {
+			if (request === latestCheck) takeCheck(read);
+		});
 	}
 
 	async function runCheck() {
+		checkedHere = true;
+		const request = ++latestCheck;
 		checking = true;
-		try {
-			check = await checkForUpdates(includePrereleases);
-			checkError = '';
-		} catch (e) {
-			check = null;
-			checkError = messageOf(e);
-		} finally {
-			checking = false;
-		}
+		const read = await settle(checkForUpdates(includePrereleases));
+		if (request === latestCheck) takeCheck(read);
 	}
 
 	async function handleInstall() {
@@ -242,7 +273,8 @@
 			</div>
 
 			{#if checking && !check && !checkError}
-				<div aria-busy="true" class="space-y-2"><Skeleton count={3} /></div>
+				<!-- The check comes after the rest of the tab (it asks GitHub): its place waits. -->
+				<div aria-busy="true" class="space-y-2" data-later><Skeleton count={3} /></div>
 			{:else if checkError}
 				<div role="alert">
 					<Alert variant="error" size="sm" title={$t('updates.latest.checkFailed')}>{checkError}</Alert>

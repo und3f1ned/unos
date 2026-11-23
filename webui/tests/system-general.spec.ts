@@ -139,3 +139,62 @@ test.describe('System > General: the name and time zone of the NAS', () => {
     await expect(page.getByRole('button', { name: 'Сохранить часовой пояс' })).toBeVisible();
   });
 });
+
+// webui.navigation-without-skeletons (ADR-0469, ADR-0470): a change forgets what the pages of its
+// area read. The host name is the network's (PUT /network/hostname): General, Network and the
+// Dashboard, whose header names the host, read it again on their next visit instead of showing the
+// name from before.
+test.describe('System > General: a saved name is not shown older', () => {
+  /** Answer the GETs of `path` only once the returned function is called (to the fakes before). */
+  async function hold(page: Page, path: string): Promise<() => void> {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      (url) => url.pathname === path,
+      async (route) => {
+        if (route.request().method() === 'GET') await held;
+        await route.fallback().catch(() => undefined);
+      },
+    );
+    return release;
+  }
+  const tabLink = (page: Page, name: string) => page.locator('main nav').getByRole('link', { name, exact: true });
+
+  test('a saved host name makes General and the Dashboard read again on their next visit', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeHostApi(page);
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+    await page.locator('aside nav a[href="/system"]').click();
+    const field = page.getByLabel('Hostname', { exact: true });
+    await expect(field).toHaveValue('nas-old');
+    await field.fill('nas-new');
+    await page.getByRole('button', { name: 'Save hostname' }).click();
+    await expect(page.getByText('The hostname is now nas-new.')).toBeVisible();
+
+    await tabLink(page, 'Notifications').click();
+    await expect(page).toHaveURL('/system/notifications');
+    await expect(page.locator('main h2', { hasText: /^Notifications$/ })).toBeVisible();
+
+    // General's read before the save is forgotten: the tab waits for its fresh read, Notifications
+    // staying until then, and then shows the new name.
+    let release = await hold(page, '/api/v1/network/hostname');
+    await tabLink(page, 'General').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/system/notifications');
+    await expect(field).toHaveCount(0);
+    release();
+    await expect(page).toHaveURL('/system');
+    await expect(field).toHaveValue('nas-new');
+
+    // So is the Dashboard's, read at the sign-in: it waits for its fresh read of the system.
+    release = await hold(page, '/api/v1/system/info');
+    await page.locator('aside nav a[href="/"]').click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL('/system');
+    await expect(page.locator('main [data-widget]')).toHaveCount(0);
+    release();
+    await expect(page).toHaveURL('/');
+    await expect(page.locator('main [data-widget="storage"]')).toBeVisible();
+  });
+});

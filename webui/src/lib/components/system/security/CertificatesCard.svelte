@@ -2,7 +2,7 @@
 	import { FileKey, Plus, Trash2 } from 'lucide-svelte';
 	import { messageOf } from '$lib/errors';
 	import { deleteCertificate, serveCertificate, LOCAL_CA_ID, type Certificate } from '$lib/api/security';
-	import { Alert, Badge, Button, CardAction, EmptyState, Skeleton, confirm, toast } from '$lib/components/ui';
+	import { Alert, Badge, Button, CardAction, EmptyState, confirm, toast } from '$lib/components/ui';
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 	import { CERTIFICATE_TYPES, SERVED_BADGES, SERVED_BY, storedCertificate } from './certificates';
@@ -105,9 +105,6 @@
 		<div class="flex flex-wrap items-center gap-2">
 			{#if certificates.status}
 				<Badge variant={SERVED_BADGES[certificates.status.served_by] ?? 'info'}>{servedSource}</Badge>
-			{:else if !certificates.loadError}
-				<!-- The badge's place until the status comes (ADR-0430). -->
-				<span aria-busy="true"><Skeleton shape="block" class="h-6 w-28 rounded-full" /></span>
 			{/if}
 			<CardAction aria-expanded={showCertModal} onclick={() => (showCertModal = !showCertModal)}>
 				{$t('account.certs.manage')}

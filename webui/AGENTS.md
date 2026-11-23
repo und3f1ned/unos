@@ -167,7 +167,7 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
   `tests/loading.spec.ts` checks the main pages with the API slowed: no "Loading", no empty frame,
   the navigation drawn once, a layout shift below 0.05; `tests/page-loads.spec.ts` the navigations.
 
-### Page loads: the recipe for a page (Dashboard, Storage and Shares are done)
+### Page loads: the recipe for a page (Dashboard, Storage, Shares and System are done)
 
 1. **The reader**, `src/lib/pages/<page>.ts`: the page's API reads through `$lib/api`, as one
    snapshot type that holds each read's value or its failure (`settle` of `$lib/pages/read`, the
@@ -208,6 +208,13 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
    release it, see the fresh answer); the page joins the loop of `tests/page-loads.spec.ts` when
    the sidebar links it; a page whose reads take longer than 300 ms on the stand-in keeps its row
    of `PAGES` in `tests/loading.spec.ts`. `make check` and the specs of the page.
+7. **A page with tabs** gives each tab whose data differ a route of its own under the page, with
+   its reader and load (`system:<tab>`), and the tabs are the links of the page's `+layout.svelte`
+   (`PageTabs` with an `href` per tab, which preload as the sidebar's): a switch of tabs is then a
+   navigation that keeps the open tab, and Back goes from tab to tab. System does so
+   (`routes/system/`, General at `/system`, ADR-0470). A card that read in `onMount` takes the
+   load's value as a prop or through its class's `apply`, at once and for the fresh read, and keeps
+   a form's typed values and its own reads after its changes.
 
 ## Data
 

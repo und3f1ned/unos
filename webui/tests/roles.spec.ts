@@ -231,7 +231,7 @@ test.describe('Regular user account', () => {
   test('the system page is not a regular account\'s: its own settings are on the Account page', async ({ page }) => {
     const forbidden = recordForbidden(page);
     // System is the NAS's (ADR-0431): an administrator tab in the URL leads to the dashboard.
-    await openAs(page, userToken, '/system#logs');
+    await openAs(page, userToken, '/system/logs');
     await expect(page).toHaveURL('/');
     await expect(page.locator('h2:has-text("System Logs")')).toHaveCount(0);
 
@@ -257,7 +257,7 @@ test.describe('Regular user account', () => {
   test('a regular user can neither see nor create scheduled tasks', async ({ page, request }) => {
     // A custom task runs a shell command as root (ADR-0044): the Scheduler is for administrators.
     const forbidden = recordForbidden(page);
-    await openAs(page, userToken, '/system#scheduler');
+    await openAs(page, userToken, '/system/scheduler');
 
     await expect(page).toHaveURL('/');
     await expect(page.getByRole('heading', { level: 2, name: 'Scheduler', exact: true })).toHaveCount(0);

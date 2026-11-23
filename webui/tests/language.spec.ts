@@ -154,7 +154,7 @@ test.describe('Language', () => {
           (route) => (route.request().method() === 'GET' ? route.fulfill({ json: answer }) : route.abort()),
         );
       }
-      await page.goto('/system#security');
+      await page.goto('/system/security');
       const main = page.locator('main');
       await main.getByRole('button', { name: 'Configure', exact: true }).click();
       await main.getByRole('button', { name: 'Manage', exact: true }).click();
@@ -188,7 +188,7 @@ test.describe('Language', () => {
       await main.locator('nav').getByRole('button', { name: 'Appearance and language' }).click();
       await chooseLanguage(page, 'Interface language', 'Русский');
       await page.goBack();
-      await expect(page).toHaveURL('/system#security');
+      await expect(page).toHaveURL('/system/security');
       await main.getByRole('button', { name: 'Настроить', exact: true }).click();
       await main.getByRole('button', { name: 'Управление', exact: true }).click();
       await expect(main.getByText('По умолчанию: входящие — запрещены, исходящие — разрешены', { exact: true }))

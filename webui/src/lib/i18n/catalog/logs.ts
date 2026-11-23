@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Logs: src/routes/system/tabs/LogsTab.svelte. The sources, the levels and the time
+// System > Logs: src/routes/system/logs/+page.svelte. The sources, the levels and the time
 // ranges are the server's values, shown through maps of the tab; a source's English texts are
 // the server's (LOG_SOURCES of supervisor/src/logs/router.py, supervisor/tests/test_logs_sources.py).
 

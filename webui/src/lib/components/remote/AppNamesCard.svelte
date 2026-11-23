@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import {
 		addAppName,
 		applyAppNames,
@@ -9,13 +9,24 @@
 		type AppName,
 		type AppNamesStatus
 	} from '$lib/api/remoteAccess';
-	import { Alert, Button, Card, Input, Select, EmptyState, confirm, toast } from '$lib/components/ui';
+	import { Alert, Button, Card, Input, Select, EmptyState, Skeleton, confirm, toast } from '$lib/components/ui';
+	import { settle, type Later, type Settled } from '$lib/pages/read';
 	import { t } from '$lib/i18n';
 	import { Globe, Plus, Trash2 } from 'lucide-svelte';
 	import FormDialog from './FormDialog.svelte';
 
 	// System > Network, administrators only: the local names of apps (ADR-0420, ADR-0431), routed by the
 	// web UI's Caddy to a published port of the app and announced by avahi on the LAN.
+
+	type Props = {
+		/**
+		 * The names as the tab's load reads them (ADR-0469), after the rest of the tab: they ask Docker
+		 * for the apps' ports. A change and Retry read them here.
+		 */
+		read: Later<Settled<AppNamesStatus>>;
+	};
+
+	let { read }: Props = $props();
 
 	let status = $state<AppNamesStatus | null>(null);
 	let loading = $state(false);
@@ -40,9 +51,26 @@
 		!!status && status.names.length > 0 && !!status.announced && status.address !== status.announced
 	);
 
-	onMount(() => {
-		void load();
+	// The number of the newest read: an older one's answer is not shown.
+	let latest = 0;
+
+	// What the load read, before the card is drawn when it has come, else once it does.
+	$effect.pre(() => {
+		const next = read;
+		untrack(() => {
+			const request = ++latest;
+			if (next.value) take(next.value);
+			else
+				void next.promise.then((answer) => {
+					if (request === latest) take(answer);
+				});
+		});
 	});
+
+	function take(answer: Settled<AppNamesStatus>) {
+		if (answer.ok) status = answer.value;
+		loadError = answer.ok ? '' : answer.error;
+	}
 
 	/** Where a name opens the app. */
 	function urlOf(name: AppName): string {
@@ -51,15 +79,11 @@
 	}
 
 	async function load() {
+		const request = ++latest;
 		loading = true;
-		try {
-			status = await getAppNames();
-			loadError = '';
-		} catch (e) {
-			loadError = messageOf(e);
-		} finally {
-			loading = false;
-		}
+		const answer = await settle(getAppNames());
+		if (request === latest) take(answer);
+		loading = false;
 	}
 
 	/** A label from an app's name: lower case, a-z, 0-9 and -, at most 32 characters. */
@@ -97,6 +121,7 @@
 		error = '';
 		try {
 			if (!chosen) return;
+			latest += 1;
 			status = await addAppName(label.trim(), chosen.name, chosen.port);
 			showAdd = false;
 			toast.success(
@@ -118,6 +143,7 @@
 		busy = true;
 		error = '';
 		try {
+			latest += 1;
 			status = await removeAppName(name.label);
 			toast.success($t('remote.names.removed', { name: name.name }));
 		} catch (e) {
@@ -132,6 +158,7 @@
 		busy = true;
 		error = '';
 		try {
+			latest += 1;
 			status = await applyAppNames();
 			toast.success($t('remote.names.applied'));
 		} catch (e) {
@@ -173,7 +200,10 @@
 		</Alert>
 	{/if}
 
-	{#if status && !status.volume}
+	{#if !status && !loadError}
+		<!-- The names come after the rest of the tab: their place waits. -->
+		<div class="mt-4" aria-busy="true" data-later><Skeleton count={2} /></div>
+	{:else if status && !status.volume}
 		<Alert variant="info" class="mt-4">{$t('remote.names.noVolume')}</Alert>
 	{:else if status && !status.announcer && status.names.length === 0}
 		<Alert variant="info" class="mt-4">{$t('remote.names.noAnnouncer')}</Alert>

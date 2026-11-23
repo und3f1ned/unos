@@ -126,7 +126,7 @@ test.describe('Form fields in Chromium and WebKit', () => {
   test('the Create task dialog: name, selects, Copies to keep with its steppers, passphrases and the time', async ({
     authenticatedPage: page,
   }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task' }).click();
     const dialog = page.getByRole('dialog', { name: 'Create task' });
     await dialog.getByLabel('Task type', { exact: true }).selectOption('backup');
@@ -150,7 +150,7 @@ test.describe('Form fields in Chromium and WebKit', () => {
   });
 
   test('the certificate dialog: text fields and the validity in days', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.getByRole('button', { name: 'Manage', exact: true }).first().click();
     await page.getByRole('button', { name: 'Generate Self-Signed' }).click();
     const dialog = page.getByRole('dialog', { name: 'Generate Self-Signed Certificate' });
@@ -162,7 +162,7 @@ test.describe('Form fields in Chromium and WebKit', () => {
   test("the off-device copy's settings: a REST server's fields and select, limits with units, counts with steppers", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     const section = page.getByRole('region', { name: 'Off-device copy' });
     const settings = section.locator('.card', { has: page.getByRole('heading', { name: 'Settings of the copy' }) });
     await settings.getByText('restic REST server', { exact: true }).click();
@@ -186,7 +186,7 @@ test.describe('Form fields in Chromium and WebKit', () => {
   });
 
   test('the power schedule: two times and the idle minutes', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#power');
+    await page.goto('/system/power');
     const schedule = page.locator('.card', { has: page.getByRole('heading', { name: 'Shutdown and wake schedule' }) });
     for (const setting of ['Daily shutdown', 'Daily wake', 'Idle shutdown']) {
       await schedule.getByLabel(setting, { exact: true }).check();

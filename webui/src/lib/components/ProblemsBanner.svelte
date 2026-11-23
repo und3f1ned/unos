@@ -45,10 +45,10 @@
 	// settings. A kind this web UI does not know links nowhere.
 	const PLACES: [RegExp, string][] = [
 		[/^(pool_|volume_quota_)/, '/storage'],
-		[/^disk_/, '/system#health'],
-		[/^task_/, '/system#scheduler'],
+		[/^disk_/, '/system/health'],
+		[/^task_/, '/system/scheduler'],
 		[/^app_/, '/containers'],
-		[/^shutdown_/, '/system#power']
+		[/^shutdown_/, '/system/power']
 	];
 
 	const placeOf = (kind: string): string | undefined => PLACES.find(([pattern]) => pattern.test(kind))?.[1];

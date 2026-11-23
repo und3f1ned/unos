@@ -6,53 +6,53 @@ import { chooseAction } from './ui';
 
 test.describe('Scheduler', () => {
   test('should display scheduler tab', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(1000);
     await expect(page.locator('h2:text-is("Scheduler")')).toBeVisible();
   });
 
   test('should have refresh button', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(1000);
     const refreshButton = page.locator('button:has(svg)').first();
     await expect(refreshButton).toBeVisible();
   });
 
   test('should show task list or empty state', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(2000);
     // Should show scheduled tasks section
     await expect(page.locator('h2:text-is("Scheduler")')).toBeVisible();
   });
 
   test('should display scheduler content', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(1000);
     await expect(page.locator('text=/Scheduled|Tasks/i').first()).toBeVisible();
   });
 
   test('should have task management area', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(1000);
     // Scheduler tab should be loaded
     await expect(page.locator('h2:text-is("Scheduler")')).toBeVisible();
   });
 
   test('should show scheduler section header', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:text-is("Scheduler")')).toBeVisible();
   });
 
   test('should display task area', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(2000);
     // Page should be loaded
     await expect(page.locator('text=/Scheduled/i').first()).toBeVisible();
   });
 
   test('should have working refresh', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.waitForTimeout(1000);
 
     const refreshButton = page.locator('button:has(svg)').first();
@@ -149,7 +149,7 @@ async function fakeSchedulerApi(page: Page, disks: typeof FAKE_DISKS, tasks: obj
 }
 
 async function openSchedulerTab(page: Page, taskName = SMART_TASK.name) {
-  await page.goto('/system#scheduler');
+  await page.goto('/system/scheduler');
   await expect(page.getByText(taskName, { exact: true })).toBeVisible();
 }
 
@@ -278,7 +278,7 @@ test.describe('Scheduler: SMART task whose disk is connected', () => {
 test.describe('Scheduler: the task form', () => {
   test('every control of the task form is reached through its label', async ({ authenticatedPage: page }) => {
     const { created } = await fakeSchedulerApi(page, FAKE_DISKS, []);
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await expect(page.getByText('No scheduled tasks')).toBeVisible();
     await page.getByRole('button', { name: 'New task' }).click();
 
@@ -445,7 +445,7 @@ test.describe('Scheduler: a task that ran', () => {
     backupsBefore = await backupNames(page);
     const name = `E2E kept run ${Date.now().toString(36)}`;
 
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task' }).click();
     await field(page, 'Task name').fill(name);
     await field(page, 'Task type').selectOption('backup');
@@ -535,7 +535,7 @@ async function fakeSnapshotTasksApi(page: Page, tasks: unknown[], runs: unknown[
 test.describe('Scheduler: snapshot tasks', () => {
   test('a new snapshot task is saved with its pool and keep count', async ({ authenticatedPage: page }) => {
     const created = await fakeSnapshotTasksApi(page, []);
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await expect(page.getByText('No scheduled tasks')).toBeVisible();
 
     await page.getByRole('button', { name: 'New task' }).click();
@@ -559,7 +559,7 @@ test.describe('Scheduler: snapshot tasks', () => {
 
   test('the history of a failed run says that the pool is not mounted', async ({ authenticatedPage: page }) => {
     await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN]);
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
     await expect(page.getByText(/Snapshot\s+on e2e_tank/)).toBeVisible();
 
@@ -579,7 +579,7 @@ test.describe('Scheduler: the time zone of the schedules', () => {
     authenticatedPage: page,
   }) => {
     await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN]);
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await expect(page.getByText(SNAPSHOT_TASK.name, { exact: true })).toBeVisible();
 
     // One time zone on the page, the NAS's, named once (ADR-0432); the rest behind Details.
@@ -719,7 +719,7 @@ test.describe('Scheduler: custom tasks', () => {
 
   /** Make a custom task in the form; returns the task as the server answered. */
   async function createCustomTask(page: Page, name: string, command: string, hour?: number) {
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task' }).click();
     await field(page, 'Task name').fill(name);
     await field(page, 'Task type').selectOption('custom');
@@ -751,7 +751,7 @@ test.describe('Scheduler: custom tasks', () => {
   test('a run records the output and the exit status of the command', async ({ authenticatedPage: page }) => {
     await signIn(page);
     const name = `E2E custom command ${Date.now().toString(36)}`;
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task' }).click();
     await field(page, 'Task type').selectOption('custom');
     await expect(field(page, 'Command')).toHaveAccessibleDescription(/records its output .* and its exit status/);
@@ -854,7 +854,7 @@ test.describe('Scheduler: a backup task with a Copies to keep', () => {
     const manual: string = (await made.json()).backup.filename;
 
     const name = `E2E keep three ${Date.now().toString(36)}`;
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: 'New task' }).click();
     await field(page, 'Task name').fill(name);
     await field(page, 'Task type').selectOption('backup');
@@ -885,7 +885,7 @@ test.describe('Scheduler: a backup task with a Copies to keep', () => {
     expect(await runStatuses(page)).toEqual(['success', 'success', 'success', 'success']);
 
     // The Backup & Restore tab lists the three newest and the manual backup, not the oldest.
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     await expect(page.getByRole('heading', { name: 'Backup & Restore', exact: true })).toBeVisible();
     for (const kept of scheduled.slice(1)) await expect(page.getByText(kept, { exact: true })).toBeVisible();
     await expect(page.getByText(scheduled[0], { exact: true })).toHaveCount(0);
@@ -922,7 +922,7 @@ test.describe('Scheduler: in Russian', () => {
     const row = (name: string) => page.locator('div.justify-between', { hasText: name });
 
     // In English, the schedules read as before the catalogs.
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await expect(row(SNAPSHOT_TASK.name).getByText(/Snapshot\s+on e2e_tank\s+• Daily at 2:00\sAM/)).toBeVisible();
     await expect(row(SMART_TASK.name).getByText(/SMART test\s+on \/dev\/e2e-gone\s+• Sundays at 3:00\sAM/))
       .toBeVisible();
@@ -1019,7 +1019,7 @@ test.describe('Scheduler: in Russian', () => {
     await fakeSnapshotTasksApi(page, [WEEKLY_WITHOUT_DAY, MONTHLY_WITHOUT_DAY]);
     const row = (name: string) => page.locator('div.justify-between', { hasText: name });
 
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await expect(row(WEEKLY_WITHOUT_DAY.name).getByText(/SMART test\s+on \/dev\/e2e-gone\s+• Sundays at 5:15\sAM/))
       .toBeVisible();
     await expect(row(MONTHLY_WITHOUT_DAY.name).getByText(/Scrub\s+on e2e_tank\s+• Day 1 at 6:45\sAM/))
@@ -1054,7 +1054,7 @@ test.describe('Scheduler: in Russian', () => {
     authenticatedPage: page,
   }) => {
     await fakeSnapshotTasksApi(page, [SNAPSHOT_TASK], [FAILED_SNAPSHOT_RUN, SLOW_SNAPSHOT_RUN]);
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await chooseAction(page, SNAPSHOT_TASK.name, 'View history');
     await expect(page.getByRole('heading', { name: `Run history: ${SNAPSHOT_TASK.name}` })).toBeVisible();
     await expect(page.getByText('1.5s', { exact: true })).toBeVisible();

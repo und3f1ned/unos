@@ -91,11 +91,19 @@ def test_only_pages_whose_loads_read_no_data_disk_preload_on_hover():
 
 @pytest.mark.parametrize(
     ("page", "unsafe"),
-    [("/", {"storage", "containers", "health"}), ("/storage", {"storage"}), ("/shares", {"shares"})],
+    [
+        ("/", {"storage", "containers", "health"}),
+        ("/storage", {"storage"}),
+        ("/shares", {"shares"}),
+        ("/system/health", {"health"}),
+        ("/system/scheduler", {"storage"}),
+    ],
 )
 def test_the_pages_that_read_the_disks_could_not_preload_on_hover(page: str, unsafe: set[str]):
     # The dashboard reads the pools (btrfs scans every disk) and waits for Docker; Storage reads the
     # disks; Shares the volumes of the mounted pools, smbd's status and the network's interfaces.
+    # System's Disk Health runs smartctl on every disk, and its Scheduler lists the pools and disks
+    # for a task's form (ADR-0470).
     asked = api_modules(SRC, route_file(SRC, page))
     assert unsafe <= asked and not asked <= HOVER_SAFE_API
 

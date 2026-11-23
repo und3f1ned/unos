@@ -144,7 +144,7 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.network',
 		kindKey: SYSTEM,
 		icon: Network,
-		run: { go: '/system#network' }
+		run: { go: '/system/network' }
 	},
 	{
 		id: 'remote',
@@ -152,7 +152,7 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.remote',
 		kindKey: SYSTEM,
 		icon: Globe,
-		run: { go: '/system#remote' }
+		run: { go: '/system/remote' }
 	},
 	{
 		id: 'security',
@@ -160,7 +160,7 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.security',
 		kindKey: SYSTEM,
 		icon: Shield,
-		run: { go: '/system#security' }
+		run: { go: '/system/security' }
 	},
 	{
 		id: 'notifications',
@@ -168,7 +168,7 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.notifications',
 		kindKey: SYSTEM,
 		icon: Bell,
-		run: { go: '/system#notifications' }
+		run: { go: '/system/notifications' }
 	},
 	{
 		id: 'monitor',
@@ -176,16 +176,16 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.monitor',
 		kindKey: SYSTEM,
 		icon: Gauge,
-		run: { go: '/system#monitor' }
+		run: { go: '/system/monitor' }
 	},
-	{ id: 'logs', nameKey: 'system.tabs.logs', kindKey: SYSTEM, icon: FileText, run: { go: '/system#logs' } },
+	{ id: 'logs', nameKey: 'system.tabs.logs', kindKey: SYSTEM, icon: FileText, run: { go: '/system/logs' } },
 	{
 		id: 'health',
 		nameKey: 'system.tabs.health',
 		keywordsKey: 'palette.keywords.health',
 		kindKey: SYSTEM,
 		icon: Heart,
-		run: { go: '/system#health' }
+		run: { go: '/system/health' }
 	},
 	{
 		id: 'updates',
@@ -193,16 +193,16 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.updates',
 		kindKey: SYSTEM,
 		icon: ArrowUpCircle,
-		run: { go: '/system#updates' }
+		run: { go: '/system/updates' }
 	},
-	{ id: 'backup', nameKey: 'system.tabs.backup', kindKey: SYSTEM, icon: Database, run: { go: '/system#backup' } },
+	{ id: 'backup', nameKey: 'system.tabs.backup', kindKey: SYSTEM, icon: Database, run: { go: '/system/backup' } },
 	{
 		id: 'scheduler',
 		nameKey: 'system.tabs.scheduler',
 		keywordsKey: 'palette.keywords.scheduler',
 		kindKey: SYSTEM,
 		icon: Calendar,
-		run: { go: '/system#scheduler' }
+		run: { go: '/system/scheduler' }
 	},
 	{
 		id: 'power',
@@ -210,7 +210,7 @@ export const ADMIN_PAGES: Choice[] = [
 		keywordsKey: 'palette.keywords.power',
 		kindKey: SYSTEM,
 		icon: Power,
-		run: { go: '/system#power' }
+		run: { go: '/system/power' }
 	},
 	ACCOUNT_PAGE,
 	APPEARANCE_TAB
@@ -241,7 +241,7 @@ export const ADMIN_ACTIONS: Choice[] = [
 		keywordsKey: 'palette.keywords.reboot',
 		kindKey: ACTION,
 		icon: RotateCcw,
-		run: { go: '/system#power', dialog: 'reboot' }
+		run: { go: '/system/power', dialog: 'reboot' }
 	},
 	{
 		id: 'shutdown',
@@ -249,7 +249,7 @@ export const ADMIN_ACTIONS: Choice[] = [
 		keywordsKey: 'palette.keywords.shutdown',
 		kindKey: ACTION,
 		icon: Power,
-		run: { go: '/system#power', dialog: 'shutdown' }
+		run: { go: '/system/power', dialog: 'shutdown' }
 	},
 	{
 		id: 'suspend',
@@ -257,7 +257,7 @@ export const ADMIN_ACTIONS: Choice[] = [
 		keywordsKey: 'palette.keywords.suspend',
 		kindKey: ACTION,
 		icon: Moon,
-		run: { go: '/system#power', dialog: 'suspend' }
+		run: { go: '/system/power', dialog: 'suspend' }
 	}
 ];
 

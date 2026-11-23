@@ -118,7 +118,12 @@ a share saved or the dashboard arranged, a page that shows it waits for its new
 data instead. Grey shapes still stand in for the data when the first page of a
 tab takes longer than a moment, and on the pages not built this way yet.
 Pointing at a link reads no data from the NAS, so that it wakes no sleeping
-disk; pressing it starts reading the next page's data.
+disk; pressing it starts reading the next page's data. The tabs of **System**
+work the same way: each has an address of its own (General is `/system`, the
+others `/system/network`, `/system/power` and so on), the tab you are on stays
+until the next one has its data, and Back returns to the tab you came from.
+Pointing at **Notifications** already reads its data, which come from UNOS's own
+files and wake no disk.
 
 On a phone, or in a window narrower than 768 pixels, a bar at the top replaces
 the sidebar: its menu button (☰) opens the navigation, with your account and

@@ -1,7 +1,7 @@
 <script lang="ts">
 	// System > Network (ADR-0244): the host's interfaces with Disable, which comes back on by itself
 	// unless it is kept, and Enable; bonds, VLANs and bridges; the routes, the sockets and DNS.
-	import { onDestroy, onMount, tick, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { bringInterfaceUp, bringInterfaceDown, keepInterfaceDown, type NetworkInterface } from '$lib/api/network';
 	import { ApiError } from '$lib/api/client';
 	import { Alert, Button, EmptyState, Skeleton, Tabs, confirm, toast } from '$lib/components/ui';
@@ -17,6 +17,11 @@
 	import { t } from '$lib/i18n';
 	import { stats, type NetworkInterface as WSNetworkInterface } from '$lib/stores/stats';
 	import { Network, RefreshCw } from 'lucide-svelte';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { NetworkSnapshot } from '$lib/pages/system/network';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// Once the time to keep a disable has run out, the page reads the interfaces
 	// again after the host's revert had a few seconds to turn it back on (ADR-0244).
@@ -40,6 +45,8 @@
 
 	// Disables that wait to be kept: interface -> when it comes back on by itself (Date.now()).
 	let deadlines = $state<Record<string, number>>({});
+	// The interfaces whose countdown this page's Disable started.
+	let ownDisables = new Set<string>();
 	// Disables whose time has run out, until the page has read the interfaces again.
 	let expiring: string[] = [];
 	let now = $state(Date.now());
@@ -66,9 +73,22 @@
 	// Keep of the interface just disabled (ADR-0246).
 	let countdowns = $derived(Object.entries(deadlines).sort(([, a], [, b]) => b - a));
 
-	onMount(() => {
-		net.loadAll();
-	});
+	// The bonds, VLANs and bridges, and the apps' names, as the tab's load read them (ADR-0469).
+	let virtual = $state.raw<NetworkSnapshot['virtual'] | null>(null);
+	let virtualAt = $state(0);
+	let appNames = $state.raw<NetworkSnapshot['appNames'] | null>(null);
+
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: NetworkSnapshot) {
+		net.apply(snapshot);
+		virtual = snapshot.virtual;
+		virtualAt = snapshot.virtualAt;
+		appNames = snapshot.appNames;
+	}
 
 	onDestroy(() => {
 		if (ticker) clearInterval(ticker);
@@ -76,15 +96,17 @@
 	});
 
 	// The countdowns follow the server: a disable kept or undone elsewhere ends its
-	// countdown, and one found after a reload starts it. A running countdown keeps its
-	// own deadline, counted from when the page sent the Disable.
-	function followReverts(list: NetworkInterface[]) {
+	// countdown, and one found in a read starts it, counted from when that read answered (`at`; a
+	// revisit shows a read of before, from the tab's cache), and a newer read corrects it. A
+	// countdown of this page's own Disable keeps its deadline, counted from when the page sent it.
+	function followReverts(list: NetworkInterface[], at: number) {
 		const next: Record<string, number> = {};
 		for (const iface of list) {
 			if (iface.revert_in === null) continue;
-			if (iface.name in deadlines) next[iface.name] = deadlines[iface.name];
-			else if (iface.revert_in > 0) next[iface.name] = Date.now() + iface.revert_in * 1000;
+			if (iface.name in deadlines && ownDisables.has(iface.name)) next[iface.name] = deadlines[iface.name];
+			else if (iface.revert_in > 0) next[iface.name] = at + iface.revert_in * 1000;
 		}
+		ownDisables = new Set([...ownDisables].filter((name) => name in next));
 		deadlines = next;
 	}
 
@@ -183,6 +205,7 @@
 			const deadline = started + result.revert_in * 1000;
 			if (deadline > Date.now()) {
 				deadlines = { ...deadlines, [name]: deadline };
+				ownDisables = new Set([...ownDisables, name]);
 				// A check of an earlier disable of it that is still to come has nothing left to report.
 				expiring = expiring.filter((n) => n !== name);
 				counting = true;
@@ -320,7 +343,9 @@
 			</div>
 
 			<!-- Bonds, VLANs and bridges (ADR-0424): a change lists the interfaces again -->
-			<VirtualInterfacesCard onchanged={() => net.loadInterfaces()} />
+			{#if virtual}
+				<VirtualInterfacesCard read={virtual} readAt={virtualAt} onchanged={() => net.loadInterfaces()} />
+			{/if}
 		{/if}
 
 		<!-- Routes -->
@@ -341,5 +366,7 @@
 	{/if}
 
 	<!-- The apps' names on the LAN (ADR-0420), which reach the LAN only: no remote access. -->
-	<AppNamesCard />
+	{#if appNames}
+		<AppNamesCard read={appNames} />
+	{/if}
 </div>

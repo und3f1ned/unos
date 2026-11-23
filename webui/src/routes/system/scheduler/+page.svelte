@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { getTasks, deleteTask, runTaskNow, toggleTask, type ScheduledTask } from '$lib/api/scheduler';
 	import { ApiError } from '$lib/api/client';
-	import { getPools, getDisks, type Pool, type Disk } from '$lib/api/storage';
+	import type { Pool, Disk } from '$lib/api/storage';
 	import { Button, EmptyState, HelpText, LoadState, Skeleton, confirm, toast } from '$lib/components/ui';
 	import { TaskFormDialog, TaskHistory, TaskHistoryDialog, TaskRow } from '$lib/components/system/scheduler';
 	import { messageOf } from '$lib/errors';
@@ -11,6 +10,11 @@
 	import { nasTimeZone } from '$lib/stores/nasTime';
 	import { knownZone } from '$lib/time';
 	import { Calendar, RefreshCw, Plus, History } from 'lucide-svelte';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { SchedulerResources, SchedulerSnapshot } from '$lib/pages/system/scheduler';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// The tasks of the Scheduler, on the NAS's clock (ADR-0432): the tab names the zone once, and
 	// every time it shows is the NAS's. A failed load says so in place of the list, never "no tasks";
@@ -22,8 +26,9 @@
 	// The NAS's zone when this browser knows it: the next runs and the history are on its clock, and
 	// the tab names it; else the browser's clock, unnamed.
 	let zone = $derived(knownZone($nasTimeZone) ? $nasTimeZone : null);
-	let loading = $state(true);
-	// The first load has answered: a reload keeps the list (ADR-0430).
+	// A reload of the tasks is under way: it keeps the list.
+	let loading = $state(false);
+	// The tab's data have come (its load, ADR-0469): until then, on the tab's first page, its skeleton.
 	let loaded = $state(false);
 	let loadError = $state('');
 	let runningTaskId = $state<string | null>(null);
@@ -36,9 +41,38 @@
 	let editingTask = $state<ScheduledTask | null>(null);
 	const history = new TaskHistory();
 
-	onMount(async () => {
-		await Promise.all([loadTasks(), loadResources()]);
-	});
+	// The number of the newest snapshot of the load: an older one's pools and disks are not shown.
+	let latestSnapshot = 0;
+
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: SchedulerSnapshot) {
+		if (snapshot.tasks.ok) {
+			tasks = snapshot.tasks.value;
+			loadError = '';
+		} else {
+			loadError = snapshot.tasks.error;
+		}
+		loaded = true;
+		// The pools and disks of the task form come after the tasks.
+		const taken = ++latestSnapshot;
+		const part = snapshot.resources;
+		if (part.value !== undefined) takeResources(part.value);
+		else
+			void part.promise.then((read) => {
+				if (taken === latestSnapshot) takeResources(read);
+			});
+	}
+
+	function takeResources(read: SchedulerResources) {
+		if (!read) return;
+		pools = read.pools;
+		disks = read.disks;
+		disksLoaded = true;
+	}
 
 	async function loadTasks() {
 		loading = true;
@@ -52,17 +86,6 @@
 		}
 		loading = false;
 		loaded = true;
-	}
-
-	async function loadResources() {
-		try {
-			const [poolsResult, disksResult] = await Promise.all([getPools(), getDisks()]);
-			pools = poolsResult;
-			disks = disksResult.filter((d) => d.type === 'disk');
-			disksLoaded = true;
-		} catch (e) {
-			console.error('Failed to load resources:', e);
-		}
 	}
 
 	function openCreateModal() {

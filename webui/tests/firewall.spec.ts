@@ -137,7 +137,7 @@ async function fakeFirewall(page: Page, start: { installed?: boolean; enabled?: 
 }
 
 async function openFirewall(page: Page) {
-  await page.goto('/system#security');
+  await page.goto('/system/security');
   await page.getByRole('button', { name: 'Configure', exact: true }).click();
 }
 
@@ -152,7 +152,7 @@ function ruleRow(page: Page, title: string) {
 test.describe('Firewall', () => {
   test("the stand-in is no NAS host: the card shows the server's refusal", async ({ authenticatedPage: page }) => {
     test.skip(process.env.E2E_STAND_IN !== '1', 'The refusal comes from a supervisor that runs its host commands locally');
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await expect(card(page).getByText('The firewall could not be read')).toBeVisible();
     await expect(card(page).getByText(FIREWALL_OFF, { exact: true })).toBeVisible();
   });
@@ -349,7 +349,7 @@ test.describe('Firewall', () => {
 
   test('in Russian: the dialog and the countdown', async ({ authenticatedPage: page }) => {
     await fakeFirewall(page);
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
     await page.getByRole('button', { name: 'Настроить', exact: true }).first().click();

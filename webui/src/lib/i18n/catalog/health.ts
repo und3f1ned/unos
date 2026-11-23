@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Disk Health: src/routes/system/tabs/HealthTab.svelte. smartctl's names (models,
+// System > Disk Health: src/routes/system/health/+page.svelte. smartctl's names (models,
 // attributes, self-test results) and the reasons of a failure prediction stay as the server
 // answers them; a disk's capacity takes the number format and the unit of the page.
 

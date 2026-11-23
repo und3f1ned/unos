@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { messageOf } from '$lib/errors';
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Cpu, MemoryStick, Network, HardDrive } from 'lucide-svelte';
 	import { Alert, Card, Skeleton, Segmented } from '$lib/components/ui';
 	import { stats, wsConnected, wsForbidden, wsSettled, type WebSocketStats } from '$lib/stores/stats';
-	import { getMonitorHistory } from '$lib/api/monitor';
+	import type { MonitorHistory } from '$lib/api/monitor';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { MonitorSnapshot } from '$lib/pages/system/monitor';
+	import type { PageProps } from './$types';
 	import {
 		cpuOf,
 		memoryOf,
@@ -21,9 +23,11 @@
 	import { formatPercent, formatRate, formatSize, ONE_DECIMAL } from '$lib/format';
 	import { intlLocale, t } from '$lib/i18n';
 
+	let { data }: PageProps = $props();
+
 	// System > Resource Monitor (ADR-0399): the history that the supervisor keeps for an hour, read
-	// once when the tab opens, and each stats message of /ws/v1/events added to it as it arrives. No
-	// timer asks the API again (ADR-0365).
+	// by the tab's load (ADR-0469), and each stats message of /ws/v1/events added to it as it
+	// arrives. No timer asks the API again (ADR-0365).
 
 	const KEPT_MS = 3600 * 1000;
 	const RANGES = [
@@ -39,23 +43,32 @@
 	let live = $state.raw<Point[]>([]);
 	let historyError = $state('');
 
-	onMount(async () => {
-		const opened = Date.now();
-		try {
-			const answer = await getMonitorHistory();
-			history = answer.points.map((point) => ({
-				at: opened - point.age_seconds * 1000,
-				cpu: point.cpu_percent,
-				memory: point.memory_percent,
-				netRecv: point.net_recv_rate,
-				netSent: point.net_sent_rate,
-				diskRead: point.disk_read_rate,
-				diskWrite: point.disk_write_rate
-			}));
-		} catch (error) {
-			historyError = messageOf(error);
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	// The history as it answered: a point's time is the moment of the answer, less its age.
+	function apply(snapshot: MonitorSnapshot) {
+		if (!snapshot.history.ok) {
+			historyError = snapshot.history.error;
+			return;
 		}
-	});
+		historyError = '';
+		history = pointsOf(snapshot.history.value, snapshot.at);
+	}
+
+	function pointsOf(answer: MonitorHistory, at: number): Point[] {
+		return answer.points.map((point) => ({
+			at: at - point.age_seconds * 1000,
+			cpu: point.cpu_percent,
+			memory: point.memory_percent,
+			netRecv: point.net_recv_rate,
+			netSent: point.net_sent_rate,
+			diskRead: point.disk_read_rate,
+			diskWrite: point.disk_write_rate
+		}));
+	}
 
 	// The message that the store already held when the tab opened: its time is not known, and the
 	// socket may have closed since. The points start with the next one.

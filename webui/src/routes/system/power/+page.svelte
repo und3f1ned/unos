@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { cancelShutdown, getPendingAction, type PendingAction } from '$lib/api/power';
 	import { Alert, Button, confirm, toast } from '$lib/components/ui';
 	import {
@@ -17,6 +17,12 @@
 	import { t } from '$lib/i18n';
 	import { knownZone } from '$lib/time';
 	import { paletteRequest, type PaletteRequest } from '$lib/stores/palette';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import type { Settled } from '$lib/pages/read';
+	import type { PowerSnapshot } from '$lib/pages/system/power';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// Reboot, shutdown, suspend and Wake-on-LAN act on the host (ADR-0233):
 	// reboot and shutdown one minute after the confirmation, so that they can
@@ -38,12 +44,18 @@
 	// (ADR-0407).
 	const plan = new PowerPlan();
 
-	onMount(() => {
-		void loadPending();
-		void wol.load();
-		void plan.loadConfig();
-		void plan.loadSchedule();
-	});
+	// The tab's load reads them all (ADR-0469); the cards read again after their own changes.
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: PowerSnapshot) {
+		takePending(snapshot.pending);
+		wol.apply(snapshot.wol);
+		plan.applyConfig(snapshot.config);
+		plan.applySchedule(snapshot.schedule);
+	}
 
 	/** What an action of a card did: a toast, in place of an earlier failure. */
 	function showNotice(message: string) {
@@ -59,13 +71,16 @@
 
 	async function loadPending() {
 		try {
-			pending = await getPendingAction();
-			pendingError = '';
+			takePending({ ok: true, value: await getPendingAction() });
 		} catch (e) {
-			pendingError = messageOf(e);
-		} finally {
-			pendingKnown = true;
+			takePending({ ok: false, error: messageOf(e) });
 		}
+	}
+
+	function takePending(read: Settled<PendingAction>) {
+		if (read.ok) pending = read.value;
+		pendingError = read.ok ? '' : read.error;
+		pendingKnown = true;
 	}
 
 	/** Every read again, after the host's power state could not be read. */

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import { toDataURL } from 'qrcode';
 	import {
 		addRemotePeer,
@@ -11,8 +11,10 @@
 		setRemoteEndpoint,
 		type RemotePeer,
 		type RemotePeerCreated,
+		type RemoteAccessAnswer,
 		type RemoteAccessStatus
 	} from '$lib/api/remoteAccess';
+	import { settle, type Settled } from '$lib/pages/read';
 	import { Alert, Badge, Button, Card, Input, confirm, toast, HelpText } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 	import FormDialog from './FormDialog.svelte';
@@ -22,6 +24,13 @@
 	// System > Remote access, administrators only: the WireGuard tunnel on the host (ADR-0420). A
 	// new peer's configuration comes in the answer of its creation only: it is shown once, with a
 	// QR code that the browser draws, and the page keeps it only until its dialog closes.
+
+	type Props = {
+		/** The tunnel as the tab's load read it (ADR-0469); a change and Retry read it here. */
+		read: Settled<RemoteAccessAnswer>;
+	};
+
+	let { read }: Props = $props();
 
 	let status = $state<RemoteAccessStatus | null>(null);
 	// How far the NAS's clock is ahead of the browser's (getRemoteAccess): a peer's handshake ages on it.
@@ -46,27 +55,40 @@
 
 	let on = $derived(!!status?.enabled);
 
-	onMount(() => {
-		void load();
+	// The stored settings the fields were filled from: a fresh read with the same ones keeps what was
+	// typed meanwhile.
+	let filledFrom = '';
+
+	// What the load read, before the card is drawn, and its fresh read when that comes.
+	$effect.pre(() => {
+		const next = read;
+		untrack(() => take(next));
 	});
 
 	async function load() {
 		loading = true;
-		try {
-			const answer = await getRemoteAccess();
-			status = answer.status;
-			clockAhead = answer.clockAhead;
-			loadError = '';
+		take(await settle(getRemoteAccess()), true);
+		loading = false;
+	}
+
+	/** A read of the tunnel; its settings fill the fields after the card's own read (`always`) or when they changed. */
+	function take(next: Settled<RemoteAccessAnswer>, always = false) {
+		if (!next.ok) {
+			loadError = next.error;
+			return;
+		}
+		status = next.value.status;
+		clockAhead = next.value.clockAhead;
+		loadError = '';
+		const stored = JSON.stringify([status.endpoint, status.port, status.network, status.defaults]);
+		if (always || stored !== filledFrom) {
 			settings = {
 				endpoint: status.endpoint ?? settings.endpoint,
 				port: String(status.port ?? status.defaults.port),
 				network: status.network ?? status.defaults.network
 			};
-		} catch (e) {
-			loadError = messageOf(e);
-		} finally {
-			loading = false;
 		}
+		filledFrom = stored;
 	}
 
 	async function act(change: () => Promise<void>) {

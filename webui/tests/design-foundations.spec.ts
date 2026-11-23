@@ -56,7 +56,7 @@ test.describe('Confirmations and toasts', () => {
   }) => {
     const shown = browserDialogs(page);
     const writes = await fakeBackups(page);
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     const deleteButton = page.getByRole('button', { name: `Delete ${OTHER.filename}` });
     await deleteButton.click();
 
@@ -104,7 +104,7 @@ test.describe('Confirmations and toasts', () => {
     authenticatedPage: page,
   }) => {
     const writes = await fakeBackups(page);
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     await page.getByRole('button', { name: `Delete ${OTHER.filename}` }).click();
     const dialog = page.getByRole('dialog', { name: `Delete backup ${OTHER.filename}?` });
     await expect(dialog).toBeVisible();
@@ -117,7 +117,7 @@ test.describe('Confirmations and toasts', () => {
 
   test('the confirmation and the toast are in Russian', async ({ authenticatedPage: page }) => {
     await fakeBackups(page);
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
     await page.reload();
     await page.getByRole('button', { name: `Удалить ${OTHER.filename}`, exact: true }).click();
@@ -129,7 +129,7 @@ test.describe('Confirmations and toasts', () => {
 
     // The Scheduler's outcome too.
     await fakeScheduler(page);
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('switch', { name: `Запускать «${TASK.name}» по расписанию` }).press('Space');
     await expect(toasts(page)).toContainText(`Задача «${TASK.name}» выключена`);
   });
@@ -139,7 +139,7 @@ test.describe("A row's actions", () => {
   test('stay on one line, and the rest are in a ⋯ menu that the keyboard works', async ({ authenticatedPage: page }) => {
     await fakeBackups(page);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     const row = page.locator('tr').filter({ has: page.getByText(BACKUP.filename, { exact: true }) });
     const remove = row.getByRole('button', { name: `Delete ${BACKUP.filename}` });
     const menuButton = actionsFor(row, BACKUP.filename);
@@ -186,7 +186,7 @@ test.describe("A row's actions", () => {
   }) => {
     await fakeBackups(page);
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     const row = page.locator('tr').filter({ has: page.getByText(BACKUP.filename, { exact: true }) });
     await expect(row).toBeVisible();
     // The head stays for screen readers only; a cell names its column.
@@ -265,7 +265,7 @@ test.describe('States and settings', () => {
   }) => {
     const reason = "[Errno 2] No such file or directory: '/data/scheduler.json'";
     await fakeScheduler(page, { failFirstLoad: reason });
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     const list = page.getByRole('region', { name: 'Scheduled tasks' });
     const failed = list.locator('[data-error-state]');
     await expect(failed).toContainText('Could not load the tasks');
@@ -288,7 +288,7 @@ test.describe('States and settings', () => {
   }) => {
     const writes = await fakeScheduler(page);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
 
     // A switch, not an action icon: its role, its name and its state.
     const toggle = page.getByRole('switch', { name: `Run "${TASK.name}" on its schedule` });
@@ -334,7 +334,7 @@ test.describe('States and settings', () => {
   }) => {
     await fakeScheduler(page);
     await page.setViewportSize({ width: 1024, height: 420 });
-    await page.goto('/system#scheduler');
+    await page.goto('/system/scheduler');
     await page.getByRole('button', { name: `Edit ${TASK.name}`, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit task' });
     await expect(dialog).toBeVisible();
@@ -374,7 +374,7 @@ test.describe('States and settings', () => {
           : route.abort(),
     );
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/system#backup');
+    await page.goto('/system/backup');
     const section = page.getByRole('region', { name: 'Off-device copy' });
 
     // The kind of target: a RadioGroup, which the arrow keys move.
@@ -433,7 +433,7 @@ test.describe('States and settings', () => {
   test("a card's action is a small secondary button and badges are in sentence case", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto('/system#security');
+    await page.goto('/system/security');
     const configure = page.getByRole('button', { name: 'Configure', exact: true });
     await expect(configure).toHaveClass(/btn-secondary/);
     await expect(configure).toHaveClass(/btn-sm/);

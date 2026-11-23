@@ -29,8 +29,8 @@ test.describe('Settings', () => {
   test('should have tabs navigation', async ({ authenticatedPage: page }) => {
     await page.goto('/system');
     await page.waitForTimeout(1000);
-    // Should have multiple tabs in sidebar
-    await expect(page.locator('button:has-text("General")')).toBeVisible();
+    // Should have multiple tabs in sidebar: links, each to its page (ADR-0470).
+    await expect(page.locator('main nav a:has-text("General")')).toBeVisible();
   });
 
   test('should display system content', async ({ authenticatedPage: page }) => {

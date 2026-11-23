@@ -1,6 +1,6 @@
 import type { Translation } from '../translate';
 
-// System > Power Management: src/routes/system/tabs/PowerTab.svelte. The host's answers to the
+// System > Power Management: src/routes/system/power/+page.svelte. The host's answers to the
 // actions are the server's messages and stay in English.
 
 export const en = {

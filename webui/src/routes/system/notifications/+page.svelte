@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { messageOf } from '$lib/errors';
-	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { Plus, RefreshCw } from 'lucide-svelte';
 	import { Alert, Button, Tabs, confirm, toast } from '$lib/components/ui';
@@ -24,6 +23,12 @@
 		type NotificationConfig,
 		type NotificationLog
 	} from '$lib/api/notifications';
+	import { followPage } from '$lib/pages/follow.svelte';
+	import { errorOf, valueOr } from '$lib/pages/read';
+	import type { NotificationsSnapshot } from '$lib/pages/system/notifications';
+	import type { PageProps } from './$types';
+
+	let { data }: PageProps = $props();
 
 	// Channels of five kinds (ADR-0326), each of which receives every alert. A test that the server
 	// delivered says so in a toast, one that it did not says why next to its channel, and the history lists every
@@ -37,7 +42,10 @@
 	// The channels whose on/off the server has not answered yet: each shows its new state, and takes
 	// no second change until the answer.
 	const toggling = new SvelteSet<string>();
-	let loading = $state(true);
+	// A reload of the lists (Refresh, after a change) is under way.
+	let loading = $state(false);
+	// The tab's data have come (its load, ADR-0469): until then, on the tab's first page, its skeleton.
+	let loaded = $state(false);
 	let loadError = $state('');
 	let activeView = $state<View>('channels');
 
@@ -51,7 +59,17 @@
 
 	const filter = new HistoryFilter();
 
-	onMount(() => loadData());
+	followPage(
+		() => data,
+		(snapshot) => apply(snapshot)
+	);
+
+	function apply(snapshot: NotificationsSnapshot) {
+		logs = valueOr(snapshot.logs, logs);
+		configs = valueOr(snapshot.configs, configs);
+		loadError = errorOf(snapshot.logs) || errorOf(snapshot.configs);
+		loaded = true;
+	}
 
 	async function loadData() {
 		loading = true;
@@ -212,7 +230,7 @@
 		{#if activeView === 'channels'}
 			<ChannelsView
 				{configs}
-				{loading}
+				loading={!loaded}
 				{results}
 				{testing}
 				{toggling}
@@ -223,7 +241,7 @@
 				ondismissresult={dismissResult}
 			/>
 		{:else}
-			<HistoryView {logs} {loading} {filter} />
+			<HistoryView {logs} loading={!loaded} {filter} />
 		{/if}
 	</div>
 </div>

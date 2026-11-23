@@ -51,45 +51,45 @@ async function refresh(page: Page) {
 
 test.describe('Disk Health', () => {
   test('should display health tab', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(1000);
     await expect(page.locator('h2:has-text("Disk Health")')).toBeVisible();
   });
 
   test('should display disk list', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(2000);
     // Should show disks or health section
     await expect(page.locator('h2:has-text("Disk Health")')).toBeVisible();
   });
 
   test('should show health section', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(2000);
     await expect(page.locator('text=/Health|Disk/i').first()).toBeVisible();
   });
 
   test('should display health content', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:has-text("Disk Health")')).toBeVisible();
   });
 
   test('should display power info if disks present', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:has-text("Disk Health")')).toBeVisible();
   });
 
   test('should have refresh button', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(1000);
     const refreshButton = page.locator('button:has(svg)').first();
     await expect(refreshButton).toBeVisible();
   });
 
   test('should show health header', async ({ authenticatedPage: page }) => {
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await page.waitForTimeout(2000);
     await expect(page.locator('h2:has-text("Disk Health")')).toBeVisible();
   });
@@ -104,7 +104,7 @@ test.describe('Disk Health', () => {
           ? route.fulfill({ status: 500, json: { detail: "Could not list the host's disks: lsblk failed" } })
           : route.fulfill({ json: { disks: [] } }),
     );
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     await expect(page.getByText("Could not list the host's disks: lsblk failed")).toBeVisible();
     await expect(page.getByText('No disks found')).toHaveCount(0);
 
@@ -128,7 +128,7 @@ test.describe('Disk Health', () => {
         await route.fallback();
       },
     );
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     const skeleton = page.locator('main .card-flush[aria-busy="true"]');
     await expect(skeleton).toHaveCount(1);
     await expect(skeleton.locator('> div')).toHaveCount(3);
@@ -149,7 +149,7 @@ test.describe('Disk Health', () => {
     authenticatedPage: page,
   }) => {
     const requested = await fakeHealthApi(page);
-    await page.goto('/system#health');
+    await page.goto('/system/health');
 
     // The NVMe disk and the disk without SMART data are listed too.
     await expect(page.getByRole('list', { name: 'Disks' }).getByRole('listitem')).toHaveCount(FAKE_SMART_DISKS.length);
@@ -209,7 +209,7 @@ test.describe('Disk Health', () => {
   // storage.disk-spindown: reading SMART data does not wake a sleeping disk (ADR-0378).
   test('a disk that sleeps is listed as asleep, without SMART data', async ({ authenticatedPage: page }) => {
     await fakeHealthApi(page, { disks: () => ({ json: { disks: [...FAKE_SMART_DISKS, SLEEPING_DISK] } }) });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
     // One badge that reads alone.
     await expect(disk(page, '/dev/e2e-sdd').locator('.badge')).toHaveText('Asleep');
     await disk(page, '/dev/e2e-sdd').getByRole('button', { name: 'SMART data of /dev/e2e-sdd' }).click();
@@ -228,7 +228,7 @@ test.describe('Disk Health', () => {
   }) => {
     let predictions = predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2);
     await fakeHealthApi(page, { predictions: () => predictions });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
 
     const failing = disk(page, '/dev/e2e-sda');
     await expect(replaceSoonMark(failing)).toBeVisible();
@@ -272,7 +272,7 @@ test.describe('Disk Health', () => {
           { ...REPLACE_SOON, serial: 'E2E-OLD-1', device: '/dev/e2e-sdb' },
         ),
     });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
 
     await expect(replaceSoonMark(disk(page, '/dev/e2e-sda'))).toBeVisible();
     await expect(replaceSoonMark(page)).toHaveCount(1);
@@ -293,7 +293,7 @@ test.describe('Disk Health', () => {
       disks: () => ({ json: { disks } }),
       predictions: () => predictionsAnswer(REPLACE_SOON, usb),
     });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
 
     await expect(unmatchedAlert(page).getByRole('listitem')).toHaveText([
       '/dev/e2e-sdb (serial E2E-USB-1): Reallocated_Sector_Ct: 3 (was 0); Reallocated_Sector_Ct increasing rapidly',
@@ -323,7 +323,7 @@ test.describe('Disk Health', () => {
     const detail = "Could not list the host's disks: lsblk failed: lsblk: failed to access sysfs directory: /sys/dev/block";
     let predictions: FakeAnswer = { status: 500, json: { detail } };
     await fakeHealthApi(page, { predictions: () => predictions });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
 
     await expect(page.getByText('Could not load the failure predictions')).toBeVisible();
     await expect(page.getByText(detail)).toBeVisible();
@@ -342,7 +342,7 @@ test.describe('Disk Health', () => {
   test('in Russian: the disks, a disk to replace soon and their SMART data', async ({ authenticatedPage: page }) => {
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     await fakeHealthApi(page, { predictions: () => predictionsAnswer(REPLACE_SOON, HEALTHY_HDD_2) });
-    await page.goto('/system#health');
+    await page.goto('/system/health');
 
     await expect(page.getByRole('heading', { name: 'Состояние дисков' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Обновить состояние дисков' })).toBeVisible();

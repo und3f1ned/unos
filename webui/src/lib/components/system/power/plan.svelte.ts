@@ -1,5 +1,5 @@
-import { messageOf } from '$lib/errors';
 import { getPowerConfig, getPowerSchedule, type PowerConfig, type PowerSchedule } from '$lib/api/power';
+import { settle, type Settled } from '$lib/pages/read';
 import { timeFieldValue } from '$lib/time';
 
 /** The form of the stored settings. */
@@ -17,7 +17,8 @@ function formOf(settings: PowerConfig) {
 /**
  * The scheduled shutdown, the wake by the RTC and the idle shutdown of the power settings
  * (ADR-0407): their times are on the host's clock, and the server acts on them. The settings, their
- * form and the plan that the server made of them; the page creates it and loads it.
+ * form and the plan that the server made of them; the page creates it and gives it what its load
+ * read (applyConfig, applySchedule).
  */
 export class PowerPlan {
 	config = $state<PowerConfig | null>(null);
@@ -62,21 +63,25 @@ export class PowerPlan {
 	}
 
 	async loadConfig() {
-		try {
-			this.config = await getPowerConfig();
-			this.fillForm(this.config);
-			this.configError = '';
-		} catch (e) {
-			this.configError = messageOf(e);
-		}
+		this.applyConfig(await settle(getPowerConfig()));
 	}
 
 	async loadSchedule() {
-		try {
-			this.schedule = await getPowerSchedule();
-			this.scheduleError = '';
-		} catch (e) {
-			this.scheduleError = messageOf(e);
+		this.applySchedule(await settle(getPowerSchedule()));
+	}
+
+	/** The stored settings, into the form too unless it holds changes not saved yet. */
+	applyConfig(read: Settled<PowerConfig>) {
+		if (read.ok) {
+			const edited = this.changed;
+			this.config = read.value;
+			if (!edited) this.fillForm(read.value);
 		}
+		this.configError = read.ok ? '' : read.error;
+	}
+
+	applySchedule(read: Settled<PowerSchedule>) {
+		if (read.ok) this.schedule = read.value;
+		this.scheduleError = read.ok ? '' : read.error;
 	}
 }
