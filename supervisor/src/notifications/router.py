@@ -14,7 +14,7 @@ import uuid
 import httpx
 from collections.abc import Callable, Iterable
 from typing import Annotated
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -85,12 +85,119 @@ _HEADER_VALUE = re.compile(r"(?:[^\x00\s]+(?:[ \t]+[^\x00\s]+)*)?")
 _SHORTEST_SECRET = 8
 
 # The test notification, and the answers of the API that the web UI shows
-# (webui/tests/notifications-fakes.ts answers with the same texts).
+# (webui/tests/notifications-fakes.ts answers with the same texts, from a host named nas).
 TEST_TITLE = "Test Notification"
-TEST_MESSAGE = "This is a test notification from your UNOS NAS system."
+TEST_MESSAGE = "This is a test notification from UNOS on {host}."
+# The test notification before UNOS read the host's name (ADR-0476).
+TEST_MESSAGE_WITHOUT_HOST = "This is a test notification from UNOS."
 SEND_FAILED = "Failed to send notification: {error}"
 NOT_FOUND = "Config not found: {id}"
 SAVE_FAILED = "Could not save the notification channels: {error}"
+
+# Every message names the NAS that sends it by the host's name (ADR-0476): what `hostname` prints on
+# the host, through src/host.py as GET /system/info reads it, never the container's name. It is read
+# when a message is built, so that a new name shows in the next one; the messages built within
+# HOST_NAME_REUSE seconds of a read's start (a test's text and its footer, the channels of an alert)
+# share it. One read runs at a time, in a daemon thread of its own: on a failing system disk
+# (ADR-0475) hostname can hang past its timeout, and a read that hangs then holds no worker of an
+# executor (the alerts' e-mail loop waits for those at its end) and no queue of reads. A message
+# waits for the read until HOST_NAME_WAIT seconds after the read started; when it failed, or has not
+# ended by then, the message names the host by the last name read, kept in RAM, and by UNOS alone
+# before any. After a read that failed, no new one starts for HOST_NAME_RETRY seconds, so that the
+# next messages do not wait for the host again.
+# Seconds that run_on_host gives nsenter and hostname.
+HOST_NAME_TIMEOUT = 5
+HOST_NAME_WAIT = 6
+HOST_NAME_REUSE = 1
+HOST_NAME_RETRY = 60
+
+
+@dataclass(frozen=True)
+class _HostNameRead:
+    """A read of the host's name: its result, and when it started (time.monotonic)."""
+
+    result: Future[str]
+    started: float
+
+
+_HOST_NAME_LOCK = threading.Lock()
+_host_name_read: _HostNameRead | None = None
+# The last name read; None before the first read that worked.
+_known_host_name: str | None = None
+# Whether a read that failed was logged since the last read that worked.
+_host_name_failure_logged = False
+
+
+def _read_host_name() -> str:
+    """The host's name, as `hostname` prints it on the host (blocking); raises why it cannot be read."""
+    result = host.run_on_host(["hostname"], timeout=HOST_NAME_TIMEOUT, errors="replace")
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"hostname exited with status {result.returncode}")
+    name = result.stdout.strip()
+    if not name:
+        raise RuntimeError("hostname printed no name")
+    return name
+
+
+def _read_in_a_thread(result: Future[str]) -> None:
+    """Read the host's name into ``result``, and keep a name read as the last one."""
+    global _known_host_name, _host_name_failure_logged
+    try:
+        name = _read_host_name()
+    except Exception as error:  # handed to the messages that wait for it
+        result.set_exception(error)
+        return
+    with _HOST_NAME_LOCK:
+        _known_host_name, _host_name_failure_logged = name, False
+    result.set_result(name)
+
+
+def _start_host_name_read() -> _HostNameRead:
+    """The read of the host's name for a message: the one that runs, or that ended less than
+    HOST_NAME_REUSE (a name) or HOST_NAME_RETRY (a failure) seconds after its start; else a new one."""
+    global _host_name_read
+    with _HOST_NAME_LOCK:
+        last = _host_name_read
+        now = time.monotonic()
+        if last is not None and (not last.result.done() or now - last.started < (
+                HOST_NAME_RETRY if last.result.exception() is not None else HOST_NAME_REUSE)):
+            return last
+        result: Future[str] = Future()
+        result.set_running_or_notify_cancel()  # a message that stops waiting cannot cancel it
+        threading.Thread(target=_read_in_a_thread, args=(result,), name="unos-host-name", daemon=True).start()
+        _host_name_read = _HostNameRead(result, now)
+        return _host_name_read
+
+
+async def host_name() -> str | None:
+    """The host's name for a message being built (_start_host_name_read). After a read that failed or
+    has not ended HOST_NAME_WAIT seconds after its start, the last name read, and None before any;
+    such a failure is logged once until a read works again."""
+    global _host_name_failure_logged
+    try:
+        reading = _start_host_name_read()
+        wait = reading.started + HOST_NAME_WAIT - time.monotonic()
+        if wait > 0:
+            return await asyncio.wait_for(asyncio.wrap_future(reading.result), wait)
+        return reading.result.result(timeout=0)
+    except TimeoutError:
+        problem = f"hostname did not answer within {HOST_NAME_WAIT} s"
+    except Exception as error:
+        problem = _error_text(error)
+    if not _host_name_failure_logged:
+        _host_name_failure_logged = True
+        if _known_host_name is None:
+            logger.warning("Could not read the host's name, and none was read before: the notifications name "
+                           "UNOS alone: %s", problem)
+        else:
+            logger.warning("Could not read the host's name: the notifications name it %s, the name read last: %s",
+                           _known_host_name, problem)
+    return _known_host_name
+
+
+def _sender(name: str | None) -> str:
+    """How a message names the NAS that sends it: UNOS and the host's name, or UNOS alone."""
+    return f"UNOS · {name}" if name else "UNOS"
 
 # smtplib blocks for the whole SMTP conversation, so it runs on a small private
 # pool: a slow or unreachable mail server must neither freeze the event loop
@@ -520,10 +627,11 @@ def _mail_domain(address: str) -> str:
 async def send_email(config: EmailConfig, event: NotificationEvent) -> tuple[bool, str | None]:
     """Send email notification; the SMTP conversation runs off the event loop."""
     try:
+        name = await host_name()
         msg = MIMEMultipart()
         msg["From"] = config.from_address
         msg["To"] = ", ".join(config.to_addresses)
-        msg["Subject"] = f"[UNOS] {event.title}"
+        msg["Subject"] = f"[{name or 'UNOS'}] {event.title}"
         # RFC 5322 requires a Date, and providers junk or refuse a message
         # without a Message-ID; not every relay adds them.
         msg["Date"] = email.utils.formatdate(localtime=True)
@@ -538,7 +646,7 @@ Type: {event.type.value}
 Time: {_event_time(event)}
 
 --
-UNOS NAS Notification System
+{_sender(name)}
 """
         msg.attach(MIMEText(body, "plain"))
 
@@ -564,7 +672,8 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
     # as in a pool named e2e_tank, makes it refuse the message (ADR-0326).
     title = html.escape(event.title, quote=False)
     text = html.escape(event.message, quote=False)
-    message = f"{emoji} <b>{title}</b>\n\n{text}\n\n<i>UNOS NAS</i>"
+    sender = html.escape(_sender(await host_name()), quote=False)
+    message = f"{emoji} <b>{title}</b>\n\n{text}\n\n<i>{sender}</i>"
 
     # The bot token is part of the URL.
     request = _json_request(
@@ -577,6 +686,7 @@ async def send_telegram(config: TelegramConfig, event: NotificationEvent) -> tup
 
 async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple[bool, str | None]:
     """Send generic webhook notification; from the host's network when the container connects nowhere."""
+    name = await host_name()
     try:
         # Build the body
         if config.body_template:
@@ -584,16 +694,18 @@ async def send_webhook(config: WebhookConfig, event: NotificationEvent) -> tuple
                 title=event.title,
                 message=event.message,
                 type=event.type.value,
-                timestamp=_event_time(event)
+                timestamp=_event_time(event),
+                host=name or "UNOS",
             )
         else:
-            # Default JSON body
+            # Default JSON body; host is null before UNOS read the host's name (ADR-0476).
             body = json.dumps({
                 "title": event.title,
                 "message": event.message,
                 "type": event.type.value,
                 "timestamp": _event_time(event),
-                "source": "UNOS NAS"
+                "source": _sender(name),
+                "host": name,
             })
     except Exception as e:
         return False, _error_text(e)
@@ -618,13 +730,14 @@ async def send_discord(config: DiscordConfig, event: NotificationEvent) -> tuple
         NotificationType.SUCCESS: 3066993,   # Green
     }
 
+    sender = _sender(await host_name())
     payload = {
-        "username": config.username,
+        "username": config.username or sender,
         "embeds": [{
             "title": event.title,
             "description": event.message,
             "color": colors.get(event.type, 3447003),
-            "footer": {"text": "UNOS NAS"},
+            "footer": {"text": sender},
             "timestamp": _event_time(event)
         }]
     }
@@ -647,14 +760,15 @@ async def send_slack(config: SlackConfig, event: NotificationEvent) -> tuple[boo
         NotificationType.SUCCESS: "#2eb886",
     }
 
+    sender = _sender(await host_name())
     payload = {
-        "username": config.username,
+        "username": config.username or sender,
         "icon_emoji": config.icon_emoji,
         "attachments": [{
             "color": colors.get(event.type, "#36a64f"),
             "title": event.title,
             "text": event.message,
-            "footer": "UNOS NAS",
+            "footer": sender,
             "ts": int((event.timestamp or utc_now()).timestamp())
         }]
     }
@@ -801,15 +915,19 @@ async def delete_config(config_id: ConfigId, request: Request, user: User = Depe
 )
 async def test_notification(config_id: ConfigId, _: dict = Depends(verify_token)):
     """Send a test notification through one channel, enabled or not, and wait for the channel's
-    answer; the notification history records it, sent or not."""
+    answer; the notification history records it, sent or not. Its text names the host.
+    \f
+    ADR-0476.
+    """
     config = next((c for c in load_configs() if c.id == config_id), None)
     if not config:
         raise HTTPException(404, NOT_FOUND.format(id=config_id))
 
+    name = await host_name()
     event = NotificationEvent(
         type=NotificationType.INFO,
         title=TEST_TITLE,
-        message=TEST_MESSAGE,
+        message=TEST_MESSAGE.format(host=name) if name else TEST_MESSAGE_WITHOUT_HOST,
         timestamp=utc_now(),
     )
     success, error = await send_through(config, event)

@@ -258,6 +258,13 @@ def _notification_files_in_tmp_path(monkeypatch, tmp_path):
     # The channels that the alerts keep in RAM (ADR-0475): none before the test reads or writes them.
     monkeypatch.setattr(notifications, "_known_channels", None)
     monkeypatch.setattr(notifications, "_fallback_logged", False)
+    # The host's name that the messages give (ADR-0476): none read yet, and no host to ask but one
+    # named nas-test, so that no test runs nsenter on this machine. The tests of the read itself
+    # give back the real one (test_notifications.READ_HOST_NAME) with a fake host.
+    monkeypatch.setattr(notifications, "_read_host_name", lambda: "nas-test")
+    monkeypatch.setattr(notifications, "_host_name_read", None)
+    monkeypatch.setattr(notifications, "_known_host_name", None)
+    monkeypatch.setattr(notifications, "_host_name_failure_logged", False)
 
 
 @pytest.fixture(autouse=True)
