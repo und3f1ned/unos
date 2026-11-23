@@ -16,6 +16,7 @@ import subprocess
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import psutil
@@ -494,14 +495,23 @@ def _build_state(
     return state
 
 
-def _collect_host_state() -> _HostState:
-    tree = _lsblk_tree()
+def _mounts_or_none() -> list[HostMount] | None:
     try:
-        mounts: list[HostMount] | None = host_mounts()
+        return host_mounts()
     except Exception as exc:  # lsblk mountpoints still cover the common cases
         logger.warning("Could not read the host mount table: %s", exc)
-        mounts = None
-    return _build_state(tree, mounts, _active_swaps(), _boot_root_spec())
+        return None
+
+
+def _collect_host_state() -> _HostState:
+    """lsblk, the mount table, the active swaps and the kernel's command line, read at once;
+    RuntimeError when lsblk fails."""
+    tree: list[dict[str, Any]]
+    mounts: list[HostMount] | None
+    swaps: set[str]
+    root_spec: tuple[str, str] | None
+    tree, mounts, swaps, root_spec = host.at_once(_lsblk_tree, _mounts_or_none, _active_swaps, _boot_root_spec)
+    return _build_state(tree, mounts, swaps, root_spec)
 
 
 def _matches_root_spec(node: dict[str, Any], spec: tuple[str, str]) -> bool:
@@ -835,13 +845,19 @@ def list_disks() -> list[DiskInfo]:
     """
     from . import spindown  # it reads disks' facts itself
 
-    state = _collect_host_state()
-    timeouts, unread = spindown.timeouts_or_problem()
-    no_hdparm = spindown.hdparm_missing()
+    # The host's state, the rule and hdparm's check at once; then every disk at once, each after its
+    # own power read.
+    state: _HostState
+    timeouts: dict[str, int]
+    unread: str | None
+    no_hdparm: bool
+    state, (timeouts, unread), no_hdparm = host.at_once(
+        _collect_host_state, spindown.timeouts_or_problem, spindown.hdparm_missing
+    )
     whole = _whole_disks(state.tree)
     listed = [(n.get("path") or f"/dev/{n['name']}", disk_id(n.get("serial"))) for n in whole]
-    result: list[DiskInfo] = []
-    for node in whole:
+
+    def disk_info(node: dict[str, Any]) -> DiskInfo:
         name = node["name"]
         path = node.get("path") or f"/dev/{name}"
         # Before anything that could read the disk: the power read leaves a sleeping disk alone.
@@ -861,35 +877,34 @@ def list_disks() -> list[DiskInfo]:
             for child in node.get("children") or []
             if child.get("type") == "part"
         ]
-        result.append(
-            DiskInfo(
-                name=name,
-                path=node.get("path") or f"/dev/{name}",
-                model=node.get("model"),
-                serial=node.get("serial"),
-                wwn=disk_id(node.get("wwn")),
-                size=_to_int(node.get("size")),
-                rotational=_to_bool(node.get("rota")),
-                mountpoint=facts.mountpoints[0] if facts.mountpoints else None,
-                type=node.get("type") or "disk",
-                fstype=node.get("fstype"),
-                label=node.get("label"),
-                pttype=node.get("pttype"),
-                partitions=partitions,
-                mountpoints=list(facts.mountpoints),
-                has_data=facts.has_data,
-                is_system=facts.is_system,
-                in_use=facts.in_use,
-                in_use_reason=facts.in_use_reason,
-                pool=facts.pool,
-                power_state=power,
-                spindown=timeouts.get(facts.serial or "", 0),
-                spindown_problem=(
-                    spindown.problem(facts, listed) or unread or (spindown.NO_HDPARM if no_hdparm else None)
-                ),
-            )
+        return DiskInfo(
+            name=name,
+            path=node.get("path") or f"/dev/{name}",
+            model=node.get("model"),
+            serial=node.get("serial"),
+            wwn=disk_id(node.get("wwn")),
+            size=_to_int(node.get("size")),
+            rotational=_to_bool(node.get("rota")),
+            mountpoint=facts.mountpoints[0] if facts.mountpoints else None,
+            type=node.get("type") or "disk",
+            fstype=node.get("fstype"),
+            label=node.get("label"),
+            pttype=node.get("pttype"),
+            partitions=partitions,
+            mountpoints=list(facts.mountpoints),
+            has_data=facts.has_data,
+            is_system=facts.is_system,
+            in_use=facts.in_use,
+            in_use_reason=facts.in_use_reason,
+            pool=facts.pool,
+            power_state=power,
+            spindown=timeouts.get(facts.serial or "", 0),
+            spindown_problem=(
+                spindown.problem(facts, listed) or unread or (spindown.NO_HDPARM if no_hdparm else None)
+            ),
         )
-    return result
+
+    return host.at_once(*(partial(disk_info, node) for node in whole))
 
 
 def addable_problem(fact: DeviceFacts) -> str | None:

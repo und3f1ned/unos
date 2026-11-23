@@ -760,9 +760,10 @@ def test_storage_shows_each_disk_s_power_state_without_waking_it(host):
     # hdparm -C on the host asks each SATA disk CHECK POWER MODE alone, which did not restart the dev
     # device's disk's standby timer: never smartctl -i, whose IDENTIFY does. The NVMe disk, which hdparm
     # cannot ask and which gets no idle timeout, is read with smartctl.
-    assert power_reads(host) == ["/dev/sda", "/dev/sdb", "/dev/sdc"]
-    assert [power_read(f"/dev/{name}") for name in ("sda", "sdb", "sdc")] == [
-        call for call in host.calls if "-C" in call]
+    # The disks are read at once: in no particular order.
+    assert sorted(power_reads(host)) == ["/dev/sda", "/dev/sdb", "/dev/sdc"]
+    assert [power_read(f"/dev/{name}") for name in ("sda", "sdb", "sdc")] == sorted(
+        call for call in host.calls if "-C" in call)
     assert host.container_calls == [IDENTIFY + ["/dev/nvme0n1"]]
 
 
@@ -797,9 +798,9 @@ def test_storage_names_the_power_conditions_of_an_epc_disk_without_identify(host
         found = listed(api)
     assert {name: d["power_state"] for name, d in found.items()} == {
         "sda": "active", "sdb": "standby", "sdc": "active", "nvme0n1": "active"}
-    assert power_reads(host) == ["/dev/sda", "/dev/sdb", "/dev/sdc"]
-    assert host.container_calls == [
-        *(EPC_READ + [f"/dev/{name}"] for name in ("sda", "sdb", "sdc")), IDENTIFY + ["/dev/nvme0n1"]]
+    assert sorted(power_reads(host)) == ["/dev/sda", "/dev/sdb", "/dev/sdc"]
+    assert sorted(host.container_calls) == sorted([
+        *(EPC_READ + [f"/dev/{name}"] for name in ("sda", "sdb", "sdc")), IDENTIFY + ["/dev/nvme0n1"]])
     assert host.identified == ["/dev/nvme0n1"]
     # The disk in standby_y sleeps: it stays asleep and is not probed for signatures.
     assert host.woken == [] and host.asleep == {"/dev/sdb"}
@@ -1387,7 +1388,7 @@ def test_a_disk_that_does_not_answer_keeps_no_more_than_one_hdparm_on_the_host(h
             assert {name: d["power_state"] for name, d in found.items()} == {
                 "sda": "active", "sdb": "unknown", "sdc": "active", "nvme0n1": "active"}
     assert disks.power_state("/dev/sdb") == "unknown"
-    assert power_reads(host) == ["/dev/sda", "/dev/sdb", "/dev/sdc", "/dev/sda", "/dev/sdc", "/dev/sda", "/dev/sdc"]
+    assert sorted(power_reads(host)) == ["/dev/sda"] * 3 + ["/dev/sdb"] + ["/dev/sdc"] * 3
     assert host.stuck_hdparm == {"/dev/sdb"}
     assert [call for call in host.container_calls if call[0] == "pgrep"] == [stuck_check("/dev/sdb")] * 3
     timed_out = [r.getMessage() for r in caplog.records if r.name == disks.__name__ and "hdparm" in r.getMessage()]

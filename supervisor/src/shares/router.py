@@ -11,12 +11,15 @@ PUT /shares/smb/{name} is gone (405): PATCH changes only the fields it sends.
 import asyncio
 import inspect
 import logging
+import os
+from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .. import host
 from ..audit.router import log_action
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.utils import verify_token
@@ -141,38 +144,32 @@ async def _audit(request: Request, actor: str | None, action: AuditAction, chang
     )
 
 
+def _volume_names(name: str, target: str) -> list[str]:
+    """The volumes of the pool ``name`` mounted at ``target``, sorted; none when they cannot be read
+    or the pool shows a subvolume other than its top level (list_volumes refuses it)."""
+    try:
+        return sorted(pools.mounted_pool_volumes(name, target)[0])
+    except Exception:
+        return []
+
+
 def _available_paths() -> list[SharePath]:
+    """The mounted pools and their volumes (pools.mounted_pools: no scan of the disks), each pool's
+    volumes read at once; none when the pools cannot be read."""
+    try:
+        mounted, managed = pools.mounted_pools()
+    except Exception:
+        return []
+    names = managed or set()  # unknown: no path counts as one of a managed pool
+    volumes = host.at_once(*(partial(_volume_names, name, target) for name, target in mounted))
     available = []
-    try:
-        managed = pools.managed_pool_names()
-    except Exception:
-        managed = set()  # unknown: no path counts as one of a managed pool
-
-    try:
-        pool_list = pools.list_pools()
-        for pool in pool_list:
-            if pool.mountpoint:
-                available.append(SharePath(
-                    path=pool.mountpoint,
-                    name=pool.name,
-                    type="pool",
-                    managed=pool.name in managed,
-                ))
-                # Also list volumes in this pool
-                try:
-                    volumes = pools.list_volumes(pool.name)
-                    for vol in volumes:
-                        available.append(SharePath(
-                            path=vol.path,
-                            name=f"{pool.name}/{vol.name}",
-                            type="volume",
-                            managed=pool.name in managed,
-                        ))
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
+    for (name, target), volume_names in zip(mounted, volumes):
+        available.append(SharePath(path=target, name=name, type="pool", managed=name in names))
+        available.extend(
+            SharePath(path=os.path.join(target, volume), name=f"{name}/{volume}", type="volume",
+                      managed=name in names)
+            for volume in volume_names
+        )
     return available
 
 

@@ -40,7 +40,7 @@ _CONTAINER_EXAMPLE: JsonDict = {
     "image": "jellyfin/jellyfin:12.4.20261026-211555",
     "status": "running",
     "state": "running",
-    "created": "2026-11-18T09:14:03.512345678Z",
+    "created": "2026-11-18T09:14:03Z",
     "ports": [{"host_port": 8096, "container_port": 8096, "protocol": "tcp"}],
     "labels": {"unos.app": "jellyfin", "unos.app.pool": "data", "unos.app.version": "12.4.20261026-211555"},
 }
@@ -54,8 +54,8 @@ class ContainerInfo(BaseModel):
     id: str = Field(description="Docker's short id of the container: the first 12 hex digits of its id.")
     name: str = Field(description="The container's name.")
     image: str = Field(
-        description="The first tag of the container's image, or the image's short id (sha256: and 12 hex digits) "
-                    "when it has no tag."
+        description="The image reference the container was created from, as docker ps shows it, while it still "
+                    "names the container's image; else the image's short id (sha256: and 12 hex digits)."
     )
     status: str = Field(
         description="Docker's status of the container: created, running, paused, restarting, removing, exited or dead."
@@ -63,11 +63,12 @@ class ContainerInfo(BaseModel):
     state: ContainerState = Field(
         description="The status as one of running, exited, paused, restarting, created and dead: created for removing."
     )
-    created: str = Field(description="When Docker created the container, as Docker writes it (UTC, with Z).")
+    created: str = Field(description="When Docker created the container, in UTC to the second (RFC 3339, with Z).")
     ports: list[PortMapping] = Field(
         default=[],
-        description="Its ports with the host's ports that publish them; the list of all containers also names "
-                    "the ports that no host port publishes, the answer about one container does not.",
+        description="Its ports, in the order of Docker's inspect (by the text port/protocol, such as 8096/tcp): one "
+                    "for each address of the host that publishes the port, and one without a host port for a port "
+                    "that no host port publishes.",
     )
     labels: dict[str, str] = Field(
         default={}, description="Its Docker labels; the containers of an app carry unos.app, the app's id, among them."

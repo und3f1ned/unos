@@ -128,8 +128,14 @@ class TestDockerModule:
 
     @pytest.fixture
     def mock_docker_client(self):
-        """Mock Docker client."""
+        """Mock Docker client: its list and its inspect know test_container (mock_container)."""
         mock_client = MagicMock()
+        mock_client.api.containers.return_value = [{
+            "Id": "abc123", "Names": ["/test_container"], "Image": "nginx:latest", "ImageID": "sha256:def456",
+            "Created": 1704067200, "State": "running", "Labels": {"app": "test"},
+            "Ports": [{"IP": "0.0.0.0", "PrivatePort": 80, "PublicPort": 8080, "Type": "tcp"}],
+        }]
+        mock_client.api.inspect_container.return_value = {"Id": "abc123"}
         return mock_client
 
     @pytest.fixture
@@ -154,8 +160,6 @@ class TestDockerModule:
 
     def test_list_containers(self, mock_docker_client, mock_container):
         """Test listing containers."""
-        mock_docker_client.containers.list.return_value = [mock_container]
-        
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             result = docker_module.list_containers()
         
@@ -163,10 +167,13 @@ class TestDockerModule:
         assert result[0].id == "abc123"
         assert result[0].name == "test_container"
         assert result[0].state == ContainerState.RUNNING
+        assert result[0].created == "2024-01-01T00:00:00Z"
+        assert result[0].ports == [PortMapping(host_port=8080, container_port=80)]
+        mock_docker_client.api.containers.assert_called_once_with(all=True)
 
     def test_list_containers_empty(self, mock_docker_client):
         """Test listing containers when none exist."""
-        mock_docker_client.containers.list.return_value = []
+        mock_docker_client.api.containers.return_value = []
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             result = docker_module.list_containers()
@@ -175,8 +182,6 @@ class TestDockerModule:
 
     def test_get_container_success(self, mock_docker_client, mock_container):
         """Test getting a specific container."""
-        mock_docker_client.containers.get.return_value = mock_container
-        
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             result = docker_module.get_container("abc123")
         
@@ -186,7 +191,7 @@ class TestDockerModule:
     def test_get_container_not_found(self, mock_docker_client):
         """Test getting non-existent container."""
         from docker.errors import NotFound
-        mock_docker_client.containers.get.side_effect = NotFound("not found")
+        mock_docker_client.api.inspect_container.side_effect = NotFound("not found")
         
         with patch("src.containers.docker.get_client", return_value=mock_docker_client):
             with pytest.raises(ValueError, match="not found"):
@@ -427,6 +432,7 @@ def _bind(source, target: str, *, rw: bool = True) -> dict:
 
 def _container(name: str, labels: dict, mounts: list[dict]) -> MagicMock:
     container = MagicMock(name=name)
+    container.id = f"{name}-id".ljust(64, "0")
     container.short_id = f"{name}-id"
     container.name = name
     container.status = "exited"
@@ -447,6 +453,27 @@ def _jellyfin(pool: Path) -> MagicMock:
             _bind(pool / "media", "/media", rw=False),
         ],
     )
+
+
+def answer_docker_lists(client: MagicMock, by_name: dict[str, MagicMock]) -> None:
+    """Let ``client.api`` answer Docker's list (GET /containers/json; its filter id is an ID or a
+    prefix of one, as Docker's index of IDs looks it up) and inspect for the containers of
+    ``by_name``, as their mocks describe them at the time of the request; the inspect finds a
+    container through ``client.containers.get``."""
+
+    def summary(c: MagicMock) -> dict:
+        return {"Id": c.id, "Names": [f"/{c.name}"], "Image": c.image.tags[0] if c.image.tags else c.image.id,
+                "ImageID": c.image.id, "Created": 1767323045, "State": c.status, "Labels": c.labels, "Ports": []}
+
+    def containers(all=False, filters=None, **kwargs):
+        wanted = (filters or {}).get("id")
+        return [
+            summary(c) for c in list(by_name.values())
+            if (all or c.status == "running") and (wanted is None or c.id.startswith(wanted))
+        ]
+
+    client.api.containers.side_effect = containers
+    client.api.inspect_container.side_effect = lambda name: {"Id": client.containers.get(name).id}
 
 
 @pytest.fixture
@@ -474,6 +501,7 @@ def docker_client(monkeypatch):
 
     client.containers.get.side_effect = get
     client.containers.list.side_effect = list_containers
+    answer_docker_lists(client, by_name)
     monkeypatch.setattr(docker_module, "get_client", lambda: client)
     client.add = lambda container: by_name.setdefault(container.name, container)
     return client
@@ -780,6 +808,8 @@ class TestADockerThatDoesNotAnswer:
         for request in (docker_client.containers, docker_client.images):
             for name in ("get", "list", "run", "create", "pull", "remove"):
                 getattr(request, name).side_effect = error
+        docker_client.api.containers.side_effect = error
+        docker_client.api.inspect_container.side_effect = error
 
         response = api.request(method, url, json=body)
 
@@ -813,7 +843,7 @@ class TestADockerThatDoesNotAnswer:
 
     def test_an_error_that_docker_answers_keeps_its_status(self, api, docker_client):
         # Docker answered: the request reached it, so it is no 503.
-        docker_client.containers.list.side_effect = APIError("500 Server Error", explanation="driver failed")
+        docker_client.api.containers.side_effect = APIError("500 Server Error", explanation="driver failed")
 
         response = api.get("/api/v1/containers")
 
@@ -907,7 +937,8 @@ class TestRequestsAnsweredWhileDockerBlocks:
         elif blocked == "remove":
             container.remove.side_effect = hold(None)
         else:
-            docker_client.containers.list.side_effect = hold([container])
+            listed = docker_client.api.containers.side_effect
+            docker_client.api.containers.side_effect = lambda *args, **kwargs: hold(None)() or listed(*args, **kwargs)
 
         answered: dict[str, int] = {}
         slow = threading.Thread(target=lambda: answered.setdefault("slow", live_api.request(method, url, 30)))
