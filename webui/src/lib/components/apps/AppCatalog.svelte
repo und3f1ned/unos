@@ -147,15 +147,18 @@
 		</div>
 
 		{#if filteredCatalog.length === 0}
-			<EmptyState icon={Package} title={$t('apps.noneFound')} description={$t('apps.noneFoundHint')}>
-				<Button
-					variant="secondary"
-					onclick={() => {
+			<EmptyState
+				icon={Package}
+				title={$t('apps.noneFound')}
+				description={$t('apps.noneFoundHint')}
+				action={{
+					label: $t('apps.clearFilters'),
+					onclick: () => {
 						search = '';
 						category = '';
-					}}>{$t('apps.clearFilters')}</Button
-				>
-			</EmptyState>
+					}
+				}}
+			/>
 		{:else}
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
 				{#each filteredCatalog as app (app.id)}

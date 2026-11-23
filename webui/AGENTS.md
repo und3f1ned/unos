@@ -59,10 +59,11 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 
 - Pages are built from `$lib/components/ui`: `Button`, `Card`, `CardAction`, `Badge`, `Input`,
   `Select`, `Checkbox`, `RadioGroup`, `Switch`, `SwitchRow`, `FieldGroup`, `Modal`, `Sheet`,
-  `ConfirmDialog`, `Alert`, `StatusSummary`, `HelpText`, `TechDetails`, `ProgressBar`, `EmptyState`,
-  `ErrorState`, `LoadState`, `StatusDot`, `Skeleton`, `Menu`, `ActionMenu`, `BulkBar`, `Tabs`,
-  `Segmented`, and `confirm()` and `toast` (ADR-0432). `Input` and `Select` take a
-  `label`, and dialogs, lists and hints work with the keyboard and screen readers (ADR-0361).
+  `ConfirmDialog`, `Alert`, `HelpText`, `TechDetails`, `ProgressBar`, `EmptyState`, `ErrorState`,
+  `LoadState`, `StatusDot`, `Skeleton`, `Menu`, `ActionMenu`, `BulkBar`, `Tabs`, `Segmented`, and
+  `confirm()` and `toast` (ADR-0432); a component that no page uses is removed (ADR-0466). `Input`
+  and `Select` take a `label`, and dialogs, lists and hints work with the keyboard and screen
+  readers (ADR-0361).
   A dialog asked from a dialog opens over it, which stays open: `Modal` keeps the stack of open
   dialogs, and Escape closes only the top one, whatever the markup order.
 - Colours are the tokens of the `@theme` blocks of `src/app.css` (Tailwind CSS 4: no
@@ -124,19 +125,21 @@ and proxies `/api/*` and `/ws/*` to the supervisor (`webui/Caddyfile`).
 ## Patterns (ADR-0432)
 
 - A load: `LoadState` with the page's skeleton, its `ErrorState` (a catalog title, the server's
-  message, Retry; never the empty state after a failure) and its `EmptyState` with its next step.
-  A technical message folds into `TechDetails` (`isTechnical` of `$lib/errors`); an `Alert` takes a
-  `details` snippet, help is one line of `HelpText`, and a page's several states are one
-  `StatusSummary`.
+  message, Retry; never the empty state after a failure) and its `EmptyState` with its next step
+  as its `action`, the one control it takes (ADR-0466). A technical message folds into `TechDetails`
+  (`isTechnical` of `$lib/errors`); an `Alert` takes a `details` snippet, and help is one line of
+  `HelpText`. The NAS's problems are the health banner's (`ProblemsBanner`, ADR-0332); a page's own
+  state is said on its object.
 - A destructive action asks with `await confirm({ title, message, consequences, confirmLabel })`:
   the title is the question, the button a verb and its object. What an action did, or why it failed,
   is a `toast` (`toast.success`, `toast.error(message, { title })`); an outcome to read before going
   on stays on the page, by its object. The specs answer a confirmation with `tests/ui.ts`.
 - One filled primary button per view, in the page header. A card's header action is a `CardAction`
-  (a link with an arrow, or a small secondary button), its badges Card's `status`. A row shows at
-  most edit and delete as icons, in a `table-actions` cell that never wraps, and the rest in an
-  `ActionMenu`; a table that must read on a phone takes `table-stack` and a `data-label` per cell.
-  A selection's actions are a `BulkBar`. A disabled button says why (`disabledReason`).
+  (with `href` a link to where its things are managed, the arrow its icon and not in the text; else
+  a small secondary button), its badges Card's `status`. A row shows at most edit and delete as
+  icons, in a `table-actions` cell that never wraps, and the rest in an `ActionMenu`; a table that
+  must read on a phone takes `table-stack` and a `data-label` per cell. A selection's actions are a
+  `BulkBar`. A disabled button says why (`disabledReason`).
 - A number field has its unit (`suffix`), bounds (`min`, `max`) and a width, and no browser's spin
   buttons (`app.css`); a count to keep steps with Input's `steppers` (ADR-0460); related fields are a
   `FieldGroup`; an on/off setting is a `Switch` or a `SwitchRow`, an item to select a `Checkbox`,

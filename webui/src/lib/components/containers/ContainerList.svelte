@@ -190,16 +190,13 @@
 {/snippet}
 
 {#if containers.length === 0}
+	<!-- Create container is the page header's (ADR-0431): the next step only clears a filter. -->
 	<EmptyState
 		icon={ContainerIcon}
 		title={filtered ? $t('containers.empty.filteredTitle') : $t('containers.empty.title')}
 		description={filtered ? $t('containers.empty.filtered') : $t('containers.empty.none')}
-	>
-		<!-- Create container is the page header's (ADR-0431). -->
-		{#if filtered}
-			<Button variant="secondary" onclick={onclear}>{$t('containers.empty.clear')}</Button>
-		{/if}
-	</EmptyState>
+		action={filtered ? { label: $t('containers.empty.clear'), onclick: onclear } : null}
+	/>
 {:else if view === 'table'}
 	<!-- Table View: a flush card (ADR-0428) -->
 	<Card flush>

@@ -25,6 +25,7 @@ import {
   type FakeUser,
 } from './shares-fakes';
 import { fakeIscsiApi } from './iscsi-fakes';
+import { expectNextStep } from './ui';
 
 const POOL_ROOT_MESSAGE =
   'Share a folder inside the pool or a volume: the top level of a pool holds app data (apps/), volumes and snapshots';
@@ -716,6 +717,25 @@ test.describe('SMB shares page (fake data)', () => {
       path: '/shares/smb/downloads',
       body: { expected_version: 2, path: `${POOLS}/tank/downloads` },
     });
+  });
+
+  test('without a pool, the empty SMB and NFS lists lead to Storage and the header says why Add waits', async ({
+    authenticatedPage: page,
+  }) => {
+    await fakeSmbApi(page, { paths: [] });
+    await fakeIscsiApi(page);
+    await page.goto('/shares');
+
+    await expect(page.getByText('No SMB shares yet', { exact: true })).toBeVisible();
+    // The empty state's next step (EmptyState's action, ADR-0432); Add is the header's, and waits.
+    await expectNextStep(page, 'link', 'Go to Storage', '/storage');
+    await expect(page.getByRole('button', { name: 'Add SMB share' })).toBeDisabled();
+    await expect(page.getByText('Create a storage pool first', { exact: true })).toBeVisible();
+
+    await page.getByRole('tab', { name: 'NFS', exact: true }).click();
+    await expect(page.getByText('No NFS exports yet', { exact: true })).toBeVisible();
+    await expectNextStep(page, 'link', 'Go to Storage', '/storage');
+    await expect(page.getByRole('button', { name: 'Add NFS export' })).toBeDisabled();
   });
 
   test('the SMB, NFS and iSCSI tabs work as tabs, also with the keyboard', async ({ authenticatedPage: page }) => {

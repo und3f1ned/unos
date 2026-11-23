@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { expectNextStep } from './ui';
 
 test.describe('App Store', () => {
   test('should navigate to app store page', async ({ authenticatedPage: page }) => {
@@ -82,15 +83,31 @@ test.describe('App Store', () => {
     expect(await appCards.count()).toBeGreaterThan(0);
   });
 
-  test('should have search functionality', async ({ authenticatedPage: page }) => {
+  test('a search that finds no app says so, and its Clear filters shows the catalog again', async ({
+    authenticatedPage: page,
+  }) => {
     await page.goto('/apps');
-    
-    const searchInput = page.locator('input[placeholder*="Search" i]');
-    await expect(searchInput).toBeVisible();
-    
-    // Test search
-    await searchInput.fill('plex');
-    await page.waitForTimeout(500);
+    const cards = page.locator('main .card[role="button"]');
+    await expect(cards.first()).toBeVisible();
+    const all = await cards.count();
+
+    // A category and a search that no app matches.
+    const nav = page.getByRole('navigation', { name: 'Categories' });
+    const categories = nav.getByRole('button');
+    const allApps = nav.getByRole('button', { name: /^All apps/ });
+    await categories.nth(1).click();
+    await expect(categories.nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(allApps).toHaveAttribute('aria-pressed', 'false');
+    const searchInput = page.getByRole('textbox', { name: 'Search apps' });
+    await searchInput.fill('no-such-app-anywhere');
+    await expect(page.getByText('No apps found', { exact: true })).toBeVisible();
+    await expect(cards).toHaveCount(0);
+    // The empty state's next step (EmptyState's action, ADR-0432).
+    await (await expectNextStep(page, 'button', 'Clear filters')).click();
+    // Both are cleared.
+    await expect(searchInput).toHaveValue('');
+    await expect(allApps).toHaveAttribute('aria-pressed', 'true');
+    await expect(cards).toHaveCount(all);
   });
 
   test('should have category filter', async ({ authenticatedPage: page }) => {

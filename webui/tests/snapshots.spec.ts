@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { expectCardLink, expectNextStep } from './ui';
 
 test.describe('Snapshots', () => {
   test('should navigate to snapshots page', async ({ authenticatedPage: page }) => {
@@ -669,7 +670,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     // An empty state with what to do and where.
     await expect(page.getByText('No pool is mounted', { exact: true })).toBeVisible();
     await expect(page.getByText('Snapshots are taken of a mounted pool or volume.', { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Storage →' })).toHaveAttribute('href', '/storage');
+    await expectNextStep(page, 'link', 'Go to Storage', '/storage');
     await expect(page.getByRole('button', { name: 'Create snapshot' })).toBeDisabled();
     await expect(picker(page)).toHaveCount(0);
     expect(requests.filter((r) => r.path === '/')).toEqual([]);
@@ -686,7 +687,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
     // The list's card names its folder once, and links to the schedule of snapshots; the About card
     // is gone, its rules are where they apply.
     await expect(page.getByText(`Kept in ${DATA.path}/.snapshots`, { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Schedule snapshots →' })).toHaveAttribute('href', '/system#scheduler');
+    await expectCardLink(page, 'Schedule snapshots', '/system#scheduler');
     await expect(page.getByRole('heading', { name: 'About Snapshots' })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Create snapshot' }).click();
@@ -837,7 +838,7 @@ test.describe('Snapshots of pools and volumes (fake data)', () => {
 
     await expect(page.getByText('Нет смонтированных пулов', { exact: true })).toBeVisible();
     await expect(page.getByText('Снимки делаются со смонтированного пула или тома.', { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Хранилище →' })).toHaveAttribute('href', '/storage');
+    await expectNextStep(page, 'link', 'Перейти в «Хранилище»', '/storage');
     await expect(page.getByRole('button', { name: 'Создать снимок' })).toBeDisabled();
   });
 });

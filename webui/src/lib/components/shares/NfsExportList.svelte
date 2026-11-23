@@ -48,11 +48,12 @@
 	{:else if exports.length === 0}
 		<!-- Its next step is the header's Add NFS export, which it names; without a pool, Storage. -->
 		<Card>
-			<EmptyState icon={Network} title={$t('shares.nfs.empty')} description={$t('shares.nfs.emptyHint')}>
-				{#if noPool}
-					<a class="link" href="/storage">{$t('shares.toStorage')}</a>
-				{/if}
-			</EmptyState>
+			<EmptyState
+				icon={Network}
+				title={$t('shares.nfs.empty')}
+				description={$t('shares.nfs.emptyHint')}
+				action={noPool ? { label: $t('shares.toStorage'), href: '/storage' } : null}
+			/>
 		</Card>
 	{:else}
 		<ul class="space-y-4" aria-label={$t('shares.nfs.title')}>

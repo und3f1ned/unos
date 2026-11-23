@@ -1,5 +1,4 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
 	import { Inbox } from 'lucide-svelte';
 	import { t } from '$lib/i18n';
 	import Button from './Button.svelte';
@@ -13,12 +12,12 @@
 		/** A list inside a card, whose heading names it: less room, and a title that is no heading. */
 		compact?: boolean;
 		/**
-		 * The next step (ADR-0432): a button, or a link with `href`, such as "Create a group" where
-		 * the groups are made. Not a second copy of the page header's own action (ADR-0431).
+		 * The next step, its one control (ADR-0432, ADR-0466): a small secondary button, or a link
+		 * drawn as one with `href`, such as "Clear filters" or "Go to Storage". Not a second copy of
+		 * the page header's own action (ADR-0431).
 		 */
 		action?: { label: string; onclick?: () => void; href?: string; icon?: IconComponent } | null;
 		class?: string;
-		children?: Snippet;
 	};
 
 	let {
@@ -27,8 +26,7 @@
 		description = '',
 		compact = false,
 		action = null,
-		class: className = '',
-		children
+		class: className = ''
 	}: Props = $props();
 
 	const Icon = $derived(icon);
@@ -46,18 +44,15 @@
 	{#if description}
 		<p class="empty-state-description">{description}</p>
 	{/if}
-	{#if children || action}
-		<div class="mt-4 flex flex-wrap justify-center gap-2">
-			{#if action}
-				<Button
-					variant="secondary"
-					size="sm"
-					href={action.href ?? null}
-					icon={action.icon ?? null}
-					onclick={action.onclick}>{action.label}</Button
-				>
-			{/if}
-			{@render children?.()}
+	{#if action}
+		<div class="mt-4 flex justify-center">
+			<Button
+				variant="secondary"
+				size="sm"
+				href={action.href ?? null}
+				icon={action.icon ?? null}
+				onclick={action.onclick}>{action.label}</Button
+			>
 		</div>
 	{/if}
 </div>

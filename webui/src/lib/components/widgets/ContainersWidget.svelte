@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Container, ExternalLink } from 'lucide-svelte';
-	import { Badge, Card, EmptyState } from '$lib/components/ui';
+	import { Badge, Card, CardAction, EmptyState } from '$lib/components/ui';
 	import { t } from '$lib/i18n';
 
 	type Props = {
@@ -77,7 +77,7 @@
 				<Container class="w-5 h-5 text-content-secondary" aria-hidden="true" />
 				{$t('dashboard.containers.title')}
 			</h3>
-			<a href="/containers" class="link text-[13px]">{$t('dashboard.manage')}</a>
+			<CardAction href="/containers">{$t('dashboard.manage')}</CardAction>
 		</div>
 
 		<!-- The counts, which add up to the total: Other only when there is one. -->

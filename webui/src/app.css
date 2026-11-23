@@ -508,9 +508,10 @@
 		@apply inline-flex flex-wrap items-center gap-1.5;
 	}
 
-	/* A header action that leads to another place: a text link with an arrow, as tall as a badge. */
+	/* A header action that leads to another place: a text link with an arrow, as tall as a badge, on
+	   one line (the card's header wraps it below the title as a whole). */
 	.card-action-link {
-		@apply inline-flex items-center gap-1 min-h-8 text-[13px] font-medium text-content-link hover:underline;
+		@apply inline-flex items-center gap-1 min-h-8 text-[13px] font-medium text-content-link whitespace-nowrap hover:underline;
 	}
 
 	.card-title {
@@ -1537,23 +1538,6 @@
 
 	.bulk-bar[data-active] .bulk-bar-count {
 		@apply text-content font-medium;
-	}
-
-	/* A page's states in one bar that opens (StatusSummary): the worst tone's colour. */
-	.status-summary {
-		@apply rounded-lg border border-l-[3px] text-content;
-	}
-
-	.status-summary-head {
-		@apply flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2.5;
-	}
-
-	.status-summary-list {
-		@apply border-t border-border divide-y divide-border;
-	}
-
-	.status-summary-item {
-		@apply flex flex-wrap items-start gap-x-3 gap-y-1.5 px-3.5 py-2.5;
 	}
 
 	/* One line of help, and what it leaves out behind Details (HelpText). */

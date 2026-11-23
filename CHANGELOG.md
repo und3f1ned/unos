@@ -106,6 +106,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   but a GitHub-hosted runner, and the check one with pools.
 
 ### Changed
+- The web UI's card headers and empty states use the shared components (ADR-0466): the dashboard's
+  **Manage** (Storage pools, Containers) and **View all** (Recent activity) and Snapshots' **Schedule
+  snapshots** are header links with an arrow icon (`CardAction`); an empty list's next step is a
+  small secondary button: **Clear filters** on Containers and the App Store, **Go to Storage** on
+  the SMB, NFS and iSCSI tabs without a pool or a volume and on Snapshots without a mounted pool.
 - The CI workflow runs on GitHub again (ADR-0462, which supersedes ADR-0230): every push to `main`
   and every pull request against it runs its Unit Tests, Lint and Audit, Frontend Checks, Commit
   Messages and Secret Scan jobs; `make check` stays the gate before a change is done.

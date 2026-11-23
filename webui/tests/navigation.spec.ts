@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 // Links of the sidebar menu. The pages link to each other too (e.g. the
-// dashboard widgets' "Manage →" links to /storage and /containers, each widget's one link).
+// dashboard widgets' "Manage" links to /storage and /containers, each widget's one link).
 const sidebarLink = (page: Page, href: string) => page.locator(`aside nav a[href="${href}"]`);
 
 test.describe('Navigation', () => {

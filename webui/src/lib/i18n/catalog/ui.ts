@@ -30,10 +30,7 @@ export const en = {
 	'ui.input.atMost': 'At most {max}',
 	'ui.input.increase': 'Increase {label}',
 	'ui.input.decrease': 'Decrease {label}',
-	'ui.input.value': 'value',
-	'ui.status.issues': { one: '{n} thing needs attention', other: '{n} things need attention' },
-	'ui.status.show': 'Show',
-	'ui.status.hide': 'Hide'
+	'ui.input.value': 'value'
 };
 
 export const ru: Translation<typeof en> = {
@@ -64,12 +61,5 @@ export const ru: Translation<typeof en> = {
 	'ui.input.atMost': 'Не больше {max}',
 	'ui.input.increase': 'Увеличить: {label}',
 	'ui.input.decrease': 'Уменьшить: {label}',
-	'ui.input.value': 'значение',
-	'ui.status.issues': {
-		one: '{n} пункт требует внимания',
-		few: '{n} пункта требуют внимания',
-		many: '{n} пунктов требуют внимания'
-	},
-	'ui.status.show': 'Показать',
-	'ui.status.hide': 'Скрыть'
+	'ui.input.value': 'значение'
 };
