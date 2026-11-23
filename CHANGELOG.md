@@ -193,9 +193,11 @@ manager, encrypted backup uploads, health checks, CI checks).
   a check of a new login or a reboot of the device. A folder that is not the user's own with mode
   700, or a TMPDIR that is not a short, plain absolute path, makes every call connect on its own,
   as before.
-- On a screen 1536 pixels wide or more the dashboard shows **Storage pools**, **Containers** and
-  **Recent activity** three to a row, so that they fill one row of a wide screen (ADR-0483); a
-  1440-pixel laptop, a tablet and a phone keep their columns, and arranging works the same.
+- The dashboard's widgets take their columns from the width of their grid: from a browser window
+  of about 1200 pixels (a 1280-pixel laptop) **Storage pools**, **Containers** and **Recent
+  activity** are three to a row and the stats cards five, in a window of about 1100 pixels the
+  wide ones two (ADR-0483, ADR-0484); a tablet and a phone keep their columns, and arranging works
+  the same.
 - The reads that the pages wait for answer faster (ADR-0468): the container list asks Docker for its
   list of containers and its list of images (and its version, as every client does), instead of an
   inspect of every container and of its image (about 40 ms each on the dev device); a container's

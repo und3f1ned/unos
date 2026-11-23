@@ -15,16 +15,19 @@ export interface WidgetDef {
 }
 
 /**
- * The grid of the widgets and the columns a widget of each size takes in it (ADR-0395, ADR-0483),
- * for the page and its skeleton alike. Small cards are two to a row on a phone, three from `md`
- * and five from `xl`; wide ones fill the row below `xl`, are two to a row from it and three from
- * `2xl` (1536 px), where the grid's 15 columns take five small cards (3 each) or three wide ones
- * (the 5 of `xl`). A laptop's 1440 px keeps the two columns.
+ * The grid of the widgets and the columns a widget of each size takes in it (ADR-0395, ADR-0484),
+ * for the page and its skeleton alike. The columns follow the width of the grid, not of the window:
+ * the grid's wrapper is a container (WIDGET_CONTAINER) and the grid's classes are container queries.
+ * Below 480 px (a phone) the grid has 2 columns: small cards two to a row, wide ones the full width;
+ * from 480 px (a tablet) 6: small cards three to a row, wide ones the full width; from 640 px wide
+ * ones two to a row; from 900 px (a window of 1196 px beside the sidebar) 15: five small cards (3
+ * each) or three wide ones (5 each) to a row.
  */
-export const WIDGET_GRID = 'grid grid-cols-2 md:grid-cols-6 xl:grid-cols-10 2xl:grid-cols-15 gap-4';
+export const WIDGET_CONTAINER = '@container';
+export const WIDGET_GRID = 'grid grid-cols-2 @min-[480px]:grid-cols-6 @min-[900px]:grid-cols-15 gap-4';
 export const WIDGET_SPAN: Record<WidgetDef['size'], string> = {
-	small: 'col-span-1 md:col-span-2 2xl:col-span-3',
-	wide: 'col-span-2 md:col-span-6 xl:col-span-5'
+	small: 'col-span-1 @min-[480px]:col-span-2 @min-[900px]:col-span-3',
+	wide: 'col-span-2 @min-[480px]:col-span-6 @min-[640px]:col-span-3 @min-[900px]:col-span-5'
 };
 
 /** The widgets in their default order. */

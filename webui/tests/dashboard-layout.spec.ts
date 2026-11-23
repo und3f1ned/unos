@@ -87,7 +87,13 @@ test.describe('Dashboard layout', () => {
     await expectOrder(page, arranged);
     // A widget of the lower part moves up past the stats cards too.
     await customize(page).click();
-    await widget(page, 'recent-activity').locator('[data-drag-handle]').dragTo(widget(page, 'storage'));
+    // Dropped at the top of Storage pools, beside the handle in its row: the target's centre can be
+    // below the window's edge, and a scroll in the middle of a drag drops nothing.
+    await widget(page, 'recent-activity')
+      .locator('[data-drag-handle]')
+      .dragTo(widget(page, 'storage'), { targetPosition: { x: 40, y: 20 } });
+    // Saved before the reload, which would abort the request.
+    await expect(page.locator('[data-layout-status]')).toHaveText('Recent activity moved to position 6 of 8');
     await page.reload();
     await expectOrder(page, ['disk-io', 'cpu', 'memory', 'network', 'temperature', 'recent-activity', 'storage', 'containers']);
   });
@@ -261,12 +267,14 @@ test.describe('Dashboard layout', () => {
   });
 });
 
-// webui.dashboard-three-columns (ADR-0483): from 1536 px (2xl) the wide widgets are three to a row,
-// so that Storage pools, Containers and Recent activity fill one row of a wide screen; below it the
-// widgets keep the columns of ADR-0395.
+// webui.dashboard-three-columns (ADR-0484): the columns follow the width of the widgets' grid, not of
+// the window. From a grid of 900 px (a 1196 px window beside the sidebar, without a scroll bar) Storage pools, Containers
+// and Recent activity are three to a row and the stats cards five; from 640 px the wide ones are two
+// to a row; a tablet and a phone keep their columns.
 const SMALL = DEFAULT_ORDER.slice(0, 5);
 const WIDE = ['storage', 'containers', 'recent-activity'];
-const SCREEN_1920 = { width: 1920, height: 1080 };
+/** The owner's window: a 2000-pixel Retina screen, about 1250 CSS px wide. */
+const SCREEN_1280 = { width: 1280, height: 800 };
 
 /** The grid of the widgets: its box and the gap between its columns. */
 async function widgetGrid(page: Page) {
@@ -325,10 +333,19 @@ test.describe('Dashboard columns by the width of the screen', () => {
     await resetAdminLayout(page);
   });
 
-  // Step 1: at 1920 px the three cards of the owner's screenshot sit in one row.
-  for (const size of [SCREEN_1920, { width: 2560, height: 1440 }, { width: 1536, height: 864 }]) {
+  /** The width of the grid at this window: three columns from 900 px. */
+  async function expectGridWidth(page: Page, atLeast: number, below: number) {
+    const { width } = await widgetGrid(page);
+    expect(width).toBeGreaterThanOrEqual(atLeast);
+    expect(width).toBeLessThan(below);
+  }
+
+  // Step 1: from a grid of 900 px (the owner's window of about 1250 px and up) the three wide cards
+  // sit in one row, under the five stats cards.
+  for (const size of [{ width: 1196, height: 1600 }, SCREEN_1280, { width: 1440, height: 900 }, { width: 1920, height: 1080 }, { width: 2560, height: 1440 }]) {
     test(`at ${size.width} px the wide widgets are three to a row and the small ones five`, async ({ authenticatedPage: page }) => {
       await openAt(page, size);
+      await expectGridWidth(page, 900, 1441);
       await expectRow(page, WIDE, 3);
       await expectRow(page, SMALL, 5);
       await expectBelow(page, 'cpu', 'storage');
@@ -336,17 +353,29 @@ test.describe('Dashboard columns by the width of the screen', () => {
     });
   }
 
-  // Step 2: a laptop's 1440 px, and up to the breakpoint, keep the two columns of ADR-0395.
-  for (const size of [{ width: 1440, height: 900 }, { width: 1535, height: 864 }]) {
-    test(`at ${size.width} px the wide widgets stay two to a row`, async ({ authenticatedPage: page }) => {
+  // Step 2: a grid of 640 to 899 px (a window of about 1100 px) puts the wide widgets two to a row.
+  for (const size of [{ width: 1195, height: 1600 }, { width: 1100, height: 800 }, { width: 1024, height: 768 }]) {
+    test(`at ${size.width} px the wide widgets are two to a row`, async ({ authenticatedPage: page }) => {
       await openAt(page, size);
+      await expectGridWidth(page, 640, 900);
       await expectRow(page, ['storage', 'containers'], 2);
       await expectRow(page, ['recent-activity'], 2);
       await expectBelow(page, 'storage', 'recent-activity');
-      await expectRow(page, SMALL, 5);
+      await expectRow(page, ['cpu', 'memory', 'network'], 3);
+      await expectRow(page, ['disk-io', 'temperature'], 3);
       await expectNoSidewaysScroll(page);
     });
   }
+
+  // Step 2: a tablet keeps one wide widget to a row and three stats cards.
+  test('on a tablet the wide widgets keep the full width and the small cards three to a row', async ({ authenticatedPage: page }) => {
+    await openAt(page, { width: 768, height: 1024 });
+    for (const id of WIDE) await expectRow(page, [id], 1);
+    await expectBelow(page, 'storage', 'containers');
+    await expectRow(page, ['cpu', 'memory', 'network'], 3);
+    await expectRow(page, ['disk-io', 'temperature'], 3);
+    await expectNoSidewaysScroll(page);
+  });
 
   // Step 2: a phone keeps its one column of wide widgets and two small cards to a row (ADR-0302).
   test('on a phone the wide widgets keep the full width and the small cards two to a row', async ({ authenticatedPage: page }) => {
@@ -362,7 +391,8 @@ test.describe('Dashboard columns by the width of the screen', () => {
 
   // Step 3: the user's order and hidden widgets hold in three columns, and so does arranging.
   test("in three columns the widgets are arranged, and the user's order and hidden widgets keep their places", async ({ authenticatedPage: page }) => {
-    await page.setViewportSize(SCREEN_1920);
+    // Tall enough that the dragged widget and its target are both on the screen.
+    await page.setViewportSize({ ...SCREEN_1280, height: 1200 });
     await openArranging(page);
     await expectRow(page, WIDE, 3);
 
