@@ -55,7 +55,7 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs `main` cf3ae7f6 since the evening of 2026-11-22, deployed at the owner's word ("yes,
+  runs `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
   deploy"; SD MiB, its eMMC: sync 2.555, build-supervisor 0.457, build-webui 0.148, up 0.336, check
   0.000; check: OK). Before it f8a8ed58 of `mvp.batch-21` the same day (sync 6.023,
   build-supervisor 0.230, build-webui 0.148, up 0.328, check 0.016; check: OK), and 202403f9 of `mvp.batch-20` the same day, deployed at the owner's word
@@ -302,7 +302,7 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   since boot, its own wear estimate 0 to 10%. Nothing writes to it.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs `main` cf3ae7f6 since the evening of 2026-11-22, deployed at the owner's word ("yes,
+- Runs `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
   deploy", in translation). SD MiB: sync 2.664, build-supervisor 1586.949 (pip's layer rebuilt for
   Dependabot's pins), build-webui 18.734, up 6.215, check 0.543; total 1615.250. check: OK.
 - Before it, f8a8ed58 of the branch `mvp.batch-21` since 2026-11-22, deployed at the owner's word
@@ -804,7 +804,7 @@ Open owner actions:
   without a merge and its branch deleted. So six entries pass (d913a66e): `ci.python-type-check`,
   `ci.shellcheck`, `ci.wider-ruff-rules`, `ci.webui-eslint`, `ci.ledger-changes-checked`,
   `ci.secret-scan-of-history`.
-- At the owner's word ("yes, deploy") both boards were deployed with `main` cf3ae7f6 (W3: check
+- At the owner's word ("yes, deploy") both boards were deployed with `main` 0b7ba73e (W3: check
   OK, 1615 MiB on the SD card, pip's layer rebuilt; F3: check OK, 3.5 MiB); `main`'s later commits
   change no runtime file. After the F3's deploy, fstrim on its NVMe pool and a warm reboot showed
   no NVMe error, so `storage.nvme-trim-on-k1` passes.
@@ -814,8 +814,17 @@ Open owner actions:
   2026-11-23. `ci.samba-in-ci` (ADR-0463, pull request 111): its run 45071062266 installed Samba
   4.23.6 on Ubuntu 26.04, and the summary of `make test` (-rfEs) lists no skip or failure of
   tests/test_smbconf_testparm.py; merged as ef7f04e8, the entry passes.
-- `ci.btrfs-loop-device-tests` was cut off before its review and commit; its builder resumes in
-  its worktree.
+- `ci.btrfs-loop-device-tests` (ADR-0464, pull request 112): cut off before its review and
+  commit, its builder finished in its worktree on 2026-11-23. The workflow runs the real
+  supervisor as root on a GitHub-hosted runner with two loop devices as its disks; its first run
+  passed all 13 steps (a raid1 pool, a volume, a snapshot, a restore, a scrub of 128 MiB, forget,
+  the runner as found), merged as 454db1e3, so the entry passes.
+- 2026-11-23: at the owner's word the packages unos-supervisor and unos-webui are public on GHCR:
+  their 0.1.0 manifests answer without credentials, each for linux/amd64, linux/arm64 and
+  linux/riscv64. The W3's GET /api/v1/updates/progress names why it cannot install (0b7ba73e is
+  not a release, and the supervisor's image was built on the host), step 4 of
+  `system.in-app-updater`. The README is shorter and current, with badges that work while the
+  repository is private.
 - `process.prune-merged-branches`: all three steps seen (GitHub deleted pull request 109's branch
   two seconds after its merge by itself, mvp.batch-21, equal to main, is deleted, and only
   origin/main is merged on GitHub), but no test can name them, so it stays open. `ci.actions-pinned-by-sha` waits only for Dependabot's first github-actions
