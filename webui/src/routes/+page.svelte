@@ -30,6 +30,7 @@
 		setHidden,
 		step,
 		widgetDef,
+		WIDGET_CONTAINER,
 		WIDGET_GRID,
 		WIDGET_SPAN
 	} from '$lib/dashboard-layout';
@@ -279,22 +280,24 @@
 		<!-- The tab's first page, when its data take longer than a moment (ADR-0430): the widgets of the
          default layout as skeletons, in their places; the page's data replaces them all at once. A
          navigation keeps the page before until they are in. -->
-		<div class={WIDGET_GRID} aria-busy="true">
-			{#each skeleton as size, index (index)}
-				{#if size === 'wide'}
-					<div class="{WIDGET_SPAN.wide} card min-h-64" data-skeleton aria-hidden="true">
-						<div class="card-header">
-							<Skeleton size="base" class="w-40" />
-							<Skeleton class="w-16" />
+		<div class={WIDGET_CONTAINER}>
+			<div class={WIDGET_GRID} aria-busy="true">
+				{#each skeleton as size, index (index)}
+					{#if size === 'wide'}
+						<div class="{WIDGET_SPAN.wide} card min-h-64" data-skeleton aria-hidden="true">
+							<div class="card-header">
+								<Skeleton size="base" class="w-40" />
+								<Skeleton class="w-16" />
+							</div>
+							<Skeleton count={3} />
 						</div>
-						<Skeleton count={3} />
-					</div>
-				{:else}
-					<div class="{WIDGET_SPAN.small} flex flex-col">
-						<Skeleton shape="tile" class="flex-1" />
-					</div>
-				{/if}
-			{/each}
+					{:else}
+						<div class="{WIDGET_SPAN.small} flex flex-col">
+							<Skeleton shape="tile" class="flex-1" />
+						</div>
+					{/if}
+				{/each}
+			</div>
 		</div>
 	{:else}
 		<!-- The problems of the NAS, the disks to replace soon and the pools that are not healthy, in
@@ -331,44 +334,47 @@
 			/>
 		{/if}
 
-		<!-- The widgets: small cards five to a row on a wide screen, wide ones two to a row and three from
-         2xl (WIDGET_SPAN, ADR-0395, ADR-0483). While they are arranged each has a dashed outline and its
-         toolbar in room of its own at the top right, so that it covers nothing of the widget. -->
-		<div class={WIDGET_GRID} data-widget-grid aria-busy={waitingForStats ? 'true' : undefined}>
-			{#each shown as entry, index (entry.id)}
-				{@const def = widgetDef(entry.id)}
-				<div
-					data-widget={entry.id}
-					class="widget relative min-w-0 flex flex-col {WIDGET_SPAN[def?.size ?? 'small']}
+		<!-- The widgets, in columns by the width of their grid (WIDGET_SPAN, ADR-0395, ADR-0484): from
+         900 px small cards five to a row and wide ones three. While they are arranged each has a dashed
+         outline and its toolbar in room of its own at the top right, so that it covers nothing of the
+         widget. -->
+		<div class={WIDGET_CONTAINER}>
+			<div class={WIDGET_GRID} data-widget-grid aria-busy={waitingForStats ? 'true' : undefined}>
+				{#each shown as entry, index (entry.id)}
+					{@const def = widgetDef(entry.id)}
+					<div
+						data-widget={entry.id}
+						class="widget relative min-w-0 flex flex-col {WIDGET_SPAN[def?.size ?? 'small']}
             {arranging ? 'pt-10 rounded-card outline-dashed outline-1 outline-offset-[3px] outline-border-strong' : ''}
             {overId === entry.id && draggedId !== entry.id ? 'ring-2 ring-brand-ring' : ''}
             {draggedId === entry.id ? 'opacity-50' : ''}"
-					ondragover={(e) => onDragOver(e, entry.id)}
-					ondrop={(e) => onDrop(e, entry.id)}
-				>
-					{#if arranging}
-						<WidgetToolbar
-							name={nameOf(entry.id)}
-							first={index === 0}
-							last={index === shown.length - 1}
-							{saving}
-							ondragstart={(e) => onDragStart(e, entry.id)}
-							ondragend={onDragEnd}
-							onmove={(direction) => move(entry.id, direction)}
-							onhide={() => hide(entry.id)}
+						ondragover={(e) => onDragOver(e, entry.id)}
+						ondrop={(e) => onDrop(e, entry.id)}
+					>
+						{#if arranging}
+							<WidgetToolbar
+								name={nameOf(entry.id)}
+								first={index === 0}
+								last={index === shown.length - 1}
+								{saving}
+								ondragstart={(e) => onDragStart(e, entry.id)}
+								ondragend={onDragEnd}
+								onmove={(direction) => move(entry.id, direction)}
+								onhide={() => hide(entry.id)}
+							/>
+						{/if}
+						<DashboardWidget
+							id={entry.id}
+							{pools}
+							poolsFailed={poolsError !== ''}
+							{containers}
+							{containersPending}
+							{notificationLogs}
+							stats={currentStats}
 						/>
-					{/if}
-					<DashboardWidget
-						id={entry.id}
-						{pools}
-						poolsFailed={poolsError !== ''}
-						{containers}
-						{containersPending}
-						{notificationLogs}
-						stats={currentStats}
-					/>
-				</div>
-			{/each}
+					</div>
+				{/each}
+			</div>
 		</div>
 
 		{#if !isAdmin}

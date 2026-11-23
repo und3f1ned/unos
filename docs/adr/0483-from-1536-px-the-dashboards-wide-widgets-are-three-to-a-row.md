@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0484
 date: 2026-11-23
 area: webui
 decided-by: agent
@@ -8,6 +9,8 @@ decided-by: agent
 # ADR-0483: From 1536 px the dashboard's wide widgets are three to a row
 
 ## Context
+
+Superseded by ADR-0484: the columns follow the width of the widgets' grid, not of the window, and the wide widgets are three to a row from a grid of 900 px (a 1196 px window), two from 640 px.
 
 ADR-0395 made the dashboard's wide widgets (Storage pools, Containers, Recent activity) fill the
 row below `xl` and two to a row from it. On a screen about 2000 px wide the owner saw two cards in

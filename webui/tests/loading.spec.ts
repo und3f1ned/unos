@@ -364,13 +364,14 @@ test.describe('Loading without flicker on a phone', () => {
   });
 });
 
-// webui.dashboard-three-columns (ADR-0483): on a wide screen the dashboard's skeleton has the three
-// columns of its wide widgets, so that the data arriving put each card in the column of its skeleton.
+// webui.dashboard-three-columns (ADR-0484): in a window of 1280 px the dashboard's skeleton has the
+// three columns of its wide widgets, so that the data arriving put each card in the column of its
+// skeleton.
 test.describe('Loading without flicker on a wide screen', () => {
   test('the dashboard: the skeleton in three columns, each card in its place, and no layout shift', async ({
     authenticatedPage: page,
   }) => {
-    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.setViewportSize({ width: 1280, height: 800 });
     await page.addInitScript(SAMPLER);
     const release = await hold(page, '/api/v1/storage/pools');
     await page.goto('/');
