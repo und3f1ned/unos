@@ -8,6 +8,7 @@
   some-command | scripts/dev/api.py --redact     (a filter: text with the same redaction)
   echo '{"template_id": "x"}' | scripts/dev/api.py POST /apps/install -     (202: the install's job)
   scripts/dev/api.py --timeout 3660 GET /apps/install/jobs/<job id> --param wait=3600
+  scripts/dev/api.py --repeat 25 GET /containers --param all=true     (p50 and p95 of 25 reads)
 
 PATH is relative to /api/v1. The request runs on the device itself, against
 https://127.0.0.1/api/v1 (through Caddy, like a browser's): the device's web ports do not
@@ -31,6 +32,13 @@ answers at once with its job (ADR-0384), and GET /apps/install/jobs/<id> with th
 answers once the job has ended (succeeded with its result, or failed with its error) or the
 seconds have passed, so its --timeout must exceed the wait.
 
+--repeat N (a GET, N from 1 to 500) times the read on the device itself: the relay reads PATH once,
+then N times more with the same token, each timed from the request to the end of the answer's
+body, through Caddy and without SSH, and the output is "HTTP <statuses>" and the p50, p95, minimum
+and maximum of the N reads in ms (by the nearest rank), not the body; exit status 1 when a read,
+the first included, was not answered 2xx (architecture.fast-page-reads, ADR-0490). --timeout
+bounds each read.
+
 Output: "HTTP <status>", then the body (JSON pretty-printed) with secrets redacted: values of
 keys that name a password, token, secret, key, webhook URL or recovery codes; KEY=value text
 with such a KEY; the user part of URLs (user:password@, token@); JWTs; and the values of
@@ -49,11 +57,13 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import re
 import secrets
 import shlex
 import subprocess
 import sys
+import urllib.parse
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -211,8 +221,19 @@ args = (req["method"], req["path"], req.get("params"), req.get("body"), req.get(
 extra = {"data": raw, "content_type": req.get("content_type")}
 status, body = call(*args, token=token, **extra)
 if status == 401 and req.get("auth") and not fresh:
-    status, body = call(*args, token=login(), **extra)
-done(status=status, body=body)
+    token = login()
+    status, body = call(*args, token=token, **extra)
+if not req.get("repeat"):
+    done(status=status, body=body)
+# --repeat: the reads after the first, each timed on this device.
+import time
+times, statuses = [], set()
+for _ in range(req["repeat"]):
+    start = time.perf_counter()
+    again, _ = call(*args, token=token, **extra)
+    times.append((time.perf_counter() - start) * 1000)
+    statuses.add(again)
+done(status=status, body=body, times=times, statuses=sorted(statuses))
 '''
 
 
@@ -338,14 +359,15 @@ class DeviceApi:
         self.base_url = base_url
         self.token_cache = token_cache
 
-    def _relay(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _relay(self, payload: dict[str, Any], requests: int = 1) -> dict[str, Any]:
+        """REQUESTS: how many requests the relay makes, each within the timeout (--repeat)."""
         payload = {**payload, "base": self.base_url, "cache": self.token_cache, "timeout": self.timeout}
         try:
             result = subprocess.run(
                 [str(self.ssh), RELAY_COMMAND],
                 input=json.dumps(payload).encode(),
                 capture_output=True,
-                timeout=self.timeout + 60,
+                timeout=self.timeout * requests + 60,
             )
         except subprocess.TimeoutExpired as e:
             raise ApiError(f"no answer from the device within {e.timeout} s") from None
@@ -390,6 +412,21 @@ class DeviceApi:
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Answer:
         return self.request("GET", path, params=params)
+
+    def timed_get(
+        self, path: str, params: dict[str, Any] | None = None, repeat: int = 25
+    ) -> tuple[Answer, list[float], list[int]]:
+        """GET PATH once, then REPEAT times more on the device itself: the first answer, the ms of
+        each read after it and the statuses that all of them were answered, sorted (--repeat)."""
+        payload: dict[str, Any] = {"method": "GET", "path": api_path(path), "params": params or None,
+                                   "has_body": False, "body": None, "auth": True, "repeat": repeat}
+        password = self.settings.get("UNOS_DEV_ADMIN_PASSWORD", "")
+        if password:
+            payload["login"] = {"username": self.settings.get("UNOS_DEV_ADMIN_USER") or "admin", "password": password}
+        answer = self._relay(payload, requests=repeat + 2)  # a login after a 401 asks once more
+        times = [float(ms) for ms in answer.get("times", [])]
+        statuses = sorted({int(answer["status"]), *(int(status) for status in answer.get("statuses", []))})
+        return Answer(int(answer["status"]), str(answer["body"])), times, statuses
 
     def post(self, path: str, json: Any = None) -> Answer:  # json: the name httpx uses
         return self.request("POST", path, json_body=json)
@@ -443,6 +480,23 @@ def parse_params(items: list[str]) -> dict[str, list[str]]:
     return params
 
 
+def nearest_rank(values: list[float], share: float) -> float:
+    """The value below which SHARE of VALUES lie, by the nearest rank (p50: share 0.5)."""
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(share * len(ordered)) - 1)]
+
+
+def repeat_count(value: str) -> int:
+    """--repeat's value: a whole number of reads, 1 to 500."""
+    try:
+        count = int(value)
+    except ValueError:
+        count = 0
+    if not 1 <= count <= 500:
+        raise argparse.ArgumentTypeError(f"not a number of reads from 1 to 500: {value!r}")
+    return count
+
+
 def positive_seconds(value: str) -> int:
     """--timeout's value: a whole number of seconds, 1 or more."""
     try:
@@ -468,6 +522,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--redact", action="store_true", help="copy standard input to standard output, redacted")
     parser.add_argument("--timeout", type=positive_seconds, default=150, metavar="SECONDS",
                         help="how long to wait for the answer (default 150)")
+    parser.add_argument("--repeat", type=repeat_count, metavar="N",
+                        help="a GET: time N more reads on the device and print their p50 and p95")
     args = parser.parse_args(argv)
     try:
         if args.redact:
@@ -494,7 +550,18 @@ def main(argv: list[str] | None = None) -> int:
                 body = json.load(sys.stdin)
             except ValueError as e:
                 parser.error(f"standard input is not JSON: {e}")
+        if args.repeat is not None and (args.method != "GET" or args.no_login or body is not None):
+            parser.error("--repeat times only a GET with the login")
         api = DeviceApi(timeout=args.timeout)
+        if args.repeat is not None:
+            _, times, statuses = api.timed_get(args.path, params, repeat=args.repeat)
+            if not times:
+                raise ApiError("the relay timed no read")
+            print(f"HTTP {', '.join(str(status) for status in statuses)}")
+            query = redact_text("?" + urllib.parse.urlencode(params, doseq=True), api.secrets) if params else ""
+            print(f"GET {api_path(args.path)}{query}: {len(times)} reads, p50 {nearest_rank(times, 0.5):.0f} ms, "
+                  f"p95 {nearest_rank(times, 0.95):.0f} ms, min {min(times):.0f} ms, max {max(times):.0f} ms")
+            return 0 if all(200 <= status < 300 for status in statuses) else 1
         answer = api.request(args.method, args.path, json_body=body, params=params, auth=not args.no_login)
     except (ApiError, ValueError) as e:
         print(f"api.py: {e}", file=sys.stderr)
