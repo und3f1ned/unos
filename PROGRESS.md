@@ -825,6 +825,34 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-24: The btrfs CI, stats and network tests hold under load; a hung test ends its worker (testing.btrfs-ci-under-load, ADR-0490)
+
+- On the branch `testing.btrfs-ci-under-load` from origin/main 80fe1f51, at the lead's brief. The
+  flakes reproduced with five other builders on the workstation (load average 60 to 150 on 10
+  cores): `test_btrfs_ci.py` failed 29 of 33 looped runs and a `make check` beside them, and
+  `test_ws_stats.py` and `test_virtual_interfaces.py` failed 2 and 1 of 4 runs. Causes, all in the
+  tests and the CI script, none in `src`: the fake check ended before the fake supervisor had set
+  its TERM trap (it now waits for it, as the real check waits for GET /health); `btrfs-loop.sh`
+  kept each PID one command after starting its process, so a signal between the two left the
+  check or the supervisor running (its trap takes the PID from `$!` now); the stats test counted
+  the read of a busy process that had just ended; the network test read the wall clock across a
+  second boundary (`revert_in` 119). The `make check` that hung at 99% left no trace of its test:
+  `supervisor/pytest.ini` now ends a test after 900 s, printing its stack, and the run fails
+  naming it (ADR-0490).
+- A fresh-context review found, all fixed: the supervisor's PID had the same window as the
+  check's; the first hold of the script (a `sleep 2`) could be outrun under load (a loop that the
+  trap ends now); counting the read after it returned loosened the stats test (it now checks that
+  every full read is of a listed process or of one that ended); the xdist test needs
+  `importorskip`; the limit is checked per command, not per test. ADR 0490 may collide with other
+  branches' new ADRs: the lead renumbers on merge.
+- Proof under load (load average 100 to 160): 90 of 90 looped runs of the three files green, and
+  the three files green inside a `make check` beside them, which took 50 minutes and failed on
+  three other tests with fixed wall-clock margins (`test_containers.py`, `test_command_timeouts.py`,
+  `test_notifications.py`), each green alone: candidates for an entry of their own.
+- The pre-commit `make check-fast` under that load timed out the new guard test's inner pytest at
+  120 s (8 to 58 s in later runs): it runs one worker now and waits up to 600 s, as it checks
+  that the run ends, not how soon.
+
 ### 2026-11-24: The SD standby passes on the BPI-W3 and the BPI-F3 (system.sd-standby-boot, system.sd-standby-bpi-f3)
 
 - The last step of both entries, at the owner's hands: both cards pulled from the running boards, both
