@@ -3215,6 +3215,48 @@ or more, and rsync, dosfstools and sfdisk on the host.
   card's counter back; should the card come back, the error "An SD card holds
   a standby that is not set up" asks you to remove it, which wipes it.
 
+#### Critical apps
+
+Once the standby is set up, the ⋯ menu of an installed app on the **Apps** page
+offers **Critical on the SD standby…** (ADR-0498). Its dialog lists the app's
+folders under `{pool}/apps/<app>/` that the standby copies, with their sizes,
+and those it does not: its caches, which the app makes again, the copy of its
+database that an update keeps, and its folders on other pools, such as media.
+It shows the size of its images and the card's free space; a mark that would
+leave the card less than its reserve (10% of the card, at least 2 GiB) is
+refused. The sync interval is 1, 2, 4, 6, 12 or 24 hours (24: with the
+system's daily sync); after the first syncs the dialog shows what the interval
+writes to the card a week. An app is synced only while its pool's disks are
+awake, and a sync that finds nothing changed writes nothing.
+
+- When btrfs makes the app's pool read-only after an error, UNOS copies the
+  app once more when the pool still reads, and moves it to the card; when the pool is not mounted, or
+  lacks a disk its RAID profile cannot spare, for two checks in a row (5 to 10
+  minutes), it moves it too. The app's containers are created again on the
+  card's copy: its caches are in RAM there, and its folders on other pools
+  look empty to it. An alert and the banner name the apps and their copy's age.
+  A pool that you unmount on the Storage page moves nothing, and an app without
+  a copy stays stopped.
+- While an app runs from the card, it gets no sync, and its update, rollback,
+  uninstall and any change of its mark wait for its return. Uninstalling a
+  critical app removes its mark and its copy on the card.
+- **System → SD Standby** shows the card's space by part and the critical apps;
+  **Move the critical apps to the card** is a drill of the same (each app is
+  synced once more first), and **Return
+  to the pool, discarding the card's changes** (type the card's model) creates
+  the apps again on their pools once those are mounted and healthy: what the
+  apps changed on the card is lost.
+- To repair a pool, unmount or remove it on the Storage page: when critical
+  apps use it, the dialog offers to move them to the card first, and the
+  unmount goes on unless another app still uses the pool. Once the pool is
+  mounted again, the SD Standby tab offers to bring the apps back.
+- On the standby, only the critical apps are there, and the Apps page says so:
+  each runs from its pool when that pool is mounted and healthy, else from its
+  copy on the card, as last synced.
+- On the BPI-W3 and the BPI-F3, Docker's data is on the data pool: when that
+  pool fails, the whole NAS switches to the card (above), and the critical apps
+  start there from their copies.
+
 The standby is no backup: it sits in the same device and copies a mistake at
 the next sync. Keep the off-device copies. To boot the card by hand from any
 computer, see [UNOS Recovery](RECOVERY.md#boot-the-sd-standby-by-hand).

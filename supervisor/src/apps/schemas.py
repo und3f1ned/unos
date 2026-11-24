@@ -128,6 +128,21 @@ class VolumeMapping(BaseModel):
                            "the new version starts, which an app rollback puts back."
     )
 
+    # What the app makes again by itself (thumbnails, transcodes, downloaded models): the SD standby
+    # copies none of it, and an app that runs from the standby's card gets a tmpfs there (ADR-0498).
+    cache: bool = Field(
+        default=False,
+        description="Whether it is a cache of the app's own folder on the pool ({pool}/apps/<app>/...), which the app "
+                    "makes again by itself: the SD standby does not copy it, and on the card it is a tmpfs of 256 MiB."
+    )
+
+    @model_validator(mode="after")
+    def _a_cache_is_a_folder_of_the_apps_own(self) -> "VolumeMapping":
+        if self.cache and (self.is_file or self.generated_secret or self.readonly
+                           or not self.host.startswith(f"{APPS_DATA_PATH}/")):
+            raise ValueError(f"{self.container}: a cache is a writable folder under {APPS_DATA_PATH}/<app>/")
+        return self
+
     @model_validator(mode="after")
     def _content_only_for_a_file_on_the_pool(self) -> "VolumeMapping":
         if self.content is not None and (not self.is_file or self.generated_secret or not is_pool_path(self.host)):
@@ -644,6 +659,16 @@ class InstalledApp(BaseModel):
         default=None,
         description="The earlier version that the app's last app update kept, until an app rollback or its "
                           "removal; null: none."
+    )
+    # ADR-0498.
+    critical: bool = Field(
+        default=False,
+        description="Whether it is a critical app of the SD standby: kept on its card and moved there when its pool "
+                    "fails."
+    )
+    on_standby_card: bool = Field(
+        default=False,
+        description="Whether its containers run from the SD standby's copy of its data, not from its pool."
     )
 
 

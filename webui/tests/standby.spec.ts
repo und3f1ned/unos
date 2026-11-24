@@ -30,7 +30,7 @@ const FREE = {
   available: true, unavailable_reason: null, conditions: W3_CONDITIONS, profile: 'BPI-W3', armed: false, leftover: false, card: CARD,
   card_present: null, in_boot_path: null, root: null, boot_reason: null, generation: null, marked_failed: false,
   drill_pending: false, syncing: false, sync_time: '04:00', next_sync_at: null, last_sync: null,
-  last_complete_at: null, standby_ran: null, switch_ready: false, problems: [],
+  last_complete_at: null, standby_ran: null, switch_ready: false, problems: [], apps: [], space: null,
 };
 const ARMED = {
   ...FREE, armed: true, card_present: true, in_boot_path: true, root: 'emmc', boot_reason: 'emmc', generation: 1,
@@ -44,6 +44,21 @@ const ON_CARD = {
   problems: [{ kind: 'running_on_standby', severity: 'error' }],
 };
 const RAN = { ...ARMED, standby_ran: ON_CARD.standby_ran, switch_ready: true, problems: [{ kind: 'standby_has_changes', severity: 'warning' }] };
+
+// The critical apps (ADR-0498): Jellyfin on the test pool usb, synced every 6 hours, and the card by part.
+const JELLYFIN = {
+  app: 'jellyfin', pool: 'usb', interval_hours: 6, generation: 4, synced_at: '2026-11-24T06:00:00Z', mib_per_sync: 2.5,
+  data_bytes: 310 * 1024 * 1024, images_bytes: 290 * 1024 * 1024, error: null, moved: null, return_blocked: null,
+};
+const SPACE = {
+  size: 31000000000, free: 20000000000, reserve: 3100000000, system: 2000000000, unos_images: 700000000,
+  unos_volumes: 3000000, loaded_images: 0,
+};
+const WITH_APPS = { ...ARMED, apps: [JELLYFIN], space: SPACE };
+const MOVED = {
+  ...WITH_APPS, problems: [{ kind: 'apps_on_standby', severity: 'error' }],
+  apps: [{ ...JELLYFIN, moved: { at: '2026-11-24T10:00:00Z', reason: 'drill', pool: 'usb', has_copy: true } }],
+};
 
 type Sent = { method: string; path: string; body: unknown };
 
@@ -61,6 +76,11 @@ async function fakeStandby(page: Page, initial: object, after: Record<string, ob
     const key = `${request.method()} ${path}`;
     if (after[key]) state = after[key];
     if (key === 'PUT /settings') return route.fulfill({ status: 204 });
+    if (key === 'POST /apps/move' || key === 'POST /apps/return') {
+      // The critical apps' moves (ADR-0498): the server's AppsAction.
+      return route.fulfill({ json: { dry_run: false, message: 'done',
+        apps: [{ app: 'jellyfin', has_copy: true, age: key === 'POST /apps/move' ? '6 h' : null, error: null }] } });
+    }
     const message = key === 'POST /drill' ? 'Drill mark: the host reboots now' : 'done';
     const sync = key === 'POST /sync' ? { ...WROTE, trigger: 'manual', result: 'unchanged', mib: null, parts: [] } : null;
     return route.fulfill({ json: { dry_run: false, plan: [], message, sync } });
@@ -236,6 +256,46 @@ test.describe('System > Standby', () => {
     await expect(page.getByText('The sync failed')).toBeVisible();
   });
 
+  test('critical apps: the card by part, a move to the card and the return that discards its changes', async ({
+    authenticatedPage: page,
+  }) => {
+    const sent = await fakeStandby(page, WITH_APPS, { 'POST /apps/move': MOVED, 'POST /apps/return': WITH_APPS });
+    await page.goto('/system/standby');
+    const space = page.getByTestId('standby-space');
+    await expect(space).toContainText("The system's copy");
+    await expect(space).toContainText('jellyfin: data and images');
+    await expect(space).toContainText('Kept in reserve');
+    const app = page.getByTestId('standby-app-jellyfin');
+    await expect(app).toContainText('Every 6 hours');
+    await expect(app).toContainText('2.5 MiB a sync');
+    await expect(app.locator('.badge', { hasText: 'On usb' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Move the critical apps to the card' }).click();
+    await answerConfirmation(page, { title: 'Move the critical apps to the card?', action: 'Move the critical apps to the card' });
+    await expect(toasts(page)).toContainText('1 app runs from the card');
+    await expect(app.locator('.badge', { hasText: 'On the card' })).toBeVisible();
+    await expect(app).toContainText('a drill (usb)');
+
+    await page.getByRole('button', { name: 'Return to the pool, discarding the card’s changes' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Return the apps to their pools?' });
+    const confirm = dialog.getByRole('button', { name: 'Return and discard', exact: true });
+    await expect(confirm).toBeDisabled();
+    await dialog.getByRole('textbox').fill('SC32G');
+    await confirm.click();
+    await expect(toasts(page)).toContainText('1 app is back on its pool');
+    expect(sent).toEqual([
+      { method: 'POST', path: '/apps/move', body: { reason: 'drill', pool: null } },
+      { method: 'POST', path: '/apps/return', body: { model: 'SC32G', apps: null } },
+    ]);
+  });
+
+  test('a critical app whose pool is not back yet cannot return, and says why', async ({ authenticatedPage: page }) => {
+    await fakeStandby(page, { ...MOVED, apps: [{ ...MOVED.apps[0], return_blocked: 'the pool usb is not mounted' }] });
+    await page.goto('/system/standby');
+    await expect(page.getByTestId('standby-app-jellyfin')).toContainText('Not back yet: the pool usb is not mounted.');
+    await expect(page.getByRole('button', { name: /^Return to the pool/ })).toHaveCount(0);
+  });
+
   test('in Russian', async ({ authenticatedPage: page }) => {
     await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
     await fakeStandby(page, ARMED);
@@ -246,6 +306,7 @@ test.describe('System > Standby', () => {
     await expect(page.getByRole('button', { name: 'Синхронизировать' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Отметить eMMC как отказавшую' })).toBeVisible();
     await expect(page.getByTestId('standby-condition-profile')).toContainText('Выполнено');
+    await expect(page.getByText('Критичные приложения', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Резерв на SD' })).toBeVisible();
   });
 });

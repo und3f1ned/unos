@@ -163,6 +163,9 @@ export const en = {
 	'audit.action.standbyReturned': 'Standby returned',
 	'audit.action.standbyDiscarded': 'Standby discarded',
 	'audit.action.standbySwitched': 'Standby switched',
+	'audit.action.appCriticalChanged': 'App critical changed',
+	'audit.action.standbyAppsMoved': 'Standby apps moved',
+	'audit.action.standbyAppsReturned': 'Standby apps returned',
 	'audit.action.dockerDataMoved': 'Docker data moved',
 	'audit.action.other': 'Other',
 
@@ -361,6 +364,9 @@ export const ru: Translation<typeof en> = {
 	'audit.action.standbyReturned': 'Возврат с резерва на SD',
 	'audit.action.standbyDiscarded': 'Изменения резерва на SD отброшены',
 	'audit.action.standbySwitched': 'Переключение на резерв на SD',
+	'audit.action.appCriticalChanged': 'Изменена отметка критичного приложения',
+	'audit.action.standbyAppsMoved': 'Критичное приложение перенесено на резерв на SD',
+	'audit.action.standbyAppsReturned': 'Критичное приложение возвращено в пул',
 	'audit.action.dockerDataMoved': 'Перенос данных Docker',
 	'audit.action.other': 'Другое',
 

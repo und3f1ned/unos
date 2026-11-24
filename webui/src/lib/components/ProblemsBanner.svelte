@@ -48,7 +48,8 @@
 		standby_not_in_boot_path: 'problems.kind.standby_not_in_boot_path',
 		standby_has_changes: 'problems.kind.standby_has_changes',
 		standby_leftover: 'problems.kind.standby_leftover',
-		running_on_standby: 'problems.kind.running_on_standby'
+		running_on_standby: 'problems.kind.running_on_standby',
+		apps_on_standby: 'problems.kind.apps_on_standby'
 	};
 
 	// Where each kind of problem is dealt with: its pool, disk (the system disk's card too), task, volume,
@@ -59,7 +60,7 @@
 		[/^task_/, '/system/scheduler'],
 		[/^app_/, '/containers'],
 		[/^shutdown_/, '/system/power'],
-		[/^(standby_|running_on_standby$)/, '/system/standby']
+		[/^(standby_|running_on_standby$|apps_on_standby$)/, '/system/standby']
 	];
 
 	const placeOf = (kind: string): string | undefined => PLACES.find(([pattern]) => pattern.test(kind))?.[1];

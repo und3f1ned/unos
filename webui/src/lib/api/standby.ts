@@ -68,6 +68,49 @@ export interface StandbyStatus {
 	standby_ran: StandbyRun | null;
 	switch_ready: boolean;
 	problems: StandbyProblem[];
+	/** The critical apps and their copies (ADR-0498). */
+	apps: StandbyApp[];
+	/** The card's space by part; null when it is not read. */
+	space: StandbySpace | null;
+}
+
+export interface StandbyAppMove {
+	at: string;
+	reason: 'pool_failed' | 'pool_read_only' | 'drill' | 'planned' | string;
+	pool: string;
+	/** Whether it runs from its copy; false: it had none and stays stopped. */
+	has_copy: boolean;
+}
+
+export interface StandbyApp {
+	app: string;
+	pool: string | null;
+	interval_hours: number;
+	generation: number | null;
+	synced_at: string | null;
+	mib_per_sync: number | null;
+	data_bytes: number | null;
+	images_bytes: number | null;
+	error: string | null;
+	moved: StandbyAppMove | null;
+	/** For an app that runs from the card: why it cannot return to its pool yet; null when it can. */
+	return_blocked: string | null;
+}
+
+export interface StandbySpace {
+	size: number | null;
+	free: number | null;
+	reserve: number | null;
+	system: number | null;
+	unos_images: number | null;
+	unos_volumes: number | null;
+	loaded_images: number | null;
+}
+
+export interface StandbyAppsAction {
+	dry_run: boolean;
+	apps: { app: string; has_copy: boolean; age: string | null; error: string | null }[];
+	message: string;
 }
 
 export interface StandbyAction {
@@ -109,4 +152,14 @@ export function returnToEmmc(): Promise<StandbyAction> {
 
 export function discardStandby(model: string): Promise<StandbyAction> {
 	return api.post<StandbyAction>('/system/standby/discard', { model });
+}
+
+/** Move the critical apps to the card: every one as a drill, or those of `pool` before its unmount or removal. */
+export function moveCriticalApps(reason: 'drill' | 'planned', pool: string | null = null): Promise<StandbyAppsAction> {
+	return api.post<StandbyAppsAction>('/system/standby/apps/move', { reason, pool });
+}
+
+/** Return the apps that run from the card to their pool, discarding the card's changes; the card's model typed. */
+export function returnCriticalApps(model: string, apps: string[] | null = null): Promise<StandbyAppsAction> {
+	return api.post<StandbyAppsAction>('/system/standby/apps/return', { model, apps });
 }

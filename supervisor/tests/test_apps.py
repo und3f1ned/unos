@@ -714,11 +714,11 @@ class TestCatalogPaths:
         assert response.json()["volumes"] == [
             {"host": f"{POOL_PLACEHOLDER}/apps/portainer/data", "container": "/data",
              "readonly": False, "is_file": False, "content": None, "uid": None, "gid": None,
-             "generated_secret": False, "secret_digits": 64, "secret_for": None, "copy_before_update": False,
+             "generated_secret": False, "secret_digits": 64, "secret_for": None, "copy_before_update": False, "cache": False,
              "on_pool": True},
             {"host": "/var/run/docker.sock", "container": "/var/run/docker.sock",
              "readonly": False, "is_file": False, "content": None, "uid": None, "gid": None,
-             "generated_secret": False, "secret_digits": 64, "secret_for": None, "copy_before_update": False,
+             "generated_secret": False, "secret_digits": 64, "secret_for": None, "copy_before_update": False, "cache": False,
              "on_pool": False},
         ]
 

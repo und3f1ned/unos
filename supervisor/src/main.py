@@ -64,6 +64,7 @@ from .apps import install_jobs
 from .apps.usage import start_app_resources, stop_app_resources
 from .apps.router import router as apps_router
 from .apps.updates import router as app_updates_router
+from .apps.critical import router as app_critical_router
 from .files.router import router as files_router
 from .files.router import (
     start_trash_expiry,
@@ -178,6 +179,9 @@ async def lifespan(app: FastAPI):
         # "nofail" gives up on slow or missing disks) before the scheduler and
         # apps start writing to /mnt/pools. Logs the outcome, never raises.
         await reconcile_pools_on_startup()
+        # A critical app that runs from the SD standby's card, whose pool-bound containers Docker started at
+        # boot, runs from the card again before the first request (ADR-0498). Bounded, never raises.
+        await standby_service.before_serving()
         # The SMB startup reconcile (shares/service.py) runs beside the rest of
         # startup and holds smb_lock while it runs: SMB changes, and the first
         # read of the shares before their one-time import, wait for it. The
@@ -352,6 +356,7 @@ for _router in (
     containers_router,
     apps_router,
     app_updates_router,
+    app_critical_router,
     files_router,
     snapshots_router,
     notifications_router,

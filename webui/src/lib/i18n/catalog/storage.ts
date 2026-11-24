@@ -428,7 +428,12 @@ export const en = {
 	'storage.volumes.chartTooFew': 'Not enough points yet: UNOS keeps one per hour, for 30 days.',
 	// {from} and {to} are dates and times; {start} and {end} the sizes used then.
 	'storage.volumes.chartSummary': '{start} used on {from}, {end} on {to}.',
-	'storage.volumes.chartQuota': 'Quota: {quota}.'
+	'storage.volumes.chartQuota': 'Quota: {quota}.',
+	// A planned repair: the critical apps of the SD standby that block an unmount or a removal (ADR-0498).
+	'storage.criticalApps.title': 'Critical apps use this pool',
+	'storage.criticalApps.text':
+		'{apps} can move to the SD standby’s card first, as if the pool failed; System > SD Standby brings them back once the pool is mounted again.',
+	'storage.criticalApps.move': 'Move them to the card and try again'
 };
 
 export const ru: Translation<typeof en> = {
@@ -820,5 +825,10 @@ export const ru: Translation<typeof en> = {
 	'storage.volumes.chartError': 'Не удалось загрузить заполнение во времени',
 	'storage.volumes.chartTooFew': 'Пока мало точек: UNOS хранит по одной в час за 30 дней.',
 	'storage.volumes.chartSummary': 'Занято {start} на {from} и {end} на {to}.',
-	'storage.volumes.chartQuota': 'Квота: {quota}.'
+	'storage.volumes.chartQuota': 'Квота: {quota}.',
+	// A planned repair: the critical apps of the SD standby that block an unmount or a removal (ADR-0498).
+	'storage.criticalApps.title': 'Этот пул используют критичные приложения',
+	'storage.criticalApps.text':
+		'{apps} можно сначала перенести на карту резерва SD, как при отказе пула; «Система > Резерв на SD» вернёт их, когда пул снова смонтирован.',
+	'storage.criticalApps.move': 'Перенести на карту и повторить'
 };

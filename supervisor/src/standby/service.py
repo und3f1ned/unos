@@ -66,7 +66,8 @@ NOT_CHANGES = {
     AuditAction.LOGIN_SUCCESS, AuditAction.LOGIN_FAILED, AuditAction.LOGOUT, AuditAction.DASHBOARD_LAYOUT_CHANGED,
     AuditAction.THEME_CHANGED, AuditAction.STANDBY_ARMED, AuditAction.STANDBY_REMOVED, AuditAction.STANDBY_SYNCED,
     AuditAction.STANDBY_SETTINGS_CHANGED, AuditAction.STANDBY_DRILL, AuditAction.STANDBY_RETURNED,
-    AuditAction.STANDBY_DISCARDED, AuditAction.STANDBY_SWITCHED,
+    AuditAction.STANDBY_DISCARDED, AuditAction.STANDBY_SWITCHED, AuditAction.STANDBY_APPS_MOVED,
+    AuditAction.STANDBY_APPS_RETURNED,
 }
 
 
@@ -146,6 +147,41 @@ class StandbyStatus(BaseModel):
     standby_ran: StandbyRun | None = Field(description="UNOS ran from the card: its changes are not on the eMMC.")
     switch_ready: bool = Field(description="Whether a failure of the eMMC switches to the card: set up, in the boot path, complete.")
     problems: list[StandbyProblem] = Field(description="The standby's problems that are there now.")
+    apps: list[StandbyAppStatus] = Field(default_factory=list, description="The critical apps and their copies.")
+    space: StandbySpace | None = Field(default=None, description="The card's space by part; null when it is not read.")
+
+
+class StandbyAppMove(BaseModel):
+    at: str = Field(description="When the app moved to the card, in UTC.")
+    reason: str = Field(description="pool_failed, pool_read_only, drill or planned.")
+    pool: str = Field(description="The pool it left.")
+    has_copy: bool = Field(description="Whether it runs from its copy; false: it had none and stays stopped.")
+
+
+class StandbyAppStatus(BaseModel):
+    app: str = Field(description="The critical app's id.")
+    pool: str | None = Field(description="The pool that holds its data.")
+    interval_hours: int = Field(description="Its sync interval in hours; 24 syncs it with the system's daily sync.")
+    generation: int | None = Field(description="Its copy's generation on the card; null before its first sync.")
+    synced_at: str | None = Field(description="When its copy was last written, in UTC.")
+    mib_per_sync: float | None = Field(description="The MiB its recent syncs wrote to the card, on average.")
+    data_bytes: int | None = Field(description="What its copied folders take on the card.")
+    images_bytes: int | None = Field(description="What its images' archives take on the card.")
+    error: str | None = Field(description="Why its last sync failed; null when it did not.")
+    moved: StandbyAppMove | None = Field(description="It runs from the card: when, why and from which pool.")
+    return_blocked: str | None = Field(description=(
+        "For an app that runs from the card: why it cannot return to its pool yet (not mounted, read-only, "
+        "degraded); null when it can."))
+
+
+class StandbySpace(BaseModel):
+    size: int | None = Field(description="The card's btrfs size in bytes.")
+    free: int | None = Field(description="Its free bytes.")
+    reserve: int | None = Field(description="What it keeps free: 10% of its size, at least 2 GiB.")
+    system: int | None = Field(description="The system's copy, as the last sync that wrote measured it.")
+    unos_images: int | None = Field(description="The archives of UNOS's images.")
+    unos_volumes: int | None = Field(description="The copy of UNOS's volumes.")
+    loaded_images: int | None = Field(description="What the standby's Docker loaded when it ran.")
 
 
 class StandbyAction(BaseModel):
@@ -197,6 +233,9 @@ class _State:
 
 _state = _State()
 _lock = asyncio.Lock()
+# One change of state.json at a time, and its read: the moves of the critical apps run beside the syncs
+# and the reads of the card (ADR-0498).
+_stored_lock = threading.Lock()
 _stop_sync = threading.Event()
 _loop_task: asyncio.Task | None = None
 _reboot_task: asyncio.Task | None = None
@@ -231,13 +270,15 @@ def _refresh_card(ops: StandbyHost, state: _State) -> None:
     state.card_present = present
     if not present:
         return
-    stored = ops.read_file(generation.STATE_FILE)
-    try:
-        state.stored = json.loads(stored) if stored else {}
-    except json.JSONDecodeError:
-        logger.warning("The SD standby's %s cannot be read: it is written again at the next change",
-                       generation.STATE_FILE)
-        state.stored = {}
+    # Under the lock of its writers: a read that came before a write must not replace what it wrote.
+    with _stored_lock:
+        stored = ops.read_file(generation.STATE_FILE)
+        try:
+            state.stored = json.loads(stored) if stored else {}
+        except json.JSONDecodeError:
+            logger.warning("The SD standby's %s cannot be read: it is written again at the next change",
+                           generation.STATE_FILE)
+            state.stored = {}
     state.current = generation.read_generations(ops)[0]
     mark = ops.read_file(generation.MARK)
     state.marked = mark is not None or ops.exists(generation.MARK)
@@ -312,6 +353,15 @@ def _save_stored(stored: dict[str, Any]) -> None:
     StandbyHost().write_file(generation.STATE_FILE, json.dumps(stored, indent=1, sort_keys=True) + "\n",
                              what="The standby's state.json")
     _state.stored = stored
+
+
+def merge_stored(values: dict[str, Any], drop: tuple[str, ...] = ()) -> None:
+    """Set ``values`` and drop the keys ``drop`` of state.json as it is now, and write it when it changed
+    (blocking)."""
+    with _stored_lock:
+        stored = {key: value for key, value in _state.stored.items() if key not in drop}
+        stored.update(values)
+        _save_stored(stored)
 
 
 def sync_time() -> str:
@@ -413,11 +463,15 @@ async def _run_sync(trigger: str, *, force: bool = False, clean_docker: bool = F
         return outcome, record
     if error is None and outcome is not None:
         _state.last_complete_at = record["at"]
-    stored = dict(_state.stored)
+    stored: dict[str, Any] = {}
     if error is not None or (outcome is not None and outcome.result == "wrote"):
         stored["last_sync"] = record
         if error is None:
             stored["last_complete_at"] = record["at"]
+            if outcome is not None and outcome.generation is not None and set(outcome.parts) & set(generation.PARTS):
+                space = await asyncio.to_thread(_measure_space, outcome.generation)
+                if space:
+                    stored["space"] = space
         if error is not None:
             logger.warning("The sync of the SD standby (%s) failed: %s", trigger, error)
         else:
@@ -430,11 +484,29 @@ async def _run_sync(trigger: str, *, force: bool = False, clean_docker: bool = F
     else:
         _state.memory_sync = record
     try:
-        await asyncio.to_thread(_save_stored, stored)
+        if stored:
+            await asyncio.to_thread(merge_stored, stored)
         await asyncio.to_thread(refresh)
     except StandbyError as e:
         logger.warning("The SD standby's state could not be saved: %s", e)
     return outcome, record
+
+
+def _measure_space(number: int) -> dict[str, int] | None:
+    """What the generation ``number`` takes on the card, by part (du of its folders, once per generation
+    written): the system's copy, UNOS's image archives and volumes, and the Docker data the standby loaded
+    when it ran."""
+    from . import apps as standby_apps
+
+    ops = StandbyHost()
+    gen = generation.generation_path(number)
+    parts = {"unos_images": [f"{gen}{generation.LIB}/images"], "unos_volumes": [f"{gen}{generation.LIB}/volumes"],
+             "loaded_images": [f"{gen}/var/lib/docker", f"{gen}/var/lib/containerd"], "total": [gen]}
+    found = {name: sum(standby_apps.sizes(ops, [path]).get(path, 0) for path in paths) for name, paths in parts.items()}
+    if not found["total"]:
+        return None
+    found["system"] = max(0, found.pop("total") - found["unos_images"] - found["unos_volumes"] - found["loaded_images"])
+    return found
 
 
 def last_sync() -> dict[str, Any] | None:
@@ -478,7 +550,30 @@ async def _due_sync() -> None:
 # --- the problems ----------------------------------------------------------------------------------
 
 
-def _found() -> dict[str, problems.Problem]:
+def _found(critical: dict[str, Any] | None = None) -> dict[str, problems.Problem]:
+    """The standby's problems; with ``critical`` (the critical apps' marks) those of its apps too."""
+    found = _found_of_the_system()
+    if critical is not None and (_state.armed or _state.root == "card"):
+        from . import apps as standby_apps
+
+        for kind, severity, about, title, detail in standby_apps.problems_found(critical):
+            key = f"{kind}:{about}"
+            found[key] = problems.Problem(key=key, severity=severity, kind=kind, subject=about, title=title,  # type: ignore[arg-type]  # error or warning
+                                          detail=detail)
+    return found
+
+
+async def _marks() -> dict[str, Any] | None:
+    from . import apps as standby_apps
+
+    try:
+        return await standby_apps.marks()
+    except Exception as e:  # the database: the apps' problems stay unknown this pass
+        logger.warning("The critical apps cannot be read: %s", e)
+        return None
+
+
+def _found_of_the_system() -> dict[str, problems.Problem]:
     state = _state
     found: dict[str, problems.Problem] = {}
     subject = state.card_device or "SD standby"
@@ -532,7 +627,14 @@ def _found() -> dict[str, problems.Problem]:
 
 
 async def update_problems() -> None:
-    await problems.update(SOURCE, _found())
+    critical = await _marks()
+    found = _found(critical)
+    if critical is None:
+        # The database could not be read: the critical apps' problems stay as they were found before.
+        system = {problem.subject for problem in _found_of_the_system().values()} | {_state.card_device or "SD standby"}
+        found.update({key: problem for key, problem in problems.of_source(SOURCE).items()
+                      if problem.kind in ("apps_on_standby", "standby_copy_old") and problem.subject not in system})
+    await problems.update(SOURCE, found)
 
 
 # --- the status ------------------------------------------------------------------------------------
@@ -575,6 +677,7 @@ async def status() -> StandbyStatus:
             next_at = None
     run = ran()
     record = last_sync()
+    critical = await _marks() if state.armed or state.root == "card" else {}
     return StandbyStatus(
         available=state.armed or all(item.met for item in items),
         unavailable_reason=_unavailable(),
@@ -597,8 +700,44 @@ async def status() -> StandbyStatus:
         last_complete_at=state.last_complete_at,
         standby_ran=StandbyRun.model_validate(run) if run else None,
         switch_ready=switch_ready(),
-        problems=[StandbyProblem(kind=problem.kind, severity=problem.severity) for problem in _found().values()],
+        problems=[StandbyProblem(kind=problem.kind, severity=problem.severity) for problem in _found(critical).values()],
+        apps=await asyncio.to_thread(_apps_status, critical or {}),
+        space=await asyncio.to_thread(_space) if state.card_present else None,
     )
+
+
+def _apps_status(critical: dict[str, Any]) -> list[StandbyAppStatus]:
+    """The critical apps as state.json has them (blocking: a moved app's pool is read)."""
+    from . import apps as standby_apps
+
+    shown = []
+    for app, mark in sorted(critical.items()):
+        record = standby_apps.stored_app(app)
+        moved = record.get("failed_over") if isinstance(record.get("failed_over"), dict) else None
+        recent = [value for value in record.get("mib", []) if isinstance(value, (int, float))]
+        found = record.get("bytes")
+        sizes: dict[str, Any] = found if isinstance(found, dict) else {}
+        shown.append(StandbyAppStatus(
+            app=app, pool=record.get("pool") or standby_apps._pool_of(app), interval_hours=mark.interval,
+            generation=record.get("generation") if isinstance(record.get("generation"), int) else None,
+            synced_at=record.get("synced_at"), mib_per_sync=round(sum(recent) / len(recent), 1) if recent else None,
+            data_bytes=sizes.get("data"), images_bytes=sizes.get("images"), error=record.get("error"),
+            moved=StandbyAppMove(at=moved.get("at", ""), reason=moved.get("reason", ""), pool=moved.get("pool", ""),
+                                 has_copy=bool(moved.get("copy"))) if moved else None,
+            return_blocked=standby_apps.pool_unfit(str(moved.get("pool"))) if moved else None))
+    return shown
+
+
+def _space() -> StandbySpace | None:
+    from . import apps as standby_apps
+
+    kept = _state.stored.get("space")
+    measured: dict[str, Any] = kept if isinstance(kept, dict) else {}
+    card_space = standby_apps.card_space(StandbyHost())
+    size, free = card_space if card_space else (None, None)
+    return StandbySpace(size=size, free=free, reserve=standby_apps.reserve_of(size) if size else None,
+                        system=measured.get("system"), unos_images=measured.get("unos_images"),
+                        unos_volumes=measured.get("unos_volumes"), loaded_images=measured.get("loaded_images"))
 
 
 # --- the actions -----------------------------------------------------------------------------------
@@ -674,6 +813,13 @@ async def remove(model: str, *, dry_run: bool, request: Request, username: str) 
     async with _lock:
         if _state.syncing:
             raise HTTPException(409, detail="A sync runs: remove the standby once it ended")
+        from . import apps as standby_apps
+
+        moved = sorted(app for app, record in standby_apps.stored_apps().items()
+                       if isinstance(record.get("failed_over"), dict))
+        if moved:
+            raise HTTPException(409, detail=f"Critical apps run from the card ({', '.join(moved)}): return them to "
+                                            "their pool first")
         device = _state.card_device
         try:
             plan = await asyncio.to_thread(card.remove, model, dry_run=dry_run, running_on_card=running_on_standby())
@@ -735,9 +881,8 @@ async def set_sync_time(value: str, *, request: Request, username: str) -> None:
         old = sync_time()
         if old == value:
             return
-        stored = {**_state.stored, "sync_time": value}
         try:
-            await asyncio.to_thread(_save_stored, stored)
+            await asyncio.to_thread(merge_stored, {"sync_time": value})
         except StandbyError as e:
             raise _http(e) from None
         await _audit(AuditAction.STANDBY_SETTINGS_CHANGED, request, username, f"Daily sync time ({old} to {value})")
@@ -846,8 +991,7 @@ async def discard(model: str, *, dry_run: bool, request: Request, username: str)
             await _audit(AuditAction.STANDBY_DISCARDED, request, username, f"Failed: {record['error']}", success=False)
             raise HTTPException(500, detail=f"The new generation failed: {record['error']}")
         try:
-            await asyncio.to_thread(_save_stored, {key: value for key, value in _state.stored.items()
-                                                   if key != "standby_ran"})
+            await asyncio.to_thread(merge_stored, {}, ("standby_ran",))
         except StandbyError as e:
             raise _http(e) from None
         await _audit(AuditAction.STANDBY_DISCARDED, request, username,
@@ -886,8 +1030,11 @@ def on_system_disk_failed(detail: str) -> asyncio.Task | None:
     _state.switching = True
     current = _state.current
     assert current is not None
-    # 1. Stop a sync: its next step does not start, its running command is killed.
+    # 1. Stop a sync, the system's or an app's: its next step does not start, its running command is killed.
     _stop_sync.set()
+    from . import apps as standby_apps
+
+    standby_apps._stop_app_sync.set()
     threading.Thread(target=kill_sync, name="unos-standby-kill", daemon=True).start()
     marked, alerted = threading.Event(), threading.Event()
     threading.Thread(target=switch.run, args=(current[0], "system_disk_failed", marked, alerted),
@@ -948,11 +1095,10 @@ async def _on_start() -> None:
     (_correct_run_time, ADR-0488)."""
     if _state.root != "card" or ran() is not None or not _state.card_present:
         return
-    stored = {**_state.stored, "standby_ran": {"at": utc_text(utc_now()),
-                                               "generation": _state.current[0] if _state.current else None,
-                                               "reason": _state.reason}}
+    run = {"at": utc_text(utc_now()), "generation": _state.current[0] if _state.current else None,
+           "reason": _state.reason}
     try:
-        await asyncio.to_thread(_save_stored, stored)
+        await asyncio.to_thread(merge_stored, {"standby_ran": run})
         if not await asyncio.to_thread(_clock_synchronized):
             _state.run_recorded_at = _monotonic()
     except StandbyError as e:
@@ -976,9 +1122,56 @@ async def _correct_run_time() -> None:
     at = utc_text((utc_now() - timedelta(seconds=elapsed)).replace(microsecond=0))
     if run.get("at") != at:
         try:
-            await asyncio.to_thread(_save_stored, {**_state.stored, "standby_ran": {**run, "at": at}})
+            await asyncio.to_thread(merge_stored, {"standby_ran": {**run, "at": at}})
         except StandbyError as e:
             logger.error("The SD standby's state.json could not correct the run's time: %s", e)
+
+
+BEFORE_SERVING_SECONDS = 120
+
+
+async def before_serving() -> None:
+    """Before the supervisor serves (the lifespan of src/main.py): a pool-bound container of a critical app
+    that state.json records as moved to the card, which this system's Docker may have started at boot, is
+    moved again (ADR-0498). Bounded; never raises."""
+    from . import apps as standby_apps
+
+    if host.runs_locally():
+        return
+    try:
+        await asyncio.to_thread(refresh)
+        if not (_state.armed or _state.root == "card") or not _state.card_present or not standby_apps.stored_apps():
+            return
+        critical = await standby_apps.marks()
+        done = await asyncio.wait_for(asyncio.to_thread(standby_apps.reapply, set(critical)), BEFORE_SERVING_SECONDS)
+        for app in done:
+            await audit_change(AuditAction.STANDBY_APPS_MOVED, None, "system", resource_type="app", resource_id=app,
+                               severity=AuditSeverity.WARNING,
+                               details=f"{app} runs from the SD standby's card again at the start of UNOS")
+    except TimeoutError:
+        logger.error("The moves of the critical apps were not applied again within %s s: the supervisor serves "
+                     "while they go on", BEFORE_SERVING_SECONDS)
+    except Exception:
+        logger.exception("The moves of the critical apps could not be applied again")
+
+
+async def _start_apps_on_standby() -> None:
+    """On the card's root: the critical apps' images, networks and containers (ADR-0498)."""
+    from . import apps as standby_apps
+
+    try:
+        critical = await standby_apps.marks()
+        if critical:
+            created = await asyncio.to_thread(standby_apps.start_on_standby, set(critical))
+            for app in created:
+                moved = standby_apps.failed_over(app)
+                await audit_change(AuditAction.STANDBY_APPS_MOVED, None, "system", resource_type="app", resource_id=app,
+                                   severity=AuditSeverity.WARNING,
+                                   details=f"Created {app} on the SD standby "
+                                   + ("on its copy on the card" if moved else "on its pool"))
+            await update_problems()
+    except Exception:
+        logger.exception("The critical apps could not be started on the SD standby")
 
 
 async def standby_loop() -> None:
@@ -986,6 +1179,8 @@ async def standby_loop() -> None:
         await asyncio.to_thread(refresh)
         await _on_start()
         await update_problems()
+        if _state.root == "card" and _state.card_present:
+            await _start_apps_on_standby()
     except Exception:
         logger.exception("SD standby error")
     passes = 0
@@ -1016,3 +1211,63 @@ async def stop() -> None:
     if _loop_task is not None:
         _loop_task.cancel()
         await asyncio.gather(_loop_task, return_exceptions=True)
+
+
+# --- the critical apps' moves (ADR-0498) ----------------------------------------------------------------
+
+
+async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dry_run: bool, request: Request,
+                    username: str) -> list[Any]:
+    """Move the critical apps to the card: every one (a drill), or those of ``pool`` (before a repair)."""
+    from . import apps as standby_apps
+
+    _refuse_locally()
+    if not (_state.armed or _state.root == "card") or not _state.card_present:
+        raise HTTPException(409, detail="The standby is not set up, or its card is not in its slot")
+    critical = await standby_apps.marks()
+    chosen = []
+    for app in sorted(critical):
+        if standby_apps.failed_over(app) is not None:
+            continue
+        found = standby_apps.stored_app(app).get("pool") or await asyncio.to_thread(standby_apps._pool_of, app)
+        if pool is None or found == pool:
+            chosen.append(app)
+    if not chosen:
+        raise HTTPException(409, detail="No critical app is left to move" + (f" from the pool {pool}" if pool else ""))
+    if not dry_run and _state.root != "card":
+        # The pools are fine: one more sync of each app first, so that it moves with its latest data.
+        async with _lock:
+            for app in chosen:
+                if _can_sync() is None:
+                    await standby_apps.run_app_sync(app)
+    moved = await standby_apps.move(chosen, reason, request=request, username=username, dry_run=dry_run)
+    if all(item.error for item in moved):
+        raise HTTPException(500, detail="; ".join(f"{item.app}: {item.error}" for item in moved))
+    return moved
+
+
+async def return_apps(apps: list[str] | None, model: str, *, dry_run: bool, request: Request,
+                      username: str) -> list[str]:
+    """The discarding return of the apps that run from the card, after the card's model was typed."""
+    from . import apps as standby_apps
+
+    _refuse_locally()
+    stored_card = _state.stored.get("card") or {}
+    if not model.strip() or model.strip() != str(stored_card.get("model") or "").strip():
+        raise HTTPException(409, detail=f"Type the card's model, {stored_card.get('model')}, to return the apps and "
+                                        "discard the card's changes")
+    moved = sorted(app for app, record in standby_apps.stored_apps().items()
+                   if isinstance(record.get("failed_over"), dict))
+    if apps is not None and (not apps or set(apps) - set(moved)):
+        raise HTTPException(409, detail="No such app runs from the card")
+    if apps is None:
+        # Every app whose pool can take it back.
+        blocked = {app: await asyncio.to_thread(standby_apps.pool_unfit,
+                                                str((standby_apps.failed_over(app) or {}).get("pool")))
+                   for app in moved}
+        apps = [app for app in moved if blocked[app] is None]
+        if not apps:
+            raise HTTPException(409, detail="No app that runs from the card can return: " + "; ".join(
+                f"{app}: {why}" for app, why in blocked.items()) if blocked else "No app runs from the card")
+    chosen = apps
+    return await standby_apps.return_apps(chosen, request=request, username=username, dry_run=dry_run)

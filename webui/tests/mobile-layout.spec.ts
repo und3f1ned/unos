@@ -342,6 +342,8 @@ const INSTALLED_JELLYFIN = {
   version: null,
   update_to: null,
   previous: null,
+  critical: false,
+  on_standby_card: false,
 };
 // An app of several containers whose machine learning stopped: its card names its containers and
 // warns about the one that does not run (ADR-0381).
@@ -476,9 +478,27 @@ const STANDBY_ARMED = {
     error: 'The copy of the system: rsync: [sender] read errors mapping "/var/lib/samba/private/passdb.tdb": Input/output error (5) (exit status 23)' },
   last_complete_at: '2026-11-22T04:00:41Z', standby_ran: null, switch_ready: true,
   problems: [{ kind: 'standby_sync_failed', severity: 'warning' }],
+  // A critical app that runs from the card, its pool not back yet, with long names (ADR-0498).
+  apps: [{ app: 'paperless-ngx', pool: 'documents_of_the_whole_family', interval_hours: 6, generation: 41,
+    synced_at: '2026-11-23T10:00:00Z', mib_per_sync: 12.5, data_bytes: 2_300_000_000, images_bytes: 1_400_000_000,
+    error: null, moved: { at: '2026-11-23T11:00:00Z', reason: 'pool_failed', pool: 'documents_of_the_whole_family', has_copy: true },
+    return_blocked: 'the pool documents_of_the_whole_family is not mounted' }],
+  space: { size: 31_000_000_000, free: 17_000_000_000, reserve: 3_100_000_000, system: 2_500_000_000,
+    unos_images: 700_000_000, unos_volumes: 3_000_000, loaded_images: 0 },
 };
 const STANDBY_FREE = { ...STANDBY_ARMED, armed: false, card_present: null, in_boot_path: null, root: null, generation: null,
-  drill_pending: false, last_sync: null, last_complete_at: null, switch_ready: false, problems: [] };
+  drill_pending: false, last_sync: null, last_complete_at: null, switch_ready: false, problems: [], apps: [], space: null };
+// The critical mark's dialog of Jellyfin (GET /apps/installed/{id}/critical, ADR-0498), with long paths.
+const CRITICAL_PLAN = {
+  app: 'jellyfin', name: 'jellyfin', pool: 'e2e_media', critical: true, interval_hours: 6, intervals: [1, 2, 4, 6, 12, 24],
+  folders: [
+    { path: `${POOLS}/e2e_media/apps/jellyfin/config`, bytes: 314_572_800, copied: true, kind: 'data' },
+    { path: `${POOLS}/e2e_media/apps/jellyfin/cache`, bytes: 2_147_483_648, copied: false, kind: 'cache' },
+    { path: `${POOLS}/e2e_media/Movies and TV shows`, bytes: null, copied: false, kind: 'other_pool' },
+  ],
+  copied_bytes: 314_572_800, images_bytes: 304_087_040, card_size: 31_000_000_000, card_free: 20_000_000_000,
+  reserve: 3_100_000_000, needed: 922_746_880, fits: true, mib_per_sync: 4.2, failed_over: false,
+};
 
 const POWER = {
   '/api/v1/power/pending': { action: 'reboot', at: '2026-11-08T23:00:00+00:00' },
@@ -1843,6 +1863,24 @@ const VIEWS: View[] = [
       await page.getByRole('listitem', { name: 'immich-machine-learning', exact: true }).getByRole('button').click();
     },
     shows: (page) => page.getByRole('dialog').getByRole('textbox').last(),
+    start: dialogTitle,
+    end: dialogEnd,
+  },
+  {
+    // The critical mark of an app on the SD standby: what is copied, the card and the interval (ADR-0498).
+    name: 'Dialog: the critical mark of an app',
+    path: '/apps',
+    fake: (page) => serve(page, {
+      '/api/v1/apps/installed': INSTALLED_APPS,
+      '/api/v1/apps/standby': { offered: true, reason: null, running_on_standby: false },
+      '/api/v1/apps/installed/e2e-jellyfin/critical': CRITICAL_PLAN,
+    }),
+    open: async (page) => {
+      await page.getByRole('tab', { name: /^(Installed|Установленные) \(2\)$/ }).click();
+      await page.getByRole('button', { name: /^(Actions for |Действия: )e2e-jellyfin$/ }).click();
+      await page.getByRole('menu').getByRole('menuitem', { name: /^(Critical on the SD standby…|Критичное на резерве SD…)$/ }).click();
+    },
+    shows: (page) => page.getByRole('dialog').getByText(/apps\/jellyfin\/cache/),
     start: dialogTitle,
     end: dialogEnd,
   },

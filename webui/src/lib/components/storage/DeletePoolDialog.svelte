@@ -2,8 +2,12 @@
 	// The dialog that removes a pool, in one step: what it does, as a short list of
 	// consequences, then the pool's name typed into an empty field. The data stays on the disks.
 	import { Alert, ConfirmDialog } from '$lib/components/ui';
+	import { ApiError } from '$lib/api/client';
 	import { deletePool, type Pool } from '$lib/api/storage';
+	import { moveCriticalApps } from '$lib/api/standby';
 	import { t } from '$lib/i18n';
+	import CriticalAppsOffer from './CriticalAppsOffer.svelte';
+	import { criticalAppsOf } from './criticalApps';
 	import { messageOf } from './pools';
 
 	type Props = {
@@ -21,11 +25,35 @@
 
 	let deleting = $state(false);
 	let deleteError = $state('');
+	// The critical apps of the pool that a refused removal offers to move to the SD standby first (ADR-0498).
+	let critical = $state<string[]>([]);
 
 	function closeDeleteModal() {
 		if (deleting) return;
 		deleteError = '';
+		critical = [];
 		onclose();
+	}
+
+	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0498). */
+	async function offer(name: string) {
+		const apps = await criticalAppsOf(name);
+		if (pool?.name === name && deleteError) critical = apps;
+	}
+
+	async function moveAndRetry() {
+		if (!pool) return;
+		deleting = true;
+		try {
+			await moveCriticalApps('planned', pool.name);
+			critical = [];
+		} catch (e) {
+			deleteError = messageOf(e);
+			deleting = false;
+			return;
+		}
+		deleting = false;
+		await handleDeletePool();
 	}
 
 	// The dialog confirms only once the name typed matches the pool's, exactly.
@@ -33,12 +61,14 @@
 		if (!pool || deleting) return;
 		deleting = true;
 		deleteError = '';
+		critical = [];
 		try {
 			await deletePool(pool.name);
 			deleting = false;
 			await ondeleted();
 		} catch (e) {
 			deleteError = messageOf(e);
+			if (e instanceof ApiError && e.status === 409) void offer(pool.name);
 		} finally {
 			deleting = false;
 		}
@@ -76,6 +106,9 @@
 		</ul>
 		{#if deleteError}
 			<Alert variant="error" size="sm" title={$t('storage.remove.failed')}>{deleteError}</Alert>
+		{/if}
+		{#if critical.length > 0}
+			<CriticalAppsOffer apps={critical} busy={deleting} onmove={moveAndRetry} />
 		{/if}
 	{/if}
 </ConfirmDialog>

@@ -708,7 +708,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=32400, container=32400)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/plex/config", container="/config"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/plex/transcode", container="/transcode"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/plex/transcode", container="/transcode", cache=True),
             VolumeMapping(host=f"{POOL}/media", container="/data", readonly=True),
         ],
         environment=[
@@ -736,7 +736,7 @@ APP_CATALOG: list[AppTemplate] = [
         ports=[PortMapping(host=8096, container=8096)],
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/jellyfin/config", container="/config"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/jellyfin/cache", container="/cache"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/jellyfin/cache", container="/cache", cache=True),
             VolumeMapping(host=f"{POOL}/media", container="/media", readonly=True),
         ],
         environment=[
@@ -900,7 +900,7 @@ APP_CATALOG: list[AppTemplate] = [
             Companion(
                 name="machine-learning",
                 image=IMMICH_ML.ref,
-                volumes=[VolumeMapping(host=f"{APPS_DATA_PATH}/immich/model-cache", container="/cache")],
+                volumes=[VolumeMapping(host=f"{APPS_DATA_PATH}/immich/model-cache", container="/cache", cache=True)],
                 # At v2 the models have files for the RK3588 for every task, OCR included.
                 environment=[EnvVar(name="MACHINE_LEARNING_MODEL_REVISION", value="v2")],
                 tmpfs={"/tmp": "size=64m"},
@@ -1640,7 +1640,7 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/media", container="/usr/src/paperless/media"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/export", container="/usr/src/paperless/export"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/consume", container="/usr/src/paperless/consume"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/scratch", container="/usr/src/paperless/scratch"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/paperless-ngx/scratch", container="/usr/src/paperless/scratch", cache=True),
             PAPERLESS_SECRET_KEY,
         ],
         environment=[
@@ -1876,7 +1876,7 @@ APP_CATALOG: list[AppTemplate] = [
         volumes=[
             VolumeMapping(host=f"{APPS_DATA_PATH}/netdata/config", container="/etc/netdata"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/netdata/lib", container="/var/lib/netdata"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/netdata/cache", container="/var/cache/netdata"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/netdata/cache", container="/var/cache/netdata", cache=True),
             VolumeMapping(host="/etc/passwd", container="/host/etc/passwd", readonly=True),
             VolumeMapping(host="/etc/group", container="/host/etc/group", readonly=True),
             VolumeMapping(host="/proc", container="/host/proc", readonly=True),
@@ -2504,7 +2504,7 @@ APP_CATALOG: list[AppTemplate] = [
         volumes=[
             # Its archives of the pages: screenshots, PDFs, readable copies.
             VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/data", container="/data/data"),
-            VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/next-cache", container="/data/apps/web/.next/cache"),
+            VolumeMapping(host=f"{APPS_DATA_PATH}/linkwarden/next-cache", container="/data/apps/web/.next/cache", cache=True),
             LINKWARDEN_DB_PASSWORD,
             LINKWARDEN_AUTH_SECRET,
         ],

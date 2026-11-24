@@ -168,6 +168,14 @@ class StandbyFakeHost:
         # The units that systemctl enabled, and the number of changes after which the host stops (PowerCut).
         self.enabled: set[str] = set()
         self.cut_at: int | None = None
+        # The critical apps (ADR-0498): the btrfs subvolumes other than the system's generations (the pools'
+        # top levels, their snapshots, the apps' copies on the card), the sizes of files that du counts
+        # (else their text's), the card's size and free bytes as df reports them, and the image ids that
+        # the card's Docker has.
+        self.subvolume_paths: set[str] = {"/mnt/pools/data"}
+        self.file_sizes: dict[str, int] = {}
+        self.card_df = (31_000_000_000, 20_000_000_000)
+        self.loaded_images: set[str] = set()
 
     # --- the host's state -----------------------------------------------------------------------------
 
@@ -272,6 +280,18 @@ class StandbyFakeHost:
             if cmd[1] == "-b":
                 return ok if cmd[2] in self.block_devices else fail
             return ok if self.exists(cmd[2]) else fail
+        if program == "du":
+            paths = cmd[cmd.index("--") + 1:]
+            excludes = [part[len("--exclude="):] for part in cmd if part.startswith("--exclude=")]
+            lines = [f"{size}\t{path}\n" for path in paths if (size := self.size_of(path, excludes)) is not None]
+            return host.HostResult(0 if len(lines) == len(paths) else 1, "".join(lines), "")
+        if program == "df":
+            return host.HostResult(0, f"  1B-blocks     Avail\n{self.card_df[0]} {self.card_df[1]}\n", "")
+        if program == "stat" and cmd[1:3] == ["-c", "%i"]:
+            path = cmd[-1]
+            if not self.exists(path):
+                return fail
+            return host.HostResult(0, "256\n" if path in self.subvolume_paths else "4711\n", "")
         if program == "stat":
             path = cmd[-1]
             return host.HostResult(0, f"{self.sizes[path]}\n", "") if path in self.sizes else fail
@@ -417,7 +437,8 @@ class StandbyFakeHost:
         elif program == "systemctl" and cmd[1] in ("enable", "disable"):
             names = {part for part in cmd[2:] if not part.startswith("-")}
             self.enabled = self.enabled | names if cmd[1] == "enable" else self.enabled - names
-        elif program in ("bash", "dd", "wipefs", "sfdisk", "blockdev", "udevadm", "chattr", "ln", "sync", "systemctl"):
+        elif program in ("bash", "dd", "wipefs", "sfdisk", "blockdev", "udevadm", "chattr", "chmod", "ln", "sync",
+                         "systemctl"):
             if program == "bash" and "docker save" in cmd[2]:
                 self.files[cmd[-1]] = "archive"
                 return host.HostResult(self.copy_status.get(f"image:{cmd[-2]}", 0), "", "")
@@ -438,8 +459,15 @@ class StandbyFakeHost:
                     "com.docker.compose.service": "webui"}}},
             ]
             return host.HostResult(0, json.dumps(containers), "")
+        if cmd[1:3] == ["image", "inspect"] and cmd[-1].startswith("sha256:"):
+            # Whether the card's Docker has an image of a critical app (ADR-0498).
+            return host.HostResult(0 if cmd[-1] in self.loaded_images else 1, "", "")
         if cmd[1:3] == ["image", "inspect"]:
             return host.HostResult(0, self.images[cmd[-1]] + "\n", "")
+        if cmd[1] == "load":
+            self._change(cmd)
+            self.loaded_images.add("sha256:" + cmd[-1].rsplit("/", 1)[1].removesuffix(".tar.gz"))
+            return host.HostResult(0, "", "")
         if cmd[1:3] == ["volume", "ls"]:
             return host.HostResult(0, "".join(f"{name}\n" for name in self.volumes), "")
         if cmd[1:3] == ["volume", "inspect"]:
@@ -448,7 +476,8 @@ class StandbyFakeHost:
 
     def _ls(self, path: str) -> host.HostResult:
         if path == CARD_DIR:
-            names = [f"@sys-{number}" for number in self.subvolumes] + ["state.json"]
+            names = [f"@sys-{number}" for number in self.subvolumes] + ["state.json"] + sorted(
+                p.rsplit("/", 1)[1] for p in self.subvolume_paths if p.startswith(CARD_DIR + "/"))
         else:
             prefix = path.rstrip("/") + "/"
             names = sorted({name[len(prefix):].split("/")[0] for name in [*self.files, *self.dirs]
@@ -456,6 +485,8 @@ class StandbyFakeHost:
         return host.HostResult(0, "".join(f"{name}\n" for name in names), "")
 
     def _btrfs(self, cmd: list[str]) -> host.HostResult:
+        if "@sys-" not in cmd[-1]:
+            return self._other_subvolume(cmd)
         if cmd[1] == "inspect-internal":
             number = int(cmd[-1].rsplit("@sys-", 1)[1])
             return host.HostResult(0, f"{self.subvolumes[number]}\n", "")
@@ -474,8 +505,91 @@ class StandbyFakeHost:
                 del self.files[name]
         return host.HostResult(0, "", "")
 
+    def _other_subvolume(self, cmd: list[str]) -> host.HostResult:
+        """A subvolume of a pool or an app's copy on the card: its files are those under its path."""
+        self._change(cmd)
+        if any(shlex.join(cmd).startswith(prefix) for prefix in self.failing):
+            return host.HostResult(1, "", "btrfs: an I/O error\n")
+        target = cmd[-1]
+        if cmd[2] == "create":
+            self.subvolume_paths.add(target)
+            self.dirs.add(target)
+        elif cmd[2] == "snapshot":
+            source = cmd[-2]
+            self.subvolume_paths.add(target)
+            self.dirs.add(target)
+            for name in [name for name in self.files if name.startswith(source + "/") and not name.startswith(target + "/")]:
+                self.files[target + name[len(source):]] = self.files[name]
+                if name in self.file_sizes:
+                    self.file_sizes[target + name[len(source):]] = self.file_sizes[name]
+            for name in [name for name in self.dirs if name.startswith(source + "/") and not name.startswith(target + "/")]:
+                self.dirs.add(target + name[len(source):])
+        elif cmd[2] == "delete":
+            if target not in self.subvolume_paths:
+                return host.HostResult(1, "", f"ERROR: Could not statfs: {target}\n")
+            self.subvolume_paths.discard(target)
+            self.dirs = {name for name in self.dirs if name != target and not name.startswith(target + "/")}
+            for name in [name for name in self.files if name.startswith(target + "/")]:
+                del self.files[name]
+        return host.HostResult(0, "", "")
+
+    def size_of(self, path: str, excludes: list[str]) -> int | None:
+        """What du -sb counts under ``path``: its files' sizes, without what an exclude matches (a basename
+        pattern *suffix at any depth, or a full path)."""
+        if not self.exists(path) and not any(name.startswith(path + "/") for name in self.files):
+            return None
+
+        def left_out(name: str) -> bool:
+            parts = name.split("/")
+            for pattern in excludes:
+                if pattern.startswith("*") and any(part.endswith(pattern[1:]) for part in parts):
+                    return True
+                if name == pattern or name.startswith(pattern + "/"):
+                    return True
+            return False
+
+        return sum(self.file_sizes.get(name, len(text)) for name, text in self.files.items()
+                   if (name == path or name.startswith(path + "/")) and not left_out(name))
+
+    def _app_rsync(self, cmd: list[str], source: str, destination: str) -> host.HostResult:
+        """rsync of an app's folder to its copy on the card, with its excludes (*suffix anywhere, /relative
+        anchored) and --delete; a dry run answers ``compare["app:<app>"]``."""
+        app = destination.split("/@app-", 1)[1].split("/", 1)[0].rsplit("-", 1)[0]
+        if "--dry-run" in cmd:
+            return host.HostResult(0, "".join(f"{line}\n" for line in self.compare.get(f"app:{app}", [])), "")
+        self._change(cmd)
+        status = self.copy_status.get(f"app:{app}", 0)
+        if status:
+            return host.HostResult(status, "", f"rsync error: some files vanished (code {status})\n")
+        source, destination = source.rstrip("/"), destination.rstrip("/")
+        excludes = [part[len("--exclude="):] for part in cmd if part.startswith("--exclude=")]
+
+        def left_out(relative: str) -> bool:
+            parts = relative.split("/")
+            for pattern in excludes:
+                if pattern.startswith("*") and any(part.endswith(pattern[1:]) for part in parts):
+                    return True
+                anchored = pattern.lstrip("/")
+                if pattern.startswith("/") and (relative == anchored or relative.startswith(anchored + "/")):
+                    return True
+            return False
+
+        copied = {}
+        for name, text in self.files.items():
+            if name.startswith(source + "/") and not left_out(name[len(source) + 1:]):
+                copied[destination + name[len(source):]] = text
+                if name in self.file_sizes:
+                    self.file_sizes[destination + name[len(source):]] = self.file_sizes[name]
+        for name in [name for name in self.files if name.startswith(destination + "/") and name not in copied]:
+            del self.files[name]
+        self.files.update(copied)
+        self.dirs.add(destination)
+        return host.HostResult(0, "", "")
+
     def _rsync(self, cmd: list[str]) -> host.HostResult:
         destination = cmd[-1]
+        if "/@app-" in destination:
+            return self._app_rsync(cmd, cmd[-2], destination)
         if destination.endswith("/unos.db"):
             part = "database"
         elif "/volumes/" in destination:

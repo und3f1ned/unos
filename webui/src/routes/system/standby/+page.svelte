@@ -2,7 +2,9 @@
 	import {
 		armStandby,
 		discardStandby,
+		moveCriticalApps,
 		removeStandby,
+		returnCriticalApps,
 		returnToEmmc,
 		setStandbySyncTime,
 		startDrill,
@@ -11,7 +13,12 @@
 		type StandbyStatus
 	} from '$lib/api/standby';
 	import { Alert, Button, Card, ErrorState, HelpText, Skeleton, confirm, toast } from '$lib/components/ui';
-	import { StandbyConditions, StandbyDrillsCard, StandbyStatusCard } from '$lib/components/system/standby';
+	import {
+		StandbyAppsCard,
+		StandbyConditions,
+		StandbyDrillsCard,
+		StandbyStatusCard
+	} from '$lib/components/system/standby';
 	import { reasonText, syncText } from '$lib/components/system/standby/texts';
 	import { messageOf } from '$lib/errors';
 	import { formatSize } from '$lib/format';
@@ -188,6 +195,38 @@
 		}, 'standby.discard.failed');
 	}
 
+	// The critical apps (ADR-0498): all of them to the card as a drill, and back to their pool.
+	async function moveApps() {
+		const asked = await confirm({
+			title: $t('standby.apps.moveTitle'),
+			message: $t('standby.apps.moveMessage'),
+			consequences: [$t('standby.apps.moveCache'), $t('standby.apps.moveOthers')],
+			confirmLabel: $t('standby.apps.move'),
+			tone: 'warning'
+		});
+		if (!asked) return;
+		await act(async () => {
+			const answer = await moveCriticalApps('drill');
+			return $t('standby.apps.moved', { n: answer.apps.filter((app) => !app.error).length });
+		}, 'standby.apps.moveFailed');
+	}
+
+	async function returnApps() {
+		const model = card?.model ?? '';
+		const asked = await confirm({
+			title: $t('standby.apps.returnTitle'),
+			message: $t('standby.apps.returnMessage'),
+			confirmLabel: $t('standby.apps.returnConfirm'),
+			typeToConfirm: model,
+			focusCancel: true
+		});
+		if (!asked) return;
+		await act(async () => {
+			const answer = await returnCriticalApps(model);
+			return $t('standby.apps.returned', { n: answer.apps.length });
+		}, 'standby.apps.returnFailed');
+	}
+
 	async function remove() {
 		const model = card?.model ?? '';
 		const asked = await confirm({
@@ -265,6 +304,7 @@
 		{#if status.armed}
 			<StandbyStatusCard {status} {zone} {syncing} {savingTime} onsync={syncNow} onsavetime={saveTime} />
 			<StandbyDrillsCard {status} {busy} ondrill={drill} onreturn={returnBack} ondiscard={discard} />
+			<StandbyAppsCard {status} {zone} {busy} onmove={moveApps} onreturn={returnApps} />
 			{#if status.root !== 'card'}
 				{@render removeCard()}
 			{/if}

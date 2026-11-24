@@ -12,6 +12,17 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- **Critical apps on the SD standby**: an installed app's ⋯ menu marks it critical, with a sync
+  interval of 1 to 24 hours; its dialog lists what the standby copies and what it does not (caches,
+  the copies an update keeps, other pool folders) with their sizes, the card's space and the writes
+  a week of the interval, and refuses a mark that would leave the card less than its reserve. Its
+  folder is copied from a read-only snapshot, with its images and its containers' definitions, into a
+  new generation on the card, only while the pool's disks are awake. When its pool goes read-only
+  after an error (after one last copy), or stays unmounted or short of a disk for two checks, its
+  containers run from the card's copy, alerted and on the banner; **System → SD Standby** shows the
+  card's space by part, moves the apps to the card as a drill and returns them to their pool,
+  discarding the card's changes, and the Storage page's unmount or removal of a pool they use offers
+  to move them first. On the standby the critical apps start from their copies (ADR-0498).
 - **The first pool takes Docker's data**: when an administrator makes the host's first managed pool
   and Docker's data root or containerd's root is on the system disk, UNOS moves both into the
   pool's subvolumes `.docker` and `.containerd` in the transient unit `unos-docker-move` of the host:

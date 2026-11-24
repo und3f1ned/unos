@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import host
+from ..standby import apps as standby_apps
 from ..standby import service as standby_service
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -908,6 +909,7 @@ async def update_app(container_id: base.AppContainerId, request: Request, user: 
     shares = await base._share_folders(db)
     await db.close()
     _, app = await asyncio.to_thread(base._get_app, container_id)
+    standby_apps.refuse_failed_over(app.key, "its update")
     if app.template is None:
         _refuse(f"{app.name} is no app of the catalog: it has nothing to update to")
     template = app.template
@@ -1112,6 +1114,7 @@ async def rollback_app(container_id: base.AppContainerId, request: Request,
     """
     standby_service.refuse_on_standby("an app's rollback")
     _, app = await asyncio.to_thread(base._get_app, container_id)
+    standby_apps.refuse_failed_over(app.key, "its rollback")
     if not app.previous:
         _refuse(f"{app.name} has no earlier version to roll back to")
     template = app.template

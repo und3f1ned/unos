@@ -6,6 +6,7 @@ export { default as AppInstallJobs } from './AppInstallJobs.svelte';
 export { default as AppUpdateDialog } from './AppUpdateDialog.svelte';
 export { default as AppResources } from './AppResources.svelte';
 export { default as AppLimitsDialog } from './AppLimitsDialog.svelte';
+export { default as AppCriticalDialog } from './AppCriticalDialog.svelte';
 export { default as AppCatalog } from './AppCatalog.svelte';
 export { default as AppCatalogCard } from './AppCatalogCard.svelte';
 export { default as InstalledAppCard } from './InstalledAppCard.svelte';

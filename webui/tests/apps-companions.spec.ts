@@ -123,6 +123,8 @@ function installedStack(app: Expected, template: CatalogApp, port: number): Fake
     version: null,
     update_to: null,
     previous: null,
+    critical: false,
+    on_standby_card: false,
   };
 }
 
