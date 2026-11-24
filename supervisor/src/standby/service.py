@@ -151,11 +151,20 @@ class StandbyStatus(BaseModel):
     space: StandbySpace | None = Field(default=None, description="The card's space by part; null when it is not read.")
 
 
+class StandbyReturnFailure(BaseModel):
+    at: str = Field(description="When the return started, in UTC.")
+    step: str | None = Field(description="The step that failed: stop, copy, containers or record.")
+    error: str | None = Field(description="Why it failed.")
+    backup: str | None = Field(description="The folder that keeps what the copy replaced or deleted.")
+
+
 class StandbyAppMove(BaseModel):
     at: str = Field(description="When the app moved to the card, in UTC.")
     reason: str = Field(description="pool_failed, pool_read_only, drill or planned.")
     pool: str = Field(description="The pool it left.")
     has_copy: bool = Field(description="Whether it runs from its copy; false: it had none and stays stopped.")
+    return_failed: StandbyReturnFailure | None = Field(default=None, description=(
+        "The last return to the pool that failed: the app stays stopped, and the return can run again."))
 
 
 class StandbyAppStatus(BaseModel):
@@ -723,9 +732,18 @@ def _apps_status(critical: dict[str, Any]) -> list[StandbyAppStatus]:
             synced_at=record.get("synced_at"), mib_per_sync=round(sum(recent) / len(recent), 1) if recent else None,
             data_bytes=sizes.get("data"), images_bytes=sizes.get("images"), error=record.get("error"),
             moved=StandbyAppMove(at=moved.get("at", ""), reason=moved.get("reason", ""), pool=moved.get("pool", ""),
-                                 has_copy=bool(moved.get("copy"))) if moved else None,
+                                 has_copy=bool(moved.get("copy")),
+                                 return_failed=_return_failure(moved.get("returning"))) if moved else None,
             return_blocked=standby_apps.pool_unfit(str(moved.get("pool"))) if moved else None))
     return shown
+
+
+def _return_failure(value: Any) -> StandbyReturnFailure | None:
+    """The record of a pool return that failed; None when none did (or one runs now)."""
+    if not isinstance(value, dict) or not value.get("error"):
+        return None
+    return StandbyReturnFailure(at=str(value.get("at") or ""), step=value.get("step"), error=str(value.get("error")),
+                                backup=value.get("backup"))
 
 
 def _space() -> StandbySpace | None:
@@ -1246,16 +1264,19 @@ async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dr
     return moved
 
 
-async def return_apps(apps: list[str] | None, model: str, *, dry_run: bool, request: Request,
-                      username: str) -> list[str]:
-    """The discarding return of the apps that run from the card, after the card's model was typed."""
+async def return_apps(apps: list[str] | None, model: str, *, discard: bool = False, dry_run: bool, request: Request,
+                      username: str) -> list[Any]:
+    """The return of the apps that run from the card to their pool: with the card's changes (the pool return,
+    system.sd-standby-failback), or, after the card's model was typed, discarding them."""
     from . import apps as standby_apps
+    from . import failback
 
     _refuse_locally()
-    stored_card = _state.stored.get("card") or {}
-    if not model.strip() or model.strip() != str(stored_card.get("model") or "").strip():
-        raise HTTPException(409, detail=f"Type the card's model, {stored_card.get('model')}, to return the apps and "
-                                        "discard the card's changes")
+    if discard:
+        stored_card = _state.stored.get("card") or {}
+        if not model.strip() or model.strip() != str(stored_card.get("model") or "").strip():
+            raise HTTPException(409, detail=f"Type the card's model, {stored_card.get('model')}, to return the apps and "
+                                            "discard the card's changes")
     moved = sorted(app for app, record in standby_apps.stored_apps().items()
                    if isinstance(record.get("failed_over"), dict))
     if apps is not None and (not apps or set(apps) - set(moved)):
@@ -1269,5 +1290,6 @@ async def return_apps(apps: list[str] | None, model: str, *, dry_run: bool, requ
         if not apps:
             raise HTTPException(409, detail="No app that runs from the card can return: " + "; ".join(
                 f"{app}: {why}" for app, why in blocked.items()) if blocked else "No app runs from the card")
-    chosen = apps
-    return await standby_apps.return_apps(chosen, request=request, username=username, dry_run=dry_run)
+    if discard:
+        return await standby_apps.return_apps(apps, request=request, username=username, dry_run=dry_run)
+    return await failback.return_apps(apps, request=request, username=username, dry_run=dry_run)

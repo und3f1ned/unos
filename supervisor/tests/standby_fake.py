@@ -586,8 +586,50 @@ class StandbyFakeHost:
         self.dirs.add(destination)
         return host.HostResult(0, "", "")
 
+    def _app_rsync_back(self, cmd: list[str], source: str, destination: str) -> host.HostResult:
+        """rsync of an app's run copy back to its folder on the pool (system.sd-standby-failback), with its
+        excludes, --delete and --backup-dir: each file it replaces or deletes moves into the backup folder; a
+        dry run with --stats answers the bytes it would transfer. ``copy_status["back:<app>"]`` fails it."""
+        app = source.split("/@app-", 1)[1].split("/", 1)[0].rsplit("-", 1)[0]
+        source, destination = source.rstrip("/"), destination.rstrip("/")
+        excludes = [part[len("--exclude="):] for part in cmd if part.startswith("--exclude=")]
+
+        def left_out(relative: str) -> bool:
+            parts = relative.split("/")
+            for pattern in excludes:
+                if pattern.startswith("*") and any(part.endswith(pattern[1:]) for part in parts):
+                    return True
+                anchored = pattern.lstrip("/")
+                if pattern.startswith("/") and (relative == anchored or relative.startswith(anchored + "/")):
+                    return True
+            return False
+
+        wanted = {name[len(source) + 1:]: text for name, text in self.files.items()
+                  if name.startswith(source + "/") and not left_out(name[len(source) + 1:])}
+        have = {name[len(destination) + 1:]: text for name, text in self.files.items()
+                if name.startswith(destination + "/") and not left_out(name[len(destination) + 1:])}
+        changed = [relative for relative, text in wanted.items() if have.get(relative) != text]
+        gone = [relative for relative in have if relative not in wanted]
+        size = sum(self.file_sizes.get(f"{source}/{relative}", len(wanted[relative])) for relative in changed)
+        if "--dry-run" in cmd:
+            return host.HostResult(0, f"Number of files: {len(wanted)}\nTotal transferred file size: {size:,} bytes\n", "")
+        self._change(cmd)
+        status = self.copy_status.get(f"back:{app}", 0)
+        if status:
+            return host.HostResult(status, "", f"rsync: write failed: No space left on device (28)\nrsync error (code {status})\n")
+        backup = next(part[len("--backup-dir="):] for part in cmd if part.startswith("--backup-dir="))
+        for relative in [*changed, *gone]:
+            if relative in have:
+                self.files[f"{backup}/{relative}"] = self.files.pop(f"{destination}/{relative}")
+        for relative in changed:
+            self.files[f"{destination}/{relative}"] = wanted[relative]
+        self.dirs.add(destination)
+        return host.HostResult(0, f"Total transferred file size: {size:,} bytes\n", "")
+
     def _rsync(self, cmd: list[str]) -> host.HostResult:
         destination = cmd[-1]
+        if "/@app-" in cmd[-2] and "/@app-" not in destination:
+            return self._app_rsync_back(cmd, cmd[-2], destination)
         if "/@app-" in destination:
             return self._app_rsync(cmd, cmd[-2], destination)
         if destination.endswith("/unos.db"):

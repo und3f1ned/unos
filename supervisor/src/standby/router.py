@@ -148,10 +148,14 @@ class AppsMove(DryRun):
 
 
 class AppsReturn(Confirmed):
-    model_config = ConfigDict(json_schema_extra={"examples": [{"apps": ["vaultwarden"], "model": "SC32G"}]})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"apps": ["vaultwarden"], "discard": False, "dry_run": True}]})
 
     apps: list[str] | None = Field(default=None, max_length=64, description=(
         "The apps that return; null: every app that runs from the card and whose pool can take it back."))
+    discard: bool = Field(default=False, description=(
+        "false: the pool return, which copies what the apps changed on the card into their folders on the pool and "
+        "keeps every file it replaces in {pool}/apps/<app>.before-failback-<time>/; true: the return that discards "
+        "the card's changes, confirmed by the card's model typed."))
 
 
 class AppMoved(BaseModel):
@@ -159,6 +163,10 @@ class AppMoved(BaseModel):
     has_copy: bool = Field(description="Whether it runs from its copy; false: it had none and stays stopped.")
     age: str | None = Field(description="Its copy's age, such as 3 h.")
     error: str | None = Field(description="Why its move failed; null when it did not.")
+    mib: float | None = Field(default=None, description=(
+        "The pool return: the MiB its copy writes to the pool (a dry run) or wrote; null without a copy."))
+    backup: str | None = Field(default=None, description=(
+        "The pool return: the folder that keeps the files that the copy replaced or deleted."))
 
 
 class AppsAction(BaseModel):
@@ -189,19 +197,27 @@ async def move_apps(body: AppsMove, request: Request, user=Depends(require_admin
         message=("A dry run: " if body.dry_run else "") + f"{len(moved)} critical app(s) to the card")
 
 
-@router.post("/apps/return", response_model=AppsAction, summary="Return the critical apps to their pool, discarding "
-             "the card's changes", responses=errors(BODY, {409: "The typed model does not match, no app runs from the "
-                                                                 "card, or an app's pool cannot take it back.",
-                                                            500: "A return failed."}))
+@router.post("/apps/return", response_model=AppsAction, summary="Return the critical apps to their pool",
+             responses=errors(BODY, {409: "The typed model of a discarding return does not match, no app runs from "
+                                          "the card, an app's pool cannot take it back, or a sync runs.",
+                                     500: "A return failed: the detail names the app and its step; the app stays "
+                                          "stopped and its copy on the card as it was."}))
 async def return_apps(body: AppsReturn, request: Request, user=Depends(require_admin)) -> AppsAction:
-    """Recreate the pool-bound containers of the apps that run from the card from their definitions, start
-    those that ran and delete the card's run copies: what the apps changed on the card is discarded. Each
-    app's pool must be mounted, writable and healthy. Audited as standby_apps_returned.
+    """The pool return (the default): stop the apps' containers on the card, copy what the apps changed on the card
+    into {pool}/apps/<app>/ (not their caches and update copies), keeping every file it replaces or deletes in
+    {pool}/apps/<app>.before-failback-<time>/, create the pool-bound containers again from their definitions,
+    start those that ran and delete the card's run copies. A dry run answers the MiB each copy writes. With
+    discard, the card's changes are discarded instead. Each app's pool must be mounted, writable and healthy.
+    Audited as standby_apps_returned and alerted.
     \f
     ADR-0471, ADR-0500.
     """
-    returned = await service.return_apps(body.apps, body.model, dry_run=body.dry_run, request=request,
-                                         username=user.username)
-    return AppsAction(dry_run=body.dry_run, apps=[
-        AppMoved(app=app, has_copy=True, age=None, error=None) for app in returned],
-        message=("A dry run: " if body.dry_run else "") + f"{len(returned)} app(s) back on their pool")
+    returned = await service.return_apps(body.apps, body.model, discard=body.discard, dry_run=body.dry_run,
+                                         request=request, username=user.username)
+    if body.discard:
+        items = [AppMoved(app=app, has_copy=True, age=None, error=None) for app in returned]
+    else:
+        items = [AppMoved(app=item.app, has_copy=item.mib is not None, age=None, error=None, mib=item.mib,
+                          backup=item.backup) for item in returned]
+    return AppsAction(dry_run=body.dry_run, apps=items,
+                      message=("A dry run: " if body.dry_run else "") + f"{len(returned)} app(s) back on their pool")

@@ -20,9 +20,9 @@ or at a manual move (the reason drill) or before a planned repair (the reason pl
 recreates the app's current containers on a writable snapshot ``@app-<app>-run`` of its generation:
 the binds under ``{pool}/apps/<app>/`` on its ``data/``, a cache on a tmpfs of 256 MiB, every other
 pool bind on an empty read-only folder of the card; those that ran start. ``state.json`` records it
-(``apps.<app>.failed_over``), and the problem ``apps_on_standby`` names the apps. The discarding
-return (``return_to_pool``) recreates the pool-bound containers from the definitions saved at the
-move and deletes the run copy. At every start, before the supervisor serves, ``reapply`` moves again
+(``apps.<app>.failed_over``), and the problem ``apps_on_standby`` names the apps. The pool return
+(``failback.py``) copies the card's changes back into the pool; the discarding return (``return_app``)
+recreates the pool-bound containers from the definitions saved at the move and deletes the run copy. At every start, before the supervisor serves, ``reapply`` moves again
 a pool-bound container of an app that state.json records as moved; on the standby's root
 ``start_on_standby`` loads the critical apps' images and creates their networks and containers.
 """
@@ -1444,7 +1444,7 @@ def problems_found(critical: dict[str, Mark]) -> list[tuple[str, str, str, str, 
         found.append(("apps_on_standby", "error", ", ".join(sorted(moved)), "Critical apps run from the SD standby",
                       f"These apps run from the SD standby's card since their pool failed or they were moved: "
                       f"{', '.join(parts)}. Changes made now are on the card only; System > Standby returns them to "
-                      "their pool, discarding the card's changes."))
+                      "their pool with the card's changes."))
     now = utc_now()
     for app, mark in sorted(critical.items()):
         # Until the first pass of the RAID monitor since the start, whose check of each app is kept in RAM.

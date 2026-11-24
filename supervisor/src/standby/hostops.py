@@ -56,7 +56,13 @@ class StandbyStopped(StandbyError):
 
 
 def _why(result: host.HostResult) -> str:
-    return result.stderr.strip().splitlines()[-1] if result.stderr.strip() else f"exit status {result.returncode}"
+    """The last line of a command's errors; for rsync, whose last line is its summary (``rsync error: ...
+    (code 11)``), the first line that says what failed before it."""
+    lines = [line for line in result.stderr.strip().splitlines() if line.strip()]
+    if not lines:
+        return f"exit status {result.returncode}"
+    cause = next((line for line in lines[:-1] if line.startswith("rsync: ")), None)
+    return f"{cause}; {lines[-1]}" if cause and lines[-1].startswith("rsync error") else lines[-1]
 
 
 class StandbyHost:
@@ -107,13 +113,14 @@ class StandbyHost:
             raise StandbyFailed(f"{what}: {_why(result)}")
         return result
 
-    def long_change(self, cmd: list[str], *, what: str, timeout: float) -> host.HostResult:
-        """A long change (rsync, docker save) in the sync's unit; any status but 0 fails it."""
+    def long_change(self, cmd: list[str], *, what: str, timeout: float, writable: bool = False) -> host.HostResult:
+        """A long change (rsync, docker save) in the sync's unit; any status but 0 fails it. ``writable``:
+        the unit may write the host beyond the card (the copy back of a critical app to its pool)."""
         self._check_stop()
         if self.dry_run:
             self.plan.append(shlex.join(cmd))
             return host.HostResult(0, "", "")
-        result = self._in_unit(cmd, timeout=timeout)
+        result = self._in_unit(cmd, timeout=timeout, writable=writable)
         self._check_stop()
         if not result.ok:
             raise StandbyFailed(f"{what}: {_why(result)} (exit status {result.returncode})")
@@ -135,10 +142,10 @@ class StandbyHost:
 
     # --- the sync's unit ---------------------------------------------------------------------------
 
-    def _in_unit(self, cmd: list[str], *, timeout: float) -> host.HostResult:
+    def _in_unit(self, cmd: list[str], *, timeout: float, writable: bool = False) -> host.HostResult:
         wrapped = [
             "systemd-run", f"--unit={SYNC_UNIT}", "--wait", "--pipe", "--quiet", "--collect",
-            f"--property=RuntimeMaxSec={int(timeout)}", *READ_ONLY_HOST, "--", *cmd,
+            f"--property=RuntimeMaxSec={int(timeout)}", *(() if writable else READ_ONLY_HOST), "--", *cmd,
         ]
         try:
             return host.run_on_host(wrapped, timeout=timeout + SYSTEMD_RUN_GRACE, errors="replace")
