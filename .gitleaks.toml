@@ -160,3 +160,15 @@ description = "A made-up token, the-token, that a test of the CI's changed-areas
 condition = "AND"
 commits = ["3d332758e90b1d35cf2dab29040db0841fc1e93c"]
 paths = ['''^supervisor/tests/test_ci_changed_areas\.py$''']
+
+[[allowlists]]
+description = "Test values of the backend tests (Mosquitto's install password), and RFC 6455's sample Sec-WebSocket-Key in a ledger entry's device check"
+condition = "AND"
+commits = ["bc49a4289f02a2e821412fb2aa1d120bdcb5c672"]
+paths = ['''^supervisor/tests/test_apps\.py$''', '''^feature-list\.json$''']
+
+[[allowlists]]
+description = "RFC 6455's sample Sec-WebSocket-Key in a ledger entry's device check"
+condition = "AND"
+commits = ["7f069d077c868d30556d2ef887d86d141a6c20b0"]
+paths = ['''^feature-list\.json$''']
