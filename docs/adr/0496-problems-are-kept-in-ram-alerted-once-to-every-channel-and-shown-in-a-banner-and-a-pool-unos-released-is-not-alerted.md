@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0479]
 ---
 
-# ADR-0490: The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool that UNOS released is not alerted as not mounted
+# ADR-0496: The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool that UNOS released is not alerted as not mounted
 
 ## Context
 

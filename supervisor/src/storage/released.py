@@ -1,4 +1,4 @@
-"""The pools that UNOS released, and the releases that run (ADR-0490).
+"""The pools that UNOS released, and the releases that run (ADR-0496).
 
 Unmount and Remove Pool unmount a pool and drop its entry from the host's fstab; its filesystem stays
 on its disks, unmounted, and is listed again as a pool found there. The RAID monitor alerts a pool

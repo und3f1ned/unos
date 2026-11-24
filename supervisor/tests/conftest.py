@@ -157,7 +157,7 @@ def _no_volume_use_read_yet(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_pool_released_yet(monkeypatch, tmp_path_factory):
-    """The pools that UNOS released and the releases that run (ADR-0490), kept in RAM and in a file:
+    """The pools that UNOS released and the releases that run (ADR-0496), kept in RAM and in a file:
     none when a test starts, and the file in a temporary folder of its own."""
     released = sys.modules.get("src.storage.released")
     if released is not None:

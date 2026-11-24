@@ -2050,7 +2050,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   `mosquitto.conf` that an earlier install wrote is kept: remove it before you install Mosquitto
   again.
 - A pool created and removed between two passes of the RAID monitor is not alerted as not mounted
-  either (ADR-0490, which supersedes ADR-0479): on the BPI-W3, "RAID Pool 'sdcheck' UNMOUNTED" came
+  either (ADR-0496, which supersedes ADR-0479): on the BPI-W3, "RAID Pool 'sdcheck' UNMOUNTED" came
   at the next pass, since no pass had seen it managed. Unmount and Remove Pool now record the UUID
   of the filesystem they unmount or whose fstab entry they drop (`released_pools.json` in the data
   directory, written once per release and once per mount of a released one), kept until UNOS mounts

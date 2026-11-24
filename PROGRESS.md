@@ -896,7 +896,7 @@ Open owner actions:
   Remove's and the leftover's two negative cases) failed on the code before. A fresh-context review
   found six gaps, all fixed (the ledger entry's notes). The device check, for the lead after the
   batch's deploy, is in the ledger entry; until it passes the entry stays `passes: false`.
-### 2026-11-24: A pool released between two RAID passes is not alerted (system.alert-events, ADR-0490)
+### 2026-11-24: A pool released between two RAID passes is not alerted (system.alert-events, ADR-0496)
 
 - On a branch from origin/main 80fe1f51, at the lead's brief: the
   gap of 2026-11-23, "RAID Pool 'sdcheck' UNMOUNTED" for a pool created and removed between two
@@ -906,7 +906,7 @@ Open owner actions:
   fstab entry they drop (`supervisor/src/storage/released.py`, `released_pools.json`), until UNOS
   mounts it again; and they, and Create Pool, mark the pool in RAM while they run, which each check
   reads before and after its read of the host: a pool read as not mounted meanwhile is neither
-  judged nor recorded in that check, without the pools' lock. ADR-0490 supersedes ADR-0479; the
+  judged nor recorded in that check, without the pools' lock. ADR-0496 supersedes ADR-0479; the
   RAID status loses `managed`.
 - Tests that failed first on 80fe1f51: eleven of `TestThePoolsOfTheRaidMonitor` (made and released
   between two checks by Remove Pool and by Unmount, after a restart, mounted again and falling off,

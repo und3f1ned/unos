@@ -4,14 +4,14 @@ date: 2026-11-23
 area: system
 decided-by: agent
 supersedes: [ADR-0332]
-superseded-by: ADR-0490
+superseded-by: ADR-0496
 ---
 
 # ADR-0479: The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool the administrator removed is not alerted
 
 ## Context
 
-Superseded by ADR-0490: UNOS records the filesystems it released, so that a pool no pass saw managed and a read during a removal are not alerted either.
+Superseded by ADR-0496: UNOS records the filesystems it released, so that a pool no pass saw managed and a read during a removal are not alerted either.
 
 ADR-0332 kept the RAID monitor's alerts of a change of status for the pools UNOS does not manage. A
 pool that the administrator removes (Remove Pool, or Unmount: unmounted and its fstab entry dropped)

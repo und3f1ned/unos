@@ -57,7 +57,7 @@ CERTIFICATES = DATA_DIR / "certs"
 RAID_STATUS = DATA_DIR / "raid_status.json"
 SMART_HISTORY = DATA_DIR / "smart_history.json"
 VOLUME_USAGE = DATA_DIR / "volume_usage.json"
-# The filesystems of the pools that Unmount and Remove Pool released (src/storage/released.py, ADR-0490).
+# The filesystems of the pools that Unmount and Remove Pool released (src/storage/released.py, ADR-0496).
 RELEASED_POOLS = DATA_DIR / "released_pools.json"
 # The notification channels and the history of what was sent (src/notifications/router.py).
 NOTIFICATIONS = DATA_DIR / "notifications.json"

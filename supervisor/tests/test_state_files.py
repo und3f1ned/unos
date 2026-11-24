@@ -293,7 +293,7 @@ STATE_FILES = [
     # The history of the volumes' use, written only at shutdown (storage.volume_usage).
     StateFile("volume_usage.json", volume_usage, "HISTORY_FILE", _save_volume_usage,
               lambda: volume_usage.history_of("3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d", 256), []),
-    # The filesystems of the pools that Unmount and Remove Pool released (ADR-0490).
+    # The filesystems of the pools that Unmount and Remove Pool released (ADR-0496).
     StateFile("released_pools.json", released, "RELEASED_FILE",
               lambda: released.record("4b2d0a7f-2345-4d4c-8c1b-9a4d3b2c5d6e", "media"),
               _loaded_released_pools, {}),

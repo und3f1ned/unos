@@ -896,7 +896,7 @@ class _PoolsRead:
     pools: list[PoolInfo]
     managed: set[str] | None  # the names in the host's fstab; None when it could not be read
     # The pools that a release or a creation changed during the read, and the filesystems released
-    # (storage.released, ADR-0490).
+    # (storage.released, ADR-0496).
     released: storage_released.Seen = field(default_factory=storage_released.Seen)
 
 
@@ -922,7 +922,7 @@ async def check_raid_health() -> list[RaidHealthInfo]:
     the event loop as it returns, so that the read of another check never comes between. With it,
     the pools that Unmount, Remove Pool or Create Pool changed during the read and the filesystems
     released (storage.released): marked before the read and asked after it, without the pools' lock
-    (ADR-0490).
+    (ADR-0496).
     """
     global _pools_read
     mark = storage_released.mark()
@@ -955,7 +955,7 @@ def pool_problems(
     earlier: dict[str, problems.Problem],
     changing: frozenset[str] = frozenset(),
 ) -> dict[str, problems.Problem]:
-    """The problems of the pools that UNOS manages, by key, from one read of the pools (ADR-0490).
+    """The problems of the pools that UNOS manages, by key, from one read of the pools (ADR-0496).
 
     ``managed`` names the pools whose entries the host's fstab has; when it could not be read
     (None), the problems found before (``earlier``) stay. A managed pool that is not mounted, or
@@ -1135,7 +1135,7 @@ async def raid_monitor_loop():
     the same check names them, and a state that could not be read. For the other pools it alerts new
     errors, a filesystem forced read-only, and a status that turned from healthy, but not to not
     mounted for a pool that UNOS released (Unmount, Remove Pool: storage.released): the
-    administrator let it go, and its disks keep it (ADR-0490). A pool read as not mounted while
+    administrator let it go, and its disks keep it (ADR-0496). A pool read as not mounted while
     Unmount, Remove Pool or Create Pool changed it is neither judged nor recorded in that check: it
     keeps the status it had, and the next check judges it.
     """

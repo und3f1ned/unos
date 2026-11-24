@@ -40,7 +40,7 @@ namespace still has the pool mounted, also at its mountpoint, keeps it in use
 Deleting or unmounting a pool never touches the disks: the filesystem stays
 intact and can be mounted again. Its UUID is kept as released until UNOS mounts
 it again, and both mark the pool while they run, as Create does (storage.released):
-the RAID monitor does not alert a pool that the administrator let go of (ADR-0490).
+the RAID monitor does not alert a pool that the administrator let go of (ADR-0496).
 
 A pool is only mounted at its top level, where its volumes and share folders
 are: a mount that shows another subvolume (the filesystem's default one was
@@ -364,7 +364,7 @@ def _forget_fstab_entry(name: str) -> bool:
     """Drop the pool's managed fstab entry; returns whether there was one to drop.
 
     The filesystem of the dropped entry is released (storage.released): the RAID monitor does not
-    alert it as not mounted (ADR-0490).
+    alert it as not mounted (ADR-0496).
     """
     text = _read_fstab()
     new_text = remove_managed_fstab_entry(text, name)
@@ -1337,7 +1337,7 @@ def _unmount_namespace_copies(target: str, mounts: list[disks.HostMount], copies
 
 
 def _release(name: str, uuid: str | None) -> None:
-    """Record the filesystem that Unmount or Remove Pool unmounted as released (ADR-0490)."""
+    """Record the filesystem that Unmount or Remove Pool unmounted as released (ADR-0496)."""
     if uuid is not None:
         released.record(uuid, name)
 
@@ -1474,7 +1474,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
     exists (Create, Mount) does it stay, write-protected like that of every
     pool that is not mounted. An import that fails leaves nothing behind.
     Returns whether it changed anything: it mounted the pool or wrote the fstab (ADR-0402).
-    The filesystem is no longer released (storage.released, ADR-0490).
+    The filesystem is no longer released (storage.released, ADR-0496).
     """
     target = pool_mountpoint(name)
     changed = not already_mounted
@@ -1518,7 +1518,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
                 _remove_made_mountpoint(target)
             raise
     changed = _write_fstab(desired, text) or changed
-    released.forget(uuid)  # a pool again (ADR-0490)
+    released.forget(uuid)  # a pool again (ADR-0496)
     return changed
 
 
@@ -1797,7 +1797,7 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
     data_profile, meta_profile = PROFILE_MAP[pool.raid_level]
 
     # Marked while it runs: a check that reads between mkfs and the mount does not judge the new
-    # pool, unmounted and not yet managed (storage.released, ADR-0490).
+    # pool, unmounted and not yet managed (storage.released, ADR-0496).
     with _lock, released.changing(name):
         facts = _check_pool_devices(validated_devices, pool.force, identities)
         _check_name_available(name, facts)
