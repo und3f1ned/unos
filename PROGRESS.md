@@ -55,9 +55,12 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs the branch `system.sd-standby-bpi-f3` since 2026-11-24, deployed with `scripts/dev/deploy.sh`
-  sync, build-supervisor and up supervisor (SD MiB, its eMMC: 0.855, 0.230, 0.219; check: OK), with
-  the SD standby set up on its card SC64G, generation 1, every boot through its chooser (Log).
+  runs `main` 20e6754f (`mvp.batch-22` with `system.sd-standby-bpi-f3`, ADR-0489) since 2026-11-24,
+  deployed with `scripts/dev/deploy.sh all` at the owner's standing permission (SD MiB, its eMMC: sync
+  1.617, build-supervisor 0.219, build-webui 0.145, up 0.398, check 0.000; check: OK), with the SD
+  standby set up on its card SC64G, every condition met, every boot through its chooser (Log);
+  `scenario.sh all` passed there after it. Before it the branch `system.sd-standby-bpi-f3` the same
+  day (SD MiB: 0.855, 0.230, 0.219; check: OK).
   Before it `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
   deploy"; SD MiB, its eMMC: sync 2.555, build-supervisor 0.457, build-webui 0.148, up 0.336, check
   0.000; check: OK). Before it f8a8ed58 of `mvp.batch-21` the same day (sync 6.023,
