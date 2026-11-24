@@ -607,10 +607,12 @@ class TestTheEmmcReturnsUnit:
             await service.return_to_emmc(dry_run=False, request=None, username="admin")
             assert service._state.emmc_returning is True
             fake.files[f"{RUN_DIR}/result"] = "failed\ncheck\nfsck.ext4: /dev/mmcblk0p1 is in use\n"
-            for _ in range(1000):  # each pass of the follow yields at once (FOLLOW_SECONDS 0)
-                if not service._tasks:
-                    break
-                await asyncio.sleep(0)
+            # The follow ends once it read the result: wait for it, not for a count of passes, which
+            # its reads in worker threads outlast on a slower machine (ADR-0497). 30 s is a guard.
+            following = set(service._tasks)
+            await asyncio.wait(following, timeout=30)
+            assert all(task.done() for task in following)
+            await asyncio.sleep(0)  # the done callbacks that drop the tasks from the set
             assert not service._tasks
 
         run(go())
