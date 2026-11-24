@@ -155,13 +155,14 @@ class TestTheConditions:
         assert met(items)["profile"] is False
         assert items[0].detail == "This NAS does not boot through U-Boot"
 
-    def test_the_f3_names_its_missing_profile(self, fake):
-        fake.files["/etc/armbian-release"] = "BOARD=bananapif3\nBOARD_NAME=\"Banana Pi BPI-F3\"\n"
+    def test_a_board_without_a_profile_names_it_and_the_boards_that_have_one(self, fake):
+        fake.files["/etc/armbian-release"] = "BOARD=orangepi5\nBOARD_NAME=\"Orange Pi 5\"\n"
         items = conditions.evaluate(conditions.read_facts(), armed=False)
         state = met(items)
         assert (state["profile"], state["loader"], state["emmc_root"]) == (False, False, True)
         details = {item.id: item.detail for item in items}
-        assert "no board profile" in details["profile"] and "bananapif3" in details["profile"]
+        assert "no board profile" in details["profile"] and "orangepi5" in details["profile"]
+        assert details["profile"].endswith("offered only on the BPI-W3 and the BPI-F3")
 
     @pytest.mark.parametrize(("root", "why"), [
         ("1 1 0:1 / / rw - ext4 /dev/mmcblk0p1 rw,commit=600\n", "errors=remount-ro"),

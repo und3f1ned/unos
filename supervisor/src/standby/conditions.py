@@ -1,9 +1,10 @@
 """Where the SD card standby is offered: each condition of ADR-0471 with its result.
 
 - ``profile``: the host runs Armbian (``/etc/armbian-release``) on a board with a profile
-  (``profiles.py``: only the BPI-W3 for now);
+  (``profiles.py``: the BPI-W3 and the BPI-F3);
 - ``loader``: Armbian's loader package of that board, ``write_uboot_platform`` in
-  ``/usr/lib/u-boot/platform_install.sh`` and the images it writes;
+  ``/usr/lib/u-boot/platform_install.sh`` and the images the profile names, each of which fits its
+  place on the card before the next part, partition or the counter sector;
 - ``emmc_root``: the root filesystem is ext4 on an eMMC, mounted with ``errors=remount-ro``;
 - ``sd_card``: an SD card of at least 14 GiB that ADR-0472 offers as free (no part of the running
   system), with nothing mounted and no filesystem that the host's fstab names; once set up, the
@@ -28,12 +29,14 @@ from pydantic import BaseModel, Field
 
 from .. import host
 from ..storage import disks
-from . import profiles
-from .hostops import StandbyHost
+from . import bootscript, profiles
+from .hostops import StandbyHost, StandbyRefused
 
 ConditionId = Literal["profile", "loader", "emmc_root", "sd_card", "host_tools"]
 ARMBIAN_RELEASE = "/etc/armbian-release"
 PLATFORM_INSTALL = "/usr/lib/u-boot/platform_install.sh"
+# The eMMC's boot configuration on an extlinux board, as the host sees it (ADR-0489).
+EXTLINUX = "/boot/extlinux/extlinux.conf"
 MOUNTINFO = "/proc/1/mountinfo"
 TOOLS = {"rsync": "rsync", "mkfs.vfat": "dosfstools", "sfdisk": "fdisk"}
 _MMC_PARTITION = re.compile(r"/dev/(mmcblk[0-9]+)p([0-9]+)")
@@ -125,10 +128,18 @@ def _read_profile(ops: StandbyHost, facts: Facts) -> None:
     facts.profile = profiles.profile_for(facts.board)
     named = f"{facts.board_name or facts.board or 'an unnamed board'} ({facts.board or 'no BOARD'})"
     if facts.profile is None:
+        boards = " and the ".join(dict.fromkeys(profile.name for profile in profiles.PROFILES.values()))
         facts.profile_detail = (f"Armbian on {named}, which has no board profile: the standby is offered only on "
-                                "the BPI-W3 for now")
+                                f"the {boards}")
     else:
         facts.profile_detail = f"Armbian on the {facts.profile.name}, {named}"
+
+
+def read_profile(ops: StandbyHost) -> profiles.BoardProfile | None:
+    """The host's board profile; None on a board without one."""
+    facts = Facts()
+    _read_profile(ops, facts)
+    return facts.profile
 
 
 def _read_loader(ops: StandbyHost, facts: Facts) -> None:
@@ -140,21 +151,72 @@ def _read_loader(ops: StandbyHost, facts: Facts) -> None:
     if script is None or "write_uboot_platform" not in script:
         facts.loader_detail = f"{PLATFORM_INSTALL} with write_uboot_platform is missing: Armbian's linux-u-boot package"
         return
-    end = 0
-    for image, sector in profile.loader_images:
+    sizes = {}
+    for image in dict.fromkeys(image for image, _ in profile.loader_images):
         path = f"{profile.loader_dir}/{image}"
         result = ops.read(["stat", "--format=%s", "--", path])
         if not result.ok or not result.stdout.strip().isdigit():
             facts.loader_detail = f"{path} of Armbian's loader package is missing"
             return
-        end = max(end, sector + -(-int(result.stdout.strip()) // profiles.SECTOR))
-    facts.loader_end_sector = end
-    if end > profile.counter_sector:
-        facts.loader_detail = (f"The loader's images end at sector {end}, past the sector {profile.counter_sector} "
-                               "that the standby's tries counter needs")
+        sizes[image] = int(result.stdout.strip())
+    facts.loader_end_sector = max(sector + -(-sizes[image] // profiles.SECTOR) for image, sector in profile.loader_images)
+    problem = loader_problem(profile, sizes)
+    if problem is not None:
+        facts.loader_detail = problem
         return
     facts.loader_ok = True
     facts.loader_detail = f"Armbian's loader package {profile.loader_dir} with write_uboot_platform"
+
+
+def loader_problem(profile: profiles.BoardProfile, sizes: dict[str, int]) -> str | None:
+    """Why the loader's images, of ``sizes`` bytes each, do not fit the card's layout; None when they do.
+    Each image must end before the next thing on the card that starts after it (another image, a
+    partition of the loader, the counter sector, the first partition) and within its own loader
+    partition; a first stage that SpacemiT's boot info names, within the boot ROM's limit."""
+    if profile.loader_header == "spacemit_bootinfo":
+        first = profile.loader_images[0][0]
+        if sizes[first] > profiles.SPACEMIT_FIRST_STAGE_LIMIT:
+            return (f"The loader's {first} holds {sizes[first]} bytes, larger than the "
+                    f"{profiles.SPACEMIT_FIRST_STAGE_LIMIT} bytes that the boot ROM loads")
+    starts = {sector for _, sector in profile.loader_images} | {first for _, first, _ in profile.loader_partitions}
+    bounds = sorted(starts | {profile.counter_sector, profile.first_sector})
+    partition_ends = {first: first + size for _, first, size in profile.loader_partitions}
+    for image, sector in profile.loader_images:
+        end = sector + -(-sizes[image] // profiles.SECTOR)
+        room = min([bound for bound in bounds if bound > sector] + [partition_ends.get(sector, profile.first_sector)])
+        if end <= room:
+            continue
+        if room == profile.counter_sector:
+            return (f"The loader's images end at sector {end}, past the sector {profile.counter_sector} that the "
+                    "standby's tries counter needs")
+        return f"The loader's {image} at sector {sector} ends at sector {end}, past sector {room}, where its room ends"
+    return None
+
+
+def boot_relative(path: str, prefix: str) -> str:
+    """A path of the eMMC's boot partition (such as /boot/Image, with the boot folder ``prefix`` /boot/)
+    relative to the boot folder: Image. ValueError for a path outside it."""
+    if not path.startswith(prefix) or len(path) == len(prefix):
+        raise ValueError(f"{path} lies outside the eMMC's boot folder {prefix}")
+    return path[len(prefix):]
+
+
+def read_emmc_label(ops: StandbyHost, facts: Facts) -> bootscript.ExtlinuxLabel:
+    """The eMMC's extlinux label that the chooser boots on an extlinux board, its files on the host (ADR-0489).
+    StandbyRefused when the chooser cannot boot it as sysboot would."""
+    text = ops.read_file(EXTLINUX)
+    if text is None:
+        raise StandbyRefused(f"The eMMC's {EXTLINUX} cannot be read")
+    try:
+        label = bootscript.parse_extlinux(text)
+        assert facts.boot_prefix is not None
+        files = [boot_relative(path, facts.boot_prefix) for path in (label.kernel, label.initrd, label.fdt)]
+    except ValueError as e:
+        raise StandbyRefused(f"The chooser cannot boot the eMMC's {EXTLINUX}: {e}") from None
+    for relative in files:
+        if not ops.exists(f"/boot/{relative}"):
+            raise StandbyRefused(f"/boot/{relative}, which the eMMC's {EXTLINUX} loads, is missing")
+    return label
 
 
 def _read_root(ops: StandbyHost, facts: Facts) -> None:

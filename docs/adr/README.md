@@ -421,6 +421,7 @@ and this index, and `make check-fast` runs it.
 | [0482](0482-notifications-name-the-nas-by-the-hosts-name-read-for-each-message.md) | Notifications name the NAS by the host's name, read for each message, with the last name read as a fallback | accepted | 2026-11-23 |
 | [0487](0487-the-first-pool-takes-dockers-data-through-a-transient-unit-that-leaves-its-result-in-ram.md) | The first pool takes Docker's data through a transient unit of the host that restores the old configuration on any failure and leaves its result in RAM | accepted | 2026-11-23 |
 | [0488](0488-the-sd-standbys-card-has-the-partition-table-its-boards-u-boot-reads-its-syncs-write-nothing-to-the-emmc-and-it-also-takes-over-when-dockers-pool-fails.md) | The SD standby's card has the partition table its board's U-Boot reads, its syncs write nothing to the eMMC, and it also takes over when Docker's pool fails | accepted | 2026-11-23 |
+| [0489](0489-the-bpi-f3s-sd-standby-uses-spacemits-official-sd-layout-and-its-chooser-boots-the-emmcs-extlinux-label-with-booti.md) | The BPI-F3's SD standby uses SpacemiT's official SD layout, and its chooser boots the eMMC's extlinux label itself with booti | accepted | 2026-11-24 |
 
 ## Web UI
 

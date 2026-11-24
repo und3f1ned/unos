@@ -17,8 +17,8 @@ const W3_CONDITIONS = [
   { id: 'sd_card', met: true, detail: 'The free SD card /dev/mmcblk1 (SC32G, 31.9 GB)' },
   { id: 'host_tools', met: true, detail: 'rsync, dosfstools and sfdisk are on the host' },
 ];
-const F3_PROFILE =
-  'Armbian on Banana Pi BPI-F3 (bananapif3), which has no board profile: the standby is offered only on the BPI-W3 for now';
+const NO_PROFILE =
+  'Armbian on Orange Pi 5 (orangepi5), which has no board profile: the standby is offered only on the BPI-W3 and the BPI-F3';
 const CARD = { device: '/dev/mmcblk1', model: 'SC32G', serial: '0x8f3a1b2c', size: 31914983424 };
 const WROTE = {
   at: '2026-11-23T10:05:00Z', trigger: 'setup', result: 'wrote', mib: 2310.5,
@@ -82,12 +82,12 @@ test.describe('System > Standby', () => {
 
   test('a board without a profile names the unmet conditions and offers no action', async ({ authenticatedPage: page }) => {
     const conditions = W3_CONDITIONS.map((item) =>
-      item.id === 'profile' ? { ...item, met: false, detail: F3_PROFILE }
+      item.id === 'profile' ? { ...item, met: false, detail: NO_PROFILE }
       : item.id === 'loader' ? { ...item, met: false, detail: 'No board profile names the loader package' } : item);
     await fakeStandby(page, { ...FREE, available: false, profile: null, card: null, conditions });
     await page.goto('/system/standby');
     await expect(page.getByText('The SD card standby is not offered on this NAS')).toBeVisible();
-    await expect(page.getByTestId('standby-condition-profile')).toContainText(F3_PROFILE);
+    await expect(page.getByTestId('standby-condition-profile')).toContainText(NO_PROFILE);
     await expect(page.getByTestId('standby-condition-profile')).toContainText('Not met');
     // Docker's data root is no condition: it is on a pool, which the standby covers (ADR-0486, ADR-0488).
     await expect(page.locator('[data-testid^="standby-condition-"]')).toHaveCount(5);
