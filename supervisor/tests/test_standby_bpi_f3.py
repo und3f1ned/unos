@@ -101,13 +101,17 @@ def commands(fake: StandbyFakeF3) -> list[str]:
     return [" ".join(cmd) for cmd in fake.changes]
 
 
+SETTLE = "udevadm settle --timeout=30"
+
+
 def assert_wiped_again(fake: StandbyFakeF3) -> None:
     """The card of a failed Set up is an empty card again, and nothing of the eMMC changed."""
     done = commands(fake)
     wipe = done[len(done) - 1 - done[::-1].index(BOOT_INFO_CLEARED):]
-    assert wipe in ([BOOT_INFO_CLEARED, *partitions, "wipefs -a /dev/mmcblk0",
+    # udev settles before each wipe: wipefs cannot open what udev probes.
+    assert wipe in ([BOOT_INFO_CLEARED, *partitions, SETTLE, "wipefs -a /dev/mmcblk0",
                      "dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=16 conv=fsync status=none"]
-                    for partitions in ([], ["wipefs -a /dev/mmcblk0p1", "wipefs -a /dev/mmcblk0p2"]))
+                    for partitions in ([], [SETTLE, "wipefs -a /dev/mmcblk0p1", SETTLE, "wipefs -a /dev/mmcblk0p2"]))
     assert fake.raw == {} and fake.sectors == {} and fake.cards[0].labels == ()
     assert not [cmd for cmd in done if cmd.startswith(("write /etc", "chattr", "mkdir", "systemctl"))]
 
@@ -182,6 +186,7 @@ class TestTheSetup:
         assert [cmd for cmd in done if cmd.startswith(CARD_COMMANDS)] == [
             # A boot info that the card holds goes first: the boot ROM would take a loader whose GPT is gone.
             BOOT_INFO_CLEARED,
+            SETTLE,
             "wipefs -a /dev/mmcblk0",
             "dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=16 conv=fsync status=none",
             # The table first: SpacemiT's boot info shares the card's first sector with it.
@@ -339,7 +344,7 @@ class TestTheSetup:
 
     def test_a_dry_run_lists_the_plan_and_changes_nothing(self, fake):
         plan = card.prepare("SC64G", dry_run=True).plan
-        assert plan[:4] == [BOOT_INFO_CLEARED, "wipefs -a /dev/mmcblk0",
+        assert plan[:5] == [BOOT_INFO_CLEARED, SETTLE, "wipefs -a /dev/mmcblk0",
                             "dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=16 conv=fsync status=none",
                             "sfdisk --wipe never --no-tell-kernel /dev/mmcblk0"]
         assert fake.changes == [] and fake.raw == {}
@@ -402,8 +407,9 @@ class TestTheSync:
         await service.remove("SC64G", dry_run=False, request=None, username="admin")
         done = commands(fake)
         # The boot info first: from then on the boot ROM passes over the card, whose GPT the wipe removes.
-        assert [cmd for cmd in done if cmd.startswith(CARD_COMMANDS)][-8:] == [
-            BOOT_INFO_CLEARED, "wipefs -a /dev/mmcblk0p1", "wipefs -a /dev/mmcblk0p2", "wipefs -a /dev/mmcblk0",
+        assert [cmd for cmd in done if cmd.startswith(CARD_COMMANDS)][-11:] == [
+            BOOT_INFO_CLEARED, SETTLE, "wipefs -a /dev/mmcblk0p1", SETTLE, "wipefs -a /dev/mmcblk0p2",
+            SETTLE, "wipefs -a /dev/mmcblk0",
             "dd if=/dev/zero of=/dev/mmcblk0 bs=1M count=16 conv=fsync status=none",
             "udevadm settle --timeout=30", "blockdev --rereadpt /dev/mmcblk0", "udevadm settle --timeout=30"]
         assert not [cmd for cmd in done[:done.index(BOOT_INFO_CLEARED)] if "/dev/mmcblk0" in cmd]

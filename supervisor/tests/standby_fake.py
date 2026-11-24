@@ -159,6 +159,8 @@ class StandbyFakeHost:
         # Re-reads of the card's table that find it busy even after udev settled (an event udev took
         # up after the settle).
         self.busy_rereads = 0
+        # Wipes of the card that find it busy even after udev settled.
+        self.busy_wipes = 0
         # Changes that fail: the beginnings of their commands as shlex.join writes them.
         self.failing: set[str] = set()
         self.uuids: dict[str, str] = {}
@@ -321,8 +323,16 @@ class StandbyFakeHost:
         self._change(cmd)
         if input is not None:
             self.inputs[shlex.join(cmd)] = input
+        if program == "udevadm" and cmd[1] == "settle":
+            self.udev_probing = False  # udev's work is done, also when the test makes the command fail
         if any(shlex.join(cmd).startswith(prefix) for prefix in self.failing):
             return host.HostResult(1, "", f"{program}: an I/O error\n")
+        # wipefs opens its target exclusively: while udev probes the card (after a write that closed it,
+        # or the unmount of one of its filesystems) the open fails, as Remove found on the W3 right after
+        # its unmounts (2026-11-24).
+        if program == "wipefs" and cmd[-1].startswith(f"/dev/{self.card}") and (self.udev_probing or self.busy_wipes):
+            self.busy_wipes = max(0, self.busy_wipes - 1)
+            return host.HostResult(1, "", f"wipefs: error: {cmd[-1]}: probing initialization failed: Device or resource busy\n")
         # A write to the card that closes it makes udev probe it (and re-read its table) through its
         # watch: until udevadm settle, the kernel finds the card busy at blockdev --rereadpt, as Set up
         # found on the F3 after the loader's writes (2026-11-24).
@@ -338,6 +348,8 @@ class StandbyFakeHost:
             self.mounted.add(cmd[1])
             self.files.update(self.hidden.pop(cmd[1], {}))
         elif program == "umount":
+            if cmd[1] in (BOOT_DIR, CARD_DIR):
+                self.udev_probing = True
             # What the card's filesystem holds is no more under its mount point.
             self.mounted.discard(cmd[1])
             inside = {name: text for name, text in self.files.items() if name.startswith(cmd[1] + "/")}

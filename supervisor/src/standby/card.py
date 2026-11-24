@@ -248,6 +248,25 @@ def reread_partitions(ops: StandbyHost, disk: str) -> None:
     settle_udev(ops)
 
 
+def _wipe_signatures(ops: StandbyHost, target: str, what: str) -> None:
+    """wipefs opens ``target`` exclusively, which fails while udev probes it: after a write that closed the
+    card, and after the unmount of one of its filesystems (EBUSY, met on the W3 and the F3 right after
+    Remove's unmounts, 2026-11-24). udev settles first; a wipe that still finds it busy (an event udev
+    took up after the settle) waits a moment, settles and tries again, up to 3 times, as a re-read does."""
+    for attempt in range(1, REREAD_TRIES + 1):
+        try:
+            settle_udev(ops)
+        except StandbyFailed:  # only a wait: the wipe's own answer says whether the card was free
+            pass
+        try:
+            ops.change(["wipefs", "-a", target], what=what)
+            return
+        except StandbyFailed:
+            if attempt == REREAD_TRIES:
+                raise
+            time.sleep(REREAD_PAUSE)
+
+
 def wipe_card(ops: StandbyHost, profile: profiles.BoardProfile | None, disk: str, partitions: tuple[str, ...] = ()) -> None:
     """The card wiped to an empty card, one without a partition table, which never stopped a board's boot:
     SpacemiT's boot info first, so that the boot ROM passes over the card from then on (it would take a
@@ -259,8 +278,8 @@ def wipe_card(ops: StandbyHost, profile: profiles.BoardProfile | None, disk: str
                     "status=none"], what="The wipe of the card's boot info")
     for partition in partitions:
         if ops.exists(partition):
-            ops.change(["wipefs", "-a", partition], what=f"The wipe of {partition}")
-    ops.change(["wipefs", "-a", disk], what="The wipe of the card")
+            _wipe_signatures(ops, partition, what=f"The wipe of {partition}")
+    _wipe_signatures(ops, disk, what="The wipe of the card")
     ops.change(["dd", "if=/dev/zero", f"of={disk}", "bs=1M", f"count={WIPE_MIB}", "conv=fsync", "status=none"],
                what="The wipe of the card's loader area")
 

@@ -11,6 +11,7 @@ off-device copy, the roles and the audit log, and the host scripts the card runs
 
 from __future__ import annotations
 
+import shlex
 import asyncio
 import json
 import os
@@ -280,7 +281,7 @@ class TestTheSetup:
             answer = client.post("/api/v1/system/standby/arm", json={"model": "SC32G", "dry_run": True})
         assert answer.status_code == 200, answer.text
         plan = answer.json()["plan"]
-        assert plan[0] == "wipefs -a /dev/mmcblk1"
+        assert plan[:2] == ["udevadm settle --timeout=30", "wipefs -a /dev/mmcblk1"]
         assert any(step.startswith("mkfs.btrfs -f -L UNOS-STANDBY /dev/mmcblk1p2") for step in plan)
         assert f"write {BOOT_DIR}/boot.scr" in plan
         assert fake.changes == []
@@ -840,6 +841,26 @@ class TestTheFirstDeviceCheck:
         assert units
         for cmd in units:
             assert {"--property=ProtectSystem=strict", f"--property=ReadWritePaths=-{STANDBY_DIR}"} <= set(cmd), cmd
+
+    async def test_remove_wipes_the_card_once_udev_has_probed_it_after_the_unmounts(self, fake):
+        """udev probes a partition whose filesystem was just unmounted, and wipefs cannot open it meanwhile
+        (EBUSY, the W3 on 2026-11-24): Remove lets udev settle before each wipe, and ends."""
+        card.prepare("SC32G", dry_run=False)
+        service.refresh()
+        await service.remove("SC32G", dry_run=False, request=None, username="admin")
+        assert_nothing_of_the_standby_left(fake)
+        changes = [shlex.join(cmd) for cmd in fake.changes]
+        wipes = [i for i, cmd in enumerate(changes) if cmd.startswith("wipefs ")]
+        assert wipes and all(changes[i - 1] == "udevadm settle --timeout=30" for i in wipes), changes
+
+    async def test_a_wipe_that_still_finds_the_card_busy_tries_again(self, fake, monkeypatch):
+        """An event that udev takes up after the settle keeps the partition busy: settle and wipe again."""
+        monkeypatch.setattr(card, "REREAD_PAUSE", 0)
+        card.prepare("SC32G", dry_run=False)
+        service.refresh()
+        fake.busy_wipes = card.REREAD_TRIES - 1
+        await service.remove("SC32G", dry_run=False, request=None, username="admin")
+        assert_nothing_of_the_standby_left(fake)
 
     async def test_remove_leaves_no_folder_that_the_setup_made(self, fake):
         card.prepare("SC32G", dry_run=False)
