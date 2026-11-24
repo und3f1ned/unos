@@ -5,27 +5,39 @@ Set up takes only a card that ADR-0472 offers as free, never the root's disk nor
 something mounted or named by the host's fstab, and only after the administrator typed its model;
 it reads the host again right before it wipes. It then writes, in this order:
 
-1. the card wiped: the signatures of its filesystems and partition table, and its first 16 MiB;
-2. the board's loader from the host's loader package, at the sectors of Armbian's
-   ``write_uboot_platform``, the first stage's header last;
-3. a GPT with partition 1 from the profile's first sector, 512 MiB of FAT32 labelled UNOS-BOOT
-   (bootable), and partition 2, the rest, btrfs labelled UNOS-STANDBY (the loader package's version
-   kept on it, so that a sync writes the loader again only when that version changes);
-4. the tries counter at 0 in the free sector before partition 1;
+1. the card wiped: SpacemiT's boot info first (the F3's), the signatures of its filesystems and
+   partition table, and its first 16 MiB;
+2. the board's loader from the host's loader package, at the sectors of its profile, the first
+   stage's header last;
+3. the profile's partition table (a GPT on the BPI-W3 and the BPI-F3) with partition 1 from the
+   profile's first sector, 512 MiB of FAT32 labelled UNOS-BOOT (bootable), partition 2, the rest,
+   btrfs labelled UNOS-STANDBY (the loader package's version kept on it, so that a sync writes the
+   loader again only when that version changes), and the loader's named partitions where the board's
+   loader needs them (the F3's);
+4. the tries counter at 0 in the free sector of the profile, before partition 1;
 5. UNOS's fstab lines (``nofail``) and their mount points, immutable while nothing is mounted there;
 6. the mounts, the chooser ``boot.scr`` and ``unos/``;
 7. on the eMMC's system: ``unos-standby-boot-ok.service`` and ``unos-standby-watch.service`` (the
    switch when the pool that holds Docker fails, ADR-0488) with their scripts, and systemd's hardware
    watchdog (``RuntimeWatchdogSec=60s``) where the board has one, from the next boot.
 
-The first generation is the service's next step. Remove the standby unmounts the card, drops the
-fstab lines, the units and the mount points, and wipes the card with its loader area, so that it is
-a free card again.
+A board whose boot info shares the card's first sector with the partition table, the F3's, gets its
+loader (step 2) only after step 7: a Set up that fails before it leaves a card that the boot ROM passes
+over (ADR-0489).
+
+A Set up that fails in steps 1 to 4, before anything of the eMMC changed, wipes the card again to an
+empty card (ADR-0489). The first generation is the service's next step. Remove the standby unmounts
+the card, drops the fstab lines, the units and the mount points, and wipes the card as step 1 does,
+so that it is a free card again.
 """
 
 from __future__ import annotations
 
+import binascii
+import logging
 import re
+import struct
+import time
 from dataclasses import dataclass
 
 from ..config import get_settings
@@ -36,6 +48,8 @@ from .generation import (
 )
 from .hostops import BOOT_DIR, CARD_DIR, STANDBY_DIR, StandbyFailed, StandbyHost, StandbyRefused
 
+logger = logging.getLogger(__name__)
+
 FSTAB = get_settings().fstab_path
 FSTAB_MARKER = "# unos-standby: the SD card standby's FAT partition and btrfs top level (managed by UNOS)"
 WATCHDOG_DROPIN = "/etc/systemd/system.conf.d/unos-standby-watchdog.conf"
@@ -43,6 +57,9 @@ WATCHDOG_DEVICE = "/dev/watchdog0"
 WIPE_MIB = 16
 GPT_BASIC_DATA = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
 GPT_LINUX = "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+# The first usable sector of a GPT whose loader partitions lie before sfdisk's default of 2048: right
+# after the 32 sectors of a GPT's entries (SpacemiT's official layout, ADR-0489).
+GPT_FIRST_LBA = 34
 
 
 @dataclass
@@ -135,47 +152,126 @@ def partition_layout(profile: profiles.BoardProfile) -> str:
     """sfdisk's script of the card: partition 1, FAT32, from the profile's first sector, marked bootable
     for U-Boot's distro boot, and partition 2, the rest. GPT where the profile says so (the W3, whose
     U-Boot reads no partition of an MBR card, ADR-0488), with partition 1 "Microsoft basic data",
-    which every computer opens."""
+    which every computer opens, and after them the loader's named partitions (the F3's first stage
+    loads opensbi and uboot by name, ADR-0489). The FAT partition is never named bootfs: the F3's
+    U-Boot would import an environment from a partition of that name."""
     start, size = profile.first_sector, profiles.BOOT_PARTITION_SECTORS
     if profile.partition_table == "gpt":
-        return (f"label: gpt\nunit: sectors\n"
-                f"start={start}, size={size}, type={GPT_BASIC_DATA}, attrs=LegacyBIOSBootable\n"
-                f"start={start + size}, type={GPT_LINUX}\n")
+        lines = ["label: gpt", *([f"first-lba: {GPT_FIRST_LBA}"] if profile.loader_partitions else []), "unit: sectors",
+                 f"start={start}, size={size}, type={GPT_BASIC_DATA}, attrs=LegacyBIOSBootable",
+                 f"start={start + size}, type={GPT_LINUX}",
+                 *(f'start={first}, size={sectors}, type={GPT_LINUX}, name="{name}"'
+                   for name, first, sectors in profile.loader_partitions)]
+        return "\n".join(lines) + "\n"
     return f"label: dos\nunit: sectors\nstart={start}, size={size}, type=c, bootable\nstart={start + size}, type=83\n"
 
 
+SPACEMIT_BOOT_INFO_BYTES = 80
+
+
+def spacemit_boot_info(first: int, backup: int, flash: bytes = b"SDC") -> bytes:
+    """SpacemiT's boot info, the 80 bytes that the K1's boot ROM reads from the start of a boot device:
+    its magic and version, the flash's kind, the page and block sizes and the device's size the ROM
+    assumes, the byte offsets of the first stage and of its copy, the first stage's size limit, and the
+    CRC32 of those 64 bytes. As bootinfo_sd.json of SpacemiT's U-Boot describes it; with b"eMMC", 0x200
+    and 0 it gives the package's bootinfo_emmc.bin byte for byte, and the package ships no SD one
+    (ADR-0489)."""
+    header = struct.pack("<II", 0xB00714F0, 0x00010001) + flash.ljust(4, b"\0") + struct.pack("<BBH", 0, 0, 0)
+    header += struct.pack("<III", 512, 0x10000, 0x10000000) + struct.pack("<B3x", 0)
+    header += struct.pack("<IIIII", first, backup, profiles.SPACEMIT_FIRST_STAGE_LIMIT, 0, 0) + b"\0" * 12
+    return header + struct.pack("<I", binascii.crc32(header) & 0xFFFFFFFF) + b"\0" * 12
+
+
 def write_loader(ops: StandbyHost, profile: profiles.BoardProfile, disk: str) -> None:
-    """The board's loader from its package onto the card, each image at the sector of the profile (those
-    of Armbian's write_uboot_platform). The first stage's header is zeroed first, the later stages are
-    written, then the first stage without its first sector, and that sector last: a rewrite cut off at
-    any point leaves no valid header in front of a broken stage, and the boot ROM passes over the card
-    (ADR-0488)."""
-    (first, start), later = profile.loader_images[0], profile.loader_images[1:]
+    """The board's loader from its package onto the card, each image at the sector of the profile. The
+    first stage's header is cleared first, the later stages are written, the first stage, and its header
+    last: a rewrite cut off at any point leaves no valid header in front of a broken stage, and the boot
+    ROM passes over the card (ADR-0488). The W3's header is idbloader.img's first sector; the F3's is
+    SpacemiT's boot info in bytes 0 to 79 of the card's first sector, which name the first stage's two
+    copies, the profile's first two images (ADR-0489)."""
     conv = ("conv=notrunc,fsync", "status=none")
     what = "The board's loader on the card"
+    if profile.loader_header == "spacemit_bootinfo":
+        (_, first), (_, backup) = profile.loader_images[:2]
+        info = spacemit_boot_info(first * profiles.SECTOR, backup * profiles.SECTOR)
+        assert len(info) == SPACEMIT_BOOT_INFO_BYTES
+        size = f"bs={SPACEMIT_BOOT_INFO_BYTES}"
+        ops.change(["dd", "if=/dev/zero", f"of={disk}", size, "count=1", *conv], what=f"{what} (its boot info cleared)")
+        for image, sector in reversed(profile.loader_images):
+            ops.change(["dd", f"if={profile.loader_dir}/{image}", f"of={disk}", "bs=512", f"seek={sector}", *conv],
+                       what=f"{what} ({image})", timeout=300)
+        ops.change(["dd", f"of={disk}", size, "count=1", "iflag=fullblock", *conv], what=f"{what} (its boot info)",
+                   input=info.decode("utf-8", "surrogateescape"), errors="surrogateescape")
+        return
+    (first_image, start), later = profile.loader_images[0], profile.loader_images[1:]
     ops.change(["dd", "if=/dev/zero", f"of={disk}", "bs=512", f"seek={start}", "count=1", *conv],
                what=f"{what} (its header cleared)")
     for image, sector in reversed(later):
         ops.change(["dd", f"if={profile.loader_dir}/{image}", f"of={disk}", "bs=512", f"seek={sector}", *conv],
                    what=f"{what} ({image})", timeout=300)
-    ops.change(["dd", f"if={profile.loader_dir}/{first}", f"of={disk}", "bs=512", "skip=1", f"seek={start + 1}", *conv],
-               what=f"{what} ({first})", timeout=300)
-    ops.change(["dd", f"if={profile.loader_dir}/{first}", f"of={disk}", "bs=512", "count=1", f"seek={start}", *conv],
-               what=f"{what} ({first}'s header)")
+    ops.change(["dd", f"if={profile.loader_dir}/{first_image}", f"of={disk}", "bs=512", "skip=1", f"seek={start + 1}",
+                *conv], what=f"{what} ({first_image})", timeout=300)
+    ops.change(["dd", f"if={profile.loader_dir}/{first_image}", f"of={disk}", "bs=512", "count=1", f"seek={start}", *conv],
+               what=f"{what} ({first_image}'s header)")
+
+
+REREAD_TRIES = 3
+# Seconds before another re-read, for an event that udev has not taken up yet when it settles.
+REREAD_PAUSE = 1.0
+
+
+def settle_udev(ops: StandbyHost) -> None:
+    """udev has handled what it took up: each write that closes the card makes it probe the card through
+    its watch, and re-read the table of a card with nothing mounted, its partitions gone meanwhile."""
+    ops.change(["udevadm", "settle", "--timeout=30"], what="The card's partitions", timeout=40)
+
+
+def reread_partitions(ops: StandbyHost, disk: str) -> None:
+    """The kernel reads the card's partition table again. It refuses while udev probes the card or its
+    partitions (EBUSY, met on the F3 after the loader's writes): udev settles first, a re-read that still
+    finds the card busy (an event udev took up after the settle) waits a moment, settles and tries again,
+    up to 3 times, and udev settles after it."""
+    for attempt in range(1, REREAD_TRIES + 1):
+        settle_udev(ops)
+        try:
+            ops.change(["blockdev", "--rereadpt", disk], what="The card's partitions")
+            break
+        except StandbyFailed:
+            if attempt == REREAD_TRIES:
+                raise
+            time.sleep(REREAD_PAUSE)
+    settle_udev(ops)
+
+
+def wipe_card(ops: StandbyHost, profile: profiles.BoardProfile | None, disk: str, partitions: tuple[str, ...] = ()) -> None:
+    """The card wiped to an empty card, one without a partition table, which never stopped a board's boot:
+    SpacemiT's boot info first, so that the boot ROM passes over the card from then on (it would take a
+    first stage whose GPT, by which it finds the later stages, is gone; ADR-0489), also when the board is
+    not known, then the signatures of ``partitions``' filesystems and of the card's table, and its first
+    16 MiB, the loader's area."""
+    if profile is None or profile.loader_header == "spacemit_bootinfo":
+        ops.change(["dd", "if=/dev/zero", f"of={disk}", f"bs={SPACEMIT_BOOT_INFO_BYTES}", "count=1", "conv=notrunc,fsync",
+                    "status=none"], what="The wipe of the card's boot info")
+    for partition in partitions:
+        if ops.exists(partition):
+            ops.change(["wipefs", "-a", partition], what=f"The wipe of {partition}")
+    ops.change(["wipefs", "-a", disk], what="The wipe of the card")
+    ops.change(["dd", "if=/dev/zero", f"of={disk}", "bs=1M", f"count={WIPE_MIB}", "conv=fsync", "status=none"],
+               what="The wipe of the card's loader area")
 
 
 def _partition(path: str, number: int) -> str:
     return f"{path}p{number}"
 
 
-def _check_boot_script(ops: StandbyHost, facts: conditions.Facts) -> None:
-    """For a board whose eMMC boots through Armbian's boot.scr, the script must load relative to
-    ${prefix} and append the profile's variable, and armbianEnv.txt must not set that variable: else the
-    chooser's handover could not work."""
+def _check_emmc_boot(ops: StandbyHost, facts: conditions.Facts) -> bootscript.ExtlinuxLabel | None:
+    """What the chooser hands over to, checked: the eMMC's extlinux label that it boots itself (an
+    extlinux board), or Armbian's boot.scr, which must load relative to ${prefix} and append the profile's
+    variable, which armbianEnv.txt must not set: else the chooser's handover could not work."""
     profile = facts.profile
     assert profile is not None
-    if profile.emmc_boot != "boot.scr":
-        raise StandbyRefused(f"The chooser cannot hand over to the eMMC's {profile.emmc_boot} yet")
+    if profile.emmc_boot == "extlinux":
+        return conditions.read_emmc_label(ops, facts)
     script = ops.read_file("/boot/boot.scr")
     if script is None:
         raise StandbyRefused("The eMMC's boot script /boot/boot.scr cannot be read")
@@ -187,6 +283,7 @@ def _check_boot_script(ops: StandbyHost, facts: conditions.Facts) -> None:
         raise StandbyRefused("/boot/armbianEnv.txt cannot be read")
     if any(line.split("=", 1)[0].strip() == profile.args_variable for line in env.splitlines()):
         raise StandbyRefused(f"/boot/armbianEnv.txt sets {profile.args_variable}, which the chooser needs for itself")
+    return None
 
 
 def checked_card(ops: StandbyHost, model: str) -> tuple[conditions.Facts, conditions.disks.MmcCard, str]:
@@ -209,14 +306,57 @@ def checked_card(ops: StandbyHost, model: str) -> tuple[conditions.Facts, condit
     return facts, card, fstab
 
 
+def _write_card(ops: StandbyHost, profile: profiles.BoardProfile, disk: str, boot: str, data: str, *,
+                dry_run: bool) -> tuple[str, str]:
+    """Steps 1 to 4 on the card, and the UUIDs of its new filesystems."""
+    wipe_card(ops, profile, disk)
+    if profile.loader_header != "spacemit_bootinfo":
+        write_loader(ops, profile, disk)
+    layout = partition_layout(profile)
+    ops.change(["sfdisk", "--wipe", "never", "--no-tell-kernel", disk], what="The card's partitions", input=layout)
+    reread_partitions(ops, disk)
+    ops.change(["mkfs.vfat", "-F", "32", "-n", profiles.BOOT_LABEL, boot], what="The card's FAT partition", timeout=300)
+    ops.change(["mkfs.btrfs", "-f", "-L", profiles.CARD_LABEL, data], what="The card's btrfs", timeout=600)
+    # The UUIDs before the counter's write to the whole card, which makes udev re-read the card's table
+    # and its partitions vanish for a moment.
+    uuids = (f"<UUID of {boot}>", f"<UUID of {data}>") if dry_run else tuple(
+        ops.read(["blkid", "-s", "UUID", "-o", "value", partition]).stdout.strip() for partition in (boot, data))
+    if not all(uuids):
+        raise StandbyFailed("The UUIDs of the card's new filesystems cannot be read")
+    ops.change(["dd", f"of={disk}", "bs=512", f"seek={profile.counter_sector}", "count=1", "conv=sync,notrunc,fsync",
+                "status=none"], what="The tries counter", input=bootscript.counter_block(0).rstrip(b"\0").decode())
+    settle_udev(ops)
+    return uuids[0], uuids[1]
+
+
+def _wipe_again(ops: StandbyHost, profile: profiles.BoardProfile, card: conditions.disks.MmcCard, failure: StandbyFailed,
+                partitions: tuple[str, ...]) -> StandbyFailed:
+    """The card of a Set up whose writes to it failed, before anything of the eMMC changed, wiped to an empty
+    card again (ADR-0489): the error to raise, which says whether it was. A card that is gone is not
+    wiped: a dd to its path would make a file in /dev."""
+    try:
+        present = {other.name: other.serial for other in conditions.read_cards()}
+    except Exception:  # lsblk or its reads: the card counts as gone
+        present = {}
+    if present.get(card.name) != card.serial or not ops.read(["test", "-b", card.path]).ok:
+        return StandbyFailed(f"{failure}; the card is not wiped again: it is gone")
+    try:
+        wipe_card(ops, profile, card.path, partitions)
+    except StandbyFailed as wipe:
+        logger.error("The card %s of a failed Set up could not be wiped again: %s", card.path, wipe)
+        return StandbyFailed(f"{failure}; the card could not be wiped again: {wipe}")
+    return StandbyFailed(f"{failure}; the card is wiped again")
+
+
 def prepare(model: str, *, dry_run: bool) -> Prepared:
     """Steps 1 to 7 (blocking). StandbyRefused before anything is written; StandbyFailed when a step failed."""
     ops = StandbyHost(dry_run=dry_run)
     facts, card, fstab = checked_card(ops, model)
-    _check_boot_script(ops, facts)
+    label = _check_emmc_boot(ops, facts)
     profile = facts.profile
     assert profile is not None and facts.boot_number is not None and facts.boot_prefix is not None
-    chooser = bootscript.chooser_text(profile, emmc_part=facts.boot_number, emmc_prefix=facts.boot_prefix)
+    chooser = bootscript.chooser_text(profile, emmc_part=facts.boot_number, emmc_prefix=facts.boot_prefix,
+                                      emmc_label=label)
     disk, boot, data = card.path, _partition(card.path, 1), _partition(card.path, 2)
     if not re.fullmatch(r"/dev/mmcblk[0-9]+", disk):
         raise StandbyRefused(f"{disk} is no SD card")
@@ -225,22 +365,10 @@ def prepare(model: str, *, dry_run: bool) -> Prepared:
     if card.name not in again or conditions.card_refusal(again[card.name], fstab_uuids(fstab)) is not None \
             or again[card.name].serial != card.serial:
         raise StandbyRefused(f"{disk} changed meanwhile: read the Standby tab again")
-    ops.change(["wipefs", "-a", disk], what="The wipe of the card")
-    ops.change(["dd", "if=/dev/zero", f"of={disk}", "bs=1M", f"count={WIPE_MIB}", "conv=fsync", "status=none"],
-               what="The wipe of the card's loader area")
-    write_loader(ops, profile, disk)
-    layout = partition_layout(profile)
-    ops.change(["sfdisk", "--wipe", "never", "--no-tell-kernel", disk], what="The card's partitions", input=layout)
-    ops.change(["blockdev", "--rereadpt", disk], what="The card's partitions")
-    ops.change(["udevadm", "settle", "--timeout=30"], what="The card's partitions", timeout=40)
-    ops.change(["mkfs.vfat", "-F", "32", "-n", profiles.BOOT_LABEL, boot], what="The card's FAT partition", timeout=300)
-    ops.change(["mkfs.btrfs", "-f", "-L", profiles.CARD_LABEL, data], what="The card's btrfs", timeout=600)
-    ops.change(["dd", f"of={disk}", "bs=512", f"seek={profile.counter_sector}", "count=1", "conv=sync,notrunc,fsync",
-                "status=none"], what="The tries counter", input=bootscript.counter_block(0).rstrip(b"\0").decode())
-    boot_uuid = "<UUID of " + boot + ">" if dry_run else ops.read(["blkid", "-s", "UUID", "-o", "value", boot]).stdout.strip()
-    card_uuid = "<UUID of " + data + ">" if dry_run else ops.read(["blkid", "-s", "UUID", "-o", "value", data]).stdout.strip()
-    if not dry_run and (not boot_uuid or not card_uuid):
-        raise StandbyFailed("The UUIDs of the card's new filesystems cannot be read")
+    try:
+        boot_uuid, card_uuid = _write_card(ops, profile, disk, boot, data, dry_run=dry_run)
+    except StandbyFailed as e:
+        raise _wipe_again(ops, profile, card, e, (boot, data)) from None
     for folder in (BOOT_DIR, CARD_DIR):
         if not ops.exists(folder):
             ops.change(["mkdir", "-p", folder], what=f"The mount point {folder}")
@@ -263,6 +391,11 @@ def prepare(model: str, *, dry_run: bool) -> Prepared:
         ops.write_file(WATCHDOG_DROPIN, WATCHDOG_TEXT, what="systemd's hardware watchdog")
     ops.change(["systemctl", "daemon-reload"], what="The standby's units")
     ops.change(["systemctl", "enable", BOOT_OK_UNIT, WATCH_UNIT], what="The standby's units")
+    if profile.loader_header == "spacemit_bootinfo":
+        # SpacemiT's boot info shares the card's first sector with the partition table, so the loader
+        # follows the table; it comes last of all, so that a Set up that fails before it leaves a card that
+        # the boot ROM passes over (ADR-0489). The units run only on a boot through the chooser.
+        write_loader(ops, profile, disk)
     return Prepared(card=card, counter_sector=profile.counter_sector, plan=ops.plan)
 
 
@@ -274,6 +407,7 @@ def remove(model: str, *, dry_run: bool, running_on_card: bool) -> list[str]:
     fstab = ops.read_file(FSTAB)
     if fstab is None:
         raise StandbyFailed(f"{FSTAB} cannot be read")
+    profile = conditions.read_profile(ops)
     cards = [card for card in conditions.read_cards() if conditions.is_standby_card(card)]
     if not is_armed(fstab) and not cards:
         raise StandbyRefused("No standby is set up")
@@ -305,11 +439,6 @@ def remove(model: str, *, dry_run: bool, running_on_card: bool) -> list[str]:
         if ops.exists(folder):
             ops.change(["rmdir", "--ignore-fail-on-non-empty", "--", folder], what=f"The folder {folder}")
     if card is not None:
-        for partition in (_partition(card.path, 1), _partition(card.path, 2)):
-            if ops.exists(partition):
-                ops.change(["wipefs", "-a", partition], what=f"The wipe of {partition}")
-        ops.change(["wipefs", "-a", card.path], what="The wipe of the card")
-        ops.change(["dd", "if=/dev/zero", f"of={card.path}", "bs=1M", f"count={WIPE_MIB}", "conv=fsync", "status=none"],
-                   what="The wipe of the card's loader area")
-        ops.change(["blockdev", "--rereadpt", card.path], what="The card's partitions")
+        wipe_card(ops, profile, card.path, (_partition(card.path, 1), _partition(card.path, 2)))
+        reread_partitions(ops, card.path)
     return ops.plan

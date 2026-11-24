@@ -1,4 +1,5 @@
-"""A fake BPI-W3 for the tests of the SD card standby (system.sd-standby-boot, ADR-0471).
+"""A fake BPI-W3, and a fake BPI-F3, for the tests of the SD card standby (system.sd-standby-boot,
+system.sd-standby-bpi-f3, ADR-0471, ADR-0489).
 
 The host behind ``src.host.run_on_host``: its files, its mount table, its SD card (block devices, the
 raw sectors of the counter, the card's FAT partition and btrfs top level with its subvolumes), rsync
@@ -82,11 +83,18 @@ def mountinfo_line(number: int, target: str, fstype: str, source: str, options: 
 
 
 class StandbyFakeHost:
+    # The eMMC's and the SD card's block devices, and the loader package: the W3's.
+    emmc = "mmcblk0"
+    card = "mmcblk1"
+    loader_dir = "/usr/lib/linux-u-boot-vendor-armsom-w3"
+    loader_package = LOADER_PACKAGE
+
     def __init__(self) -> None:
+        emmc, card = self.emmc, self.card
         self.files: dict[str, str] = {
             "/etc/armbian-release": ARMBIAN_RELEASE,
             "/usr/lib/u-boot/platform_install.sh": PLATFORM_INSTALL,
-            "/sys/block/mmcblk0/device/type": "MMC\n",
+            f"/sys/block/{emmc}/device/type": "MMC\n",
             "/etc/fstab": EMMC_FSTAB,
             "/boot/armbianEnv.txt": ARMBIAN_ENV,
             "/boot/boot.scr": EMMC_BOOT_SCR,
@@ -109,13 +117,13 @@ class StandbyFakeHost:
             "/usr/lib/linux-u-boot-vendor-armsom-w3/idbloader.img": 210_000,
             "/usr/lib/linux-u-boot-vendor-armsom-w3/u-boot.itb": 1_400_000,
         }
-        self.block_devices = {"/dev/mmcblk0", "/dev/mmcblk0p1", "/dev/mmcblk1"}
+        self.block_devices = {f"/dev/{emmc}", f"/dev/{emmc}p1", f"/dev/{card}"}
         self.watchdog = True
         self.missing_tools: list[str] = []
         self.docker_root = DOCKER_ROOT
-        self.cards = [MmcCard(name="mmcblk1", path="/dev/mmcblk1", model="SC32G", serial="0x8f3a1b2c", size=SD_SIZE,
+        self.cards = [MmcCard(name=card, path=f"/dev/{card}", model="SC32G", serial="0x8f3a1b2c", size=SD_SIZE,
                               mmc_type="SD", use=None, labels=(), mounted=False, uuids=frozenset())]
-        self.emmc_card = MmcCard(name="mmcblk0", path="/dev/mmcblk0", model="BJTD4R", serial="0x2c7e19a5",
+        self.emmc_card = MmcCard(name=emmc, path=f"/dev/{emmc}", model="BJTD4R", serial="0x2c7e19a5",
                                  size=125_069_950_976, mmc_type="MMC", use="Mounted at /", labels=("armbi_emmc",),
                                  mounted=True, uuids=frozenset({ROOT_UUID}))
         self.mounted: set[str] = set()
@@ -128,6 +136,8 @@ class StandbyFakeHost:
         self.subvolumes: dict[int, int] = {}  # generation -> subvolume id
         self.next_subvolume_id = 256
         self.sectors: dict[int, bytes] = {}
+        # What dd wrote from its input in blocks other than a sector's, by byte offset (the F3's boot info).
+        self.raw: dict[int, bytes] = {}
         self.card_sectors_written = 1000
         # What rsync's dry runs find changed, per part (system, volume:<name>, boot), and each copy's
         # exit status per part.
@@ -138,6 +148,12 @@ class StandbyFakeHost:
         self.changes: list[list[str]] = []
         self.inputs: dict[str, str] = {}
         self.reboots = 0
+        self.udev_probing = False
+        # Re-reads of the card's table that find it busy even after udev settled (an event udev took
+        # up after the settle).
+        self.busy_rereads = 0
+        # Changes that fail: the beginnings of their commands as shlex.join writes them.
+        self.failing: set[str] = set()
         self.uuids: dict[str, str] = {}
         self.loader_version = "26.11.0-trunk.133"
 
@@ -146,14 +162,14 @@ class StandbyFakeHost:
     def mountinfo(self) -> str:
         text = mountinfo_line(20, "/proc", "proc", "proc") + mountinfo_line(21, "/sys", "sysfs", "sysfs")
         text += mountinfo_line(22, "/dev", "devtmpfs", "udev") + mountinfo_line(23, "/run", "tmpfs", "tmpfs")
-        text += mountinfo_line(1, "/", "ext4", "/dev/mmcblk0p1", "rw,errors=remount-ro,commit=600")
+        text += mountinfo_line(1, "/", "ext4", f"/dev/{self.emmc}p1", "rw,errors=remount-ro,commit=600")
         text += mountinfo_line(24, "/tmp", "tmpfs", "tmpfs")
         text += mountinfo_line(25, "/mnt/pools/data", "btrfs", "/dev/sda", "rw,space_cache=v2")
         text += mountinfo_line(26, "/run/docker/netns/abc", "nsfs", "nsfs")
         if BOOT_DIR in self.mounted:
-            text += mountinfo_line(30, BOOT_DIR, "vfat", "/dev/mmcblk1p1")
+            text += mountinfo_line(30, BOOT_DIR, "vfat", f"/dev/{self.card}p1")
         if CARD_DIR in self.mounted:
-            text += mountinfo_line(31, CARD_DIR, "btrfs", "/dev/mmcblk1p2", "rw,compress=zstd:1")
+            text += mountinfo_line(31, CARD_DIR, "btrfs", f"/dev/{self.card}p2", "rw,compress=zstd:1")
         for line in self.extra_mounts:
             text += line
         return text
@@ -166,8 +182,8 @@ class StandbyFakeHost:
         self.cards = [replace(self.cards[0], use="The SD card standby", labels=("UNOS-BOOT", "UNOS-STANDBY"),
                               mounted=True, uuids=frozenset({BOOT_UUID.lower(), CARD_UUID}))]
         self.mounted = {BOOT_DIR, CARD_DIR}
-        self.block_devices |= {"/dev/mmcblk1p1", "/dev/mmcblk1p2"}
-        self.uuids = {"/dev/mmcblk1p1": BOOT_UUID, "/dev/mmcblk1p2": CARD_UUID}
+        self.block_devices |= {f"/dev/{self.card}p1", f"/dev/{self.card}p2"}
+        self.uuids = {f"/dev/{self.card}p1": BOOT_UUID, f"/dev/{self.card}p2": CARD_UUID}
         self.files["/etc/fstab"] = EMMC_FSTAB + (
             "# unos-standby: the SD card standby's FAT partition and btrfs top level (managed by UNOS)\n"
             f"UUID={BOOT_UUID} {BOOT_DIR} vfat defaults,noatime,nofail 0 0\n"
@@ -215,7 +231,7 @@ class StandbyFakeHost:
 
     def _change(self, cmd: list[str]) -> None:
         self.changes.append(cmd)
-        if any(part.startswith(("/mnt/.unos-standby", "of=/dev/mmcblk1", "/dev/mmcblk1")) for part in cmd):
+        if any(part.startswith(("/mnt/.unos-standby", f"of=/dev/{self.card}", f"/dev/{self.card}")) for part in cmd):
             self.card_sectors_written += 2048
 
     def _answer(self, cmd: list[str], input: str | None) -> host.HostResult:
@@ -249,18 +265,23 @@ class StandbyFakeHost:
             return host.HostResult(0, f"{hashlib.sha256(data).hexdigest()}  {cmd[-1]}\n", "")
         if program == "dpkg-query" and cmd[1] == "-S":
             # Armbian's loader package installs a folder of another name (ADR-0488).
-            owned = cmd[2].startswith("/usr/lib/linux-u-boot-vendor-armsom-w3/") and cmd[2] in self.sizes
-            return host.HostResult(0, f"{LOADER_PACKAGE}: {cmd[2]}\n", "") if owned else fail
+            owned = cmd[2].startswith(self.loader_dir + "/") and cmd[2] in self.sizes
+            return host.HostResult(0, f"{self.loader_package}: {cmd[2]}\n", "") if owned else fail
         if program == "dpkg-query":
-            known = cmd[-1] == LOADER_PACKAGE and self.loader_version
+            known = cmd[-1] == self.loader_package and self.loader_version
             return host.HostResult(0, self.loader_version, "") if known else fail
         if program == "lsblk":
-            assert cmd[-1] == "/dev/mmcblk0", cmd
-            return host.HostResult(0, json.dumps({"blockdevices": [{"path": "/dev/mmcblk0", "uuid": None, "partuuid": None,
-                "label": None, "children": [{"path": "/dev/mmcblk0p1", "uuid": ROOT_UUID, "partuuid": EMMC_PARTUUID,
+            assert cmd[-1] == f"/dev/{self.emmc}", cmd
+            return host.HostResult(0, json.dumps({"blockdevices": [{"path": f"/dev/{self.emmc}", "uuid": None, "partuuid": None,
+                "label": None, "children": [{"path": f"/dev/{self.emmc}p1", "uuid": ROOT_UUID, "partuuid": EMMC_PARTUUID,
                                              "label": "armbi_emmc"}]}]}), "")
         if program == "blkid":
             uuid = self.uuids.get(cmd[-1])
+            # While udev re-reads the table of a card with nothing mounted after a write to the whole
+            # card, its partitions are gone for a moment: blkid finds none. (With a partition mounted,
+            # udev cannot re-read the table and only probes the partitions again.)
+            if self.udev_probing and not self.mounted & {BOOT_DIR, CARD_DIR} and cmd[-1].startswith(f"/dev/{self.card}p"):
+                uuid = None
             return host.HostResult(0, f"{uuid}\n", "") if uuid else host.HostResult(2, "", "")
         if program == "ls":
             return self._ls(cmd[-1])
@@ -274,6 +295,19 @@ class StandbyFakeHost:
         self._change(cmd)
         if input is not None:
             self.inputs[shlex.join(cmd)] = input
+        if any(shlex.join(cmd).startswith(prefix) for prefix in self.failing):
+            return host.HostResult(1, "", f"{program}: an I/O error\n")
+        # A write to the card that closes it makes udev probe it (and re-read its table) through its
+        # watch: until udevadm settle, the kernel finds the card busy at blockdev --rereadpt, as Set up
+        # found on the F3 after the loader's writes (2026-11-24).
+        if program in ("dd", "wipefs", "sfdisk") and any(
+                part.startswith((f"/dev/{self.card}", f"of=/dev/{self.card}")) for part in cmd):
+            self.udev_probing = True
+        elif program == "udevadm" and cmd[1] == "settle":
+            self.udev_probing = False
+        elif program == "blockdev" and "--rereadpt" in cmd and (self.udev_probing or self.busy_rereads):
+            self.busy_rereads = max(0, self.busy_rereads - 1)
+            return host.HostResult(1, "", "blockdev: ioctl error on BLKRRPART: Device or resource busy\n")
         if program == "mount":
             self.mounted.add(cmd[1])
             self.files.update(self.hidden.pop(cmd[1], {}))
@@ -306,13 +340,30 @@ class StandbyFakeHost:
                 if not inside:
                     self.dirs.discard(path)
         elif program == "dd" and input is not None:
-            seek = next(int(part[5:]) for part in cmd if part.startswith("seek="))
-            self.sectors[seek] = input.encode().ljust(512, b"\0")
+            seek = next((int(part[5:]) for part in cmd if part.startswith("seek=")), 0)
+            size = int(next(part[3:] for part in cmd if part.startswith("bs=")))
+            data = input.encode("utf-8", "surrogateescape")
+            if size == 512:
+                self.sectors[seek] = data.ljust(512, b"\0")
+            else:
+                self.raw[seek * size] = data[:size]
+        elif program == "dd" and "if=/dev/zero" in cmd and f"of=/dev/{self.card}" in cmd:
+            # Zeros over the card: what dd wrote there before is gone.
+            options = dict(part.split("=", 1) for part in cmd[1:] if "=" in part)
+            size = {"1M": 1024 * 1024}.get(options["bs"]) or int(options["bs"])
+            start = int(options.get("seek", 0)) * size
+            end = start + int(options["count"]) * size
+            self.raw = {at: data for at, data in self.raw.items() if at + len(data) <= start or at >= end}
+            self.sectors = {sector: data for sector, data in self.sectors.items()
+                            if not start <= sector * 512 < end}
+        elif program == "wipefs" and cmd[-1].startswith(f"/dev/{self.card}"):
+            # The signatures of the card's filesystems or of its table: lsblk finds none of UNOS's labels.
+            self.cards = [replace(self.cards[0], labels=(), use=None, uuids=frozenset())]
         elif program == "mkfs.vfat":
             self.uuids[cmd[-1]] = BOOT_UUID
         elif program == "mkfs.btrfs":
             self.uuids[cmd[-1]] = CARD_UUID
-            self.block_devices |= {"/dev/mmcblk1p1", "/dev/mmcblk1p2"}
+            self.block_devices |= {f"/dev/{self.card}p1", f"/dev/{self.card}p2"}
             self.cards = [replace(self.cards[0], labels=("UNOS-BOOT", "UNOS-STANDBY"), use="The SD card standby")]
         elif program == "systemctl" and cmd[1] == "reboot":
             self.reboots += 1
@@ -392,6 +443,66 @@ class StandbyFakeHost:
         self._change(cmd)
         status = self.copy_status.get(part, 0)
         return host.HostResult(status, "", "" if status == 0 else f"rsync error: some files vanished (code {status})\n")
+
+
+# The BPI-F3 (system.sd-standby-bpi-f3, ADR-0489), as the read-only study of 2026-11-23 found it.
+F3_RELEASE = """# PLEASE DO NOT EDIT THIS FILE
+BOARD=bananapif3
+BOARD_NAME="BananaPi BPI-F3"
+BOARDFAMILY=spacemit
+BRANCH=current
+LINUXFAMILY=spacemit
+"""
+F3_LOADER_DIR = "/usr/lib/linux-u-boot-current-bananapif3"
+F3_LOADER_PACKAGE = "linux-u-boot-bananapif3-current"
+F3_PLATFORM_INSTALL = f"""DIR={F3_LOADER_DIR}
+write_uboot_platform ()
+{{
+    dd if=$1/bootinfo_emmc.bin of=$2 conv=notrunc status=none
+}}
+"""
+F3_APPEND = (f"root=UUID={ROOT_UUID} earlycon=sbi console=tty1 console=ttyS0,115200 loglevel=1 rw no_console_suspend "
+             "consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 splash plymouth.ignore-serial-consoles")
+F3_EXTLINUX = f"""label Armbian
+  kernel /boot/Image
+  initrd /boot/uInitrd
+  fdt /boot/dtb/spacemit/k1-bananapi-f3.dtb
+  append {F3_APPEND}
+"""
+F3_SD_SIZE = 124_735_488 * 512
+F3_CMDLINE_THROUGH_CHOOSER = f"{F3_APPEND} unos.chooser=card unos.root=emmc unos.reason=emmc panic=10"
+
+
+class StandbyFakeF3(StandbyFakeHost):
+    """The BPI-F3: its eMMC mmcblk2 booted through /boot/extlinux/extlinux.conf (no boot.scr, no
+    armbianEnv.txt), its card mmcblk0 (SC64G), SpacemiT's loader package, no watchdog, and Docker's
+    classic store on the pool, held down by its drop-in, without containerd's."""
+
+    emmc = "mmcblk2"
+    card = "mmcblk0"
+    loader_dir = F3_LOADER_DIR
+    loader_package = F3_LOADER_PACKAGE
+
+    def __init__(self) -> None:
+        super().__init__()
+        for path in ("/boot/armbianEnv.txt", "/boot/boot.scr", "/etc/systemd/system/containerd.service.d/root-on-pool.conf"):
+            del self.files[path]
+        self.files.update({
+            "/etc/armbian-release": F3_RELEASE,
+            "/usr/lib/u-boot/platform_install.sh": F3_PLATFORM_INSTALL,
+            "/boot/extlinux/extlinux.conf": F3_EXTLINUX,
+            "/proc/cmdline": F3_APPEND,
+            "/etc/systemd/system/docker.service.d/data-root-on-pool.conf": (
+                "[Unit]\nRequiresMountsFor=/mnt/pools/data/.docker\n"),
+        })
+        self.dirs = {"/boot/Image", "/boot/uInitrd", "/boot/dtb", "/boot/dtb/spacemit",
+                     "/boot/dtb/spacemit/k1-bananapi-f3.dtb", "/boot/extlinux"}
+        self.sizes = {f"{F3_LOADER_DIR}/FSBL.bin": 197_792, f"{F3_LOADER_DIR}/fw_dynamic.itb": 136_559,
+                      f"{F3_LOADER_DIR}/u-boot.itb": 2_450_278}
+        self.watchdog = False
+        self.cards = [replace(self.cards[0], model="SC64G", serial="0x5c0a1f37", size=F3_SD_SIZE)]
+        self.emmc_card = replace(self.emmc_card, model="8GTF4R", size=15_634_268_160)
+        self.loader_version = "26.8.3"
 
 
 def _excluded(path: str, patterns: list[str]) -> bool:

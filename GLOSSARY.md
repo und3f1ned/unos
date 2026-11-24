@@ -120,16 +120,17 @@ it with `mmc extcsd read` once a day, or as of boot from sysfs (ADR-0471, ADR-04
 
 **SD standby**: An SD card that holds a copy of an eMMC system disk's system and boots it by itself
 when the eMMC, or the pool that holds Docker's data, fails: its own loader, a partition table that
-the board's U-Boot reads (GPT on the BPI-W3), a FAT partition `UNOS-BOOT` with the chooser and the
-boot folders, and a btrfs partition `UNOS-STANDBY` with the generations (ADR-0471, ADR-0488). "Set
+the board's U-Boot reads (GPT on the BPI-W3 and the BPI-F3), a FAT partition `UNOS-BOOT` with the
+chooser and the boot folders, and a btrfs partition `UNOS-STANDBY` with the generations (ADR-0471,
+ADR-0488, ADR-0489). "Set
 up" makes a free card one, "Remove" wipes it. Avoid: backup (it sits in the same device), spare disk
 (a card that serves the storage checks), failover card.
 
 **Chooser**: The SD standby's `boot.scr`, which U-Boot's scan of the card runs before the eMMC's own
-boot script at every boot: it boots the eMMC's own boot script, or the card's root when the eMMC is
-marked failed, its boots were counted three times, or its script cannot be read, and puts
-`unos.chooser=card`, `unos.root` and `unos.reason` on the kernel's command line (ADR-0471,
-ADR-0488). Avoid: boot menu.
+boot script at every boot: it boots the eMMC's own boot script (on the BPI-F3, the eMMC's extlinux
+label, itself with `booti`), or the card's root when the eMMC is marked failed, its boots were
+counted three times, or its boot files cannot be read, and puts `unos.chooser=card`, `unos.root` and
+`unos.reason` on the kernel's command line (ADR-0471, ADR-0488, ADR-0489). Avoid: boot menu.
 
 **Generation**: One complete copy of the system on the SD standby, the btrfs subvolume `@sys-<n>`
 with its boot folder `unos/boot-<n>/`; `unos/current.txt` names the one the chooser boots and

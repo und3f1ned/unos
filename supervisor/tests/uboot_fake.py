@@ -2,11 +2,13 @@
 tests of ``src/standby/bootscript.py``.
 
 It runs a script on a fake board: files on the partitions of its MMC devices, the raw sectors of
-those devices, and U-Boot's environment. It knows only what the BPI-W3's loader has and the chooser
-needs: ``setenv``, ``echo``, ``if``/``then``/``else``/``fi`` with ``test`` (``-z``, ``-n``, ``=``,
-``-e``) and ``load`` as conditions, ``load mmc``, ``mmc dev``/``read``/``write``, ``env import -t``,
-``env export -t`` and ``source``. Any other command, ``setexpr``, ``itest``, ``bootcount``,
-``fatwrite`` and ``saveenv`` among them, fails the test, as does a statement that is not one per line.
+those devices, the memory that ``load`` fills, and U-Boot's environment. It knows only what the
+boards' loaders have and the chooser needs: ``setenv``, ``echo``, ``if``/``then``/``else``/``fi`` with
+``test`` (``-z``, ``-n``, ``=``, ``-e``) and ``load`` as conditions, ``load mmc``, ``mmc
+dev``/``read``/``write``, ``env import -t``, ``env export -t``, ``source`` (the BPI-W3's handover) and
+``booti`` (the BPI-F3's, ADR-0489). Any other command, ``setexpr``, ``itest``, ``bootcount``,
+``fatwrite``, ``saveenv`` and ``sysboot`` among them, fails the test, as does a statement that is not
+one per line. The tests check that each board's chooser uses only its profile's commands.
 """
 
 from __future__ import annotations
@@ -37,20 +39,22 @@ class Board:
     unreadable: set[int] = field(default_factory=set)
     env: dict[str, str] = field(default_factory=lambda: {
         "scriptaddr": "0x00500000", "kernel_addr_r": "0x00400000", "pxefile_addr_r": "0x00600000",
+        "ramdisk_addr_r": "0x00700000", "fdt_addr_r": "0x00800000",
     })
-    # What a sourced script does: "boot" (it boots its kernel) or "return" (it fails and returns).
+    # What a sourced script or a booti does: boot its kernel, or fail and return.
     sourced_scripts_return: bool = False
     memory: dict[str, bytes] = field(default_factory=dict)
     current_mmc: int | None = None
     commands: list[str] = field(default_factory=list)
     echoed: list[str] = field(default_factory=list)
     sourced: list[dict[str, str]] = field(default_factory=list)
+    booted: list[dict[str, str]] = field(default_factory=list)
 
     def counter(self, dev: int, block: int) -> bytes:
         return self.sectors.get((dev, block), b"\0" * SECTOR)
 
 
-ALLOWED = {"setenv", "echo", "test", "load", "mmc", "env", "source"}
+ALLOWED = {"setenv", "echo", "test", "load", "mmc", "env", "source", "booti"}
 
 
 def _expand(text: str, env: dict[str, str]) -> str:
@@ -170,6 +174,9 @@ class Interpreter:
         if words[0] == "source":
             self._source(words[1])
             return
+        if words[0] == "booti":
+            self._booti(words[1:])
+            return
         self._command(words)
 
     def _command(self, words: list[str]) -> bool:
@@ -227,8 +234,22 @@ class Interpreter:
             raise Booted(handover)
 
 
+    def _booti(self, args: list[str]) -> None:
+        """booti <kernel> <initrd>:<size> <fdt>, as sysboot passes them: the files loaded at those
+        addresses and the command line, ``bootargs``."""
+        assert len(args) == 3 and ":" in args[1], f"booti with the kernel, initrd:size and device tree: {args}"
+        initrd, size = args[1].split(":", 1)
+        memory = self.board.memory
+        assert int(size, 16) == len(memory.get(initrd, b"")), "the initrd's size is the one loaded"
+        handover = {"kernel": memory.get(args[0], b"").decode("latin-1"), "initrd": memory.get(initrd, b"").decode("latin-1"),
+                    "fdt": memory.get(args[2], b"").decode("latin-1"), "bootargs": self.board.env.get("bootargs", "")}
+        self.board.booted.append(handover)
+        if not self.board.sourced_scripts_return:
+            raise Booted(handover)
+
+
 def run(board: Board, script: str) -> dict[str, str] | None:
-    """Run ``script`` on ``board``: the handover of the boot script that booted, or None when none did."""
+    """Run ``script`` on ``board``: the handover of the boot script or kernel that booted, or None when none did."""
     try:
         Interpreter(board).run(script)
     except Booted as booted:

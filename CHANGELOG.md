@@ -49,6 +49,16 @@ manager, encrypted backup uploads, health checks, CI checks).
   the setup), `running_on_standby` and `standby_has_changes` reach the channels and the banner.
   Elsewhere the tab names the unmet conditions. `/api/v1/system/standby`; `install.sh` installs
   rsync, dosfstools and fdisk (ADR-0471, ADR-0481, ADR-0488).
+- **The SD standby on the BPI-F3** (SpacemiT K1): its card gets SpacemiT's official SD layout,
+  written by UNOS from Armbian's loader package (a boot info that UNOS generates, the first stage
+  twice, OpenSBI and U-Boot in a GPT's named partitions, the tries counter in a free sector between
+  them), and its chooser boots the eMMC's own extlinux label itself with `booti`, the label's
+  command line followed by UNOS's arguments: the F3's U-Boot cuts a sysboot command line at 255
+  characters. Nothing of UNOS goes into the eMMC's boot path. Set up refuses an extlinux label that
+  the chooser cannot boot as sysboot would. The card's loader is written last, a wipe clears its
+  boot info first, and a Set up whose writes to the card fail wipes the card again, so that the board
+  never boots a half-made card; the card's partition table is re-read only once udev has settled
+  (ADR-0489).
 - Notifications name the NAS that sends them by the host's name (here `nas-w3`), so that several
   NASes can be told apart: an e-mail's subject starts with `[nas-w3]`; the footer of e-mail,
   Telegram, Discord and Slack, the sender's name of Discord and Slack (unless the channel sets

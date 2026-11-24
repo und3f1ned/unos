@@ -11,7 +11,8 @@ the eMMC's own fstab lines kept for the return, ``unos-standby.service`` with it
 the drop-ins that wait for the pool (ADR-0488), and the mount points, the pools' and the standby's
 immutable. The card's FAT partition holds the boot folders ``unos/boot-<n>/`` (what the eMMC's boot
 script loads, links resolved, of the device trees only the board's and its overlays, and an
-armbianEnv.txt naming the card's btrfs) and the generation files.
+armbianEnv.txt naming the card's btrfs; on an extlinux board the files of the eMMC's extlinux label and
+a boot.txt that names them and the card's command line, ADR-0489) and the generation files.
 
 A sync first compares, with reads only: rsync's dry run of the root and of each volume, a digest of
 the database's content, the images' ids, the boot files and the fix-ups. When nothing changed it
@@ -88,11 +89,13 @@ VOLATILE = (
 # of UNOS's data volume, which Sync now itself appends to, the SMART history, to which the monitor adds
 # a reading at every start of the supervisor, and the configuration that Caddy saves at every start,
 # which it makes again from its Caddyfile: a change of these alone is no reason
-# for a new generation, and they are copied with any other change (ADR-0488). Paths as rsync itemizes
-# them; a folder ends with /.
+# for a new generation, and they are copied with any other change (ADR-0488). Measured on the BPI-F3 too:
+# Armbian touches its release file, systemd saves the backlight and rfkill states, and smartd its
+# attribute state (ADR-0489). Paths as rsync itemizes them; a folder ends with /.
 ROOT_FOLLOWERS = (
     "etc/fake-hwclock.data", "etc/armbian-leds.conf", "etc/logrotate.conf", "etc/logrotate.d/",
     "etc/systemd/journald.conf", "etc/armbianmonitor/", "var/lib/alsa/", "var/lib/nfs/",
+    "etc/armbian-release", "var/lib/systemd/backlight/", "var/lib/systemd/rfkill/", "var/lib/smartmontools/",
 )
 VOLUME_FOLLOWERS = {"unos-data": ("audit/", "smart_history.json"), "caddy-config": ("caddy/autosave.json",)}
 PARTS = ("system", "volumes", "database", "images", "boot", "fixups")
@@ -106,6 +109,8 @@ BOOT_FILES = ("Image", "uInitrd", "dtb", "boot.scr", "boot.bmp", "fixup.scr", "o
 _FDTFILE = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9._-]+\.dtb")
 # The boot files on the card's FAT: links resolved, the times kept (2 s steps on FAT), no owners.
 BOOT_RSYNC = ("rsync", "-rLt", "--modify-window=1")
+# The file of an extlinux board's boot folder that names its files and the card's command line (ADR-0489).
+BOOT_TXT = "boot.txt"
 LOADER_VERSION = f"{CARD_DIR}/loader-version"
 BOOT_SCR = f"{BOOT_DIR}/boot.scr"
 BOOT_OK_UNIT = "unos-standby-boot-ok.service"
@@ -168,6 +173,8 @@ class _Context:
     docker_files: dict[str, str]
     pool_dropins: list[str]
     facts: Any  # conditions.Facts: the profile and the eMMC's boot partition
+    # The eMMC's extlinux label on an extlinux board (ADR-0489); None for Armbian's boot.scr.
+    label: bootscript.ExtlinuxLabel | None = None
 
 
 def generation_path(number: int) -> str:
@@ -206,6 +213,46 @@ def card_fstab(emmc_fstab: str, card_uuid: str, emmc_specs: set[str] | None = No
     if not placed:
         out.insert(0, root_line)
     return "".join(out), "".join(own)
+
+
+def card_boot_text(label: bootscript.ExtlinuxLabel, prefix: str, card_uuid: str) -> str:
+    """boot.txt of an extlinux board's boot folder: the label's files relative to the eMMC's boot folder
+    ``prefix``, as the boot folder holds them, and its append line with root= naming the card's btrfs,
+    rootfstype=btrfs and no rootflags=, which the chooser adds with the generation's subvolume (ADR-0489)."""
+    from .conditions import boot_relative
+
+    words: list[str] = []
+    for word in label.append.split():
+        key = word.split("=", 1)[0]
+        if key == "root" and f"root=UUID={card_uuid}" not in words:
+            words.append(f"root=UUID={card_uuid}")
+        elif key not in ("root", "rootfstype", "rootflags"):
+            words.append(word)
+    if f"root=UUID={card_uuid}" not in words:
+        words.insert(0, f"root=UUID={card_uuid}")
+    words.append("rootfstype=btrfs")
+    kernel, initrd, fdt = (boot_relative(path, prefix) for path in (label.kernel, label.initrd, label.fdt))
+    return bootscript.boot_text(kernel, initrd, fdt, " ".join(words))
+
+
+def extlinux_sources(label: bootscript.ExtlinuxLabel, prefix: str) -> tuple[list[str], list[str]]:
+    """What a boot folder copies of the eMMC's /boot for an extlinux label, and rsync's filter: a file at
+    the top whole, of a folder (dtb/) only the file the label names."""
+    from .conditions import boot_relative
+
+    sources: list[str] = []
+    includes: list[str] = []
+    folders: list[str] = []
+    for path in (label.kernel, label.initrd, label.fdt):
+        relative = boot_relative(path, prefix)
+        parts = relative.split("/")
+        sources.append(f"/boot/{parts[0]}")
+        if len(parts) > 1:
+            includes += [f"--include=/{'/'.join(parts[:depth])}/" for depth in range(1, len(parts))]
+            includes.append(f"--include=/{relative}")
+            folders.append(parts[0])
+    return (list(dict.fromkeys(sources)),
+            [*dict.fromkeys(includes), *(f"--exclude=/{folder}/**" for folder in dict.fromkeys(folders))])
 
 
 def card_armbian_env(emmc_env: str, card_uuid: str) -> str:
@@ -430,6 +477,14 @@ def _context(ops: StandbyHost) -> _Context:
                 specs.add(f"{prefix}{node[key]}")
         if node.get("path"):
             specs.add(str(node["path"]))
+    label = None
+    if facts.profile.emmc_boot == "extlinux":
+        from .conditions import read_emmc_label
+
+        try:
+            label = read_emmc_label(ops, facts)
+        except StandbyError as e:
+            raise StandbyFailed(str(e)) from None
     docker_files: dict[str, str] = {}
     for path, render in ((DOCKER_CONFIG, card_daemon_json), (CONTAINERD_CONFIG, card_containerd_config)):
         text = ops.read_file(path)
@@ -439,7 +494,7 @@ def _context(ops: StandbyHost) -> _Context:
                     fstab=fstab, project=project, workdir=workdir, images=images, image_names=image_names,
                     volumes=volumes, current=current, previous=previous, existing=existing,
                     docker_root=docker_root.rstrip("/") or "/", emmc_specs=specs, facts=facts,
-                    docker_files=docker_files, pool_dropins=_pool_dropins(ops))
+                    docker_files=docker_files, pool_dropins=_pool_dropins(ops), label=label)
 
 
 def _pool_dropins(ops: StandbyHost) -> list[str]:
@@ -531,7 +586,7 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         ops.write_file(LOADER_VERSION, version + "\n", what="The loader's version")
         parts.append("loader")
     image = bootscript.script_image(bootscript.chooser_text(profile, emmc_part=facts.boot_number,
-                                                           emmc_prefix=facts.boot_prefix))
+                                                           emmc_prefix=facts.boot_prefix, emmc_label=context.label))
     shown = ops.read(["sha256sum", "--", BOOT_SCR]).stdout.split()
     if not shown or shown[0] != hashlib.sha256(image).hexdigest():
         if apply:
@@ -582,14 +637,7 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
     unit = standby_unit(context.workdir, context.project)
     script = host_script("unos-standby.sh")
     digest = fixup_digest(fstab_text, own_lines, unit, script, points, context.docker_files, context.pool_dropins)
-    emmc_env = ops.read_file("/boot/armbianEnv.txt")
-    if emmc_env is None:
-        raise StandbyFailed("/boot/armbianEnv.txt of the eMMC cannot be read")
-    armbian_env = card_armbian_env(emmc_env, context.card_uuid)
-    boot_sources = _boot_sources(ops)
-    if not {"/boot/Image", "/boot/uInitrd", "/boot/dtb", "/boot/boot.scr"} <= set(boot_sources):
-        raise StandbyFailed("The eMMC's /boot lacks Image, uInitrd, dtb or boot.scr")
-    boot_rsync = [*BOOT_RSYNC, *boot_filters(emmc_env)]
+    boot_sources, boot_rsync, boot_file = _boot_folder(ops, context)
 
     card_parts = _refresh_card_files(ops, context, apply=False)
     current = context.current
@@ -599,7 +647,7 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
         # A new generation of everything, with the current boot folder when /boot did not change: a
         # third folder might not fit the FAT partition.
         parts = [part for part in PARTS if part != "boot" or _boot_changed(ops, boot_rsync, boot_sources, current,
-                                                                            armbian_env)]
+                                                                            boot_file)]
     elif current is None:
         parts = list(PARTS)
     else:
@@ -627,7 +675,7 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
             if (ops.read_file(f"{gen}{LIB}/images/{short}.id") or "").strip() != image_id:
                 parts.append("images")
                 break
-        if _boot_changed(ops, boot_rsync, boot_sources, current, armbian_env):
+        if _boot_changed(ops, boot_rsync, boot_sources, current, boot_file):
             parts.append("boot")
         if (ops.read_file(f"{gen}{LIB}/fixups.sha256") or "").strip() != digest:
             parts.append("fixups")
@@ -692,7 +740,7 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
             ops.change(["mkdir", "-p", f"{BOOT_DIR}/{new_bootdir}"], what="The boot folder")
             ops.long_change([*boot_rsync, *boot_sources, f"{BOOT_DIR}/{new_bootdir}"],
                             what="The copy of the boot folder", timeout=RSYNC_TIMEOUT)
-            ops.write_file(f"{BOOT_DIR}/{new_bootdir}armbianEnv.txt", armbian_env, what="The boot folder's armbianEnv.txt")
+            ops.write_file(f"{BOOT_DIR}/{new_bootdir}{boot_file[0]}", boot_file[1], what=f"The boot folder's {boot_file[0]}")
             bootdir_name = new_bootdir
         else:
             bootdir_name = current[2] if current else f"unos/boot-{number}/"
@@ -726,13 +774,38 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
                    plan=ops.plan, changes=changes[:SAMPLE])
 
 
+def _boot_folder(ops: StandbyHost, context: _Context) -> tuple[list[str], list[str], tuple[str, str]]:
+    """What a boot folder copies of the eMMC's /boot, its rsync with the filter, and the file it renders
+    (name, text): armbianEnv.txt for Armbian's boot.scr, boot.txt for an extlinux label (ADR-0489)."""
+    label = context.label
+    if label is not None:
+        prefix = context.facts.boot_prefix
+        try:
+            sources, filters = extlinux_sources(label, prefix)
+            text = card_boot_text(label, prefix, context.card_uuid)
+        except ValueError as e:
+            raise StandbyFailed(f"The boot folder cannot be made: {e}") from None
+        missing = [source for source in sources if not ops.exists(source)]
+        if missing:
+            raise StandbyFailed(f"The eMMC's /boot lacks {', '.join(missing)}")
+        return sources, [*BOOT_RSYNC, *filters], (BOOT_TXT, text)
+    emmc_env = ops.read_file("/boot/armbianEnv.txt")
+    if emmc_env is None:
+        raise StandbyFailed("/boot/armbianEnv.txt of the eMMC cannot be read")
+    boot_sources = _boot_sources(ops)
+    if not {"/boot/Image", "/boot/uInitrd", "/boot/dtb", "/boot/boot.scr"} <= set(boot_sources):
+        raise StandbyFailed("The eMMC's /boot lacks Image, uInitrd, dtb or boot.scr")
+    return boot_sources, [*BOOT_RSYNC, *boot_filters(emmc_env)], ("armbianEnv.txt", card_armbian_env(emmc_env, context.card_uuid))
+
+
 def _boot_changed(ops: StandbyHost, boot_rsync: list[str], boot_sources: list[str], current: tuple[int, int, str],
-                  armbian_env: str) -> bool:
+                  boot_file: tuple[str, str]) -> bool:
     """Whether the eMMC's boot files differ from the current generation's boot folder."""
     bootdir = f"{BOOT_DIR}/{current[2]}"
-    return bool(_changes(ops.long_read([*boot_rsync, "--delete", "--exclude=/armbianEnv.txt", *COMPARE_OPTIONS,
+    name, text = boot_file
+    return bool(_changes(ops.long_read([*boot_rsync, "--delete", f"--exclude=/{name}", *COMPARE_OPTIONS,
                                         *boot_sources, bootdir], timeout=RSYNC_TIMEOUT), "The comparison of the boot folder")
-                or ops.read_file(f"{bootdir}armbianEnv.txt") != armbian_env)
+                or ops.read_file(f"{bootdir}{name}") != text)
 
 
 def _mib(ops: StandbyHost, context: _Context, before: int | None, dry_run: bool) -> float | None:

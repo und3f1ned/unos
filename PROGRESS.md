@@ -55,7 +55,10 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
+  runs the branch `system.sd-standby-bpi-f3` since 2026-11-24, deployed with `scripts/dev/deploy.sh`
+  sync, build-supervisor and up supervisor (SD MiB, its eMMC: 0.855, 0.230, 0.219; check: OK), with
+  the SD standby set up on its card SC64G, generation 1, every boot through its chooser (Log).
+  Before it `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
   deploy"; SD MiB, its eMMC: sync 2.555, build-supervisor 0.457, build-webui 0.148, up 0.336, check
   0.000; check: OK). Before it f8a8ed58 of `mvp.batch-21` the same day (sync 6.023,
   build-supervisor 0.230, build-webui 0.148, up 0.328, check 0.016; check: OK), and 202403f9 of `mvp.batch-20` the same day, deployed at the owner's word
@@ -818,6 +821,62 @@ Open owner actions:
     GB on the eMMC).
 
 ## Log
+
+### 2026-11-24: The SD standby on the BPI-F3: SpacemiT's official SD layout, a booti chooser, its drills pass (ADR-0489)
+
+- On the branch `system.sd-standby-bpi-f3` from 9cc06747 of `mvp.batch-22`, at the lead's brief,
+  begun by a builder that was stopped mid-work and finished by another from its uncommitted tree.
+  The F3's profile (`BPI_F3`: card mmc 0, eMMC mmc 2, the package's folder
+  `/usr/lib/linux-u-boot-current-bananapif3`, its name from dpkg) and what an extlinux board needs:
+  SpacemiT's official SD layout written by UNOS (a generated boot info in bytes 0 to 79 of the card,
+  a GPT from first-lba 34 with the loader's named partitions `fsbl`, `env`, `opensbi` and `uboot`, the
+  FAT from sector 16384, the tries counter in the gap sector 960), and a chooser that boots the eMMC's
+  extlinux label itself with `booti`, its append line followed by UNOS's arguments: the F3's U-Boot
+  has `CONFIG_SYS_CBSIZE=256`, and sysboot cuts an expanded append line at 255 characters, while the
+  eMMC's line has 223 and UNOS's arguments 58 more. Nothing of UNOS goes into the eMMC's boot path.
+  The card's root boots the label's files from the boot folder, which `boot.txt` names with the
+  card's command line. The card is bootable only once Set up is complete: its loader is written last
+  of all, every wipe clears the boot info first, and a Set up whose card writes fail wipes the card
+  again. ADR-0489.
+- Device check on the F3 (card SC64G, 59.5 GB, as mmcblk0; eMMC MiB by `scripts/dev/sd.sh measure`,
+  card MiB from field 7 of `/sys/block/mmcblk0/stat`), first on the tree before the last two reviews,
+  then Remove, Set up, the syncs and a reboot twice more on the code after them: the ledger entry's
+  notes have each step. In short: the five conditions met; Set up in 3 min 50 s, eMMC 0.496 MiB,
+  card 1690 MiB (generation 1 of 1664.8 MiB), the card's layout, boot info and loader images as
+  proven; Sync now twice unchanged, 0 on both disks; a change synced by trigger change; a reboot
+  through the card's loader (boot mode 0x55e) and chooser (`unos.chooser=card unos.root=emmc
+  unos.reason=emmc panic=10` after the eMMC's own append line, 310 characters), the counter back to
+  0, the start sync unchanged, check OK; D1 to D4 and the NVMe pool's failure each booted the card's
+  root (`unos.reason=marked`, `emmc_unreadable`, `marked` after D3's ext4 error, `tries` with the
+  counter at 3, `marked` with `reason=docker_pool_failed detail=read_only`) and returned through the
+  chooser, 0.000 to 0.016 MiB on the eMMC a call, nothing written to the eMMC from the card's root,
+  Docker on the card there; Remove 0.273 MiB on the eMMC, 16.0 on the card, which is empty again.
+  Every boot of the F3 takes about 4 minutes, about 200 s of it before the kernel, with or without
+  the standby.
+- Defects found on the board and fixed with a test that failed first: Set up's re-read of the card's
+  table failed with EBUSY while udev probed the card after the loader's writes (now settled and
+  retried, and the loader comes last); the start sync after every reboot wrote a generation of
+  2.5 MiB for what the F3's root rewrites at each boot (`etc/armbian-release`, systemd's backlight
+  and rfkill states, smartd's state: now followers). The NVMe drive's admin queue timed out at the
+  first boot of D1 and D2 on the card's root (the K1's NVMe fault of ADR-0369 and ADR-0370), so the
+  pool was not mounted at those boots; a reboot from the card mounted it. The first Set up's
+  2.840 MiB on the eMMC did not come again (0.508 and 0.496).
+- Left: the boot with the card pulled, a physical step, is the owner's. `passes` stays false.
+- Review in a fresh context, three times. The first: the extlinux parser refuses what U-Boot's pxe
+  could read otherwise (`ontimeout`, a global keyword after a label, a keyword twice, `initrd=` in the
+  append line), the re-read retries, the ADR states why the chooser's buffer is `${scriptaddr}` and
+  that an unbootable extlinux.conf fails every sync, and the tests run every branch of the chooser
+  against the F3's commands and U-Boot's 16 arguments. The second: every wipe clears SpacemiT's boot
+  info first, so that the F3's first stage, which has no fallback device, never meets a card whose
+  GPT is gone; a Set up whose card writes fail wipes the card again; `include` is refused; the W3's
+  chooser and table are pinned byte for byte. The third: pxe lowercases keywords (the second's claim
+  that it does not was wrong, and its change was undone after reading pxe_utils.c); a card that is
+  gone is not wiped (a `dd` to its path would make a file in `/dev`); the loader is written after the
+  eMMC's units, so that no failure of Set up leaves a bootable card without its chooser; the UUIDs
+  are read before the counter's write to the whole card (on the W3 too); Remove reads the board
+  first and clears the boot info when it cannot; the fake models the wipes. Not fixed, recorded: a
+  Remove that stops after it took away the eMMC's units but before it wiped the card leaves a card
+  whose chooser counts tries that nothing resets (both boards, as before).
 
 ### 2026-11-24: The SD standby boots through its chooser on the BPI-W3, and its drills pass (ADR-0488)
 
