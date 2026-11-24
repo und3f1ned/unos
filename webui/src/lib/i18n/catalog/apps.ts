@@ -196,7 +196,7 @@ export const en = {
 	'apps.detail.diskAwake':
 		'While {name} runs, the hard disks of its pool do not go to sleep: its database and its jobs keep writing to them. Stop {name} on the Installed tab to let them sleep.',
 	// About what the images of an app take where Docker keeps them, from their pins (ADR-0415):
-	// on its pool, or on the system disk (ADR-0490).
+	// on its pool, or on the system disk (ADR-0493).
 	'apps.detail.imagesSize': 'About {size} for its images',
 	'apps.detail.imagesDisk': 'Disk space',
 	'apps.detail.dataLocations': 'Data locations on {pool}',

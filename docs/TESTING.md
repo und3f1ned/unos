@@ -1089,7 +1089,7 @@ The stack has no fake disks, pools or containers. The supervisor sees:
 - Containers: the host's real containers and images, through the mounted Docker socket. The
   container has neither Docker's data root nor containerd's root (nor the systemctl that tells
   whether containerd keeps the images), so an app's install checks no free space where Docker
-  keeps its images: it logs a warning and pulls (ADR-0381, ADR-0490).
+  keeps its images: it logs a warning and pulls (ADR-0381, ADR-0493).
 - The JWT secret that the supervisor generated into the `test-data` volume.
 - Users: the administrator `admin` / `unos-e2e-pass`, created by `scripts/test-cycle.sh` and the
   `test-runner`.

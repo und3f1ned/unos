@@ -1538,7 +1538,7 @@ class TestImmich:
     ):
         c = catalog_module
         need = sum(pin.disk_bytes for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML, c.IMMICH_SERVER))
-        # Docker's data root on the pool alpha, in Docker's own store (ADR-0486, ADR-0490).
+        # Docker's data root on the pool alpha, in Docker's own store (ADR-0486, ADR-0493).
         docker.root_dir = f"{pools.alpha}/.docker"
         soc.free = {DOCKER_ROOT: 64 * GIB, docker.root_dir: need + 2 * GIB - 1}
 

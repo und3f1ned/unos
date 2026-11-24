@@ -138,7 +138,7 @@ test.describe('Updating an installed app', () => {
   }) => {
     const fakes = await fakeApps(page, withUpdate());
     const containers = PLAN.containers.map((c) => (c.name === 'immich' ? c : { ...c, changed: false }));
-    // Docker's images on the system disk, as before the first pool takes them (ADR-0490).
+    // Docker's images on the system disk, as before the first pool takes them (ADR-0493).
     fakes.plan = { status: 200, json: { ...PLAN, containers, images_pool: null } };
     const card = await openInstalled(page);
     await card.getByRole('button', { name: 'Update to v3.5.0' }).click();
@@ -160,7 +160,7 @@ test.describe('Updating an installed app', () => {
     // The summary first: what changes, the space it needs, the safety net (webui.ux-apps).
     await expect(dialog.locator('[data-field="containers"]')).toHaveText('2 of 4 get a new image');
     await expect(dialog.locator('[data-field="download"]')).toHaveText('300 MB');
-    // Where the pulls write: the pool that holds Docker's images (ADR-0490).
+    // Where the pulls write: the pool that holds Docker's images (ADR-0493).
     await expect(dialog.locator('[data-field="images"]')).toHaveText('About 700 MB, of 20 GB free');
     await expect(dialog.locator('.kv > div', { has: page.locator('[data-field="images"]') })).toContainText(
       'Pool e2e_data',

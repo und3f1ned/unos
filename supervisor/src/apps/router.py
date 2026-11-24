@@ -1256,7 +1256,7 @@ def _install(
         c.hardware = container_hardware(c.spec, host_hardware)
     # The images that the hardware chose must have the host's platform too (ADR-0403).
     _check_platform(template, platforms.host_platform(), [c.image for c in containers])
-    # Room where Docker keeps its images for those that the hardware chose (ADR-0381, ADR-0490).
+    # Room where Docker keeps its images for those that the hardware chose (ADR-0381, ADR-0493).
     preflight.check_space(client, template, [c.image for c in containers])
 
     progress.check()

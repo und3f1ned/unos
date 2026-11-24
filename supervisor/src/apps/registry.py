@@ -6,7 +6,7 @@ image manifest of the platform (its layers, each with its compressed size) and t
 configuration (when it was built, ``created``, and the digests of its unpacked layers,
 ``rootfs.diff_ids``). From these the update tells whether the catalog's image is newer than the one
 that runs, which of its layers Docker lacks and so what the pull writes where Docker keeps its images
-(ADR-0490).
+(ADR-0493).
 
 The reads are anonymous and read-only, over HTTPS only, through the registry's token handshake for
 public images (Docker Hub, GHCR, where the catalog names LinuxServer's images, ADR-0426), as

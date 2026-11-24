@@ -297,7 +297,7 @@ def _reads_device_tree(cmd: list[str]) -> bool:
 SS = ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]
 # Docker's data root, as Docker's info names it, and containerd's root by default: every install
 # reads the free space of the file system of the one that holds Docker's images before the pull
-# (ADR-0381, ADR-0490): containerd's root with the containerd image store and the host's containerd
+# (ADR-0381, ADR-0493): containerd's root with the containerd image store and the host's containerd
 # service, else Docker's data root.
 DOCKER_ROOT = "/var/lib/docker"
 CONTAINERD_ROOT = "/var/lib/containerd"
@@ -4015,7 +4015,7 @@ class TestStackCatalog:
 
 
 # ---------------------------------------------------------------------------
-# The free space where Docker keeps its images, before a pull (ADR-0381, ADR-0490)
+# The free space where Docker keeps its images, before a pull (ADR-0381, ADR-0493)
 # ---------------------------------------------------------------------------
 
 FREE_SPACE_FLOOR = 2 * GIB

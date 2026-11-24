@@ -852,7 +852,7 @@ Open owner actions:
 - The pre-commit `make check-fast` under that load timed out the new guard test's inner pytest at
   120 s (8 to 58 s in later runs): it runs one worker now and waits up to 600 s, as it checks
   that the run ends, not how soon.
-### 2026-11-24: The App Store's free-space checks measure the pool of Docker's images (ADR-0490)
+### 2026-11-24: The App Store's free-space checks measure the pool of Docker's images (ADR-0493)
 
 - On a branch of its own from 80fe1f51, at the lead's brief: the open item
   of `system.docker-root-on-pool`. An install's check (`apps/preflight.py`) and an update's plan
@@ -869,10 +869,10 @@ Open owner actions:
 - The review in a fresh context found: an E2E locator that matched nothing (`has:` from the
   dialog), the compose test stack answering 500 where its container has no systemctl (now logged
   and not checked when Docker's data root is missing too, `test -e`), the open entry
-  `apps.catalog-companions` and the feature-pass skill still naming `system_disk_bytes`, ADR-0490
+  `apps.catalog-companions` and the feature-pass skill still naming `system_disk_bytes`, ADR-0493
   not naming ADR-0415 and ADR-0437, stale comments (registry.py, host.py, a spec), "2 GB" for
   2 GiB in the guide, and no test of `images_root` or of an update with the containerd store. All
-  fixed. Left: ADR-0490 changes parts of ADR-0381, ADR-0408, ADR-0415 and ADR-0437 without
+  fixed. Left: ADR-0493 changes parts of ADR-0381, ADR-0408, ADR-0415 and ADR-0437 without
   superseding them, since the rest of each stays.
 - Left: the lead's device check after the deploy (the entry's notes). `passes` stays false.
 

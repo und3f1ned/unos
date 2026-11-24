@@ -84,7 +84,7 @@ Such an app asks the administrator for no secret.
 
 Every image of the catalog is pinned: a PinnedImage (name:tag@sha256 of the
 multi-platform index, as ADR-0305 pins the Dockerfiles) with its estimated
-size where Docker keeps its images (ADR-0490) and the VOLUMEs it declares, listed in PINNED_IMAGES
+size where Docker keeps its images (ADR-0493) and the VOLUMEs it declares, listed in PINNED_IMAGES
 (ADR-0381, ADR-0410); an app of one container takes its image from
 APP_IMAGES and its version from the pin's tag. A test fails for an image
 that is not pinned; no install, space check or update has a path for one.
@@ -173,7 +173,7 @@ class PinnedImage:
     digest: str
     # About what it takes where Docker keeps its images once pulled, from the registry: its compressed
     # layers plus their unpacked size (the containerd image store keeps both). The install checks the
-    # free space there with it before a pull (ADR-0490).
+    # free space there with it before a pull (ADR-0493).
     disk_bytes: int
     # The VOLUMEs that its configuration declares, the same on each of its platforms: each lies at or
     # under a bind on the pool or a tmpfs of the container that runs it (a test; ADR-0381).

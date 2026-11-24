@@ -364,7 +364,7 @@ class TestThePlan:
         # 5000 and 7000 bytes of 6000 and 8000, and each writes that share of its size record.
         assert plan["download_bytes"] == 12000
         assert plan["images_bytes"] == 18000 * 5000 // 6000 + 24000 * 7000 // 8000
-        # Docker's data root, which holds its images, is on the system disk here (ADR-0490).
+        # Docker's data root, which holds its images, is on the system disk here (ADR-0493).
         assert (plan["images_free_bytes"], plan["images_pool"]) == (64 * GIB, None)
         [copy] = plan["copies"]
         assert copy["folder"] == str(_database(pools)) and copy["copy_folder"] == f"{_database(pools)}.previous"
@@ -482,7 +482,7 @@ class TestThePlan:
         assert response.json()["detail"].startswith("The update of Photos writes about 1 MiB to the system disk")
 
     def test_the_pool_of_dockers_images_is_measured_and_named(self, api, installed, catalog, versions, soc, pools):
-        # Docker's data root on the pool alpha (ADR-0486), whose file system holds the images (ADR-0490).
+        # Docker's data root on the pool alpha (ADR-0486), whose file system holds the images (ADR-0493).
         _to_v2(catalog, versions)
         installed.root_dir = f"{pools.alpha}/.docker"
         soc.free = {installed.root_dir: 32 * GIB}

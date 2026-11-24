@@ -5,7 +5,7 @@ area: apps
 decided-by: agent
 ---
 
-# ADR-0490: The App Store's free-space checks measure the file system of Docker's images and name its pool
+# ADR-0493: The App Store's free-space checks measure the file system of Docker's images and name its pool
 
 ## Context
 

@@ -340,7 +340,7 @@ and this index, and `make check-fast` runs it.
 | [0491](0491-authelia-leaves-the-catalog-because-it-needs-a-domain-a-reverse-proxy-and-users-that-only-the-administrator-can-choose.md) | Authelia leaves the catalog because it needs a domain, a reverse proxy and users that only the administrator can choose | accepted | 2026-11-24 |
 =======
 | [0480](0480-a-configuration-file-that-a-catalog-image-ships-is-bound-as-that-file-and-mosquitto-starts-local-only.md) | A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only | accepted | 2026-11-23 |
-| [0490](0490-the-app-stores-free-space-checks-measure-the-file-system-of-dockers-images-and-name-its-pool.md) | The App Store's free-space checks measure the file system of Docker's images and name its pool | accepted | 2026-11-24 |
+| [0493](0493-the-app-stores-free-space-checks-measure-the-file-system-of-dockers-images-and-name-its-pool.md) | The App Store's free-space checks measure the file system of Docker's images and name its pool | accepted | 2026-11-24 |
 >>>>>>> apps.preflight-docker-data-root
 
 ## Backup

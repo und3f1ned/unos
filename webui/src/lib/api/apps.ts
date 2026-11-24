@@ -299,7 +299,7 @@ export interface AppUpdatePlan {
 	download_bytes: number;
 	images_bytes: number;
 	images_free_bytes: number | null;
-	/** The pool that holds Docker's images; null for the system disk (ADR-0490). */
+	/** The pool that holds Docker's images; null for the system disk (ADR-0493). */
 	images_pool: string | null;
 	copies: DatabaseCopy[];
 }

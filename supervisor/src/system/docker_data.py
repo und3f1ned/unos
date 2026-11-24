@@ -285,7 +285,7 @@ def _store_root(info: dict[str, Any]) -> str | None:
 
 
 def images_root(info: dict[str, Any]) -> str:
-    """The folder whose file system holds Docker's images (ADR-0490): containerd's root when Docker keeps them
+    """The folder whose file system holds Docker's images (ADR-0493): containerd's root when Docker keeps them
     in the containerd image store of the host's containerd service, else Docker's data root, by ``info``
     (Docker's info). DockerDataError when Docker names no data root or containerd's configuration cannot be
     read. Blocks."""

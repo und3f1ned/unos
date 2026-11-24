@@ -13,7 +13,7 @@ itself: Docker discards the port bindings of such a container, so its ports cann
 (400 for an override that moves one), they are the ports checked, and a taken one asks to
 remove the container or stop the program that holds it.
 
-The file system of Docker's images (ADR-0490): containerd's root when Docker keeps its images in
+The file system of Docker's images (ADR-0493): containerd's root when Docker keeps its images in
 the containerd image store of the host's containerd service, else Docker's data root as Docker's
 info names it (src/system/docker_data.py), on a pool since ADR-0486. It must keep FREE_SPACE_FLOOR
 free once the install's images are there. An image of the catalog (a PinnedImage, ADR-0410) counts
@@ -183,7 +183,7 @@ _DF_LINE = re.compile(r"\s(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s")
 
 @dataclass(frozen=True)
 class ImageStore:
-    """Where Docker keeps its images (ADR-0490): the folder, the pool that holds it (None: the
+    """Where Docker keeps its images (ADR-0493): the folder, the pool that holds it (None: the
     system disk) and the free space of its file system (None: the host has no such folder)."""
 
     folder: str

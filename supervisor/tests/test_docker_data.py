@@ -217,7 +217,7 @@ class TestPlacement:
         (FRESH, "/var/lib/containerd", True, "/var/lib/containerd"),
     ], ids=["w3", "f3", "dockers-own-containerd", "fresh"])
     def test_the_folder_of_dockers_images(self, host, info, containerd_root, loaded, images):
-        # ADR-0490: the folder whose free space the App Store's checks read.
+        # ADR-0493: the folder whose free space the App Store's checks read.
         on_the_pool(host, info, containerd_root=containerd_root)
         host.commands.containerd_loaded = loaded
         assert docker_data.images_root(dict(info)) == images

@@ -9,7 +9,7 @@ only when each image that changes is newer, built later than the image that runs
 of its configuration for the host's platform, read from its registry, against Docker's ``Created``
 of the installed image). Before it runs, ``GET /apps/installed/{id}/update`` shows what it changes,
 what its pulls write where Docker keeps its images (the layers that Docker lacks, from the
-registry's manifests; its pool or the system disk, ADR-0490) and the copy of the app's database
+registry's manifests; its pool or the system disk, ADR-0493) and the copy of the app's database
 that it makes on the pool.
 
 The update is a job of src/apps/install_jobs.py, as an install is (ADR-0384): one change of an app
@@ -168,7 +168,7 @@ class _Plan:
     secrets: list[Any]
     download_bytes: int = 0
     images_bytes: int = 0
-    # Where Docker keeps its images, with the free space there (ADR-0490).
+    # Where Docker keeps its images, with the free space there (ADR-0493).
     images: preflight.ImageStore | None = None
 
     @property
@@ -405,7 +405,7 @@ def _read_images(plan: _Plan) -> None:
     """Read from the registries each image of the catalog that is not the one its container was
     created from, tell whether it is newer, and count what its pull writes where Docker keeps its
     images. 409 for an image that is not newer or whose age cannot be told, or for too little room
-    there (ADR-0490); 503 for a registry that cannot be read."""
+    there (ADR-0493); 503 for a registry that cannot be read."""
     client, template = plan.client, plan.template
     for t in plan.targets:
         installed = _installed_digest(t.old) if t.old is not None else None

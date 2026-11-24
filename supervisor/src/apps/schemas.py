@@ -757,7 +757,7 @@ class AppUpdatePlan(BaseModel):
     images_pool: str | None = Field(
         default=None,
         description="The pool that holds Docker's images (containerd's root with the containerd image store, else "
-                    "Docker's data root); null for the system disk (ADR-0490)."
+                    "Docker's data root); null for the system disk (ADR-0493)."
     )
     copies: list[DatabaseCopy] = Field(default=[], description="The database copies that the update makes on the pool.")
 

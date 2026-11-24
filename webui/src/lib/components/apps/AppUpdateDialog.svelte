@@ -134,7 +134,7 @@
 					<span class="kv-value" data-field="download">{formatSize(plan.download_bytes, $intlLocale, $t)}</span>
 				</div>
 				<div>
-					<!-- Where Docker keeps its images: its pool, or the system disk (ADR-0490). -->
+					<!-- Where Docker keeps its images: its pool, or the system disk (ADR-0493). -->
 					<span class="kv-label">
 						{plan.images_pool !== null
 							? $t('appUpdates.imagesPool', { pool: plan.images_pool })

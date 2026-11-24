@@ -17,7 +17,7 @@ export const en = {
 	'appUpdates.added': 'Added',
 	'appUpdates.leftOut': 'Kept with the earlier version',
 	'appUpdates.download': 'Download',
-	// Where the pulls write: the pool that holds Docker's images, or the system disk (ADR-0490).
+	// Where the pulls write: the pool that holds Docker's images, or the system disk (ADR-0493).
 	'appUpdates.imagesPool': 'Pool {pool}',
 	'appUpdates.systemDisk': 'System disk',
 	'appUpdates.writes': 'About {writes}, of {free} free',
