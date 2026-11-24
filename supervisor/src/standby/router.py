@@ -231,7 +231,7 @@ async def return_apps(body: AppsReturn, request: Request, user=Depends(require_a
     if body.discard:
         items = [AppMoved(app=app, has_copy=True, age=None, error=None) for app in returned]
     else:
-        items = [AppMoved(app=item.app, has_copy=item.mib is not None, age=None, error=None, mib=item.mib,
-                          backup=item.backup) for item in returned]
+        items = [AppMoved(app=item.app, has_copy=item.copy, age=None, error=None, mib=item.mib, backup=item.backup)
+                 for item in returned]
     return AppsAction(dry_run=body.dry_run, apps=items,
                       message=("A dry run: " if body.dry_run else "") + f"{len(returned)} app(s) back on their pool")

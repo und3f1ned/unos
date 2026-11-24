@@ -8,7 +8,9 @@
 # mount   the eMMC's root at $MOUNT;
 # copy    the standby's root into it with the sync's exclusions and without the fix-ups (the eMMC's
 #         drop-ins that hold Docker until its pool is mounted are left out too), and UNOS's volumes
-#         into the eMMC's Docker volumes, each file they replace on a pool kept in a backup folder;
+#         into the eMMC's Docker volumes, each file they replace on a pool kept in a backup folder; the
+#         mount point of a pool removed on the card loses its immutable flag first, and one the eMMC
+#         lacks (a pool made on the card) is made, immutable below the pools' folder;
 # fstab   the eMMC's /etc/fstab: the standby's with the card's root line replaced by the eMMC's lines;
 # verify  a dry run finds nothing left to copy (after one more copy at most), the root unmounted
 #         passes fsck.ext4 -f -n;
@@ -24,7 +26,8 @@ set -u
 dir=$1
 # EMMC, the eMMC's root device; MOUNT, where it is mounted; CARD and SECTOR, the card and the sector of its
 # tries counter; MARK, DRILL and STATE, the card's files; STATE_SHA, the digest of state.json as the
-# supervisor read it; UNITS, the units that stop; DELAY, the seconds before the first step.
+# supervisor read it; UNITS, the units that stop; DELAY, the seconds before the first step; POOLS, the
+# pools' folder.
 # shellcheck source=/dev/null
 . "$dir/return.env"
 
@@ -36,6 +39,12 @@ rsync_root="rsync -aHAX --numeric-ids --one-file-system --delete --omit-dir-time
 
 say() {
     echo "unos-standby-return: $*"
+}
+
+# The next step, in the journal.
+begin() {
+    step=$1
+    say "step $step"
 }
 
 # A command under a deadline: its output goes to the journal, and when it fails its last line, or what
@@ -84,13 +93,14 @@ trap 'why="the unit was stopped"; fail' TERM INT HUP
 
 sleep "$DELAY"
 
+say "step check"
 if findmnt -rn -S "$EMMC" > /dev/null 2>&1; then
     why="$EMMC is mounted"
     fail
 fi
 try 900 fsck.ext4 -n "$EMMC" || fail
 
-step=stop
+begin stop
 for unit in $UNITS; do
     if systemctl is-active --quiet "$unit"; then
         stopped="$stopped $unit"
@@ -102,12 +112,12 @@ if [ "$(sha256sum < "$STATE" | cut -d' ' -f1)" != "$STATE_SHA" ]; then
     fail
 fi
 
-step=mount
+begin mount
 mkdir -p "$MOUNT" || { why="$MOUNT cannot be made"; fail; }
 try 300 mount -t ext4 -o noatime "$EMMC" "$MOUNT" || fail
 mounted=1
 
-step=copy
+begin copy
 cp "$dir/excludes" "$dir/excludes.all" || { why="the exclusions cannot be read"; fail; }
 for folder in docker.service.d containerd.service.d; do
     for file in "$MOUNT/etc/systemd/system/$folder"/*.conf; do
@@ -115,6 +125,13 @@ for folder in docker.service.d containerd.service.d; do
             echo "/etc/systemd/system/$folder/${file##*/}" >> "$dir/excludes.all"
         fi
     done
+done
+
+# A pool that the card removed keeps its mount point on the eMMC, immutable while nothing is mounted on it
+# (ADR-0034), which the copy's --delete could not remove.
+for point in "$MOUNT$POOLS"/*; do
+    [ -d "$point" ] || continue
+    [ -e "$POOLS/${point##*/}" ] || chattr -i "$point" 2> /dev/null || true
 done
 
 copy() {
@@ -151,21 +168,29 @@ left_to_copy() {
 }
 
 copy || fail
+# The card's mount points that the eMMC lacks: a pool made on the card.
+while read -r point; do
+    [ -n "$point" ] && [ ! -e "$MOUNT$point" ] || continue
+    mkdir -p "$MOUNT$point" || { why="$MOUNT$point cannot be made"; fail; }
+    case $point in
+        "$POOLS"/*) chattr +i "$MOUNT$point" || { why="$MOUNT$point cannot be made immutable"; fail; } ;;
+    esac
+done < "$dir/mountpoints"
 
-step=fstab
+begin fstab
 if ! { cp "$dir/fstab" "$MOUNT/etc/fstab.unos-return" && chmod 0644 "$MOUNT/etc/fstab.unos-return" \
     && sync "$MOUNT/etc/fstab.unos-return" && mv -f "$MOUNT/etc/fstab.unos-return" "$MOUNT/etc/fstab"; }; then
     why="$MOUNT/etc/fstab cannot be written"
     fail
 fi
 
-step=verify
+begin verify
 left_to_copy || fail
 if [ -n "$left" ]; then
     # Something changed during the copy: once more.
-    step=copy
+    begin copy
     copy || fail
-    step=verify
+    begin verify
     left_to_copy || fail
     if [ -n "$left" ]; then
         why="the copy does not settle: $(printf '%s\n' "$left" | head -n 1)"
@@ -178,7 +203,7 @@ mounted=0
 try 900 fsck.ext4 -f -n "$EMMC" || fail
 
 # The eMMC holds the card's system: the card's markers go, the mark last.
-step=finish
+begin finish
 rm -f "$DRILL" || { why="$DRILL cannot be deleted"; fail; }
 try 60 dd if="$dir/counter" of="$CARD" bs=512 seek="$SECTOR" count=1 conv=sync,notrunc,fsync status=none || fail
 if ! { cp "$dir/state.json" "$STATE.tmp" && sync "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; }; then
@@ -190,4 +215,9 @@ if ! { rm -f "$MARK" && sync; }; then
     fail
 fi
 result returned "" "the eMMC holds the card's system; the NAS reboots to it"
-try 120 systemctl reboot || { why="the reboot did not start: $why; reboot the NAS"; fail; }
+# The eMMC is the system now: the reboot's own stop of this unit puts nothing back.
+trap - TERM INT HUP
+if ! try 120 systemctl reboot; then
+    result failed finish "the reboot did not start: $why; the eMMC holds the card's system: reboot the NAS"
+    exit 1
+fi

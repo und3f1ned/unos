@@ -205,6 +205,15 @@ test.describe('System > Standby', () => {
     ]);
   });
 
+  test('on the card while the return to the eMMC runs: nothing else is offered', async ({ authenticatedPage: page }) => {
+    await fakeStandby(page, { ...ON_CARD, emmc_return: { ...EMMC_OK, offered: false, running: true } });
+    await page.goto('/system/standby');
+    await expect(page.getByText('The return to the eMMC runs', { exact: true })).toBeVisible();
+    await expect(page.getByText('The card stays the system disk', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Return to the eMMC', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Check the eMMC again' })).toHaveCount(0);
+  });
+
   test("on the card with an eMMC that fails its check: the card stays the system disk", async ({ authenticatedPage: page }) => {
     const failing = { ...EMMC_OK, offered: false, detail: FSCK_FAILED, failed: {
       at: '2026-11-23T12:30:00Z', step: 'copy', message: 'rsync: write failed: No space left on device (28); Docker and Samba run again' } };
@@ -344,11 +353,14 @@ test.describe('System > Standby', () => {
   test('a critical app whose return failed names the step, stays stopped and is offered again', async ({ authenticatedPage: page }) => {
     const failed = { at: '2026-11-24T11:00:00Z', step: 'copy', error: 'rsync: write failed: No space left on device (28)',
       backup: '/mnt/pools/usb/apps/jellyfin.before-failback-20261124T110000Z' };
-    await fakeStandby(page, { ...MOVED, apps: [{ ...MOVED.apps[0], moved: { ...MOVED.apps[0].moved, return_failed: failed } }] });
+    await fakeStandby(page, { ...MOVED, apps: [{ ...MOVED.apps[0],
+      moved: { ...MOVED.apps[0].moved, return_failed: failed, copy_started: true } }] });
     await page.goto('/system/standby');
     await expect(page.getByTestId('standby-app-return-failed')).toContainText(
       'Its last return failed at the copy: rsync: write failed: No space left on device (28). It stays stopped');
     await expect(page.getByRole('button', { name: 'Return to the pool', exact: true })).toBeVisible();
+    // Its copy began: discarding the card's changes now would start it on a mix of both.
+    await expect(page.getByRole('button', { name: 'Return, discarding the card’s changes' })).toHaveCount(0);
   });
 
   test('a critical app whose pool is not back yet cannot return, and says why', async ({ authenticatedPage: page }) => {

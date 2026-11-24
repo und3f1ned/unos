@@ -194,10 +194,10 @@ def plan(*, device: str, card_device: str, sector: int, generation: int | None, 
          ops: StandbyHost | None = None) -> Plan:
     """The files and settings of the unit (blocking, reads only); StandbyRefused when a condition of the copy
     is not met."""
-    import hashlib
     import json
     import shlex
 
+    from . import apps as standby_apps
     from . import bootscript
     from .generation import (CONTAINERD_CONFIG, DOCKER_CONFIG, DRILL, EXCLUDES, FSTAB, HOST_SCRIPTS, MARK, STATE_FILE,
                              VOLATILE, _swap_files, mountpoints)
@@ -213,18 +213,33 @@ def plan(*, device: str, card_device: str, sector: int, generation: int | None, 
     fstab = emmc_fstab(card_fstab, own)
     volumes = _volumes(ops, stamp)
     mounts = conditions._parse_mountinfo(ops.read_file(conditions.MOUNTINFO) or "")
-    # The eMMC's other filesystems (a boot partition of its own, as an extlinux board may have) stay as they are.
-    others = [fields[1] for line in own.splitlines()
-              if len(fields := line.split()) >= 3 and not fields[0].startswith("#") and fields[1] != "/"
-              and fields[2] != "swap" and _PLAIN.fullmatch(fields[1])]
-    excludes = [*EXCLUDES, *VOLATILE, *mountpoints(mounts, card_fstab), *_swap_files(ops), DOCKER_CONFIG,
-                CONTAINERD_CONFIG, *others]
-    stored_text = ops.read_file(STATE_FILE)
+    # The eMMC's other filesystems (a boot partition of its own, as an extlinux board may have) stay as they are,
+    # and so do its swap files, which the copy left out, and, beside a boot partition of its own, its kernel's
+    # modules: the kernel on that partition and its modules stay a pair.
+    others, swaps = [], []
+    for line in own.splitlines():
+        fields = line.split()
+        if len(fields) < 3 or fields[0].startswith("#"):
+            continue
+        if fields[2] == "swap" and _PLAIN.fullmatch(fields[0]) and not fields[0].startswith("/dev/"):
+            swaps.append(fields[0])
+        elif fields[1] != "/" and fields[2] != "swap" and _PLAIN.fullmatch(fields[1]):
+            others.append(fields[1])
+    modules = ["/lib/modules", "/usr/lib/modules"] if "/boot" in others else []
+    points = mountpoints(mounts, card_fstab)
+    excludes = [*EXCLUDES, *VOLATILE, *points, *_swap_files(ops), DOCKER_CONFIG, CONTAINERD_CONFIG, *others,
+                *swaps, *modules]
+    # state.json and its digest as the host has its bytes, read together under the lock of its writers.
+    from .service import _stored_lock
+
+    with _stored_lock:
+        stored_text = ops.read_file(STATE_FILE)
+        digest = ops.read(["sha256sum", "--", STATE_FILE]).stdout.split()
     try:
         stored = json.loads(stored_text) if stored_text else None
     except json.JSONDecodeError:
         stored = None
-    if stored_text is None or not isinstance(stored, dict):
+    if stored_text is None or not isinstance(stored, dict) or not digest or not re.fullmatch(r"[0-9a-f]{64}", digest[0]):
         raise StandbyRefused("The standby's state.json cannot be read")
     # The run goes and the return is recorded, for the eMMC's system: its first sync writes a new generation
     # and empties the copy's Docker data. The critical apps' records stay: those that run from the card stay
@@ -238,11 +253,14 @@ def plan(*, device: str, card_device: str, sector: int, generation: int | None, 
         "fstab": fstab,
         "state.json": json.dumps(after, indent=1, sort_keys=True) + "\n",
         "counter": bootscript.counter_block(0).rstrip(b"\0").decode(),
+        # The card's mount points, which the copy leaves out: the eMMC gets those it lacks (a pool made on the
+        # card), immutable below the pools' folder as UNOS makes them (ADR-0034).
+        "mountpoints": "".join(f"{point}\n" for point in points),
     }
     settings = {"EMMC": device, "MOUNT": MOUNT, "CARD": card_device, "SECTOR": str(sector), "MARK": MARK,
                 "DRILL": DRILL, "STATE": STATE_FILE,
-                "STATE_SHA": hashlib.sha256(stored_text.encode("utf-8", "surrogateescape")).hexdigest(),
-                "UNITS": " ".join(UNITS), "DELAY": str(START_DELAY_SECONDS)}
+                "STATE_SHA": digest[0], "UNITS": " ".join(UNITS), "DELAY": str(START_DELAY_SECONDS),
+                "POOLS": standby_apps.pools_base()}
     files["return.env"] = "".join(f"{key}={shlex.quote(value)}\n" for key, value in settings.items())
     lines = [
         f"fsck.ext4 -n {device}", f"systemctl stop {' '.join(UNITS)} (those that run)",
@@ -263,7 +281,7 @@ def stage(found: Plan) -> list[str]:
     from .hostops import StandbyFailed
 
     ops = StandbyHost()
-    ops.change(["rm", "-rf", "--", RUN_DIR], what=f"{RUN_DIR} cannot be emptied")
+    ops.change(["rm", "-rf", "--one-file-system", "--", RUN_DIR], what=f"{RUN_DIR} cannot be emptied")
     ops.change(["mkdir", "-p", "-m", "0700", RUN_DIR], what=f"{RUN_DIR} cannot be made")
     for name, text in found.files.items():
         ops.write_file(f"{RUN_DIR}/{name}", text, what=f"{RUN_DIR}/{name}", mode="0600")
@@ -278,6 +296,17 @@ def stage(found: Plan) -> list[str]:
         forget_result()
         raise
     return ops.plan
+
+
+def unit_runs(ops: StandbyHost | None = None) -> bool:
+    """Whether the return's unit runs, or its folder is there without a result (True when that cannot be told)."""
+    ops = ops or StandbyHost()
+    shown = ops.read(["systemctl", "show", "--property=ActiveState", "--value", f"{UNIT}.service"])
+    if not shown.ok:
+        return True
+    if shown.stdout.strip() in ("active", "activating", "deactivating", "reloading"):
+        return True
+    return False
 
 
 def read_result(ops: StandbyHost | None = None) -> dict[str, str] | None:
@@ -298,8 +327,9 @@ def forget_result() -> None:
     """The unit's folder goes (blocking); never raises."""
     from .hostops import StandbyError
 
+    # Never into the eMMC's root, should the unit have left it mounted there.
     try:
-        StandbyHost().change(["rm", "-rf", "--", RUN_DIR], what=f"{RUN_DIR} cannot be removed")
+        StandbyHost().change(["rm", "-rf", "--one-file-system", "--", RUN_DIR], what=f"{RUN_DIR} cannot be removed")
     except StandbyError as e:
         import logging
 

@@ -165,6 +165,53 @@ class TestThePoolReturn:
         # The first run copied every file: the second replaced none of them again.
         assert backups(standby) == {"config/system.xml": "<config/>", "config/data/library.db": "rows"}
 
+    def test_a_container_that_does_not_stop_is_not_copied(self, standby, docker, monkeypatch):
+        moved_to_the_card(standby)
+        from tests.docker_fake import Container
+
+        monkeypatch.setattr(Container, "stop", lambda self, timeout=None: None)
+        with Client() as api:
+            answer = api.post("/api/v1/system/standby/apps/return", json={})
+        assert answer.status_code == 500 and "failed at its step stop: jellyfin still runs" in answer.json()["detail"]
+        assert not [cmd for cmd in standby.unit_calls if "--backup" in cmd]
+        assert standby.files[f"{FOLDER}/config/system.xml"] == "<config/>"
+
+    def test_after_a_copy_began_the_discarding_return_is_refused(self, standby, docker):
+        moved_to_the_card(standby)
+        standby.copy_status["back:jellyfin"] = 11
+        with Client() as api:
+            api.post("/api/v1/system/standby/apps/return", json={})
+            status = api.get("/api/v1/system/standby").json()
+            discard = api.post("/api/v1/system/standby/apps/return", json={"discard": True, "model": "SC32G"})
+        assert status["apps"][0]["moved"]["copy_started"] is True
+        assert discard.status_code == 409 and "began to copy jellyfin" in discard.json()["detail"]
+        assert standby.files[f"{RUN}/data/config/new.xml"] == "card only" and RUN in standby.subvolume_paths
+
+    def test_a_backup_folder_from_state_json_is_taken_only_when_it_is_the_app_s_own(self, standby):
+        moved_to_the_card(standby)
+        standby_apps.update_app_record("jellyfin", lambda record: {**record, "failed_over": {
+            **record["failed_over"], "returning": {"backup": f"{FOLDER}.before-failback-x/../../..", "step": "copy",
+                                                   "error": "e"}}})
+        with Client() as api:
+            answer = api.post("/api/v1/system/standby/apps/return", json={})
+        assert answer.status_code == 200, answer.text
+        import re
+
+        assert re.fullmatch(re.escape(FOLDER) + r"\.before-failback-[0-9]{8}T[0-9]{6}Z", answer.json()["apps"][0]["backup"])
+
+    def test_an_app_that_returned_on_the_other_system_returns_here_at_the_start(self, standby, docker):
+        mark()
+        synced(standby)
+        run(standby_apps.move(["jellyfin"], "drill", request=None, username="admin"))
+        # The standby's root returned it to its pool and deleted its run copy; this Docker still holds it on the card.
+        standby_apps.update_app_record("jellyfin", lambda record: {k: v for k, v in record.items() if k != "failed_over"})
+        standby.subvolume_paths.discard(RUN)
+        service._state = service._State()
+        run(service.before_serving())
+        assert binds(docker, "jellyfin")["/config"] == (f"{FOLDER}/config", False)
+        assert docker.containers_["jellyfin"].attrs["State"]["Running"] is True
+        assert docker.containers_["jellyfin"].attrs["Config"]["Labels"][APP_POOL_LABEL] == "usb"
+
     def test_a_failure_to_forget_the_move_stops_the_app_again(self, standby, docker, monkeypatch):
         moved_to_the_card(standby)
         original = failback._note
@@ -483,11 +530,14 @@ class TestTheEmmcReturnsUnit:
     def test_the_emmc_s_other_filesystems_are_left_out_of_the_copy(self, fake, data_pool):
         ready_to_return(fake)
         fake.files[f"{generation.LIB}/emmc-fstab"] = (f"{EMMC_OWN}UUID=0b0e0f00-0000-4000-8000-000000000002 /boot ext4 "
-                                                      "defaults 0 2\n/dev/mmcblk2p4 none swap sw 0 0\n")
+                                                      "defaults 0 2\n/dev/mmcblk2p4 none swap sw 0 0\n"
+                                                      "/swapfile none swap sw 0 0\n")
         with Client() as api:
             assert api.post("/api/v1/system/standby/return", json={}).status_code == 200
         excludes = fake.files[f"{RUN_DIR}/excludes"].splitlines()
-        assert "/boot" in excludes and "none" not in excludes
+        assert "/boot" in excludes and "none" not in excludes and "/dev/mmcblk2p4" not in excludes
+        # Its swap file stays, and beside a boot partition of its own its kernel's modules stay with that kernel.
+        assert "/swapfile" in excludes and "/lib/modules" in excludes and "/usr/lib/modules" in excludes
         assert "UUID=0b0e0f00-0000-4000-8000-000000000002 /boot ext4" in fake.files[f"{RUN_DIR}/fstab"]
 
     def test_volumes_of_the_emmc_s_docker_on_the_emmc_go_below_its_mount_without_a_backup(self, fake, data_pool):
@@ -522,6 +572,52 @@ class TestTheEmmcReturnsUnit:
         assert answer.status_code == 409 and why in answer.json()["detail"]
         assert fake.changes == []
 
+    def test_while_its_unit_runs_nothing_else_changes_the_card(self, fake, data_pool):
+        ready_to_return(fake)
+        fake.return_unit = "active"
+        with Client() as api:
+            first = api.post("/api/v1/system/standby/return", json={})
+        # A unit that runs already, which this supervisor did not start (one before a restart, say).
+        assert first.status_code == 409 and "runs already" in first.json()["detail"]
+        fake.return_unit = "inactive"
+        with Client() as api:
+            started = api.post("/api/v1/system/standby/return", json={})
+            status = api.get("/api/v1/system/standby").json()
+            again = [api.post("/api/v1/system/standby/return", json={}),
+                     api.post("/api/v1/system/standby/apps/return", json={}),
+                     api.post("/api/v1/system/standby/apps/move", json={"reason": "drill"})]
+        assert started.status_code == 200
+        assert status["emmc_return"]["running"] is True and status["emmc_return"]["offered"] is False
+        assert [answer.status_code for answer in again] == [409, 409, 409]
+        assert all("A return to the eMMC runs" in answer.json()["detail"] for answer in again)
+
+    def test_a_unit_that_fails_before_it_stops_docker_is_recorded_by_the_supervisor_that_runs(
+            self, fake, data_pool, alerts, monkeypatch):
+        import asyncio
+
+        from src.standby import emmc_return
+
+        ready_to_return(fake)
+        monkeypatch.setattr(service, "FOLLOW_SECONDS", 0)
+        # The unit does not run before the return starts it, and runs from then on.
+        answers = iter([False])
+        monkeypatch.setattr(emmc_return, "unit_runs", lambda ops=None: next(answers, True))
+
+        async def go():
+            await service.return_to_emmc(dry_run=False, request=None, username="admin")
+            assert service._state.emmc_returning is True
+            fake.files[f"{RUN_DIR}/result"] = "failed\ncheck\nfsck.ext4: /dev/mmcblk0p1 is in use\n"
+            for _ in range(1000):  # each pass of the follow yields at once (FOLLOW_SECONDS 0)
+                if not service._tasks:
+                    break
+                await asyncio.sleep(0)
+            assert not service._tasks
+
+        run(go())
+        assert service._state.emmc_returning is False
+        assert service._state.emmc_return_failed["step"] == "check"
+        assert [(alert.type, alert.title) for alert in alerts] == [("error", "The return to the eMMC failed")]
+
     def test_a_failed_return_is_recorded_audited_and_alerted_at_the_next_start(self, fake, alerts):
         on_the_card(fake)
         fake.files[f"{RUN_DIR}/result"] = ("failed\ncopy\nrsync: write failed: No space left on device (28); Docker and "
@@ -538,7 +634,8 @@ class TestTheEmmcReturnsUnit:
         entry = audit_log()[-1]
         assert (entry["action"], entry["username"], entry["success"]) == ("standby_returned", "system", False)
         assert [(alert.type, alert.title) for alert in alerts] == [("error", "The return to the eMMC failed")]
-        assert ["rm", "-rf", "--", RUN_DIR] in fake.changes
+        # Never into the eMMC's root, should the unit have left it mounted there.
+        assert ["rm", "-rf", "--one-file-system", "--", RUN_DIR] in fake.changes
         # A record of a return that did not end goes on the card.
         assert "emmc_return" not in json.loads(fake.files[STATE])
 
@@ -598,7 +695,10 @@ class ReturnHost:
         dropins.mkdir(parents=True)
         (dropins / "data-root-on-pool.conf").write_text("[Unit]\nRequiresMountsFor=/mnt/pools/data/.docker\n")
         (dropins / "override.conf").write_text("[Service]\nLimitNOFILE=1048576\n")
+        # The mount point of a pool that the card removed, and none yet of one that the card made.
+        (self.mount / "mnt/pools/old").mkdir(parents=True)
         for name, text in {"excludes": "/var/lib/docker\n/etc/fstab\n", "fstab": EMMC_OWN, "counter": "unos_tries=0\n",
+                           "mountpoints": "/proc\n/mnt/pools/new\n",
                            "state.json": '{"emmc_return": {"at": "x"}}\n',
                            "volumes": f"/var/lib/docker/volumes/deploy_unos-data/_data\t{self.pool}/.docker/volumes/"
                                       f"deploy_unos-data/_data\t{self.pool}/.docker/volumes.before-failback-1/deploy_unos-data\n"
@@ -611,7 +711,7 @@ class ReturnHost:
         self.settings = {"EMMC": "/dev/mmcblk0p1", "MOUNT": str(self.mount), "CARD": str(self.counter),
                          "SECTOR": "32767", "MARK": str(self.mark), "DRILL": str(self.drill), "STATE": str(self.state),
                          "STATE_SHA": hashlib.sha256(self.state.read_bytes()).hexdigest(), "UNITS": self.UNITS,
-                         "DELAY": "0"}
+                         "DELAY": "0", "POOLS": "/mnt/pools"}
         self.env = {**os.environ, "PATH": f"{self.bin}:/usr/bin:/bin"}
 
     def stubs(self) -> None:
@@ -621,7 +721,7 @@ class ReturnHost:
         fails = "".join(f'case "$*" in *"{text}"*) echo "{program}: {text} failed" >&2; exit 3 ;; esac\n'
                         for program, text in self.fails.items() if program == "*")
         stub(self.bin, "timeout", 'while [ "${1#-}" != "$1" ]; do shift; done\nshift\nexec "$@"\n')
-        for program in ("systemctl", "mount", "umount", "fsck.ext4", "sync"):
+        for program in ("systemctl", "mount", "umount", "fsck.ext4", "sync", "chattr"):
             failing = self.fails.get(program)
             check = (f'case "$*" in *"{failing}"*) echo "{program}: {failing} failed" >&2; exit 4 ;; esac\n'
                      if failing else "")
@@ -666,6 +766,10 @@ class TestTheReturnScript:
         assert calls[0] == "fsck.ext4 -n /dev/mmcblk0p1"
         assert calls[1:4] == ["systemctl stop docker.socket", "systemctl stop docker.service", "systemctl stop smbd.service"]
         assert calls[4] == f"mount -t ext4 -o noatime /dev/mmcblk0p1 {mount}"
+        # The removed pool's mount point may go; the new pool's is made, immutable.
+        assert calls.pop(5) == f"chattr -i {mount}/mnt/pools/old"
+        assert calls.pop(7) == f"chattr +i {mount}/mnt/pools/new"
+        assert (found.mount / "mnt/pools/new").is_dir() and (found.mount / "proc").is_dir()
         assert calls[5] == (f"rsync -aHAX --numeric-ids --one-file-system --delete --omit-dir-times --inplace "
                             f"--no-whole-file --exclude-from={found.dir}/excludes.all / {mount}/")
         assert calls[6] == (f"rsync -aHAX --numeric-ids --delete --backup --backup-dir={found.pool}/.docker/"

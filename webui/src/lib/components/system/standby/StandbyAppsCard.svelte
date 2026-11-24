@@ -25,6 +25,8 @@
 	const space = $derived(status.space);
 	const moved = $derived(status.apps.filter((app) => app.moved));
 	const returnable = $derived(moved.filter((app) => app.return_blocked === null));
+	// Once a return with the card's changes began to copy an app, only that return is offered for it.
+	const discardable = $derived(returnable.length > 0 && returnable.every((app) => !app.moved?.copy_started));
 	const movable = $derived(status.apps.filter((app) => !app.moved));
 	const STEPS: Record<string, string> = {
 		stop: 'standby.apps.step.stop',
@@ -128,9 +130,11 @@
 				<Button variant="primary" disabled={busy} onclick={onreturn}>
 					{$t('standby.apps.return', { n: returnable.length })}
 				</Button>
-				<Button variant="secondary" disabled={busy} onclick={ondiscard}>
-					{$t('standby.apps.discard', { n: returnable.length })}
-				</Button>
+				{#if discardable}
+					<Button variant="secondary" disabled={busy} onclick={ondiscard}>
+						{$t('standby.apps.discard', { n: returnable.length })}
+					</Button>
+				{/if}
 			{/if}
 		</div>
 		<HelpText class="mt-3" text={$t('standby.apps.help')} />

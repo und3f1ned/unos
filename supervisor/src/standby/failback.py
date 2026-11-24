@@ -57,7 +57,9 @@ class PoolReturnFailed(StandbyFailed):
 class PoolReturn:
     app: str
     pool: str
-    # The MiB that the copy writes to the pool (the dry run), or that it wrote; None for an app without a copy.
+    # Whether the app had a copy on the card; the MiB that the copy writes to the pool (the dry run), or that
+    # it wrote: None without a copy or when rsync's statistics cannot be read.
+    copy: bool
     mib: float | None
     backup: str | None
 
@@ -125,11 +127,11 @@ def plan(app: str) -> PoolReturn:
     ops = StandbyHost()
     found = ready(app, ops)
     if found.defs is None:
-        return PoolReturn(app=app, pool=found.pool, mib=None, backup=None)
+        return PoolReturn(app=app, pool=found.pool, copy=False, mib=None, backup=None)
     result = ops.long_read(_copy_command(app, found.folder, backup=None), timeout=standby_apps.RSYNC_TIMEOUT)
     if not result.ok:
         raise StandbyFailed(f"The dry run of the copy of {app}: rsync ended with exit status {result.returncode}")
-    return PoolReturn(app=app, pool=found.pool, mib=transferred_mib(result.stdout) or 0.0, backup=None)
+    return PoolReturn(app=app, pool=found.pool, copy=True, mib=transferred_mib(result.stdout), backup=None)
 
 
 def _note(app: str, returning: dict[str, Any] | None) -> None:
@@ -167,8 +169,9 @@ def return_to_pool(app: str) -> PoolReturn:
         found = ready(app, ops)
         value = found.moved.get("returning")
         earlier: dict[str, Any] = value if isinstance(value, dict) else {}
-        backup = str(earlier.get("backup") or "") or backup_folder(found.pool, app)
-        if not backup.startswith(found.folder + BACKUP_SUFFIX):
+        backup = str(earlier.get("backup") or "")
+        # The card is removable: only a folder of this app's own name and a time is taken from state.json.
+        if not re.fullmatch(re.escape(found.folder + BACKUP_SUFFIX) + r"[0-9]{8}T[0-9]{6}Z", backup):
             backup = backup_folder(found.pool, app)
         attempt = {"at": utc_text(utc_now()), "backup": backup if found.defs is not None else None}
         _note(app, attempt)
@@ -177,6 +180,11 @@ def return_to_pool(app: str) -> PoolReturn:
         mib = None
         try:
             _stop_all(standby_apps.installed(client, app))
+            group = standby_apps.installed(client, app)
+            still = [c.name for c in (group.containers if group is not None else [])
+                     if c.status in ("running", "restarting")]
+            if still:
+                raise StandbyFailed(f"{', '.join(still)} still runs")
             step = "copy"
             if found.defs is not None:
                 ops.change(["mkdir", "-p", "--", found.folder], what=f"The folder of {app} on its pool")
@@ -218,7 +226,8 @@ def return_to_pool(app: str) -> PoolReturn:
                 ops.change(["btrfs", "subvolume", "delete", run], what=f"The run copy of {app}")
             except StandbyError as e:
                 logger.warning("The run copy of %s could not be deleted: %s", app, e)
-        return PoolReturn(app=app, pool=found.pool, mib=mib, backup=backup if found.defs is not None else None)
+        return PoolReturn(app=app, pool=found.pool, copy=found.defs is not None, mib=mib,
+                          backup=backup if found.defs is not None else None)
     finally:
         lock.release()
 
@@ -289,7 +298,7 @@ async def return_apps(apps: list[str], *, request: Any, username: str, dry_run: 
             await audit_change(AuditAction.STANDBY_APPS_RETURNED, request, username, resource_type="app",
                                resource_id=app, severity=AuditSeverity.WARNING,
                                details=f"Returned {app} to its pool {item.pool} with the SD standby's changes"
-                               + (f" ({item.mib} MiB); the files they replaced are in {item.backup}" if item.backup
+                               + (f" ({item.mib} MiB); the files they replaced are in {item.backup}" if item.copy
                                   else ": it had no copy and starts as it was"))
     if not dry_run:
         if done:

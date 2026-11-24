@@ -52,7 +52,9 @@
 			</span>
 		</Alert>
 	{/if}
-	{#if status.root === 'card' && !emmc?.offered}
+	{#if status.root === 'card' && emmc?.running}
+		<Alert variant="info" title={$t('standby.emmc.running')} class="mb-3">{$t('standby.emmc.runningText')}</Alert>
+	{:else if status.root === 'card' && !emmc?.offered}
 		<Alert variant="warning" title={$t('standby.emmc.notOffered')} class="mb-3">
 			<span data-testid="standby-emmc-check">
 				{emmc?.detail ? $t('standby.emmc.notOfferedText', { detail: emmc.detail }) : $t('standby.emmc.notChecked')}
@@ -67,7 +69,9 @@
 					{$t('standby.returnDiscard.button')}
 				</Button>
 			{/if}
-			<Button variant="ghost" disabled={busy} onclick={oncheck}>{$t('standby.emmc.check')}</Button>
+			{#if !emmc?.running}
+				<Button variant="ghost" disabled={busy} onclick={oncheck}>{$t('standby.emmc.check')}</Button>
+			{/if}
 		{:else if status.standby_ran}
 			<Button variant="warning" disabled={busy || !status.in_boot_path} onclick={() => ondrill('mark')}>
 				{$t('standby.returnThrough.button')}

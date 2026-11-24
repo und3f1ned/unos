@@ -182,6 +182,7 @@ class StandbyFakeHost:
         self.on_card_root = False
         self.tagged: dict[str, str] = {f"UUID={ROOT_UUID}": f"/dev/{emmc}p1"}
         self.fsck: dict[str, tuple[int, str]] = {}
+        self.return_unit = "inactive"
 
     # --- the host's state -----------------------------------------------------------------------------
 
@@ -355,6 +356,8 @@ class StandbyFakeHost:
             return self._ls(cmd[-1])
         if program == "mountpoint":
             return ok if cmd[-1] in self.mounted else fail
+        if program == "systemctl" and cmd[1] == "show":
+            return host.HostResult(0, f"{self.return_unit}\n", "")
         if program == "systemctl" and cmd[1] == "is-enabled":
             return ok if cmd[-1] in self.enabled else fail
         if program == "btrfs":

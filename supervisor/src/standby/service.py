@@ -169,6 +169,7 @@ class StandbyEmmcReturn(BaseModel):
     checked_at: str | None = Field(description="When the eMMC was last checked, in UTC.")
     failed: StandbyEmmcFailure | None = Field(default=None, description=(
         "The last return to the eMMC that failed in this boot: the card stays the system disk; null when none did."))
+    running: bool = Field(default=False, description="Whether a return to the eMMC runs now.")
 
 
 class StandbyReturnFailure(BaseModel):
@@ -185,6 +186,9 @@ class StandbyAppMove(BaseModel):
     has_copy: bool = Field(description="Whether it runs from its copy; false: it had none and stays stopped.")
     return_failed: StandbyReturnFailure | None = Field(default=None, description=(
         "The last return to the pool that failed: the app stays stopped, and the return can run again."))
+    copy_started: bool = Field(default=False, description=(
+        "A return with the card's changes began to copy it to its pool: only that return is offered, not the "
+        "discarding one."))
 
 
 class StandbyAppStatus(BaseModel):
@@ -262,6 +266,8 @@ class _State:
     # and how the last return to the eMMC that failed ended (its unit's result).
     emmc_check: dict[str, Any] | None = None
     emmc_return_failed: dict[str, Any] | None = None
+    # A return to the eMMC's unit was started and has not ended: no other action changes the card meanwhile.
+    emmc_returning: bool = False
 
 
 _state = _State()
@@ -773,7 +779,8 @@ def _apps_status(critical: dict[str, Any]) -> list[StandbyAppStatus]:
             data_bytes=sizes.get("data"), images_bytes=sizes.get("images"), error=record.get("error"),
             moved=StandbyAppMove(at=moved.get("at", ""), reason=moved.get("reason", ""), pool=moved.get("pool", ""),
                                  has_copy=bool(moved.get("copy")),
-                                 return_failed=_return_failure(moved.get("returning"))) if moved else None,
+                                 return_failed=_return_failure(moved.get("returning")),
+                                 copy_started=standby_apps.copy_started(moved)) if moved else None,
             return_blocked=standby_apps.pool_unfit(str(moved.get("pool"))) if moved else None))
     return shown
 
@@ -781,9 +788,10 @@ def _apps_status(critical: dict[str, Any]) -> list[StandbyAppStatus]:
 def _emmc_return() -> StandbyEmmcReturn:
     check = _state.emmc_check or {}
     failed = _state.emmc_return_failed
-    return StandbyEmmcReturn(offered=bool(check.get("ok")), detail=check.get("detail"), device=check.get("device"),
-                             checked_at=check.get("at"),
-                             failed=StandbyEmmcFailure.model_validate(failed) if failed else None)
+    return StandbyEmmcReturn(offered=bool(check.get("ok")) and not _state.emmc_returning, detail=check.get("detail"),
+                             device=check.get("device"), checked_at=check.get("at"),
+                             failed=StandbyEmmcFailure.model_validate(failed) if failed else None,
+                             running=_state.emmc_returning)
 
 
 def _return_failure(value: Any) -> StandbyReturnFailure | None:
@@ -1029,6 +1037,13 @@ async def check_emmc() -> dict[str, Any]:
 NO_RETURN = "The card stays the system disk, and no standby is left"
 
 
+def refuse_while_returning() -> None:
+    """409 for an action that changes the card's state while a return to the eMMC runs: its unit stops at a
+    state.json that changed after the supervisor read it, and Docker is down meanwhile."""
+    if _state.emmc_returning:
+        raise HTTPException(409, detail="A return to the eMMC runs: UNOS stops for its copy, then the NAS reboots")
+
+
 async def return_to_emmc(*, discard: bool = False, dry_run: bool, request: Request, username: str) -> StandbyAction:
     """On the card's root, once the eMMC passed its check: the return with the card's changes, or with
     ``discard`` the reboot to the eMMC as it was (its system then offers to discard the card's changes)."""
@@ -1036,6 +1051,7 @@ async def return_to_emmc(*, discard: bool = False, dry_run: bool, request: Reque
     async with _lock:
         if _state.root != "card":
             raise HTTPException(409, detail="UNOS does not run from the standby")
+        refuse_while_returning()
         check = await check_emmc()
         if not check["ok"]:
             raise HTTPException(409, detail=f"{check['detail']}. {NO_RETURN}: UNOS keeps running from the card")
@@ -1086,6 +1102,8 @@ async def _return_with_changes(*, dry_run: bool, request: Request, username: str
     if dry_run:
         return StandbyAction(dry_run=True, plan=found.lines,
                              message="Return to the eMMC with the card's changes: a dry run")
+    if await asyncio.to_thread(emmc_return.unit_runs):
+        raise HTTPException(409, detail="A return to the eMMC runs already")
     try:
         await asyncio.to_thread(emmc_return.stage, found)
     except StandbyError as e:
@@ -1093,6 +1111,8 @@ async def _return_with_changes(*, dry_run: bool, request: Request, username: str
         await _audit(AuditAction.STANDBY_RETURNED, request, username, f"Failed: {e}", success=False)
         raise _http(e) from None
     _state.emmc_return_failed = None
+    _state.emmc_returning = True
+    _spawn(_follow_return())
     logger.warning("SD standby: the return to the eMMC with the card's changes runs in the unit %s; the host "
                    "reboots after it", emmc_return.UNIT)
     # The unit waits a few seconds before it stops Docker: this entry is written, and copied to the eMMC.
@@ -1317,6 +1337,55 @@ async def _alert(kind: str, title: str, message: str) -> None:
         logger.exception("The SD standby's alert could not be sent")
 
 
+_tasks: set[asyncio.Task] = set()
+FOLLOW_SECONDS = 3
+
+
+def _spawn(coroutine: Any) -> None:
+    task = asyncio.create_task(coroutine, name="unos-standby-return")
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+async def _record_return_result(result: dict[str, str]) -> None:
+    """How a return to the eMMC's unit ended without rebooting: recorded, audited and alerted; its folder goes."""
+    from . import emmc_return
+
+    _state.emmc_returning = False
+    if result["outcome"] == "failed":
+        step = result["step"] or None
+        _state.emmc_return_failed = {"at": utc_text(utc_now()), "step": step, "message": result["message"]}
+        text = (f"The return to the eMMC failed{f' at its step {step}' if step else ''}: {result['message']}. UNOS runs "
+                "from the SD standby's card.")
+        logger.error("%s", text)
+        await _audit(AuditAction.STANDBY_RETURNED, None, "system", text, success=False, severity=AuditSeverity.WARNING)
+        await _alert("error", "The return to the eMMC failed", text)
+    await asyncio.to_thread(emmc_return.forget_result)
+
+
+async def _follow_return() -> None:
+    """While this supervisor runs, the return's unit is followed: a unit that fails before it stops Docker (its
+    check of the eMMC, say) is recorded at once; one that stops Docker stops this supervisor, and the next start
+    records it (on_card_start)."""
+    from . import emmc_return
+
+    while True:
+        await asyncio.sleep(FOLLOW_SECONDS)
+        try:
+            result = await asyncio.to_thread(emmc_return.read_result)
+            if result is None and not await asyncio.to_thread(emmc_return.unit_runs):
+                result = await asyncio.to_thread(emmc_return.read_result) or {
+                    "outcome": "failed", "step": "", "message": f"The unit {emmc_return.UNIT} ended without a result: "
+                    f"journalctl -u {emmc_return.UNIT} says why"}
+            if result is not None:
+                await _record_return_result(result)
+                return
+        except Exception:
+            logger.exception("The return to the eMMC could not be followed")
+            _state.emmc_returning = False
+            return
+
+
 async def on_card_start() -> None:
     """On the card's root, at the supervisor's start: a return to the eMMC that failed in this boot is
     recorded (its unit's result), a record of one that did not end is dropped, and the eMMC is checked."""
@@ -1325,16 +1394,8 @@ async def on_card_start() -> None:
     if _state.stored.get("emmc_return") is not None:
         await asyncio.to_thread(merge_stored, {}, ("emmc_return",))
     result = await asyncio.to_thread(emmc_return.read_result)
-    if result is not None and result["outcome"] == "failed":
-        step = result["step"] or None
-        _state.emmc_return_failed = {"at": utc_text(utc_now()), "step": step, "message": result["message"]}
-        text = (f"The return to the eMMC failed{f' at its step {step}' if step else ''}: {result['message']}. UNOS runs "
-                "from the SD standby's card again.")
-        logger.error("%s", text)
-        await _audit(AuditAction.STANDBY_RETURNED, None, "system", text, success=False, severity=AuditSeverity.WARNING)
-        await _alert("error", "The return to the eMMC failed", text)
     if result is not None:
-        await asyncio.to_thread(emmc_return.forget_result)
+        await _record_return_result(result)
     await check_emmc()
 
 
@@ -1363,7 +1424,8 @@ async def standby_loop() -> None:
         await update_problems()
         if _state.root == "card" and _state.card_present:
             await _start_apps_on_standby()
-            await on_card_start()
+            # The eMMC's check may take minutes: the loop's passes do not wait for it.
+            _spawn(on_card_start())
     except Exception:
         logger.exception("SD standby error")
     passes = 0
@@ -1405,6 +1467,7 @@ async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dr
     from . import apps as standby_apps
 
     _refuse_locally()
+    refuse_while_returning()
     if not (_state.armed or _state.root == "card") or not _state.card_present:
         raise HTTPException(409, detail="The standby is not set up, or its card is not in its slot")
     critical = await standby_apps.marks()
@@ -1437,6 +1500,7 @@ async def return_apps(apps: list[str] | None, model: str, *, discard: bool = Fal
     from . import failback
 
     _refuse_locally()
+    refuse_while_returning()
     if discard:
         stored_card = _state.stored.get("card") or {}
         if not model.strip() or model.strip() != str(stored_card.get("model") or "").strip():

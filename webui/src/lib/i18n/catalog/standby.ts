@@ -138,6 +138,9 @@ export const en = {
 	'standby.emmc.notOfferedText':
 		'{detail}. The return to the eMMC waits for an eMMC that reads and whose root passes its check; until then UNOS runs from the card, and no standby is left.',
 	'standby.emmc.notChecked': 'The eMMC has not been checked yet: check it before the return.',
+	'standby.emmc.running': 'The return to the eMMC runs',
+	'standby.emmc.runningText':
+		'UNOS stops for the copy, then the NAS reboots to the eMMC. Nothing else changes the card meanwhile.',
 	'standby.emmc.passed': '{detail} (checked {time}).',
 	'standby.emmc.check': 'Check the eMMC again',
 	'standby.emmc.checkPassed': 'The eMMC passes its check: the return to the eMMC is offered',
@@ -371,6 +374,9 @@ export const ru: Translation<typeof en> = {
 	'standby.emmc.notOfferedText':
 		'{detail}. Возврат на eMMC ждёт eMMC, которая читается и корень которой проходит проверку; до тех пор UNOS работает с карты, и резерва нет.',
 	'standby.emmc.notChecked': 'eMMC ещё не проверена: проверьте её перед возвратом.',
+	'standby.emmc.running': 'Идёт возврат на eMMC',
+	'standby.emmc.runningText':
+		'UNOS останавливается на время копирования, затем NAS перезагружается на eMMC. Пока он идёт, ничто другое карту не меняет.',
 	'standby.emmc.passed': '{detail} (проверено {time}).',
 	'standby.emmc.check': 'Проверить eMMC снова',
 	'standby.emmc.checkPassed': 'eMMC проходит проверку: возврат на eMMC доступен',

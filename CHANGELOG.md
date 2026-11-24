@@ -12,6 +12,15 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- **The way back from the SD standby with the card's changes**: **Return to the pool** copies what
+  the critical apps changed on the card into their folders on the pool, without their caches and
+  update copies, keeps every file it replaces in `{pool}/apps/<app>.before-failback-<time>/`,
+  creates their containers on the pool again and says first how many MiB it writes; a failed return
+  names its step, leaves the app stopped with its copy on the card, and runs again. On the card's
+  root, **Return to the eMMC** is offered while the eMMC's root passes `fsck.ext4 -n`: a unit of the
+  host stops UNOS, copies the standby's system and UNOS's volumes to the eMMC, checks the copy, and
+  only then lets the next boot take the eMMC; otherwise the card stays the system disk. Discarding
+  the card's changes stays the other choice of both (ADR-0501).
 - **Critical apps on the SD standby**: an installed app's ⋯ menu marks it critical, with a sync
   interval of 1 to 24 hours; its dialog lists what the standby copies and what it does not (caches,
   the copies an update keeps, other pool folders) with their sizes, the card's space and the writes

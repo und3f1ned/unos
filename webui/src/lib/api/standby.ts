@@ -85,6 +85,8 @@ export interface StandbyEmmcReturn {
 	checked_at: string | null;
 	/** The last return to the eMMC that failed in this boot: the card stays the system disk. */
 	failed: { at: string; step: string | null; message: string } | null;
+	/** A return to the eMMC runs now. */
+	running: boolean;
 }
 
 export interface StandbyAppMove {
@@ -95,6 +97,8 @@ export interface StandbyAppMove {
 	has_copy: boolean;
 	/** The last return to its pool that failed: the app stays stopped, and the return can run again. */
 	return_failed: { at: string; step: string | null; error: string | null; backup: string | null } | null;
+	/** A return with the card's changes began to copy it to its pool: the discarding return is not offered. */
+	copy_started: boolean;
 }
 
 export interface StandbyApp {
