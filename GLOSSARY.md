@@ -137,6 +137,18 @@ with its boot folder `unos/boot-<n>/`; `unos/current.txt` names the one the choo
 `previous.txt` the one before, and a sync makes a new one current only once it is complete
 (ADR-0471). Avoid: snapshot (a pool's), version.
 
+**Critical app**: An installed app that an administrator marked on the Apps page so that the SD
+standby keeps its configuration, databases and images: its copy `@app-<app>-<n>` on the card, synced
+from a snapshot of its folder `{pool}/apps/<app>/` without its caches at the app's interval; it runs from
+the card on the standby, and moves there by itself when its pool fails (ADR-0471, ADR-0498). Avoid:
+important app, pinned app.
+
+**Move to the card**: Critical apps' containers created again on the run copy `@app-<app>-run` of their
+copy on the SD standby: by themselves when their pool fails, as a drill, or before a repair of the pool
+(planned). The **return** to the pool creates the pool-bound containers again and discards the card's
+changes (ADR-0498). Avoid: failback (the copy back of the card's changes,
+`system.sd-standby-failback`), migration.
+
 **Drill**: A switch to the SD standby on purpose, to prove it: the eMMC marked failed, its partition
 or its root made missing for the chooser or the kernel, then a reboot; Return to the eMMC ends it
 (ADR-0471). Avoid: test, failover.

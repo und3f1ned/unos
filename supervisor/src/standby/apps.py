@@ -102,7 +102,11 @@ _asleep: dict[str, Any] = {}
 _moving: set[str] = set()
 _checked_at: dict[str, str] = {}
 _tasks: set[asyncio.Task] = set()
-_stored_lock = threading.Lock()
+# The last failure of an automatic move, by app: a move that fails again the same way is not audited again.
+_move_failures: dict[str, str] = {}
+# Whether a pass of the RAID monitor ran since the start: until then a copy is not called old, since its
+# check that found nothing changed is kept in RAM only.
+_passed = False
 
 
 class StandbyAppsError(StandbyError):
@@ -161,7 +165,10 @@ def _service() -> Any:
 
 def stored_apps() -> dict[str, dict[str, Any]]:
     value = _service()._state.stored.get("apps")
-    return {key: dict(item) for key, item in value.items() if isinstance(item, dict)} if isinstance(value, dict) else {}
+    if not isinstance(value, dict):
+        return {}
+    # The card is removable: a key that is no app's name is no app's record.
+    return {key: dict(item) for key, item in value.items() if isinstance(item, dict) and _APP.fullmatch(str(key))}
 
 
 def stored_app(app: str) -> dict[str, Any]:
@@ -171,7 +178,7 @@ def stored_app(app: str) -> dict[str, Any]:
 def update_app_record(app: str, change: Callable[[dict[str, Any]], dict[str, Any] | None]) -> None:
     """Change ``apps.<app>`` of state.json (None removes it) and write it when it changed (blocking)."""
     service = _service()
-    with _stored_lock:
+    with service._stored_lock:
         apps = stored_apps()
         new = change(dict(apps.get(app, {})))
         if new is None:
@@ -310,6 +317,18 @@ def _is_file_target(app: str, container_name: str, target: str) -> bool:
     return False
 
 
+# The restart policies with which Docker starts a container at its own start (and fails to without its pool).
+_RESTARTED = ("always", "unless-stopped")
+
+
+def _should_run(attrs: dict[str, Any]) -> bool:
+    """Whether the container runs, or would: Docker could not start it at boot (its pool missing), its
+    policy restarts it and nobody stopped it."""
+    state = attrs.get("State") or {}
+    policy = ((attrs.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name")
+    return bool(state.get("Running") or state.get("Restarting") or (state.get("Error") and policy in _RESTARTED))
+
+
 def _container_definition(container: Any) -> dict[str, Any]:
     attrs = container.attrs or {}
     networks = (attrs.get("NetworkSettings") or {}).get("Networks") or {}
@@ -319,7 +338,7 @@ def _container_definition(container: Any) -> dict[str, Any]:
         "config": attrs.get("Config") or {},
         "host_config": attrs.get("HostConfig") or {},
         "networks": {name: {"Aliases": (value or {}).get("Aliases")} for name, value in networks.items()},
-        "running": (attrs.get("State") or {}).get("Running", False) is True,
+        "running": _should_run(attrs),
     }
 
 
@@ -464,17 +483,19 @@ def plan(app: str, *, interval: int | None = None, critical: bool | None = None,
         listing = ops.read(["ls", "-1A", "--", folder])
         if not listing.ok:
             raise HTTPException(409, detail=f"The folder {folder} of {app} cannot be read: is the pool {pool} mounted?")
-        entries = [f"{folder}/{name}" for name in listing.stdout.split("\n") if name and "/" not in name
-                   and not name.endswith(EXCLUDED_SUFFIXES)]
         caches = [f"{folder}/{relative}" for relative in _cache_folders(app)]
-        previous = []
+        names = [name for name in listing.stdout.split("\n") if name and "/" not in name]
+        entries = [f"{folder}/{name}" for name in names if not name.endswith(EXCLUDED_SUFFIXES)
+                   and f"{folder}/{name}" not in caches]
+        # The copies an update keeps beside its folders, and any other entry of a copy's suffix at the top.
+        previous = [f"{folder}/{name}" for name in names if name.endswith(EXCLUDED_SUFFIXES)]
         for container in group.containers:
             spec = group.spec(container)
             marked_copies = {v.container for v in spec.volumes if v.copy_before_update} if spec is not None else set()
             for bind in _bind_mounts(container):
                 if bind.target in marked_copies and _within(bind.source, folder):
                     copy = bind.source + COPY_SUFFIX
-                    if ops.exists(copy):
+                    if copy not in previous and ops.exists(copy):
                         previous.append(copy)
         data = sizes(ops, entries, excludes=_copy_excludes(app, folder))
         others = sizes(ops, [path for path in [*caches, *previous] if ops.exists(path)])
@@ -521,7 +542,9 @@ def offered() -> str | None:
 
 
 def forget_copy(app: str) -> None:
-    """An unmarked app's copies on the card and its record (blocking)."""
+    """An unmarked app's copies on the card and its record (blocking); refused while it runs from the card."""
+    if failed_over(app) is not None:
+        raise StandbyAppsError(f"{app} runs from the card: its copies stay")
     ops = StandbyHost()
     for number in _generations(ops, app):
         ops.change(["btrfs", "subvolume", "delete", generation_path(app, number)], what=f"The copy of {app}")
@@ -619,7 +642,8 @@ def sync_app(app: str, *, dry_run: bool = False, last_copy: bool = False, deadli
     if gen is not None:
         found = ops.long_read([*APP_RSYNC, "--dry-run", "--itemize-changes", *excludes, f"{folder}/", f"{gen}/{COPY}/"],
                               timeout=remaining(RSYNC_TIMEOUT))
-        if not found.ok:
+        # 24: files vanished while rsync read the live folder, as a running app's temporary files do.
+        if not found.ok and found.returncode != 24:
             raise StandbyFailed(f"The comparison of {app}'s copy: rsync ended with exit status {found.returncode}")
         listing = ops.read(["ls", "-1", "--", f"{gen}/images"])
         have = {name[: -len(".tar.gz")] for name in listing.stdout.split() if name.endswith(".tar.gz")}
@@ -627,11 +651,14 @@ def sync_app(app: str, *, dry_run: bool = False, last_copy: bool = False, deadli
                    or not _same_definitions(ops.read_file(f"{gen}/{DEFINITIONS}"), defs))
     if not changed:
         return AppOutcome(result="unchanged", generation=current)
+    space = card_space(ops)
+    if space is not None and space[1] < reserve_of(space[0]):
+        raise StandbyFailed("The standby's card has no more than its reserve free: no app is copied until there is room")
     service = _service()
     card_disk = service._state.card_device.rsplit("/", 1)[-1] if service._state.card_device else None
     before = None
     if not dry_run and card_disk:
-        ops.change(["sync"], what="The flush before the sync")
+        ops.change(["sync", "-f", CARD_DIR], what="The flush before the sync")
         from .generation import _sectors_written
 
         before = _sectors_written(card_disk)
@@ -672,7 +699,7 @@ def sync_app(app: str, *, dry_run: bool = False, last_copy: bool = False, deadli
             ops.long_change(["bash", "-c", 'set -o pipefail; docker save "$1" | gzip -1 > "$2.tmp" && mv -f "$2.tmp" "$2"',
                              "unos-standby", image, archive], what=f"The archive of {app}'s image", timeout=remaining(SAVE_TIMEOUT))
         ops.write_file(f"{new}/{DEFINITIONS}", text, what=f"The definitions of {app}")
-        ops.change(["sync"], what="The flush of the new copy")
+        ops.change(["sync", "-f", CARD_DIR], what="The flush of the new copy")
         measured = sizes(ops, [f"{new}/{COPY}", f"{new}/images"]) if not dry_run else {}
         mib = None
         if not dry_run and before is not None and card_disk:
@@ -868,17 +895,28 @@ def _copy_age(record: dict[str, Any]) -> str | None:
     return f"{hours:.0f} h" if hours < 48 else f"{hours / 24:.0f} d"
 
 
+def _load_images(ops: StandbyHost, app: str, gen: str, images: set[str]) -> None:
+    """The images of ``images`` (ids) that this Docker lacks, loaded from the copy's archives."""
+    for image in sorted(images):
+        match = _IMAGE_ID.fullmatch(image)
+        if match and not ops.read(["docker", "image", "inspect", image]).ok:
+            ops.change(["docker", "load", "-i", f"{gen}/images/{match.group(1)}.tar.gz"], what=f"An image of {app}",
+                       timeout=SAVE_TIMEOUT)
+
+
+def _images_of(defs: dict[str, Any]) -> set[str]:
+    return {str(item.get("image")) for item in defs.get("containers", [])}
+
+
 def move_app(app: str, reason: Reason, *, dry_run: bool = False, defs: dict[str, Any] | None = None) -> Moved:
     """Move one critical app to the card (blocking): see the module. An app without a copy stays stopped.
     ``defs``: the definitions of an app that this Docker lacks (the standby's first start). A dry run
     reads only."""
     from ..apps import stacks
 
-    record = stored_app(app)
-    if isinstance(record.get("failed_over"), dict):
-        return Moved(app=app, copy=bool(record["failed_over"].get("copy")), age=_copy_age(record))
-    number = record.get("generation") if isinstance(record.get("generation"), int) else None
     if dry_run:
+        record = stored_app(app)
+        number = record.get("generation") if isinstance(record.get("generation"), int) else None
         return Moved(app=app, copy=number is not None, age=_copy_age(record))
     if _syncing_app == app:
         _stop_app_sync.set()
@@ -889,10 +927,21 @@ def move_app(app: str, reason: Reason, *, dry_run: bool = False, defs: dict[str,
     except HTTPException as e:
         raise StandbyAppsError(str(e.detail)) from None
     try:
+        # Read under the app's lock: a move, a return or an unmark of the app went before or waits.
+        record = stored_app(app)
+        number = record.get("generation") if isinstance(record.get("generation"), int) else None
+        if isinstance(record.get("failed_over"), dict):
+            return Moved(app=app, copy=bool(record["failed_over"].get("copy")), age=_copy_age(record))
         group = installed(client, app) if defs is None else None
         if defs is None:
             if group is None or not group.containers:
                 raise StandbyAppsError(f"Docker has no container of {app}")
+            if all(bound_to_card(c) for c in group.containers):
+                # Its containers run from the card already (a record lost): the move is recorded again, and
+                # neither its containers nor its run copy are touched.
+                running = {c.name for c in group.containers if _should_run(c.attrs or {})}
+                _record_move(app, reason, str(record.get("pool") or app_pool(group)), number, running)
+                return Moved(app=app, copy=number is not None, age=_copy_age(record))
             defs = definitions(client, group)
         pool = defs.get("pool") or record.get("pool")
         if not pool:
@@ -906,11 +955,19 @@ def move_app(app: str, reason: Reason, *, dry_run: bool = False, defs: dict[str,
                     container.stop(timeout=STOP_SECONDS)
         else:
             ops = StandbyHost()
+            gen = generation_path(app, number)
+            # The copy's own definitions when its images are not those that run now (an update after the last
+            # sync): a newer version would not read the older data. Their images come from the copy.
+            copied_text = ops.read_file(f"{gen}/{DEFINITIONS}")
+            copied = json.loads(copied_text) if copied_text else None
+            if copied and _images_of(copied) != _images_of(defs):
+                defs = {**copied, "pool": pool}
+                running = {d["name"] for d in defs["containers"] if d["name"] in running or d.get("running")}
+                _load_images(ops, app, gen, _images_of(defs))
             run = run_path(app)
             if ops.exists(run):
                 ops.change(["btrfs", "subvolume", "delete", run], what=f"An old run copy of {app}")
-            ops.change(["btrfs", "subvolume", "snapshot", generation_path(app, number), run],
-                       what=f"The run copy of {app}")
+            ops.change(["btrfs", "subvolume", "snapshot", gen, run], what=f"The run copy of {app}")
             ops.write_file(f"{run}/{DEFINITIONS}", json.dumps(defs, indent=1, sort_keys=True) + "\n",
                            what=f"The definitions of {app}")
             ops.change(["mkdir", "-p", EMPTY_DIR], what="The card's empty folder")
@@ -941,48 +998,70 @@ def _record_move(app: str, reason: str, pool: str, number: int | None, running: 
     update_app_record(app, lambda record: {**record, "pool": pool, "failed_over": entry})
 
 
+def _missing_pool_sources(ops: StandbyHost, defs: dict[str, Any]) -> list[str]:
+    """The bind sources below the pools' folder that the host lacks: a container with one is never made."""
+    missing = []
+    for definition in defs.get("containers", []):
+        host_config = definition.get("host_config") or {}
+        sources = [str(m.get("Source")) for m in host_config.get("Mounts") or [] if m.get("Type") == "bind"]
+        sources += [str(bind).split(":", 1)[0] for bind in host_config.get("Binds") or []]
+        for source in sources:
+            if any(_within(source, base) for base in _bases()) and source not in missing and not ops.exists(source):
+                missing.append(source)
+    return missing
+
+
 def return_app(app: str, *, dry_run: bool = False) -> None:
     """The discarding return of one app (blocking): its pool-bound containers again from the definitions
     saved at the move, those that ran started, and the run copy deleted. The pool must be mounted, writable
-    and healthy."""
+    and healthy, and every pool folder that the containers bind must be there: otherwise nothing changes."""
     from ..apps import stacks
 
-    moved = failed_over(app)
-    if moved is None:
-        raise StandbyAppsError(f"{app} does not run from the card")
-    pool = str(moved.get("pool") or "")
-    why = pool_unfit(pool)
-    if why:
-        raise StandbyAppsError(f"{app} cannot return: {why}")
-    ops = StandbyHost(dry_run=dry_run)
-    run = run_path(app)
-    text = ops.read_file(f"{run}/{DEFINITIONS}") if moved.get("copy") else None
     try:
         client = _client()
         lock = stacks.acquire(app, app)
     except HTTPException as e:
         raise StandbyAppsError(str(e.detail)) from None
     try:
-        group = installed(client, app)
+        moved = failed_over(app)
+        if moved is None:
+            raise StandbyAppsError(f"{app} does not run from the card")
+        pool = str(moved.get("pool") or "")
+        why = pool_unfit(pool)
+        if why:
+            raise StandbyAppsError(f"{app} cannot return: {why}")
+        ops = StandbyHost(dry_run=dry_run)
+        run = run_path(app)
+        text = ops.read_file(f"{run}/{DEFINITIONS}") if moved.get("copy") else None
+        defs = None
         if text is not None:
             try:
                 defs = json.loads(text)
             except json.JSONDecodeError as e:
                 raise StandbyAppsError(f"The definitions of {app} cannot be read: {e}") from None
-            if not dry_run:
-                if group is not None:
-                    _remove_containers(group)
-                _recreate(client, app, defs, card=False, running=set(moved.get("running") or []))
-        elif group is not None and not dry_run:
+            missing = _missing_pool_sources(ops, defs)
+            if missing:
+                raise StandbyAppsError(f"{app} cannot return: {', '.join(missing)} is not there")
+        if dry_run:
+            return
+        group = installed(client, app)
+        if defs is not None:
+            if group is not None:
+                _remove_containers(group)
+            _recreate(client, app, defs, card=False, running=set(moved.get("running") or []))
+        elif group is not None:
             # No copy: the app stopped at the move; those that ran start again.
             names = set(moved.get("running") or [])
             for container in group.containers:
                 if container.name in names:
                     container.start()
+        update_app_record(app, lambda record: {k: v for k, v in record.items() if k != "failed_over"})
+        # The card's changes go last: a run copy left by a failed delete is deleted by the next move.
         if ops.exists(run):
-            ops.change(["btrfs", "subvolume", "delete", run], what=f"The run copy of {app}")
-        if not dry_run:
-            update_app_record(app, lambda record: {k: v for k, v in record.items() if k != "failed_over"})
+            try:
+                ops.change(["btrfs", "subvolume", "delete", run], what=f"The run copy of {app}")
+            except StandbyError as e:
+                logger.warning("The run copy of %s could not be deleted: %s", app, e)
     except stacks.DOCKER_ERRORS as e:
         raise StandbyAppsError(f"Docker: {e}") from None
     finally:
@@ -1010,30 +1089,41 @@ def pool_unfit(pool: str) -> str | None:
 
 
 def reapply(critical: set[str]) -> list[str]:
-    """Before the supervisor serves (blocking): a pool-bound container of an app that state.json records as
-    moved, which this system's Docker may have started at boot, stops and is created again on the card.
-    The apps it moved again."""
+    """Before the supervisor serves (blocking): an app that state.json records as moved runs from the card
+    again. A pool-bound container of it, which this system's Docker may have started at boot, or a container
+    that a failed move did not make, is created again on the card from the run copy's definitions; a
+    card-bound one that ran and does not run (Docker came up before the card was mounted) starts. The apps
+    it changed."""
+    from ..apps import stacks
+
     done = []
     for app, record in stored_apps().items():
         moved = record.get("failed_over")
         if not isinstance(moved, dict) or not moved.get("copy") or app not in critical:
             continue
         try:
-            client = _client()
-            group = installed(client, app)
-            if group is not None and group.containers and all(bound_to_card(c) for c in group.containers):
-                continue
             text = StandbyHost().read_file(f"{run_path(app)}/{DEFINITIONS}")
             if text is None:
                 logger.error("The run copy of %s on the SD standby has no definitions: it is not moved again", app)
                 continue
-            from ..apps import stacks
-
+            defs = json.loads(text)
+            names = {d["name"] for d in defs.get("containers", [])}
+            running = set(moved.get("running") or [])
+            client = _client()
             with stacks.app_lock(app, app):
+                group = installed(client, app)
+                found = list(group.containers) if group is not None else []
+                if found and {c.name for c in found} == names and all(bound_to_card(c) for c in found):
+                    stopped = [c for c in found if c.name in running and c.status not in ("running", "restarting")]
+                    for container in stopped:
+                        container.start()
+                    if stopped:
+                        done.append(app)
+                    continue
                 if group is not None:
                     _remove_containers(group)
-                _recreate(client, app, json.loads(text), card=True, running=set(moved.get("running") or []))
-            logger.warning("%s runs from the SD standby's card again: its pool-bound containers were replaced", app)
+                _recreate(client, app, defs, card=True, running=running)
+            logger.warning("%s runs from the SD standby's card again: its containers were created on the card", app)
             done.append(app)
         except Exception:
             logger.exception("The move of %s to the SD standby could not be applied again", app)
@@ -1043,7 +1133,8 @@ def reapply(critical: set[str]) -> list[str]:
 def start_on_standby(critical: set[str]) -> list[str]:
     """On the standby's root (blocking): each critical app's images loaded, its network and containers
     created from the definitions, companions first: on the card's copy when state.json records it moved,
-    else on its pool when that is mounted and healthy, else moved now. The apps it created."""
+    else on its pool when that is mounted and healthy and has every folder its containers bind, else moved
+    now. The apps it created."""
     created = []
     ops = StandbyHost()
     for app in sorted(critical):
@@ -1059,21 +1150,17 @@ def start_on_standby(critical: set[str]) -> list[str]:
                 logger.error("The critical app %s has no copy on the SD standby: it is not there", app)
                 continue
             gen = generation_path(app, number)
-            for name in ops.read(["ls", "-1", "--", f"{gen}/images"]).stdout.split():
-                if not name.endswith(".tar.gz"):
-                    continue
-                if not ops.read(["docker", "image", "inspect", f"sha256:{name[:-7]}"]).ok:
-                    ops.change(["docker", "load", "-i", f"{gen}/images/{name}"], what=f"An image of {app}", timeout=SAVE_TIMEOUT)
             text = ops.read_file(f"{gen}/{DEFINITIONS}")
             if text is None:
                 logger.error("The copy of %s on the SD standby has no definitions", app)
                 continue
             defs = json.loads(text)
+            _load_images(ops, app, gen, _images_of(defs))
             if isinstance(moved, dict):
                 run_text = ops.read_file(f"{run_path(app)}/{DEFINITIONS}")
                 _recreate(client, app, json.loads(run_text) if run_text else defs, card=True,
                           running=set(moved.get("running") or []))
-            elif defs.get("pool") and pool_unfit(defs["pool"]) is None:
+            elif defs.get("pool") and pool_unfit(defs["pool"]) is None and not _missing_pool_sources(ops, defs):
                 _recreate(client, app, defs, card=False, running={d["name"] for d in defs["containers"] if d["running"]})
             else:
                 move_app(app, "pool_failed", defs=defs)
@@ -1135,9 +1222,12 @@ async def on_pools_read(pools: list[Any], managed: set[str] | None, changing: fr
 
 
 async def _on_pools_read(pools: list[Any], managed: set[str] | None, changing: frozenset[str]) -> None:
+    global _passed
     service = _service()
-    if host.runs_locally() or not (service._state.armed or service._state.root == "card"):
+    if host.runs_locally() or not (service._state.armed or service._state.root == "card") \
+            or not service._state.card_present:
         return
+    _passed = True
     critical = await marks()
     if not critical:
         return
@@ -1273,6 +1363,7 @@ async def move(apps: list[str], reason: Reason, *, request: Any, username: str, 
     results: list[Moved] = []
     for app in apps:
         try:
+            _moving.add(app)
             results.append(await asyncio.to_thread(move_app, app, reason, dry_run=dry_run))
         except (StandbyError, HTTPException) as e:
             error = str(e.detail) if isinstance(e, HTTPException) else str(e)
@@ -1281,6 +1372,8 @@ async def move(apps: list[str], reason: Reason, *, request: Any, username: str, 
         except Exception as e:
             logger.exception("The move of %s to the SD standby failed", app)
             results.append(Moved(app=app, copy=False, error=f"{type(e).__name__}: {e}"))
+        finally:
+            _moving.discard(app)
     if dry_run:
         return results
     done = [item for item in results if item.error is None]
@@ -1289,6 +1382,12 @@ async def move(apps: list[str], reason: Reason, *, request: Any, username: str, 
                        ", ".join(f"{item.app} ({'copy of ' + (item.age or '?') if item.copy else 'no copy: stopped'})"
                                  for item in done))
     for item in results:
+        if username == "system" and item.error is not None and _move_failures.get(item.app) == item.error:
+            continue  # the same failure of the automatic move at each pass is audited once
+        if item.error is not None:
+            _move_failures[item.app] = item.error
+        else:
+            _move_failures.pop(item.app, None)
         await audit_change(AuditAction.STANDBY_APPS_MOVED, request, username, resource_type="app",
                            resource_id=item.app, success=item.error is None,
                            severity=AuditSeverity.CRITICAL if username == "system" else AuditSeverity.WARNING,
@@ -1348,10 +1447,33 @@ def problems_found(critical: dict[str, Mark]) -> list[tuple[str, str, str, str, 
                       "their pool, discarding the card's changes."))
     now = utc_now()
     for app, mark in sorted(critical.items()):
-        if app in moved:
+        # Until the first pass of the RAID monitor since the start, whose check of each app is kept in RAM.
+        if app in moved or not _passed:
             continue
         since = _last_complete(app) or mark.marked_at
         if since is not None and now - since > COPY_OLD:
             found.append(("standby_copy_old", "warning", app, "The SD standby's copy of an app is old",
                           f"The critical app {app} had no complete sync to the SD standby since {utc_text(since)}."))
     return found
+
+
+async def unmark_uninstalled(app: str, request: Any, username: str) -> None:
+    """After an uninstall: the app's mark and its copies on the card go, audited as app_critical_changed.
+    Never raises: the uninstall is done."""
+    from ..audit.changes import audit_change
+    from ..audit.schemas import AuditAction, AuditSeverity
+
+    try:
+        changed, _ = await set_mark(app, False, DEFAULT_INTERVAL)
+        if not changed:
+            return
+        service = _service()
+        async with service._lock:
+            if service._state.card_present:
+                await asyncio.to_thread(forget_copy, app)
+        await audit_change(AuditAction.APP_CRITICAL_CHANGED, request, username, resource_type="app", resource_id=app,
+                           severity=AuditSeverity.WARNING,
+                           details=f"Unmarked {app}, which was uninstalled: its copies on the SD standby deleted")
+        await service.update_problems()
+    except Exception:
+        logger.exception("The critical mark of the uninstalled app %s could not be removed", app)

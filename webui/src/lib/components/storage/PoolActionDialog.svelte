@@ -34,6 +34,12 @@
 		onclose();
 	}
 
+	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0498). */
+	async function offer(name: string) {
+		const apps = await criticalAppsOf(name);
+		if (action?.pool.name === name && error) critical = apps;
+	}
+
 	async function moveAndRetry() {
 		if (!action) return;
 		busy = true;
@@ -54,6 +60,7 @@
 		const { kind, pool } = action;
 		busy = true;
 		error = '';
+		critical = [];
 		try {
 			if (kind === 'mount') {
 				await mountPool(pool.name);
@@ -66,7 +73,7 @@
 		} catch (e) {
 			// e.g. 409 "target is busy" when unmounting
 			error = messageOf(e);
-			critical = kind === 'unmount' && e instanceof ApiError && e.status === 409 ? await criticalAppsOf(pool.name) : [];
+			if (kind === 'unmount' && e instanceof ApiError && e.status === 409) void offer(pool.name);
 		} finally {
 			busy = false;
 		}

@@ -233,6 +233,9 @@ class _State:
 
 _state = _State()
 _lock = asyncio.Lock()
+# One change of state.json at a time, and its read: the moves of the critical apps run beside the syncs
+# and the reads of the card (ADR-0498).
+_stored_lock = threading.Lock()
 _stop_sync = threading.Event()
 _loop_task: asyncio.Task | None = None
 _reboot_task: asyncio.Task | None = None
@@ -267,13 +270,15 @@ def _refresh_card(ops: StandbyHost, state: _State) -> None:
     state.card_present = present
     if not present:
         return
-    stored = ops.read_file(generation.STATE_FILE)
-    try:
-        state.stored = json.loads(stored) if stored else {}
-    except json.JSONDecodeError:
-        logger.warning("The SD standby's %s cannot be read: it is written again at the next change",
-                       generation.STATE_FILE)
-        state.stored = {}
+    # Under the lock of its writers: a read that came before a write must not replace what it wrote.
+    with _stored_lock:
+        stored = ops.read_file(generation.STATE_FILE)
+        try:
+            state.stored = json.loads(stored) if stored else {}
+        except json.JSONDecodeError:
+            logger.warning("The SD standby's %s cannot be read: it is written again at the next change",
+                           generation.STATE_FILE)
+            state.stored = {}
     state.current = generation.read_generations(ops)[0]
     mark = ops.read_file(generation.MARK)
     state.marked = mark is not None or ops.exists(generation.MARK)
@@ -348,10 +353,6 @@ def _save_stored(stored: dict[str, Any]) -> None:
     StandbyHost().write_file(generation.STATE_FILE, json.dumps(stored, indent=1, sort_keys=True) + "\n",
                              what="The standby's state.json")
     _state.stored = stored
-
-
-# One change of state.json at a time: the moves of the critical apps run beside the syncs (ADR-0498).
-_stored_lock = threading.Lock()
 
 
 def merge_stored(values: dict[str, Any], drop: tuple[str, ...] = ()) -> None:
@@ -717,7 +718,7 @@ def _apps_status(critical: dict[str, Any]) -> list[StandbyAppStatus]:
         found = record.get("bytes")
         sizes: dict[str, Any] = found if isinstance(found, dict) else {}
         shown.append(StandbyAppStatus(
-            app=app, pool=record.get("pool"), interval_hours=mark.interval,
+            app=app, pool=record.get("pool") or standby_apps._pool_of(app), interval_hours=mark.interval,
             generation=record.get("generation") if isinstance(record.get("generation"), int) else None,
             synced_at=record.get("synced_at"), mib_per_sync=round(sum(recent) / len(recent), 1) if recent else None,
             data_bytes=sizes.get("data"), images_bytes=sizes.get("images"), error=record.get("error"),
@@ -1029,8 +1030,11 @@ def on_system_disk_failed(detail: str) -> asyncio.Task | None:
     _state.switching = True
     current = _state.current
     assert current is not None
-    # 1. Stop a sync: its next step does not start, its running command is killed.
+    # 1. Stop a sync, the system's or an app's: its next step does not start, its running command is killed.
     _stop_sync.set()
+    from . import apps as standby_apps
+
+    standby_apps._stop_app_sync.set()
     threading.Thread(target=kill_sync, name="unos-standby-kill", daemon=True).start()
     marked, alerted = threading.Event(), threading.Event()
     threading.Thread(target=switch.run, args=(current[0], "system_disk_failed", marked, alerted),
@@ -1139,7 +1143,11 @@ async def before_serving() -> None:
         if not (_state.armed or _state.root == "card") or not _state.card_present or not standby_apps.stored_apps():
             return
         critical = await standby_apps.marks()
-        await asyncio.wait_for(asyncio.to_thread(standby_apps.reapply, set(critical)), BEFORE_SERVING_SECONDS)
+        done = await asyncio.wait_for(asyncio.to_thread(standby_apps.reapply, set(critical)), BEFORE_SERVING_SECONDS)
+        for app in done:
+            await audit_change(AuditAction.STANDBY_APPS_MOVED, None, "system", resource_type="app", resource_id=app,
+                               severity=AuditSeverity.WARNING,
+                               details=f"{app} runs from the SD standby's card again at the start of UNOS")
     except TimeoutError:
         logger.error("The moves of the critical apps were not applied again within %s s: the supervisor serves "
                      "while they go on", BEFORE_SERVING_SECONDS)
@@ -1154,7 +1162,13 @@ async def _start_apps_on_standby() -> None:
     try:
         critical = await standby_apps.marks()
         if critical:
-            await asyncio.to_thread(standby_apps.start_on_standby, set(critical))
+            created = await asyncio.to_thread(standby_apps.start_on_standby, set(critical))
+            for app in created:
+                moved = standby_apps.failed_over(app)
+                await audit_change(AuditAction.STANDBY_APPS_MOVED, None, "system", resource_type="app", resource_id=app,
+                                   severity=AuditSeverity.WARNING,
+                                   details=f"Created {app} on the SD standby "
+                                   + ("on its copy on the card" if moved else "on its pool"))
             await update_problems()
     except Exception:
         logger.exception("The critical apps could not be started on the SD standby")
@@ -1220,6 +1234,12 @@ async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dr
             chosen.append(app)
     if not chosen:
         raise HTTPException(409, detail="No critical app is left to move" + (f" from the pool {pool}" if pool else ""))
+    if not dry_run and _state.root != "card":
+        # The pools are fine: one more sync of each app first, so that it moves with its latest data.
+        async with _lock:
+            for app in chosen:
+                if _can_sync() is None:
+                    await standby_apps.run_app_sync(app)
     moved = await standby_apps.move(chosen, reason, request=request, username=username, dry_run=dry_run)
     if all(item.error for item in moved):
         raise HTTPException(500, detail="; ".join(f"{item.app}: {item.error}" for item in moved))

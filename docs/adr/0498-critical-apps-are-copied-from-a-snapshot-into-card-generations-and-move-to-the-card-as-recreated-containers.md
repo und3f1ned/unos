@@ -42,15 +42,21 @@ Plex's transcode and Paperless-ngx's scratch.
 and the app's network). `state.json` keeps `apps.<app>`: the generation, its time, the pool, the MiB of the
 last 8 syncs that wrote, the bytes of data and images, an error, and a move. A sync first compares with reads
 only (rsync's dry run from the live folder, the image ids, the definitions but for whether a container runs)
-and writes nothing, the pool included, when nothing changed; otherwise it takes a read-only snapshot
+and writes nothing, the pool included, when nothing changed (rsync's status 24, files that vanished while it
+read the running app's folder, is no failure there); otherwise, while the card keeps its reserve free, it
+takes a read-only snapshot
 `.unos-standby-snapshot` of the subvolume that holds the folder (the nearest parent whose inode is 256), copies
 from it into a snapshot of the last generation in the sync's unit (ADR-0481, ADR-0488), names the new
-generation in `state.json`, then deletes the old one and the snapshot. App syncs run from the RAID monitor's
+generation in `state.json`, then deletes the old one and the snapshot; its flushes are `sync -f` of the card
+alone, so that a hung pool holds no app's sync. Every write of `state.json`, and the supervisor's read of it,
+hold one lock (`service._stored_lock`): a move's record and a sync's result never replace each other. App
+syncs run from the RAID monitor's
 pass (every 300 s), one at a time with the system's syncs under the standby's lock: an interval of 24 hours is
 due once the day's sync time passed, a shorter one when it passed since the last complete sync less 3
 minutes; a pool that is not mounted, forced read-only or whose disks sleep (`spindown.pool_sleeps`) is passed
 over, and the first pass that finds it awake syncs. The Standby tab's space by part comes from `df` of the
-card and from `du` of each generation, run once when a sync wrote it.
+card and from `du` of each generation, run once when a sync wrote it. A check that found nothing changed is
+kept in RAM: `standby_copy_old` waits for the first RAID pass after a start.
 
 **The move** (`move_app`). It applies to a pool that holds a critical app's data, at the RAID monitor's pass:
 at once when btrfs forced it read-only, after one more copy from the live folder (no snapshot: nothing is
@@ -65,16 +71,23 @@ and creates them again through Docker's create of the inspected Config and HostC
 `{pool}/apps/<app>/` on the run copy's `data/`, a cache on a tmpfs `size=256m`, every other bind below the
 pools' folder on the card's `empty` folder or `empty-file`, read-only; the label `unos.app.pool` gives way to
 `unos.standby.card=<pool>`, so that an unmount's check of the pool's users and a mount's start of its apps
-pass them over. Companions start first, those the main container depends on waited for (180 s). An app
-without a copy is stopped and stays as it is. A move whose creates fail is recorded all the same, and the
-next start of the supervisor creates the app's containers on the card from the run copy's definitions. `state.json` records the move, which `apps_on_standby` (error,
+pass them over. "Ran" includes a container that Docker failed to start at its own start (its pool missing)
+and whose policy restarts it. When the images that run now are not those of the copy (an update after the
+last sync), the copy's own definitions are used, their images loaded from its archives, since a newer
+version may not read the older data. Companions start first, those the main container depends on waited for
+(180 s). An app without a copy is stopped and stays as it is. A move whose creates fail is recorded all the
+same (a repeated failure of the automatic move is audited once), and the next start of the supervisor
+creates the app's containers on the card from the run copy's definitions; containers already on the card
+are only recorded again. A drill or a planned move syncs each app once more first. `state.json` records the move, which `apps_on_standby` (error,
 its key naming the apps, so that a new set alerts again) and `standby_apps_moved` (by the system, or the
 administrator's drill and planned move) report. While moved, an app gets no sync, and its update, rollback,
 uninstall, reinstall and unmark, and Remove the standby, answer 409.
 
 **The way back and the starts.** The discarding return (`POST /api/v1/system/standby/apps/return`, the card's
-model typed) needs the pool mounted, writable and not degraded; it creates the pool-bound containers from the
-definitions saved at the move, starts those that ran and deletes the run copy. Before it serves, the
+model typed) needs the pool mounted, writable and not degraded and every pool folder that the containers bind
+there, and changes nothing otherwise; it creates the pool-bound containers from the definitions saved at the
+move, starts those that ran, clears the record and deletes the run copy last. An uninstall unmarks the app
+and deletes its copies. Before it serves, the
 supervisor of either system moves again a pool-bound container of an app that `state.json` records as moved
 (bounded to 120 s). On the standby's root it loads each critical app's archives that its Docker lacks
 (`docker load`), creates its network and containers by image id, on the run copy when moved, on the pool when
@@ -96,5 +109,7 @@ the F3): it comes from the card's mounts.
   until `system.sd-standby-failback` copies them back.
 - The supervisor's start after a reboot forgets the counted passes: a pool that stays failed moves its apps two
   passes after the start.
+- Immich's machine learning keeps its models in its cache: on the card's tmpfs of 256 MiB it downloads them
+  again and may not fit, so face and search indexing wait for the return.
 - Tests: `supervisor/tests/test_standby_apps.py`, with `tests/standby_fake.py` and `tests/docker_fake.py`;
   `webui/tests/standby.spec.ts`, `apps-critical.spec.ts` and `storage.spec.ts`.

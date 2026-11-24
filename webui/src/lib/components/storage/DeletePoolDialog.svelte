@@ -35,6 +35,12 @@
 		onclose();
 	}
 
+	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0498). */
+	async function offer(name: string) {
+		const apps = await criticalAppsOf(name);
+		if (pool?.name === name && deleteError) critical = apps;
+	}
+
 	async function moveAndRetry() {
 		if (!pool) return;
 		deleting = true;
@@ -55,13 +61,14 @@
 		if (!pool || deleting) return;
 		deleting = true;
 		deleteError = '';
+		critical = [];
 		try {
 			await deletePool(pool.name);
 			deleting = false;
 			await ondeleted();
 		} catch (e) {
 			deleteError = messageOf(e);
-			critical = e instanceof ApiError && e.status === 409 ? await criticalAppsOf(pool.name) : [];
+			if (e instanceof ApiError && e.status === 409) void offer(pool.name);
 		} finally {
 			deleting = false;
 		}

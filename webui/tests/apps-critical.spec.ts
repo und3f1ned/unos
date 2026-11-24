@@ -54,6 +54,12 @@ async function fakeApps(page: Page, offered: boolean, onStandby = false, app?: F
   return fakes;
 }
 
+/** Choose `option` in the dialog's select `label` (Select of $lib/components/ui: a combobox and its listbox). */
+async function choose(page: Page, label: string, option: string) {
+  await page.getByRole('dialog').getByRole('combobox', { name: label }).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+}
+
 async function openMenu(page: Page) {
   await page.goto('/apps');
   await page.getByRole('tab', { name: /^Installed|^Установленные/ }).click();
@@ -79,7 +85,7 @@ test.describe('The critical mark of an app', () => {
     await expect(dialog.getByTestId('app-critical-card')).toContainText('kept in reserve');
     // Before its first sync the writes a week cannot be told.
     await expect(dialog).toContainText('The writes to the card a week cannot be told before its first sync.');
-    await dialog.getByLabel('Sync interval').selectOption('6');
+    await choose(page, 'Sync interval', 'Every 6 hours');
     await dialog.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect(fakes.sent).toEqual([{ method: 'PUT', body: { critical: true, interval_hours: 6 } }]);
@@ -93,7 +99,7 @@ test.describe('The critical mark of an app', () => {
     const dialog = page.getByRole('dialog', { name: 'Critical app: jellyfin' });
     // 4 MiB a sync, daily: 28 MiB a week; hourly: 672.
     await expect(dialog).toContainText('About 28 MiB written to the card a week.');
-    await dialog.getByLabel('Sync interval').selectOption('1');
+    await choose(page, 'Sync interval', 'Every hour');
     await expect(dialog).toContainText('About 672 MiB written to the card a week.');
   });
 
@@ -120,8 +126,7 @@ test.describe('The critical mark of an app', () => {
     const dialog = page.getByRole('dialog', { name: 'Критичное приложение: jellyfin' });
     await expect(dialog).toContainText('Копируется на карту');
     await expect(dialog).toContainText('Не копируется');
-    await dialog.getByLabel('Интервал синхронизации').selectOption('2');
-    await expect(dialog.getByRole('option', { name: 'Каждые 2 часа' })).toHaveCount(1);
+    await choose(page, 'Интервал синхронизации', 'Каждые 2 часа');
     await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect(fakes.sent).toEqual([{ method: 'PUT', body: { critical: true, interval_hours: 2 } }]);

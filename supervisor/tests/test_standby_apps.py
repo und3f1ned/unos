@@ -125,6 +125,8 @@ def standby(fake, db, docker, pools, awake, monkeypatch):
     monkeypatch.setattr(standby_apps, "_moving", set())
     monkeypatch.setattr(standby_apps, "_failed_passes", {})
     monkeypatch.setattr(standby_apps, "_checked_at", {})
+    monkeypatch.setattr(standby_apps, "_move_failures", {})
+    monkeypatch.setattr(standby_apps, "_passed", False)
     fake.extra_mounts.append(mountinfo_line(40, POOL, "btrfs", "/dev/sdb", "rw"))
     fake.subvolume_paths.add(POOL)
     fake.dirs |= {POOL, f"{POOL}/apps", FOLDER, f"{POOL}/media"}
@@ -241,12 +243,14 @@ class TestTheMark:
             answer = api.get("/api/v1/apps/installed/jellyfin/critical")
         assert answer.status_code == 200, answer.text
         plan = answer.json()
-        folders = {item["path"]: (item["kind"], item["copied"], item["bytes"]) for item in plan["folders"]}
-        assert folders == {
-            f"{FOLDER}/config": ("data", True, 300 * 1024**2 + len("<config/>")),
-            f"{FOLDER}/cache": ("cache", False, 2 * GiB),
-            f"{POOL}/media": ("other_pool", False, None),
-        }
+        # Each folder once: a cache is not copied, nor the copy an update keeps.
+        folders = [(item["path"], item["kind"], item["copied"], item["bytes"]) for item in plan["folders"]]
+        assert folders == [
+            (f"{FOLDER}/config", "data", True, 300 * 1024**2 + len("<config/>")),
+            (f"{FOLDER}/cache", "cache", False, 2 * GiB),
+            (f"{FOLDER}/config.previous", "previous", False, len("<old/>")),
+            (f"{POOL}/media", "other_pool", False, None),
+        ]
         assert plan["copied_bytes"] == 300 * 1024**2 + len("<config/>")
         assert plan["images_bytes"] == 4000
         assert (plan["card_size"], plan["card_free"]) == (31_000_000_000, 20_000_000_000)
@@ -435,11 +439,16 @@ class TestTheSync:
         standby_apps.update_app_record("jellyfin", lambda r: {**r, "synced_at": utc_text(today + timedelta(minutes=5))})
         assert not standby_apps.interval_due("jellyfin", 24, now, today)
 
-    def test_a_copy_without_a_complete_sync_for_3_days_is_named(self, standby, alerts):
+    def test_a_copy_without_a_complete_sync_for_3_days_is_named(self, standby, awake, alerts):
         mark()
         synced(standby)
         old = utc_text(utc_now() - timedelta(days=3, hours=1))
         standby_apps.update_app_record("jellyfin", lambda r: {**r, "synced_at": old})
+        # Not before the first pass of the RAID monitor since the start, which checks the copy.
+        run(service.update_problems())
+        assert "standby_copy_old:jellyfin" not in problems.of_source("standby")
+        awake.asleep.add("usb")
+        raid_pass([pool_info()])
         run(service.update_problems())
         found = {p.key: p for p in problems.of_source("standby").values()}
         assert "standby_copy_old:jellyfin" in found
@@ -478,6 +487,60 @@ class TestTheFailover:
         problem = problems.of_source("standby")["apps_on_standby:jellyfin"]
         assert problem.severity == "error" and "jellyfin (a copy of" in problem.detail
         assert [event.title for event in alerts] == ["Critical apps run from the SD standby"]
+
+    def test_an_app_that_docker_could_not_start_without_its_pool_starts_on_the_card(self, standby, docker):
+        # The NAS started while the pool was missing: Docker's start of the app failed (State.Error), its
+        # policy would restart it, and nobody stopped it.
+        mark()
+        synced(standby)
+        docker.containers_["jellyfin"].halt()
+        docker.containers_["jellyfin"].attrs["State"]["Error"] = "error mounting /mnt/pools/usb/apps/jellyfin/config"
+        raid_pass([])
+        raid_pass([])
+        assert stored()["apps"]["jellyfin"]["failed_over"]["running"] == ["jellyfin"]
+        assert docker.containers_["jellyfin"].attrs["State"]["Running"] is True
+
+    def test_a_move_whose_create_fails_is_recorded_and_the_start_creates_the_app_on_the_card(self, standby, docker):
+        from docker.errors import APIError
+
+        mark()
+        synced(standby)
+        docker.fail("api.create_container_from_config", "jellyfin", APIError("500 Server Error: no space left"))
+        moved = run(standby_apps.move(["jellyfin"], "drill", request=None, username="admin"))
+        assert moved[0].error and "no space left" in moved[0].error
+        assert "jellyfin" not in docker.containers_
+        assert stored()["apps"]["jellyfin"]["failed_over"]["error"]
+        docker.clear()
+        service._state = service._State()
+        run(service.before_serving())
+        assert binds(docker, "jellyfin")["/config"][0] == f"{CARD_DIR}/@app-jellyfin-run/data/config"
+        assert [e["details"] for e in audit_log() if e["action"] == "standby_apps_moved"][-1] == (
+            "jellyfin runs from the SD standby's card again at the start of UNOS")
+
+    def test_one_lock_holds_every_write_and_read_of_state_json(self, standby, monkeypatch):
+        """A move's record, a sync's result and a read of the card each hold the same lock: neither
+        replaces what another wrote (ADR-0497: the lock is found held while each runs)."""
+        held = []
+        save = service._save_stored
+
+        def saving(stored):
+            held.append(("write", service._stored_lock.locked()))
+            save(stored)
+
+        monkeypatch.setattr(service, "_save_stored", saving)
+        read = standby.run
+
+        def reading(cmd, **kwargs):
+            if cmd[:2] == ["cat", "--"] and cmd[2] == STATE:
+                held.append(("read", service._stored_lock.locked()))
+            return read(cmd, **kwargs)
+
+        monkeypatch.setattr(service.host, "run_on_host", reading)
+        standby_apps.update_app_record("jellyfin", lambda r: {**r, "pool": "usb"})
+        service.merge_stored({"sync_time": "05:00"})
+        service._refresh_card(service.StandbyHost(), service._state)
+        assert held == [("write", True), ("write", True), ("read", True)]
+        assert stored()["apps"]["jellyfin"]["pool"] == "usb" and stored()["sync_time"] == "05:00"
 
     def test_a_managed_pool_not_mounted_moves_its_apps_at_the_second_pass(self, standby, docker):
         mark()
@@ -608,9 +671,35 @@ class TestTheMovesOfTheStandbyTab:
         assert "the pool usb is not mounted" in answer.json()["detail"]
         assert status["apps"][0]["return_blocked"] == "the pool usb is not mounted"
 
+    def test_a_return_needs_every_pool_folder_its_containers_bind(self, standby, docker):
+        mark()
+        synced(standby)
+        run(standby_apps.move(["jellyfin"], "drill", request=None, username="admin"))
+        del standby.files[f"{POOL}/media/film.mkv"]
+        standby.dirs.discard(f"{POOL}/media")
+        with Client() as api:
+            answer = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G"})
+        assert answer.status_code == 409 and f"{POOL}/media is not there" in answer.json()["detail"]
+        # Nothing changed: the app runs from the card.
+        assert binds(docker, "jellyfin")["/config"][0] == f"{CARD_DIR}/@app-jellyfin-run/data/config"
+        assert stored()["apps"]["jellyfin"]["failed_over"]["reason"] == "drill"
+
+    def test_an_uninstall_unmarks_the_app_and_deletes_its_copies(self, standby):
+        mark()
+        synced(standby)
+        with Client() as api:
+            answer = api.delete("/api/v1/apps/installed/jellyfin")
+        assert answer.status_code == 200, answer.text
+        assert run(standby_apps.marks()) == {}
+        assert not any(path.startswith(f"{CARD_DIR}/@app-") for path in standby.subvolume_paths)
+        assert [e["details"] for e in audit_log() if e["action"] == "app_critical_changed"] == [
+            "Unmarked jellyfin, which was uninstalled: its copies on the SD standby deleted"]
+
     def test_a_planned_repair_moves_the_pool_s_apps_so_the_unmount_no_longer_counts_them(self, standby, docker):
         mark()
         synced(standby)
+        # The app changed since its last sync: the planned move copies it once more first.
+        standby.compare["app:jellyfin"] = [">f.st...... config/system.xml"]
         with Client() as api:
             answer = api.post("/api/v1/system/standby/apps/move", json={"reason": "planned", "pool": "usb"})
             again = api.post("/api/v1/system/standby/apps/move", json={"reason": "planned", "pool": "usb"})
@@ -621,6 +710,7 @@ class TestTheMovesOfTheStandbyTab:
         assert labels.get(APP_POOL_LABEL) is None
         assert not any(source.startswith(POOL) for source, _ in binds(docker, "jellyfin").values())
         assert stored()["apps"]["jellyfin"]["failed_over"]["reason"] == "planned"
+        assert stored()["apps"]["jellyfin"]["failed_over"]["generation"] == 2
 
     def test_remove_the_standby_waits_for_the_apps_return(self, standby):
         mark()
@@ -689,6 +779,18 @@ class TestOnTheStandby:
 
 
 class TestTheStatus:
+    def test_a_sync_that_wrote_a_generation_measures_the_card_by_part(self, standby):
+        gen = f"{CARD_DIR}/@sys-1"
+        standby.files.update({f"{gen}/etc/hostname": "nas", f"{gen}/var/lib/unos-standby/images/supervisor.tar.gz": "a",
+                              f"{gen}/var/lib/unos-standby/volumes/unos-data/unos.db": "b",
+                              f"{gen}/var/lib/docker/image/x": "c"})
+        standby.file_sizes.update({f"{gen}/etc/hostname": 2_000_000_000,
+                                   f"{gen}/var/lib/unos-standby/images/supervisor.tar.gz": 700_000_000,
+                                   f"{gen}/var/lib/unos-standby/volumes/unos-data/unos.db": 3_000_000,
+                                   f"{gen}/var/lib/docker/image/x": 500_000_000})
+        assert service._measure_space(1) == {"system": 2_000_000_000, "unos_images": 700_000_000,
+                                             "unos_volumes": 3_000_000, "loaded_images": 500_000_000}
+
     def test_the_card_s_space_by_part_and_the_apps(self, standby):
         mark(interval=6)
         synced(standby)

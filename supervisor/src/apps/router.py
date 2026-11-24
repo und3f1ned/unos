@@ -2229,6 +2229,9 @@ async def uninstall_app(container_id: AppContainerId, request: Request, user: Us
         AuditAction.APP_UNINSTALLED, request, user.username, resource_type="app", resource_id=app.key,
         details=_uninstalled_details(app, removed, left), severity=AuditSeverity.WARNING,
     )
+    # An uninstalled app is no critical app of the SD standby any more: its mark and its copies on the card
+    # go, as an unmark's do (ADR-0498).
+    await standby_apps.unmark_uninstalled(app.key, request, user.username)
     return {"status": "removed", "id": container_id}
 
 

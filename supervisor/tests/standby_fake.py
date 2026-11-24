@@ -536,7 +536,7 @@ class StandbyFakeHost:
     def size_of(self, path: str, excludes: list[str]) -> int | None:
         """What du -sb counts under ``path``: its files' sizes, without what an exclude matches (a basename
         pattern *suffix at any depth, or a full path)."""
-        if not self.exists(path):
+        if not self.exists(path) and not any(name.startswith(path + "/") for name in self.files):
             return None
 
         def left_out(name: str) -> bool:

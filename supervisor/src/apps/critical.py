@@ -124,15 +124,18 @@ async def set_critical(container_id: base.AppContainerId, body: CriticalRequest,
                 f"keeps {(found.reserve or 0) / 1024**3:.1f} GiB in reserve"))
     changed, before = await standby_apps.set_mark(app, body.critical, body.interval_hours)
     if changed:
+        forgotten = ""
         if not body.critical:
             async with standby_service._lock:
                 try:
                     await asyncio.to_thread(standby_apps.forget_copy, app)
+                    forgotten = ", its copies on the SD standby deleted"
                 except standby_apps.StandbyError as e:
                     logger.warning("The copies of %s on the SD standby could not be deleted: %s", app, e)
+                    forgotten = f", its copies on the SD standby left: {e}"
         text = (f"Marked {app} critical, synced every {body.interval_hours} h" if body.critical and before is None
                 else f"Changed the sync interval of {app} from {before} h to {body.interval_hours} h" if body.critical
-                else f"Unmarked {app}: no longer critical, its copies on the SD standby deleted")
+                else f"Unmarked {app}: no longer critical{forgotten}")
         logger.info("%s", text)
         await audit_change(AuditAction.APP_CRITICAL_CHANGED, request, user.username, resource_type="app",
                            resource_id=app, details=text,
