@@ -13,8 +13,10 @@ import importlib
 import json
 import logging
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, UTC
+from pathlib import Path
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
@@ -32,7 +34,8 @@ from src.notifications.schemas import (
 )
 from src.scheduler.schemas import ScheduledTask, TaskRun
 from src.storage import pools as storage_pools
-from src.storage.schemas import PoolInfo
+from src.storage import released as storage_released
+from src.storage.schemas import PoolCreate, PoolInfo
 
 from .test_pool_persistence import BASE_FSTAB, MEDIA_UUID, entry, install_fake_host, marker, wait_for_app_starts
 from .test_scheduler_validation import make_env
@@ -456,14 +459,11 @@ class TestThePoolsOfTheRaidMonitor:
         its state now, no change to alert (the BPI-W3 sent "RAID Pool 'e2e_app' UNMOUNTED")."""
         assert await raid_rounds() == ([], [])
 
-        assert raid_rounds.status["mirror"]["managed"] is True
-
         assert storage_pools.delete_pool("mirror") is True
 
         assert [pool.name for pool in storage_pools.list_pools()] == ["mirror"]  # still on its disks
         assert await raid_rounds() == ([], [])
         assert raid_rounds.status["mirror"]["status"] == "unmounted"
-        assert raid_rounds.status["mirror"]["managed"] is False
         assert await raid_rounds() == ([], [])
         assert problems.current() == []
 
@@ -474,18 +474,212 @@ class TestThePoolsOfTheRaidMonitor:
 
         assert await raid_rounds() == ([], [])
 
-    async def test_a_check_that_cannot_read_the_fstab_keeps_whether_a_pool_was_managed(
+    @pytest.mark.parametrize("release", [storage_pools.delete_pool, storage_pools.unmount_pool],
+                             ids=["removed", "unmounted"])
+    async def test_a_pool_made_and_released_between_two_checks_is_not_alerted(
+            self, managed_mirror, raid_rounds, release):
+        """No check saw it managed: UNOS records what it released (the BPI-W3 sent "RAID Pool 'sdcheck'
+        UNMOUNTED" for a pool created and removed between two passes)."""
+        release("mirror")
+
+        assert await raid_rounds() == ([], [])
+        assert raid_rounds.status["mirror"]["status"] == "unmounted"
+        assert await raid_rounds() == ([], [])
+        assert problems.current() == []
+
+    async def test_a_released_pool_is_not_alerted_after_a_restart_either(self, managed_mirror, raid_rounds,
+                                                                         monkeypatch):
+        """The record is kept in its file: a restart before the next check does not forget it."""
+        storage_pools.delete_pool("mirror")
+        monkeypatch.setattr(storage_released, "_state", storage_released._State())  # the supervisor starts again
+
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_removal_after_a_check_that_cannot_read_the_fstab_is_not_alerted(
             self, managed_mirror, raid_rounds):
-        """So that a removal right after it is not alerted, and nothing is written for it."""
         assert await raid_rounds() == ([], [])
         managed_mirror.fail[("cat", "--", "/etc/fstab")] = (1, "cat: /etc/fstab: Input/output error")
         await raid_rounds()
-        assert raid_rounds.status["mirror"]["managed"] is True
         del managed_mirror.fail[("cat", "--", "/etc/fstab")]
 
         storage_pools.delete_pool("mirror")
 
         assert await raid_rounds() == ([], [])
+
+    async def test_a_released_pool_mounted_again_is_alerted_when_it_falls_off(self, managed_mirror, raid_rounds):
+        """Mount takes it back: once its fstab entry goes another way than through UNOS and it is not
+        mounted, it fell off."""
+        storage_pools.delete_pool("mirror")
+        assert await raid_rounds() == ([], [])
+        storage_pools.mount_pool("mirror")
+        assert await raid_rounds() == ([], [])
+
+        managed_mirror.files["/etc/fstab"] = BASE_FSTAB  # a hand edit, or a restored fstab
+        managed_mirror.mounts.pop()
+
+        raid_alerts, _ = await raid_rounds()
+        assert [(pool, status) for pool, status, _, _ in raid_alerts] == [("mirror", "unmounted")]
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_check_whose_read_falls_inside_a_removal_does_not_alert_the_pool(
+            self, managed_mirror, raid_rounds, monkeypatch):
+        """Read between Remove Pool's unmount and its fstab write, the pool is managed and not mounted;
+        here the removal starts after the check began and ends before it judges what it read."""
+        assert await raid_rounds() == ([], [])
+        read, forget = health_router._raid_health_and_pools, storage_pools._forget_fstab_entry
+        reads = []
+
+        def forget_after_a_read(name):
+            reads.append(read())
+            return forget(name)
+
+        def read_inside_a_removal():
+            storage_pools.delete_pool("mirror")
+            return reads[0]
+
+        monkeypatch.setattr(storage_pools, "_forget_fstab_entry", forget_after_a_read)
+        monkeypatch.setattr(health_router, "_raid_health_and_pools", read_inside_a_removal)
+
+        assert await raid_rounds() == ([], [])
+        [pool] = reads[0][1].pools
+        assert (pool.persistent, pool.mounted) == (True, False)
+        monkeypatch.setattr(health_router, "_raid_health_and_pools", read)
+        assert await raid_rounds() == ([], [])
+        assert problems.current() == []
+
+    async def test_a_check_made_while_a_removal_waits_between_its_unmount_and_its_fstab_write_does_not_alert(
+            self, managed_mirror, raid_rounds, monkeypatch):
+        """Without waiting for the pools' lock, which the removal holds."""
+        assert await raid_rounds() == ([], [])
+        forget = storage_pools._forget_fstab_entry
+        unmounted, checked = threading.Event(), threading.Event()
+
+        def forget_after_the_check(name):
+            unmounted.set()
+            assert checked.wait(10)
+            return forget(name)
+
+        monkeypatch.setattr(storage_pools, "_forget_fstab_entry", forget_after_the_check)
+        removal = asyncio.ensure_future(asyncio.to_thread(storage_pools.delete_pool, "mirror"))
+        assert await asyncio.to_thread(unmounted.wait, 10)
+
+        try:
+            assert await raid_rounds() == ([], [])
+        finally:
+            checked.set()
+            assert await removal is True
+        assert await raid_rounds() == ([], [])
+        assert problems.current() == []
+
+    async def test_a_pool_mounted_by_hand_and_unmounted_by_unos_is_not_alerted(self, managed_mirror, raid_rounds):
+        """UNOS released what it unmounted itself, also without an fstab entry of its own."""
+        managed_mirror.files["/etc/fstab"] = BASE_FSTAB
+        assert await raid_rounds() == ([], [])
+
+        storage_pools.unmount_pool("mirror")
+
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_check_whose_read_falls_between_mkfs_and_the_mount_does_not_alert_the_new_pool(
+            self, managed_mirror, raid_rounds, monkeypatch):
+        managed_mirror.add_disk("sdd")
+        assert await raid_rounds() == ([], [])
+        read, mount = health_router._raid_health_and_pools, storage_pools._mount_and_persist
+        reads = []
+
+        def mount_after_a_read(*args, **kwargs):
+            reads.append(read())
+            return mount(*args, **kwargs)
+
+        def read_inside_a_creation():
+            storage_pools.create_pool(PoolCreate(name="fresh", devices=["/dev/sdd"], raid_level="single",
+                                                 confirm_name="fresh"))
+            return reads[0]
+
+        monkeypatch.setattr(storage_pools, "_mount_and_persist", mount_after_a_read)
+        monkeypatch.setattr(health_router, "_raid_health_and_pools", read_inside_a_creation)
+
+        assert await raid_rounds() == ([], [])
+        assert {pool.name: pool.mounted for pool in reads[0][1].pools} == {"mirror": True, "fresh": False}
+        assert "fresh" not in raid_rounds.status  # not judged, nor recorded
+        monkeypatch.setattr(health_router, "_raid_health_and_pools", read)
+        assert await raid_rounds() == ([], [])
+        assert raid_rounds.status["fresh"]["status"] == "healthy"
+
+    async def test_a_pool_read_during_a_creation_that_fails_after_mkfs_is_alerted_at_the_next_check(
+            self, managed_mirror, raid_rounds, monkeypatch):
+        """Neither judged nor recorded while it was made: the next check finds it, not mounted."""
+        managed_mirror.add_disk("sdd")
+        read = health_router._raid_health_and_pools
+        reads = []
+
+        def mount_fails_after_a_read(*_args, **_kwargs):
+            reads.append(read())
+            raise RuntimeError("mount: wrong fs type")
+
+        def read_inside_a_creation():
+            with pytest.raises(storage_pools.PoolFormattedError):
+                storage_pools.create_pool(PoolCreate(name="fresh", devices=["/dev/sdd"], raid_level="single",
+                                                     confirm_name="fresh"))
+            return reads[0]
+
+        monkeypatch.setattr(storage_pools, "_mount_and_persist", mount_fails_after_a_read)
+        monkeypatch.setattr(health_router, "_raid_health_and_pools", read_inside_a_creation)
+        assert await raid_rounds() == ([], [])
+        monkeypatch.setattr(health_router, "_raid_health_and_pools", read)
+
+        raid_alerts, _ = await raid_rounds()
+        assert [(pool, status) for pool, status, _, _ in raid_alerts] == [("fresh", "unmounted")]
+
+    async def test_a_record_that_cannot_be_opened_is_not_written_over(self, managed_mirror, raid_rounds,
+                                                                       monkeypatch, tmp_path, caplog):
+        """The release holds in RAM until a restart."""
+        folder = tmp_path / "released_pools.json"
+        folder.mkdir()  # a directory in the place of the file: it cannot be opened
+        monkeypatch.setattr(storage_released, "RELEASED_FILE", folder)
+
+        with caplog.at_level(logging.WARNING):
+            storage_pools.delete_pool("mirror")
+
+        assert folder.is_dir() and list(folder.iterdir()) == []
+        assert "Could not read the released pools" in caplog.text
+        assert await raid_rounds() == ([], [])
+
+    async def test_a_removal_refused_before_its_unmount_releases_nothing(self, managed_mirror, raid_rounds,
+                                                                         monkeypatch):
+        assert await raid_rounds() == ([], [])
+        monkeypatch.setattr(storage_pools, "_containers_using", lambda *_: ["app"])
+        with pytest.raises(storage_pools.PoolBusyError):
+            storage_pools.delete_pool("mirror")
+        assert await raid_rounds() == ([], [])
+
+        managed_mirror.mounts.pop()  # then it falls off
+
+        assert await raid_rounds() == ([], ["Pool 'mirror' is not mounted"])
+
+    async def test_the_record_is_written_once_by_a_release_and_by_a_mount_and_never_by_a_check(
+            self, managed_mirror, raid_rounds, monkeypatch):
+        path = Path(storage_released.RELEASED_FILE)
+        write, writes = storage_released.state_files.write_json, []
+
+        def counted(target, value, **options):
+            if Path(target) == path:
+                writes.append(value)
+            return write(target, value, **options)
+
+        monkeypatch.setattr(storage_released.state_files, "write_json", counted)
+        storage_pools.delete_pool("mirror")  # unmounts it and drops its entry: one record, one write
+        assert writes == [{MEDIA_UUID: "mirror"}]
+        assert json.loads(path.read_text()) == {MEDIA_UUID: "mirror"}
+
+        await raid_rounds()
+        await raid_rounds()
+        assert len(writes) == 1
+
+        storage_pools.mount_pool("mirror")
+        storage_pools.mount_pool("mirror")  # already mounted and managed: nothing to forget
+        assert writes[1:] == [{}]
+        assert json.loads(path.read_text()) == {}
 
     async def test_a_managed_pool_that_falls_off_is_alerted_once(self, managed_mirror, raid_rounds):
         assert await raid_rounds() == ([], [])

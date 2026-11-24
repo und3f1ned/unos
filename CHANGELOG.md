@@ -2049,6 +2049,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   **ZIGBEE2MQTT_CONFIG_MQTT_USER** (`mqtt`) and **ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD**. A
   `mosquitto.conf` that an earlier install wrote is kept: remove it before you install Mosquitto
   again.
+- A pool created and removed between two passes of the RAID monitor is not alerted as not mounted
+  either (ADR-0490, which supersedes ADR-0479): on the BPI-W3, "RAID Pool 'sdcheck' UNMOUNTED" came
+  at the next pass, since no pass had seen it managed. Unmount and Remove Pool now record the UUID
+  of the filesystem they unmount or whose fstab entry they drop (`released_pools.json` in the data
+  directory, written once per release and once per mount of a released one), kept until UNOS mounts
+  it again, also across a restart; and a pass whose read of the host falls during an Unmount, a
+  Remove Pool or a Create Pool neither judges nor records that pool if it reads not mounted, without
+  waiting for the pools' lock. The RAID status no longer has `managed`.
+  A pool whose fstab entry goes another way than through UNOS and that is not mounted is alerted.
 - Mosquitto and Prometheus start on a fresh install (ADR-0480): the catalog bound an empty folder
   over the folder of the configuration file their images ship (`/mosquitto/config/mosquitto.conf`,
   `/etc/prometheus/prometheus.yml`), so they found none and restarted in a loop (Mosquitto wrote

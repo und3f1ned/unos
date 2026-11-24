@@ -38,7 +38,9 @@ namespace still has the pool mounted, also at its mountpoint, keeps it in use
 (ADR-0288).
 
 Deleting or unmounting a pool never touches the disks: the filesystem stays
-intact and can be mounted again.
+intact and can be mounted again. Its UUID is kept as released until UNOS mounts
+it again, and both mark the pool while they run, as Create does (storage.released):
+the RAID monitor does not alert a pool that the administrator let go of (ADR-0490).
 
 A pool is only mounted at its top level, where its volumes and share folders
 are: a mount that shows another subvolume (the filesystem's default one was
@@ -81,7 +83,7 @@ from ..security.validators import (
     validate_volume_name,
 )
 from ..shares import nfs, smb
-from . import disks, qgroups
+from . import disks, qgroups, released
 from .schemas import (
     DeviceIdentity,
     ImportableFilesystem,
@@ -359,10 +361,17 @@ def _write_fstab(new_text: str, old_text: str) -> bool:
 
 
 def _forget_fstab_entry(name: str) -> bool:
-    """Drop the pool's managed fstab entry; returns whether there was one to drop."""
+    """Drop the pool's managed fstab entry; returns whether there was one to drop.
+
+    The filesystem of the dropped entry is released (storage.released): the RAID monitor does not
+    alert it as not mounted (ADR-0490).
+    """
     text = _read_fstab()
     new_text = remove_managed_fstab_entry(text, name)
     changed = _write_fstab(new_text, text)
+    dropped = parse_managed_fstab(text).get(name)
+    if changed and dropped is not None and dropped.uuid:
+        released.record(dropped.uuid, name)
     leftovers = unmanaged_fstab_entries(new_text, pool_mountpoint(name))
     if leftovers:
         logger.warning(
@@ -1327,8 +1336,17 @@ def _unmount_namespace_copies(target: str, mounts: list[disks.HostMount], copies
     return problem
 
 
-def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) -> None:
+def _release(name: str, uuid: str | None) -> None:
+    """Record the filesystem that Unmount or Remove Pool unmounted as released (ADR-0490)."""
+    if uuid is not None:
+        released.record(uuid, name)
+
+
+def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) -> str | None:
     """Unmount whatever is mounted at the pool's mountpoint; PoolBusyError while in use.
+
+    Returns the UUID of the btrfs filesystem it unmounted there, None when nothing was or its UUID
+    cannot be told.
 
     ``umount`` on the host only reports users in mount namespaces that
     receive its unmount (the host, the supervisor's rshared /mnt). A
@@ -1347,7 +1365,7 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     """
     here = [m for m in mounts if m.target == target]
     if not here:
-        return
+        return None
     # A copy or a restore of the off-device copy holds the pool's folders open while restic runs, so
     # the umount would fail as busy: it is named instead (ADR-0337). That module imports this one.
     from ..offsite import service as offsite
@@ -1375,17 +1393,17 @@ def _unmount_pool_target(name: str, target: str, mounts: list[disks.HostMount]) 
     uuid = _mounted_uuid(here)
     _umount(target)
     if uuid is None or not _filesystem_active(uuid):
-        return
+        return uuid
     try:
         if any(m.fstype == "btrfs" and (m.uuid or "").lower() == uuid for m in disks.host_mounts()):
-            return  # also mounted elsewhere on the host, deliberately
+            return uuid  # also mounted elsewhere on the host, deliberately
     except Exception as exc:
         logger.warning("Could not read the host mount table: %s", exc)
     copies, reason = _namespace_copies(target, mounts)
     if copies and reason is None:
         reason = _unmount_namespace_copies(target, mounts, copies)
         if not _filesystem_active(uuid):
-            return
+            return uuid
     reason = reason or "for example by a container's bind mount"
     try:
         _mount_by_uuid(uuid, target)
@@ -1456,6 +1474,7 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
     exists (Create, Mount) does it stay, write-protected like that of every
     pool that is not mounted. An import that fails leaves nothing behind.
     Returns whether it changed anything: it mounted the pool or wrote the fstab (ADR-0402).
+    The filesystem is no longer released (storage.released, ADR-0490).
     """
     target = pool_mountpoint(name)
     changed = not already_mounted
@@ -1498,7 +1517,9 @@ def _mount_and_persist(name: str, uuid: str, *, already_mounted: bool, relabel: 
             if made:
                 _remove_made_mountpoint(target)
             raise
-    return _write_fstab(desired, text) or changed
+    changed = _write_fstab(desired, text) or changed
+    released.forget(uuid)  # a pool again (ADR-0490)
+    return changed
 
 
 def mount_pool(name: str) -> PoolInfo:
@@ -1572,13 +1593,13 @@ def unmount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
-    with _lock:
+    with _lock, released.changing(name):
         mounts = disks.host_mounts()
         if not _pool_filesystems(name, mounts):
             raise PoolNotFoundError(f"Pool '{name}' not found")
         _refuse_dockers_pool(name)
         mounted = any(m.target == target for m in mounts)
-        _unmount_pool_target(name, target, mounts)
+        _release(name, _unmount_pool_target(name, target, mounts))
         forgotten = _forget_fstab_entry(name)
         guard_mountpoint(target)
         return get_pool(name), mounted or forgotten
@@ -1619,14 +1640,14 @@ def delete_pool(name: str) -> bool:
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
-    with _lock:
+    with _lock, released.changing(name):
         _refuse_dockers_pool(name)
         mounts = disks.host_mounts()
         mounted = any(m.target == target for m in mounts)
         unmounted = forgotten = False
         try:
             try:
-                _unmount_pool_target(name, target, mounts)
+                _release(name, _unmount_pool_target(name, target, mounts))
             except PoolLeftUnmountedError:
                 unmounted = True
                 raise
@@ -1775,7 +1796,9 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
         raise ValueError(f"Invalid pool mountpoint: {target!r}")
     data_profile, meta_profile = PROFILE_MAP[pool.raid_level]
 
-    with _lock:
+    # Marked while it runs: a check that reads between mkfs and the mount does not judge the new
+    # pool, unmounted and not yet managed (storage.released, ADR-0490).
+    with _lock, released.changing(name):
         facts = _check_pool_devices(validated_devices, pool.force, identities)
         _check_name_available(name, facts)
         # Re-check right before mkfs: the host may have changed meanwhile.
