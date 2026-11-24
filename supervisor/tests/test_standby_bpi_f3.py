@@ -205,7 +205,7 @@ class TestTheSetup:
             BOOT_INFO_WRITTEN,
         ]
         enabled = done.index("systemctl enable unos-standby-boot-ok.service unos-standby-watch.service")
-        # The chooser after the eMMC's units that set its counter back (ADR-0490).
+        # The chooser after the eMMC's units that set its counter back (ADR-0494).
         assert enabled < done.index(f"write {BOOT_DIR}/boot.scr") < done.index(BOOT_INFO_CLEARED, 1)
         assert done[-1] == BOOT_INFO_WRITTEN
         # The UUIDs are read right after the filesystems are made, before the counter's write to the whole
@@ -411,7 +411,7 @@ class TestTheSync:
         assert fake.raw == {} and fake.sectors == {}
 
     def test_a_setup_or_removal_stopped_at_any_step_leaves_no_chooser_without_its_reset(self, fake, monkeypatch):
-        """After three boots that count a try nothing resets, the fourth would boot the card's root (ADR-0490).
+        """After three boots that count a try nothing resets, the fourth would boot the card's root (ADR-0494).
         A second Remove ends one that stopped."""
         def made() -> StandbyFakeF3:
             return install(monkeypatch, StandbyFakeF3())

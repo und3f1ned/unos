@@ -213,7 +213,7 @@ class StandbyFakeHost:
     def counts_tries_unanswered(self) -> bool:
         """Whether a boot would run the card's chooser while the eMMC lacks the enabled unit that sets its
         tries counter back to 0: each boot then counts a try that nothing resets, and the fourth boots the
-        card's root (ADR-0490). The chooser runs while the card's FAT partition (labelled UNOS-BOOT) holds
+        card's root (ADR-0494). The chooser runs while the card's FAT partition (labelled UNOS-BOOT) holds
         boot.scr, mounted or not, whichever loader the boot ROM took."""
         chooser = any("UNOS-BOOT" in card.labels for card in self.cards) and (
             f"{BOOT_DIR}/boot.scr" in self.files or f"{BOOT_DIR}/boot.scr" in self.hidden.get(BOOT_DIR, {}))

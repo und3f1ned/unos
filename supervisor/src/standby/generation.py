@@ -590,7 +590,7 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         before = ops.read_file(path)
         name = path.rsplit("/", 1)[1]
         # A unit is enabled when it was missing, and the one that sets the card's counter back also when it
-        # is there but not enabled (a Set up that stopped before it enabled it, ADR-0490).
+        # is there but not enabled (a Set up that stopped before it enabled it, ADR-0494).
         disabled = (before is None and name.endswith(".service")) or (
             name == BOOT_OK_UNIT and not ops.read(["systemctl", "is-enabled", "--quiet", name]).ok)
         if before != text or disabled:
@@ -605,7 +605,7 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         ops.change(["systemctl", "daemon-reload"], what="The standby's units")
         if enable:
             ops.change(["systemctl", "enable", *enable], what="The standby's units")
-    # The chooser after the units that set its tries counter back (ADR-0490).
+    # The chooser after the units that set its tries counter back (ADR-0494).
     image = bootscript.script_image(bootscript.chooser_text(profile, emmc_part=facts.boot_number,
                                                            emmc_prefix=facts.boot_prefix, emmc_label=context.label))
     shown = ops.read(["sha256sum", "--", BOOT_SCR]).stdout.split()

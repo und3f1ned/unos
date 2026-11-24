@@ -21,7 +21,7 @@ it reads the host again right before it wipes. It then writes, in this order:
    switch when the pool that holds Docker fails, ADR-0488) with their scripts, and systemd's hardware
    watchdog (``RuntimeWatchdogSec=60s``) where the board has one, from the next boot;
 8. the chooser ``boot.scr``, only now: a card whose chooser runs counts a try at every boot of the
-   eMMC, and only the unit of step 7 sets the counter back (ADR-0490).
+   eMMC, and only the unit of step 7 sets the counter back (ADR-0494).
 
 A board whose boot info shares the card's first sector with the partition table, the F3's, gets its
 loader (step 2) only after step 8: a Set up that fails before it leaves a card that the boot ROM passes
@@ -30,7 +30,7 @@ over (ADR-0489).
 A Set up that fails in steps 1 to 4, before anything of the eMMC changed, wipes the card again to an
 empty card (ADR-0489). The first generation is the service's next step. Remove the standby unmounts
 the card and wipes it as step 1 does, so that it is a free card again whose chooser no longer runs, and
-only then takes away the units, the mount points and, last, UNOS's fstab lines (ADR-0490): a Remove
+only then takes away the units, the mount points and, last, UNOS's fstab lines (ADR-0494): a Remove
 that stops at any step leaves no chooser that counts tries without the unit that sets them back, and
 shows as set up until it ran again to its end. With no SD card in the slot it keeps the unit that sets
 the counter back, for the card that may come back.
@@ -396,7 +396,7 @@ def prepare(model: str, *, dry_run: bool) -> Prepared:
     ops.change(["systemctl", "daemon-reload"], what="The standby's units")
     ops.change(["systemctl", "enable", BOOT_OK_UNIT, WATCH_UNIT], what="The standby's units")
     # The chooser only once the units that set its tries counter back are enabled: from the next boot on it
-    # counts a try at every boot of the eMMC (ADR-0490).
+    # counts a try at every boot of the eMMC (ADR-0494).
     ops.write_file(BOOT_SCR, bootscript.script_image(chooser), what="The chooser boot.scr")
     if profile.loader_header == "spacemit_bootinfo":
         # SpacemiT's boot info shares the card's first sector with the partition table, so the loader
@@ -432,12 +432,12 @@ def remove(model: str, *, dry_run: bool, running_on_card: bool) -> list[str]:
         if ops.read(["mountpoint", "-q", folder]).ok:
             ops.change(["umount", folder], what=f"The unmount of {folder}", timeout=120)
     # The card first: from the end of its wipe its chooser no longer runs and counts no try, so the units
-    # that set its counter back may go (ADR-0490).
+    # that set its counter back may go (ADR-0494).
     if card is not None:
         wipe_card(ops, profile, card.path, (_partition(card.path, 1), _partition(card.path, 2)))
         reread_partitions(ops, card.path)
     # With no SD card in the slot, the card that holds the standby may come back with its chooser: the unit
-    # that sets its counter back stays, inert while no chooser boots the eMMC (ADR-0490). A card in the slot
+    # that sets its counter back stays, inert while no chooser boots the eMMC (ADR-0494). A card in the slot
     # that no longer holds the standby is the one a Remove that stopped wiped.
     keep = card is None and not any(item.mmc_type == "SD" for item in present)
     units = [name for name in (BOOT_OK_UNIT, WATCH_UNIT)
@@ -456,7 +456,7 @@ def remove(model: str, *, dry_run: bool, running_on_card: bool) -> list[str]:
         if ops.exists(folder):
             ops.change(["rmdir", "--ignore-fail-on-non-empty", "--", folder], what=f"The folder {folder}")
     # UNOS's fstab lines, the anchor of a standby that is set up, last: a Remove that stopped before them
-    # shows as set up, and Remove runs again (ADR-0490).
+    # shows as set up, and Remove runs again (ADR-0494).
     if is_armed(fstab):
         ops.write_file(FSTAB, without_standby_lines(fstab), what=f"UNOS's lines in {FSTAB}")
     ops.change(["systemctl", "daemon-reload"], what="systemd's units")

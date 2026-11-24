@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0490: The SD standby's card holds a chooser only while the eMMC's unit that sets its counter back is enabled
+# ADR-0494: The SD standby's card holds a chooser only while the eMMC's unit that sets its counter back is enabled
 
 ## Context
 

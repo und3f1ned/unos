@@ -44,7 +44,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   root) and the ways back (Return to the eMMC, Return through the standby, Discard the standby's
   changes) are on the tab; **Remove the standby** wipes the card first and then leaves nothing of it
   on the eMMC (a Remove that stopped shows as set up and runs again; without the card in its slot
-  it keeps the unit that sets the card's counter back, ADR-0490). The card is in no list of disks, pools or off-device copy targets. Every action has a dry
+  it keeps the unit that sets the card's counter back, ADR-0494). The card is in no list of disks, pools or off-device copy targets. Every action has a dry
   run (`"dry_run": true`) that answers the host's commands; the problems `standby_sync_failed`,
   `standby_copy_old`, `standby_card_missing`, `standby_not_in_boot_path` (from the first boot after
   the setup), `running_on_standby`, `standby_has_changes` and `standby_leftover` (a boot through the

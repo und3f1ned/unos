@@ -875,7 +875,7 @@ Open owner actions:
   fixed. Left: ADR-0493 changes parts of ADR-0381, ADR-0408, ADR-0415 and ADR-0437 without
   superseding them, since the rest of each stays.
 - Left: the lead's device check after the deploy (the entry's notes). `passes` stays false.
-### 2026-11-24: A stopped Remove of the SD standby leaves no chooser that counts boots (system.sd-standby-remove-interrupted, ADR-0490)
+### 2026-11-24: A stopped Remove of the SD standby leaves no chooser that counts boots (system.sd-standby-remove-interrupted, ADR-0494)
 
 - On the branch `system.sd-standby-remove-interrupted` from origin/main 80fe1f51, at the lead's brief.
   Cause of the defect recorded the same day: Remove dropped UNOS's fstab lines and took away the
@@ -884,7 +884,7 @@ Open owner actions:
   1, 2 and 3, and the fourth and every later one started the card's root, an old copy of the system,
   with `unos.reason=tries`. Set up (the chooser before the units), a sync (a missing chooser before
   missing units) and a Remove without the card (the card back later) had the same window.
-- Fixed (ADR-0490): Remove unmounts and wipes the card first, then takes away the units, the mount
+- Fixed (ADR-0494): Remove unmounts and wipes the card first, then takes away the units, the mount
   points and the folders, and drops UNOS's fstab lines last, so that a Remove that stopped shows as
   set up with its card missing and runs again to its end; a failed Remove reads the state again, so
   that the tab offers that Remove without a model to type. Set up writes the chooser after it enabled

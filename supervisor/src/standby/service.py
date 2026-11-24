@@ -11,7 +11,7 @@ the Standby tab sets (04:00 host time by default), 10 minutes after the last aud
 change restarts the wait) and at Sync now; never while UNOS runs from the card or after the standby
 ran. Problems of the source ``standby`` (ADR-0332): standby_sync_failed, standby_copy_old,
 standby_card_missing, standby_not_in_boot_path, running_on_standby, standby_has_changes and standby_leftover
-(a boot through the chooser of a card whose standby is not set up here, ADR-0490).
+(a boot through the chooser of a card whose standby is not set up here, ADR-0494).
 
 When the eMMC's monitor finds ``system_disk_failed`` and the standby is set up, in this boot's path
 and holds a complete generation, ``on_system_disk_failed`` stops a sync, writes the mark, alerts the
@@ -191,7 +191,7 @@ class _State:
     run_recorded_at: float | None = None
     # The result of the last sync that found nothing changed: in RAM only, as nothing was written.
     memory_sync: dict[str, Any] | None = None
-    # Not set up, but a card holds the standby's partitions: its device is card_device (ADR-0490).
+    # Not set up, but a card holds the standby's partitions: its device is card_device (ADR-0494).
     leftover: bool = False
 
 
@@ -269,7 +269,7 @@ def booted_since_setup() -> bool:
 
 def _read_leftover(state: _State) -> None:
     """Whether a card holds the standby's partitions while the standby is not set up, and its device: at
-    the start, after each action and, while one is known, at each check of the card (ADR-0490)."""
+    the start, after each action and, while one is known, at each check of the card (ADR-0494)."""
     left = None
     if not host.runs_locally():
         try:
@@ -683,7 +683,7 @@ async def remove(model: str, *, dry_run: bool, request: Request, username: str) 
                 await _audit(AuditAction.STANDBY_REMOVED, request, username, f"Failed: {e}", success=False)
                 if not dry_run:
                     # The card may be unmounted or wiped by now: the state as the host has it, so that the
-                    # Standby tab offers the Remove that ends it (ADR-0490).
+                    # Standby tab offers the Remove that ends it (ADR-0494).
                     _state.stored, _state.current, _state.last_complete_at = {}, None, None
                     try:
                         await asyncio.to_thread(refresh)

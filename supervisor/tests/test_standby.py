@@ -309,7 +309,7 @@ class TestTheSetup:
             "write /etc/fstab",
             f"mount {BOOT_DIR}",
             f"mount {CARD_DIR}",
-            # The chooser after the eMMC's units that set its counter back (ADR-0490).
+            # The chooser after the eMMC's units that set its counter back (ADR-0494).
             "systemctl enable unos-standby-boot-ok.service unos-standby-watch.service",
             f"write {BOOT_DIR}/boot.scr",
             f"write {CURRENT.replace('current', 'next')}",
@@ -1371,7 +1371,7 @@ def assert_nothing_of_the_standby_left(fake: StandbyFakeHost) -> None:
 class TestAStopMidway:
     """A Set up, a sync or a Remove that stops at any step (a power cut, a crash) never leaves a card whose
     chooser counts tries while the eMMC lacks the unit that sets the counter back: after three such boots
-    the fourth would boot the card's root (ADR-0490)."""
+    the fourth would boot the card's root (ADR-0494)."""
 
     def prepared(self, monkeypatch) -> StandbyFakeHost:
         fake = install(monkeypatch, StandbyFakeHost())
@@ -1448,7 +1448,7 @@ class TestAStopMidway:
 
 class TestALeftoverCard:
     """A card that holds a standby which is not set up here: a Remove that ran without the card in its slot,
-    a Set up that stopped before UNOS's fstab lines, a card from another installation (ADR-0490)."""
+    a Set up that stopped before UNOS's fstab lines, a card from another installation (ADR-0494)."""
 
     def left(self, fake: StandbyFakeHost, *, through_chooser: bool = True) -> None:
         card.prepare("SC32G", dry_run=False)
@@ -1507,7 +1507,7 @@ class TestALeftoverCard:
 
 class TestARemovalWithoutTheCard:
     """The card of a standby is not in its slot when Remove runs: it cannot be wiped, so the unit that sets
-    its counter back stays for the day it comes back with its chooser (ADR-0490)."""
+    its counter back stays for the day it comes back with its chooser (ADR-0494)."""
 
     async def test_it_keeps_the_counters_reset_for_the_card_that_may_come_back(self, fake):
         card.prepare("SC32G", dry_run=False)
