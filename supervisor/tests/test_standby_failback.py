@@ -20,7 +20,7 @@ from src.apps.stacks import APP_POOL_LABEL
 from src.health import problems
 from src.standby import apps as standby_apps
 from src.standby import failback, generation, service
-from src.standby.hostops import CARD_DIR
+from src.standby.hostops import BOOT_DIR, CARD_DIR
 from tests.standby_fake import CARD_UUID, ROOT_UUID, mountinfo_line
 from tests.test_standby import STATE, Client, armed, audit_log
 from tests.test_standby_apps import FOLDER, POOL, binds, mark, pool_info, run, stored, synced
@@ -359,3 +359,370 @@ class TestTheEmmcCheck:
         run(service.on_card_start())
         assert fsck_calls(fake) == [["fsck.ext4", "-n", "/dev/mmcblk0p1"]]
         assert service._state.emmc_check["ok"] is True
+
+
+# --- the return with the card's changes: the supervisor's part --------------------------------------------
+
+
+RUN_DIR = "/run/unos-standby-return"
+CARD_VOLUMES = {f"deploy_{name}": f"/var/lib/docker/volumes/deploy_{name}/_data"
+                for name in ("unos-data", "served-certificate", "app-names", "caddy-data", "caddy-config")}
+EMMC_VOLUMES = {name.removeprefix("deploy_"): f"/mnt/pools/data/.docker/volumes/{name}/_data" for name in CARD_VOLUMES}
+
+
+@pytest.fixture
+def data_pool(monkeypatch):
+    """The data pool, which holds the eMMC's Docker data (ADR-0486), mounted and healthy on the card's root."""
+    from src.storage import pools as storage_pools
+    from src.storage.schemas import PoolInfo
+
+    found = {"data": PoolInfo(name="data", devices=["/dev/sda"], total_size=4 * 1024**4, used_size=1024**4,
+                              mountpoint="/mnt/pools/data", raid_level="single", mounted=True, persistent=True,
+                              health="healthy")}
+
+    def get_pool(name):
+        if name not in found:
+            raise storage_pools.PoolNotFoundError(name)
+        return found[name]
+
+    monkeypatch.setattr(storage_pools, "get_pool", get_pool)
+    return found
+
+
+def ready_to_return(fake) -> None:
+    """On the card's root, whose generation kept where the eMMC's Docker keeps UNOS's volumes, the eMMC checked."""
+    on_the_card(fake)
+    fake.volumes = dict(CARD_VOLUMES)
+    fake.files[f"{generation.LIB}/emmc-volumes"] = json.dumps(EMMC_VOLUMES)
+    fake.files[STATE] = json.dumps({**json.loads(fake.files[STATE]), "apps": {"jellyfin": {
+        "generation": 2, "pool": "usb", "failed_over": {"reason": "pool_failed", "pool": "usb", "copy": True}}}},
+        indent=1, sort_keys=True) + "\n"
+    service.refresh()
+
+
+class TestTheEmmcReturnsUnit:
+    def test_the_sync_keeps_where_the_emmc_s_docker_keeps_unos_s_volumes(self, fake):
+        armed(fake, generation_number=None)
+        generation.sync(force=True)
+        kept = json.loads(fake.files[f"{CARD_DIR}/@sys-1{generation.LIB}/emmc-volumes"])
+        assert kept == {name.removeprefix("deploy_"): path for name, path in fake.volumes.items()}
+
+    def test_the_emmc_s_fstab_is_the_standby_s_with_the_emmc_s_own_lines_for_the_card_s_root(self):
+        from src.standby.emmc_return import emmc_fstab
+
+        card = (f"UUID={CARD_UUID} / btrfs defaults,noatime,compress=zstd:1 0 0\n"
+                "tmpfs /tmp tmpfs defaults,nosuid 0 0\n# unos-pool:usb (managed by UNOS)\n"
+                "UUID=0d1e2f30-0000-4000-8000-000000000001 /mnt/pools/usb btrfs defaults,noatime,nofail 0 0\n")
+        own = f"{EMMC_OWN}UUID=6A1B-0001 /boot vfat defaults 0 2\n"
+        assert emmc_fstab(card, own) == (
+            f"{own}tmpfs /tmp tmpfs defaults,nosuid 0 0\n# unos-pool:usb (managed by UNOS)\n"
+            "UUID=0d1e2f30-0000-4000-8000-000000000001 /mnt/pools/usb btrfs defaults,noatime,nofail 0 0\n")
+        from src.standby.hostops import StandbyRefused
+
+        with pytest.raises(StandbyRefused):
+            emmc_fstab("tmpfs /tmp tmpfs defaults 0 0\n", own)
+        with pytest.raises(StandbyRefused):
+            emmc_fstab(card, "UUID=6A1B-0001 /boot vfat defaults 0 2\n")
+
+    def test_the_dry_run_answers_what_the_unit_runs_and_changes_nothing(self, fake, data_pool):
+        ready_to_return(fake)
+        with Client() as api:
+            answer = api.post("/api/v1/system/standby/return", json={"dry_run": True})
+        assert answer.status_code == 200, answer.text
+        plan = answer.json()["plan"]
+        assert plan[0] == "fsck.ext4 -n /dev/mmcblk0p1" and plan[-1] == "systemctl reboot"
+        assert any(line.startswith("rsync -aHAX --numeric-ids --one-file-system --delete") for line in plan)
+        assert any("--backup-dir=/mnt/pools/data/.docker/volumes.before-failback-" in line
+                   and line.endswith("/mnt/pools/data/.docker/volumes/deploy_unos-data/_data/") for line in plan)
+        assert fake.changes == [] and audit_log() == []
+
+    def test_stages_its_files_in_ram_starts_the_unit_and_writes_nothing_else(self, fake, data_pool):
+        ready_to_return(fake)
+        before = fake.files[STATE]
+        with Client() as api:
+            answer = api.post("/api/v1/system/standby/return", json={})
+        assert answer.status_code == 200, answer.text
+        assert "the NAS reboots to it" in answer.json()["message"]
+        # What the supervisor changed: the unit's folder in RAM and the unit; the card's files stay as they are.
+        assert all(cmd[0] in ("rm", "mkdir", "write", "systemd-run") for cmd in fake.changes)
+        assert all(part.startswith(RUN_DIR) for cmd in fake.changes if cmd[0] == "write" for part in cmd[1:])
+        assert fake.files[STATE] == before and generation.MARK in fake.files
+        unit = fake.changes[-1]
+        assert unit[:2] == ["systemd-run", "--unit=unos-standby-return"]
+        assert unit[-3:] == ["/bin/sh", f"{RUN_DIR}/unos-standby-return.sh", RUN_DIR]
+        files = {name[len(RUN_DIR) + 1:]: text for name, text in fake.files.items() if name.startswith(RUN_DIR + "/")}
+        from tests.test_standby import HOST_SCRIPTS
+
+        assert files["unos-standby-return.sh"] == (HOST_SCRIPTS / "unos-standby-return.sh").read_text()
+        settings = dict(line.split("=", 1) for line in files["return.env"].splitlines())
+        assert settings["EMMC"] == "/dev/mmcblk0p1" and settings["CARD"] == "/dev/mmcblk1"
+        assert settings["SECTOR"] == "32767" and settings["STATE"] == STATE
+        import hashlib
+
+        assert settings["STATE_SHA"] == hashlib.sha256(before.encode()).hexdigest()
+        assert settings["UNITS"] == "'docker.socket docker.service smbd.service nmbd.service'"
+        excludes = files["excludes"].splitlines()
+        for path in ("/var/lib/docker", "/etc/fstab", generation.LIB, "/usr/local/lib/unos-standby",
+                     "/etc/docker/daemon.json", "/etc/containerd/config.toml", "/etc/systemd/system/unos.service",
+                     "/proc", "/mnt/pools/data", "/mnt/.unos-standby/card", "/var/log*"):
+            assert path in excludes, path
+        assert files["fstab"].startswith(EMMC_OWN) and f"UUID={CARD_UUID} / " not in files["fstab"]
+        assert "/mnt/.unos-standby/card" in files["fstab"] and "/mnt/pools/data" in files["fstab"]
+        after = json.loads(files["state.json"])
+        assert "standby_ran" not in after and after["emmc_return"]["by"] == "admin"
+        # An app that runs from the card stays there until its pool's return.
+        assert after["apps"]["jellyfin"]["failed_over"]["pool"] == "usb"
+        volumes = [line.split("\t") for line in files["volumes"].splitlines()]
+        assert ["/var/lib/docker/volumes/deploy_unos-data/_data", "/mnt/pools/data/.docker/volumes/deploy_unos-data/_data"
+                ] in [row[:2] for row in volumes]
+        assert all(row[2].startswith("/mnt/pools/data/.docker/volumes.before-failback-") for row in volumes)
+        assert files["counter"] == "unos_tries=0\n"
+        entry = audit_log()[-1]
+        assert entry["action"] == "standby_returned" and "with the card's changes" in entry["details"]
+
+    def test_volumes_of_the_emmc_s_docker_on_the_emmc_go_below_its_mount_without_a_backup(self, fake, data_pool):
+        ready_to_return(fake)
+        fake.files[f"{generation.LIB}/emmc-volumes"] = json.dumps(
+            {name: path.replace("/mnt/pools/data/.docker", "/var/lib/docker") for name, path in EMMC_VOLUMES.items()})
+        with Client() as api:
+            assert api.post("/api/v1/system/standby/return", json={}).status_code == 200
+        rows = [line.split("\t") for line in fake.files[f"{RUN_DIR}/volumes"].splitlines()]
+        assert ["/var/lib/docker/volumes/deploy_unos-data/_data",
+                f"{RUN_DIR}/emmc/var/lib/docker/volumes/deploy_unos-data/_data", ""] in rows
+
+    @pytest.mark.parametrize("broken, why", [
+        ("pool", "UNOS's volumes go back to the eMMC's Docker on the pool data, but the pool data is not mounted"),
+        ("no volumes", "The card's copy does not say where the eMMC's Docker keeps UNOS's volumes"),
+        ("a volume", "The eMMC's Docker has no volume caddy-data"),
+    ])
+    def test_a_copy_that_cannot_go_is_refused_and_changes_nothing(self, fake, data_pool, broken, why):
+        from src.storage.schemas import PoolInfo
+
+        ready_to_return(fake)
+        if broken == "pool":
+            data_pool["data"] = PoolInfo(name="data", devices=[], total_size=0, used_size=0, mountpoint=None,
+                                         raid_level="single", mounted=False, persistent=True, health="unmounted")
+        elif broken == "no volumes":
+            del fake.files[f"{generation.LIB}/emmc-volumes"]
+        else:
+            fake.files[f"{generation.LIB}/emmc-volumes"] = json.dumps(
+                {name: path for name, path in EMMC_VOLUMES.items() if name != "caddy-data"})
+        with Client() as api:
+            answer = api.post("/api/v1/system/standby/return", json={})
+        assert answer.status_code == 409 and why in answer.json()["detail"]
+        assert fake.changes == []
+
+    def test_a_failed_return_is_recorded_audited_and_alerted_at_the_next_start(self, fake, alerts):
+        on_the_card(fake)
+        fake.files[f"{RUN_DIR}/result"] = ("failed\ncopy\nrsync: write failed: No space left on device (28); Docker and "
+                                          "Samba run again\n")
+        stored = json.loads(fake.files[STATE])
+        fake.files[STATE] = json.dumps({**stored, "emmc_return": {"at": "x", "generation": 1, "by": "admin"}})
+        service.refresh()
+        run(service.on_card_start())
+        with Client() as api:
+            status = api.get("/api/v1/system/standby").json()
+        failed = status["emmc_return"]["failed"]
+        assert failed["step"] == "copy" and "No space left on device" in failed["message"]
+        assert status["emmc_return"]["offered"] is True  # it can run again
+        entry = audit_log()[-1]
+        assert (entry["action"], entry["username"], entry["success"]) == ("standby_returned", "system", False)
+        assert [(alert.type, alert.title) for alert in alerts] == [("error", "The return to the eMMC failed")]
+        assert ["rm", "-rf", "--", RUN_DIR] in fake.changes
+        # A record of a return that did not end goes on the card.
+        assert "emmc_return" not in json.loads(fake.files[STATE])
+
+    def test_on_the_emmc_the_return_is_alerted_once_and_its_sync_writes_a_generation_without_docker_data(
+            self, fake, alerts):
+        from tests.test_standby import synced_once
+
+        synced_once(fake)
+        fake.files[STATE] = json.dumps({**json.loads(fake.files[STATE]), "emmc_return": {
+            "at": "2026-11-24T12:00:00Z", "generation": 1, "by": "admin"}})
+        service.refresh()
+        run(service.on_emmc_after_return())
+        run(service.on_emmc_after_return())
+        assert [(alert.type, alert.title) for alert in alerts] == [("success", "UNOS is back on the eMMC")]
+        run(service._due_syncs())
+        assert fake.files[f"{BOOT_DIR}/unos/current.txt"].startswith("unos_gen=2\n")
+        assert ["rm", "-rf", "--", f"{CARD_DIR}/@sys-2/var/lib/docker", f"{CARD_DIR}/@sys-2/var/lib/containerd"] in fake.changes
+        stored = json.loads(fake.files[STATE])
+        assert "emmc_return" not in stored and stored["last_sync"]["trigger"] == "return"
+
+
+# --- the return with the card's changes: the unit's script -----------------------------------------------
+
+
+class ReturnHost:
+    """The card's root as the unit's script sees it, with stubs of the host's programs that log their calls:
+    systemctl (docker.socket, docker.service and smbd.service active), findmnt, mount, umount, fsck.ext4,
+    rsync, dd, sync and timeout. ``fail`` makes a program fail when its arguments hold a text; ``left`` is
+    what the dry runs of rsync find left to copy, one answer per dry run."""
+
+    UNITS = "docker.socket docker.service smbd.service nmbd.service"
+
+    def __init__(self, tmp_path):
+        import os
+
+        self.dir = tmp_path / "run"
+        self.dir.mkdir()
+        self.bin = tmp_path / "bin"
+        self.bin.mkdir()
+        self.log = tmp_path / "log"
+        self.mount = self.dir / "emmc"
+        self.card = tmp_path / "card"
+        self.boot = tmp_path / "boot"
+        (self.boot / "unos").mkdir(parents=True)
+        self.card.mkdir()
+        self.mark = self.boot / "unos" / "emmc-failed"
+        self.mark.write_text("reason=drill\n")
+        self.drill = self.boot / "unos" / "drill.txt"
+        self.drill.write_text("unos_emmc_part=7f\n")
+        self.state = self.card / "state.json"
+        self.state.write_text('{"standby_ran": {"at": "x"}}\n')
+        self.counter = tmp_path / "mmcblk1"
+        # The pool that holds the eMMC's Docker data.
+        self.pool = tmp_path / "pools" / "data"
+        # The eMMC's root as mount leaves it: its own drop-ins, one that holds Docker until its pool is mounted.
+        dropins = self.mount / "etc/systemd/system/docker.service.d"
+        dropins.mkdir(parents=True)
+        (dropins / "data-root-on-pool.conf").write_text("[Unit]\nRequiresMountsFor=/mnt/pools/data/.docker\n")
+        (dropins / "override.conf").write_text("[Service]\nLimitNOFILE=1048576\n")
+        for name, text in {"excludes": "/var/lib/docker\n/etc/fstab\n", "fstab": EMMC_OWN, "counter": "unos_tries=0\n",
+                           "state.json": '{"emmc_return": {"at": "x"}}\n',
+                           "volumes": f"/var/lib/docker/volumes/deploy_unos-data/_data\t{self.pool}/.docker/volumes/"
+                                      f"deploy_unos-data/_data\t{self.pool}/.docker/volumes.before-failback-1/deploy_unos-data\n"
+                           }.items():
+            (self.dir / name).write_text(text)
+        self.fails: dict[str, str] = {}
+        self.left: list[str] = []
+        import hashlib
+
+        self.settings = {"EMMC": "/dev/mmcblk0p1", "MOUNT": str(self.mount), "CARD": str(self.counter),
+                         "SECTOR": "32767", "MARK": str(self.mark), "DRILL": str(self.drill), "STATE": str(self.state),
+                         "STATE_SHA": hashlib.sha256(self.state.read_bytes()).hexdigest(), "UNITS": self.UNITS,
+                         "DELAY": "0"}
+        self.env = {**os.environ, "PATH": f"{self.bin}:/usr/bin:/bin"}
+
+    def stubs(self) -> None:
+        from tests.test_standby import stub
+
+        log = self.log
+        fails = "".join(f'case "$*" in *"{text}"*) echo "{program}: {text} failed" >&2; exit 3 ;; esac\n'
+                        for program, text in self.fails.items() if program == "*")
+        stub(self.bin, "timeout", 'while [ "${1#-}" != "$1" ]; do shift; done\nshift\nexec "$@"\n')
+        for program in ("systemctl", "mount", "umount", "fsck.ext4", "sync"):
+            failing = self.fails.get(program)
+            check = (f'case "$*" in *"{failing}"*) echo "{program}: {failing} failed" >&2; exit 4 ;; esac\n'
+                     if failing else "")
+            extra = ('case "$1" in is-active) case "$3" in docker.socket|docker.service|smbd.service) exit 0 ;; '
+                     '*) exit 3 ;; esac ;; esac\n') if program == "systemctl" else ""
+            stub(self.bin, program, f'{extra}echo "{program} $*" >> {log}\n{check}{fails}')
+        stub(self.bin, "findmnt", "exit 1\n")
+        answers = self.dir.parent / "left"
+        answers.mkdir(exist_ok=True)
+        for index, text in enumerate(self.left):
+            (answers / str(index)).write_text(text)
+        failing = self.fails.get("rsync")
+        check = f'case "$*" in *"{failing}"*) echo "rsync: {failing} failed" >&2; exit 23 ;; esac\n' if failing else ""
+        stub(self.bin, "rsync", f'echo "rsync $*" >> {log}\n{check}'
+                                f'case "$*" in *--dry-run*) n=$(ls {answers} | head -n 1); '
+                                f'[ -z "$n" ] || {{ cat {answers}/$n; rm {answers}/$n; }} ;; esac\n')
+        stub(self.bin, "dd", f'echo "dd $*" >> {log}\nfor a; do case $a in if=*) cp "${{a#if=}}" {self.counter} ;; esac; done\n')
+        stub(self.bin, "sha256sum", 'if [ -x /usr/bin/sha256sum ]; then exec /usr/bin/sha256sum "$@"; '
+                                    'else exec shasum -a 256 "$@"; fi\n')
+
+    def run(self):
+        from tests.test_standby import HOST_SCRIPTS, _run
+
+        self.stubs()
+        (self.dir / "return.env").write_text("".join(f"{key}='{value}'\n" for key, value in self.settings.items()))
+        return _run(["/bin/sh", str(HOST_SCRIPTS / "unos-standby-return.sh"), str(self.dir)], self.env)
+
+    def calls(self) -> list[str]:
+        return [line.rstrip() for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def result(self) -> list[str]:
+        return (self.dir / "result").read_text().splitlines()
+
+
+class TestTheReturnScript:
+    def test_copies_writes_the_fstab_verifies_then_resets_the_counter_drops_the_mark_and_reboots(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        done = found.run()
+        assert done.returncode == 0, done.stdout + done.stderr
+        calls = [call for call in found.calls() if not call.startswith("systemctl is-active")]
+        mount = str(found.mount)
+        assert calls[0] == "fsck.ext4 -n /dev/mmcblk0p1"
+        assert calls[1:4] == ["systemctl stop docker.socket", "systemctl stop docker.service", "systemctl stop smbd.service"]
+        assert calls[4] == f"mount -t ext4 -o noatime /dev/mmcblk0p1 {mount}"
+        assert calls[5] == (f"rsync -aHAX --numeric-ids --one-file-system --delete --omit-dir-times --inplace "
+                            f"--no-whole-file --exclude-from={found.dir}/excludes.all / {mount}/")
+        assert calls[6] == (f"rsync -aHAX --numeric-ids --delete --backup --backup-dir={found.pool}/.docker/"
+                            "volumes.before-failback-1/deploy_unos-data /var/lib/docker/volumes/deploy_unos-data/_data/ "
+                            f"{found.pool}/.docker/volumes/deploy_unos-data/_data/")
+        assert calls[7] == f"sync {mount}/etc/fstab.unos-return"
+        assert "--dry-run" in calls[8] and "--dry-run" in calls[9]
+        assert calls[10:] == ["sync", f"umount {mount}", "fsck.ext4 -f -n /dev/mmcblk0p1",
+                             f"dd if={found.dir}/counter of={found.counter} bs=512 seek=32767 count=1 "
+                             "conv=sync,notrunc,fsync status=none", f"sync {found.state}.tmp", "sync", "systemctl reboot"]
+        assert (found.mount / "etc/fstab").read_text() == EMMC_OWN
+        # The drop-in that holds Docker until its pool is mounted is the eMMC's: neither copied nor deleted.
+        excludes = (found.dir / "excludes.all").read_text().splitlines()
+        assert "/etc/systemd/system/docker.service.d/data-root-on-pool.conf" in excludes
+        assert "/etc/systemd/system/docker.service.d/override.conf" not in excludes
+        assert found.counter.read_text() == "unos_tries=0\n"
+        assert found.state.read_text() == '{"emmc_return": {"at": "x"}}\n'
+        assert not found.mark.exists() and not found.drill.exists()
+        assert found.result()[0] == "returned"
+
+    def test_a_failed_copy_unmounts_starts_docker_and_samba_again_and_keeps_the_card_s_standby(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        found.fails["rsync"] = "--one-file-system"
+        done = found.run()
+        assert done.returncode == 1
+        assert found.result()[:2] == ["failed", "copy"] and "failed" in found.result()[2]
+        calls = found.calls()
+        assert f"umount {found.mount}" in calls
+        assert calls[-3:] == ["systemctl start docker.socket", "systemctl start docker.service", "systemctl start smbd.service"]
+        assert found.mark.exists() and found.drill.exists() and not found.counter.exists()
+        assert found.state.read_text() == '{"standby_ran": {"at": "x"}}\n'
+        assert "systemctl reboot" not in calls and "systemctl start nmbd.service" not in calls
+
+    def test_a_state_that_changed_after_the_supervisor_read_it_stops_before_the_emmc_is_mounted(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        found.settings["STATE_SHA"] = "0" * 64
+        assert found.run().returncode == 1
+        assert found.result()[:2] == ["failed", "stop"]
+        assert not any(call.startswith(("mount", "rsync")) for call in found.calls())
+        assert found.calls()[-1] == "systemctl start smbd.service" and found.mark.exists()
+
+    def test_a_root_that_fails_fsck_is_not_touched(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        found.fails["fsck.ext4"] = "-n /dev"
+        assert found.run().returncode == 1
+        assert found.result()[:2] == ["failed", "check"]
+        assert found.calls() == ["fsck.ext4 -n /dev/mmcblk0p1"]
+
+    def test_a_copy_that_does_not_settle_fails_at_its_verification(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        found.left = [">f.st...... etc/hostname\n", "", ">f.st...... etc/hostname\n", ""]
+        assert found.run().returncode == 1
+        assert found.result()[:2] == ["failed", "verify"] and "etc/hostname" in found.result()[2]
+        copies = [call for call in found.calls() if call.startswith("rsync") and "--dry-run" not in call]
+        assert len(copies) == 4  # the root and the volume, twice
+        assert found.mark.exists()
+
+    def test_a_copy_that_settles_at_its_second_run_goes_on(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        found.left = [">f.st...... etc/hostname\n", "", "", ""]
+        assert found.run().returncode == 0
+        assert not found.mark.exists()
+
+    def test_an_emmc_that_fails_its_check_after_the_copy_keeps_the_card_s_standby(self, tmp_path):
+        found = ReturnHost(tmp_path)
+        found.fails["fsck.ext4"] = "-f -n"
+        assert found.run().returncode == 1
+        assert found.result()[:2] == ["failed", "verify"]
+        assert found.mark.exists() and not found.counter.exists()
+        assert f"umount {found.mount}" in found.calls()

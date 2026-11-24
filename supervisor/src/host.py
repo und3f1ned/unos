@@ -88,6 +88,8 @@ HOST_TOOLS: dict[str, str] = {
     "mkfs.btrfs": "btrfs-progs",
     "chattr": "e2fsprogs",
     "lsattr": "e2fsprogs",
+    # The SD standby's return to the eMMC checks the eMMC's root first (system.sd-standby-failback).
+    "fsck.ext4": "e2fsprogs",
     "modprobe": "kmod",
     "mountpoint": "util-linux",
     "findmnt": "util-linux",

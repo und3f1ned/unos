@@ -259,6 +259,10 @@ class StandbyFakeHost:
     def run(self, cmd, *, timeout=60, check=False, input=None, errors=None):
         cmd = list(cmd)
         self.calls.append(cmd)
+        if cmd[0] == "systemd-run" and "--unit=unos-standby-return" in cmd:
+            # The return to the eMMC's unit (system.sd-standby-failback): started, it runs on its own.
+            self._change(cmd)
+            return host.HostResult(0, "", "")
         if cmd[0] == "systemd-run":
             assert "--wait" in cmd and "--pipe" in cmd and any(part.startswith("--unit=unos-standby-sync") for part in cmd)
             inner = cmd[cmd.index("--") + 1:]
