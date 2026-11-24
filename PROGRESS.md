@@ -55,7 +55,8 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3
-  runs `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
+  runs the tree of `mvp.batch-24` a234cfce since 2026-11-24 (SD MiB 7.250 in all; check: OK). Before
+  it `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
   eMMC: 2.180 in all; check: OK), the standby removed and set up again, its NVMe once lost at a warm
   reboot and back at the next (Log). Before it `main` 20e6754f (`mvp.batch-22` with
   `system.sd-standby-bpi-f3`, ADR-0489) since 2026-11-24,
@@ -323,7 +324,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24, deployed with
+- Runs the tree of `mvp.batch-24` a234cfce (critical apps, the ARMv7 build, the public tree) since
+  2026-11-24, deployed with `scripts/dev/deploy.sh all` (SD MiB 7.496 in all; check: OK). Before it
+  `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24, deployed with
   `scripts/dev/deploy.sh all` at the owner's standing permission (SD MiB, its eMMC: 2.004 in all; check:
   OK), with the SD standby removed and set up again (generation 1) and two reboots through its chooser (Log).
 - Before it `main` 082b67e2 (`mvp.batch-22` with the fixes of `system.sd-standby-boot`, ADR-0488) since
@@ -826,6 +829,30 @@ Open owner actions:
     GB on the eMMC).
 
 ## Log
+
+### 2026-11-24: The twenty-fourth batch, the repository public (ADR-0498 to ADR-0500)
+
+- At the owner's word to go on without them. Builders in worktrees of their own:
+  `system.sd-standby-critical-apps` (ADR-0500: the mark, the sync from a snapshot into card
+  generations, the move to the card and the discarding return, the planned move from an unmount),
+  `deploy.armv7-supervisor-build` (ADR-0499: the supervisor builds for linux/arm/v7 with its
+  compilers in a build stage; the amd64 and arm64 images unchanged to the byte), and
+  `process.public-repository` (ADR-0498), merged to `main` first (b6942696, 97b9ad09).
+- A read-only audit of the tree, the history of every ref, the pull requests and the CI logs found no
+  live secret; the history keeps the two passwords rotated on 2026-11-07 and the owner's e-mail address
+  (the owner's decision: open it as it is, the passwords used nowhere). At the owner's word the lead
+  deleted the two CI runs whose logs printed the old administrator password, cleaned 26 pull requests'
+  texts and deleted five stale remote branches; the Secret Scan job, red on main for four false
+  positives, passes again (95d5cd11). The owner made the repository public before the release, since
+  the private repository's Actions minutes were at 90%; the lead turned on the settings of
+  docs/maintenance.md at their word (`ci.branch-protection` passes).
+- Gates on the batch: `make check` 12060 passed; `make e2e-local` 1279 passed, 1 failed (a layout
+  spec that read the cards' boxes one by one while the page settled, under a builder's load: it now
+  measures a row in one snapshot, 150 runs green alone), and the specs both sides touched (401) passed
+  after the merge of `main`; `test_ws_auth.py`'s 5 s guard became 30 s (ADR-0497).
+- Deployed with `scripts/dev/deploy.sh all`, the W3 first, then the F3: SD MiB 7.496 and 7.250 in all,
+  check: OK on both, the standby armed with no problem. The critical apps' and the failback's device
+  drills need a USB stick for a test pool (the owner's); the ARMv7 build has no ARMv7 board to run on.
 
 ### 2026-11-24: The timing tests hold under load (testing.timing-tests-under-load, ADR-0497)
 

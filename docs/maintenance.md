@@ -107,8 +107,8 @@ and proposes the changes, and the owner reviews them.
 
 ## Once the repository is public
 
-The owner makes the repository public after the release v0.1.2 (ADR-0498), then turns these on
-in its **Settings**, once:
+The repository is public since 2026-11-24 (ADR-0498). These settings are on since that day, turned on
+in its **Settings** at the owner's word; check them when a setting's page changes:
 
 1. **Branch protection of `main`**, as `ci.branch-protection` in `feature-list.json` gives it: a
    pull request required, with every job of `.github/workflows/test.yml` as a required check
