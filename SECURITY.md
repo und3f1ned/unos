@@ -29,8 +29,8 @@ A fix ships in a new release, never by moving the tag of an old one. System > Up
 
 UNOS is maintained by one person, with coding agents. After a report:
 
-- a first answer, usually within 7 days, saying whether the report is confirmed or what is still
-  needed;
+- a first answer as soon as the maintainer can give one, saying whether the report is confirmed
+  or what is still needed;
 - for a confirmed vulnerability, the fix in a release, and then a published GitHub security
   advisory that credits you, unless you ask not to be named;
 - please keep the details private until that advisory is published.
