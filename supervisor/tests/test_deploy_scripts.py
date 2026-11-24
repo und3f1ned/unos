@@ -85,9 +85,12 @@ DOCKER_STUB = textwrap.dedent(
       while [ -e "$STUB_DIR/volume-at-$1-$n" ]; do n=$((n + 1)); done
       (cd "$STUB_DIR/volume" 2>/dev/null && for f in *; do [ -e "$f" ] && echo "$f=$(cat "$f")"; done) > "$STUB_DIR/volume-at-$1-$n"
     }
-    # Docker's architecture from uname -m of the scenario (machine=<name>, aarch64 by default).
+    # Docker's architecture from uname -m of the scenario (machine=<name>, aarch64 by default), or
+    # docker-arch=<arch>: a 32-bit userland on a 64-bit Arm kernel runs Docker's arm under aarch64.
     machine=$(sed -n 's/^machine=//p' "$STUB_DIR/scenario" 2> /dev/null)
     case "${machine:-aarch64}" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; armv7l) arch=arm ;; *) arch=$machine ;; esac
+    docker_arch=$(sed -n 's/^docker-arch=//p' "$STUB_DIR/scenario" 2> /dev/null)
+    arch=${docker_arch:-$arch}
     # A release's image that was pulled (or images-here) and has its GHCR name still.
     here() { has images-here || grep -qxF "$1" "$STUB_DIR/pulled" 2> /dev/null; }
     case "$1" in
@@ -731,6 +734,17 @@ class TestUpdateScript:
         ]
         assert "deploy-webui:latest" in result.stdout and "linux/arm/v7" in result.stdout
         assert "another machine" in result.stdout
+
+    def test_a_32_bit_userland_on_a_64_bit_kernel_builds_only_the_supervisor_too(self, sandbox):
+        # uname says aarch64, but Docker runs arm images (32-bit Raspberry Pi OS on a Pi 4): the web UI's
+        # image comes from another machine there too (deploy.armv7-supervisor-build).
+        result, calls = _run_update(sandbox, "machine=aarch64", "docker-arch=arm")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert [call for call in calls if call.startswith("docker compose build")] == [
+            "docker compose build --no-cache supervisor"
+        ]
+        assert "deploy-webui:latest" in result.stdout and "linux/arm/v7" in result.stdout
 
     def test_a_failed_build_on_armv7_leaves_the_running_version_alone(self, sandbox):
         before = _head(sandbox)
@@ -4632,8 +4646,10 @@ def _dockerignore(context):
 
 def _pip_layer(lines):
     """The index of the RUN that installs requirements.txt in the stripped lines of
-    supervisor/Dockerfile: the only one that starts with `RUN pip install`."""
-    starts = [i for i, line in enumerate(lines) if line.startswith("RUN pip install")]
+    supervisor/Dockerfile: the only one that starts with `RUN pip install --no-cache-dir pip==<x>
+    setuptools==<y>`, as scripts/riscv64-release-dockerfile.sh finds it."""
+    starts = [i for i, line in enumerate(lines)
+              if re.match(r"RUN pip install --no-cache-dir pip==[0-9.]+ setuptools==[0-9.]+ ", line)]
     assert len(starts) == 1, starts
     return starts[0]
 
@@ -4786,13 +4802,16 @@ def _dockerfiles():
 
 def _unpinned_from_lines(text):
     """The FROM lines of a Dockerfile that start from an image without its tag and digest. A line
-    that starts from `scratch` or from a stage that an earlier FROM line named pulls nothing."""
+    that starts from `scratch` or from a stage that an earlier FROM line named pulls nothing, and so
+    does one whose stage BuildKit picks by the target's architecture, `<name>${TARGETARCH}`, when
+    that names an earlier stage for each of TARGET_ARCHES (deploy.armv7-supervisor-build)."""
     stages, unpinned = {"scratch"}, []
     for line in text.splitlines():
         if not re.match(r"\s*FROM\b", line, re.I):
             continue
         parsed = FROM_LINE.fullmatch(line.strip())
-        if not (parsed and parsed["image"].lower() in stages) and not PINNED_FROM.fullmatch(line.strip()):
+        names = {parsed["image"].lower().replace("${targetarch}", arch) for arch in TARGET_ARCHES} if parsed else set()
+        if not (names and names <= stages) and not PINNED_FROM.fullmatch(line.strip()):
             unpinned.append(line.strip())
         if parsed and parsed["stage"]:
             stages.add(parsed["stage"].lower())
@@ -4829,14 +4848,185 @@ class TestBaseImages:
 
         assert _unpinned_from_lines(text) == []
 
+    def test_a_stage_picked_by_the_target_architecture_passes_when_each_architecture_has_one(self):
+        digest = "@sha256:" + "a" * 64
+        picks = "".join(f"FROM base AS pick-{arch}\n" for arch in TARGET_ARCHES)
+        text = f"FROM python:3.11-slim{digest} AS base\n{picks}FROM pick-${{TARGETARCH}}\n"
+
+        assert _unpinned_from_lines(text) == []
+        assert _unpinned_from_lines(text.replace("FROM base AS pick-arm\n", "")) == ["FROM pick-${TARGETARCH}"]
+
     def test_the_supervisor_images_start_from_the_same_base(self):
         # The test image runs the code on the base of the image it stands in for, and a new
-        # digest moves both (Dependabot's docker group in .github/dependabot.yml).
+        # digest moves both (Dependabot's docker group in .github/dependabot.yml). The stages of
+        # supervisor/Dockerfile that pull an image all pull that base (deploy.armv7-supervisor-build).
         def bases(name):
-            return re.findall(r"^FROM (\S+)", (REPO_ROOT / "supervisor" / name).read_text(), re.M)
+            return [stage["image"] for stage in _stages((REPO_ROOT / "supervisor" / name).read_text())
+                    if PINNED_FROM.fullmatch(f"FROM {stage['image']}")]
 
-        assert bases("Dockerfile")
-        assert bases("Dockerfile.test") == bases("Dockerfile")
+        assert len(bases("Dockerfile")) == 2 and len(set(bases("Dockerfile"))) == 1
+        assert bases("Dockerfile.test") == bases("Dockerfile")[:1]
+
+
+# The architectures of BuildKit's TARGETARCH that UNOS builds or pulls images for: those of a release
+# and 32-bit ARM's (linux/arm/v7), whose supervisor is built on the host (deploy.armv7-supervisor-build).
+TARGET_ARCHES = ("amd64", "arm64", "riscv64", "arm")
+
+
+def _instructions(text):
+    """The instructions of a Dockerfile, each with its continuation lines joined, without comments."""
+    joined, parts = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts.append(line.removesuffix("\\").strip())
+        if not line.endswith("\\"):
+            joined.append(" ".join(parts))
+            parts = []
+    return joined
+
+
+def _stages(text):
+    """The stages of a Dockerfile in order: the image or stage each starts from, its name and the
+    instructions after its FROM."""
+    stages = []
+    for instruction in _instructions(text):
+        parsed = FROM_LINE.fullmatch(instruction) if re.match(r"FROM\b", instruction, re.I) else None
+        if parsed:
+            stages.append({"image": parsed["image"], "name": parsed["stage"], "run": []})
+        else:
+            stages[-1]["run"].append(instruction)
+    return stages
+
+
+def _chain(stages, arch):
+    """The stages that make the last stage's image for BuildKit's TARGETARCH `arch`, the first of
+    them the one that pulls an image."""
+    named = {stage["name"]: stage for stage in stages if stage["name"]}
+    chain = [stages[-1]]
+    while chain[0]["image"].replace("${TARGETARCH}", arch) in named:
+        chain.insert(0, named[chain[0]["image"].replace("${TARGETARCH}", arch)])
+    return chain
+
+
+class TestArmv7Supervisor:
+    """supervisor/Dockerfile builds for linux/arm/v7 (deploy.armv7-supervisor-build): six of the
+    supervisor's packages publish no armv7l wheel, so a build stage compiles wheels of the requirements,
+    which 32-bit ARM's pip layer installs through a mount. No build tool reaches an image, and amd64,
+    arm64 and riscv64 run the instructions of the one-stage file before, so that the dev devices keep
+    their cached layers and the images do not change."""
+
+    DOCKERFILE = REPO_ROOT / "supervisor" / "Dockerfile"
+    # What the packages without an armv7l wheel compile with: cffi needs libffi's headers, greenlet a
+    # C++ compiler, uvloop's libuv make; the base has Python's headers.
+    BUILD_TOOLS = "gcc g++ libffi-dev make"
+
+    def _runs(self, arch):
+        return [run for stage in _chain(_stages(self.DOCKERFILE.read_text()), arch) for run in stage["run"]]
+
+    def test_each_architecture_builds_on_a_packages_stage_of_its_own(self):
+        stages = _stages(self.DOCKERFILE.read_text())
+
+        assert stages[-1]["image"] == "packages-${TARGETARCH}" and stages[-1]["name"] is None
+        assert {arch: [stage["name"] for stage in _chain(stages, arch)] for arch in TARGET_ARCHES} == {
+            "amd64": ["system", "packages", "packages-amd64", None],
+            "arm64": ["system", "packages", "packages-arm64", None],
+            "riscv64": ["system", "packages", "packages-riscv64", None],
+            "arm": ["system", "packages-arm", None],
+        }
+        for arch in ("amd64", "arm64", "riscv64"):
+            assert next(stage for stage in stages if stage["name"] == f"packages-{arch}")["run"] == [], arch
+        assert PINNED_FROM.fullmatch(f"FROM {_chain(stages, 'arm')[0]['image']}")
+
+    def test_the_other_architectures_run_the_instructions_of_the_one_stage_file(self):
+        """The image of amd64, arm64 and riscv64 is made by WORKDIR, the apt-get layer, the copy of
+        requirements.txt, the pip layer and the rest, in that order, as before the stages: no mount, no
+        copy from another stage, and the apt-get layer installs no build tool of the wheels."""
+        for arch in ("amd64", "arm64", "riscv64"):
+            runs = self._runs(arch)
+            assert runs[:3] == [
+                "WORKDIR /app",
+                "RUN apt-get update && apt-get install -y --no-install-recommends btrfs-progs smartmontools gcc "
+                "python3-dev iproute2 ethtool procps systemd && rm -rf /var/lib/apt/lists/*",
+                "COPY requirements.txt .",
+            ], arch
+            assert _pip_layer(runs) == 3, arch
+            assert not [run for run in runs if "--mount" in run or "--from" in run], arch
+
+    def test_32_bit_arm_differs_only_in_its_pip_layer_which_installs_the_wheels_without_the_index(self):
+        arm = self._runs("arm")
+        for arch in ("amd64", "arm64", "riscv64"):
+            other = self._runs(arch)
+            at = _pip_layer(other)
+            assert len(arm) == len(other) and arm[:at] == other[:at] and arm[at + 1:] == other[at + 1:], arch
+
+        assert arm[at] == (
+            "RUN --mount=type=bind,from=arm-wheels,source=/wheels,target=/wheels "
+            f"pip install --no-cache-dir --no-index --find-links /wheels {_pip_pins(other[at])} "
+            "&& pip install --no-cache-dir --no-index --find-links /wheels -r requirements.txt"
+        )
+
+    def test_the_wheels_are_compiled_in_a_build_stage_that_no_image_starts_from(self):
+        stages = _stages(self.DOCKERFILE.read_text())
+        wheels = next(stage for stage in stages if stage["name"] == "arm-wheels")
+        pins = _pip_pins(self._runs("amd64")[_pip_layer(self._runs("amd64"))])
+
+        assert wheels["image"] == _chain(stages, "arm")[0]["image"]
+        assert wheels["run"] == [
+            f"RUN apt-get update && apt-get install -y --no-install-recommends {self.BUILD_TOOLS} "
+            "&& rm -rf /var/lib/apt/lists/*",
+            "COPY requirements.txt .",
+            f"RUN pip install --no-cache-dir {pins.split()[0]} && pip wheel --no-cache-dir --wheel-dir /wheels "
+            f"{pins} -r requirements.txt",
+        ]
+        for arch in TARGET_ARCHES:
+            assert wheels not in _chain(stages, arch), arch
+            runs = self._runs(arch)
+            # What only the wheels need (g++, libffi-dev, make) is installed by no layer but riscv64's pip
+            # layer, which removes it again (ADR-0370); gcc and python3-dev were in every image before.
+            pip_layer = None if arch == "arm" else _pip_layer(runs)
+            others = [run for n, run in enumerate(runs) if n != pip_layer]
+            for tool in self.BUILD_TOOLS.split()[1:]:
+                assert not [run for run in others if re.search(rf"(?<![\w-]){re.escape(tool)}(?![\w-])", run)], (arch, tool)
+            assert not [run for run in runs if "COPY --from" in run], arch
+
+    def test_install_sh_builds_the_supervisor_where_the_dockerfile_compiles_its_wheels(self, tmp_path):
+        """The platform rule: install.sh builds the supervisor on the host only where Docker's architecture
+        has no release images, 32-bit ARM (`arm`, uname armv7l), the one architecture whose packages stage
+        mounts compiled wheels; elsewhere it pulls the release's images. The docker stub reports the
+        architecture of each machine as Docker does."""
+        hosts = {"x86_64": "amd64", "aarch64": "arm64", "riscv64": "riscv64", "armv7l": "arm",
+                 # A 32-bit userland on a 64-bit Arm kernel (32-bit Raspberry Pi OS on a Pi 4).
+                 "aarch64 32-bit userland": "arm"}
+        compiles = {arch for arch in TARGET_ARCHES if any("from=arm-wheels" in run for run in self._runs(arch))}
+        built = set()
+        for n, (host, arch) in enumerate(hosts.items()):
+            scenario = [f"machine={host.split()[0]}", f"docker-arch={arch}"]
+            result, calls, exec_start = _start_install(tmp_path / str(n), *scenario)
+            assert result.returncode == 0 and exec_start, result.stdout + result.stderr
+            if [call for call in calls if call.startswith("docker compose build")] == ["docker compose build supervisor"]:
+                assert "docker image inspect deploy-webui:latest" in calls, host
+                built.add(arch)
+            else:
+                assert not any(call.startswith("docker compose build") for call in calls), host
+
+        assert built == compiles == {"arm"}
+        result, calls, _ = _start_install(tmp_path / "no-webui", "machine=aarch64", "docker-arch=arm", "no-webui-image")
+        assert result.returncode == 1 and "--platform linux/arm/v7" in result.stdout + result.stderr
+
+    def test_the_install_guide_says_that_an_armv7_host_builds_the_supervisor(self):
+        """docs/INSTALL.md, ARMv7: the supervisor's build on the host was checked (under QEMU) and
+        compiles the packages without an armv7l wheel in a build stage; it names how long that took
+        and how much space it needs, and that the web UI's image still comes from another machine."""
+        guide = (REPO_ROOT / "docs" / "INSTALL.md").read_text()
+        section = guide[guide.index("### ARMv7\n"):guide.index("### Banana Pi BPI-F3")]
+        text = " ".join(section.split())
+
+        assert "has not been checked" not in text and "probably" not in text
+        for name in ("cffi", "greenlet", "build stage", "deploy-webui:latest", "QEMU"):
+            assert name in text, name
+        assert re.search(r"\b\d+ minutes\b", text) and re.search(r"\b\d+(?:\.\d+)? GB\b", text), text
 
 
 COMPOSE_FILES = ("docker-compose.yml", "docker-compose.test.yml")

@@ -2497,6 +2497,28 @@ def test_deploy_sh_build_supervisor_says_whether_its_pinned_base_is_on_the_devic
         assert f"names the base {unpinned} without a digest" in result.stderr
         assert not [call for call in calls() if call.startswith(("tag ", "compose build"))], unpinned
 
+    # The stages of supervisor/Dockerfile (deploy.armv7-supervisor-build): a FROM line that starts from an earlier stage,
+    # or from the stage of the target's architecture where amd64, arm64, riscv64 and arm each have one,
+    # pulls nothing; each base is named once, and an unpinned one in any stage is refused.
+    staged = (f"FROM {pinned} AS system\nWORKDIR /app\nFROM system AS packages\n"
+              + "".join(f"FROM packages AS packages-{arch}\n" for arch in ("amd64", "arm64", "riscv64"))
+              + "FROM WHEELS AS arm-wheels\nFROM system AS packages-arm\nFROM packages-${TARGETARCH}\n")
+    result = build(staged.replace("WHEELS", pinned), FAKE_IMAGES=pinned)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count(f"base {pinned}: on the device") == 1
+    assert "without a digest" not in result.stderr and "compose build supervisor" in calls()
+
+    # BuildKit expands only ${TARGETARCH} as written: packages-${targetarch} would name the stage "packages-".
+    for refused, dockerfile in (("python:3.11-slim", staged.replace("WHEELS", "python:3.11-slim")),
+                                ("packages-${TARGETARCH}", staged.replace("WHEELS", pinned).replace(
+                                    "FROM packages AS packages-riscv64\n", "")),
+                                ("packages-${targetarch}", staged.replace("WHEELS", pinned).replace(
+                                    "${TARGETARCH}", "${targetarch}"))):
+        result = build(dockerfile, FAKE_IMAGES=pinned)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert f"names the base {refused} without a digest" in result.stderr
+        assert not [call for call in calls() if call.startswith(("tag ", "compose build"))], refused
+
 
 # --- the inbound IPv6 filter of the device (ADR-0301) ---------------------------------------
 

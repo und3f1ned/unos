@@ -81,11 +81,31 @@ set -euo pipefail
 repo=$1
 cd "$repo/deploy"
 image=$(project)-supervisor
-# The bases of supervisor/Dockerfile, pinned by digest (ADR-0305). BuildKit keeps a base that it
-# pulled in its build cache, not as an image: buildx du describes those layers as "pulled from
-# <name>:<tag>@<digest>".
+# The bases of supervisor/Dockerfile, pinned by digest (ADR-0305), each once. BuildKit keeps a base that
+# it pulled in its build cache, not as an image: buildx du describes those layers as "pulled from
+# <name>:<tag>@<digest>". A stage that starts from an earlier stage pulls nothing, nor does the last,
+# which starts from the stage of the target'\''s architecture, packages-${TARGETARCH}, where amd64,
+# arm64, riscv64 and arm each have one (deploy.armv7-supervisor-build).
 pulled=$(docker buildx du --verbose 2> /dev/null | sed -n "s/^Description:[[:space:]]*pulled from //p") || true
-for base in $(awk '\''toupper($1) == "FROM" { print $2 }'\'' "$repo/supervisor/Dockerfile"); do
+bases=$(awk '\''
+    toupper($1) != "FROM" { next }
+    {
+        image = tolower($2)
+        pulls = !(image in stage)
+        # As BuildKit expands it: ${TARGETARCH} in capitals.
+        at = index($2, "${TARGETARCH}")
+        if (pulls && at) {
+            pulls = 0
+            n = split("amd64 arm64 riscv64 arm", arches, " ")
+            for (i = 1; i <= n; i++) {
+                if (!((substr(image, 1, at - 1) arches[i] substr(image, at + 13)) in stage)) pulls = 1
+            }
+        }
+        if (pulls && !($2 in seen)) { seen[$2] = 1; print $2 }
+        if (toupper($3) == "AS") stage[tolower($4)] = 1
+    }
+'\'' "$repo/supervisor/Dockerfile")
+for base in $bases; do
     if ! [[ $base =~ @sha256:[0-9a-f]{64}$ ]]; then
         echo "supervisor/Dockerfile names the base $base without a digest (name:tag@sha256:<hex>, ADR-0305)" >&2
         exit 1

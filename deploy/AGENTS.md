@@ -32,9 +32,11 @@
   `install.sh` checks out the newest release and pulls them, `update.sh [<tag>]` refuses local
   changes, pulls them while UNOS runs, backs up, switches, waits for health and rolls back on
   failure with the backup's database (ADR-0049, ADR-0050); both build only where Docker is neither
-  amd64, arm64 nor riscv64 (32-bit arm), which has no release images (ADR-0458). The in-app updater runs `update.sh --fetch` and, in a transient
-  systemd unit, `update.sh --in-app` (`supervisor/src/updates/installer.py`); the compose file
-  keeps building `deploy-supervisor` and `deploy-webui` for `scripts/dev/deploy.sh`, and the
+  amd64, arm64 nor riscv64 (32-bit arm), which has no release images (ADR-0458), and its supervisor's
+  build compiles the packages without an armv7l wheel in a build stage (ADR-0498). The in-app
+  updater runs `update.sh --fetch` and, in a transient systemd unit, `update.sh --in-app`
+  (`supervisor/src/updates/installer.py`); the compose file keeps building `deploy-supervisor` and
+  `deploy-webui` for `scripts/dev/deploy.sh`, and the
   scripts give the pulled images those names; `uninstall.sh` keeps the SMB host accounts and removes only their exact passdb
   entries, with one restart of smbd (ADR-0322), and undoes on the disks of UNOS's udev rule of
   the idle timeouts what UNOS set, with the host's hdparm and smartctl, then removes the rule (only
@@ -96,10 +98,14 @@ write counts; its SD card holds the SD standby, changed only through its API (AD
   and digest (ADR-0305). A release's riscv64 supervisor is `supervisor/Dockerfile` with its one pip
   layer (`RUN pip install --no-cache-dir pip==<x> setuptools==<y> ...`) replaced by an install of the
   wheels of `supervisor/Dockerfile.riscv64-wheels` (`scripts/riscv64-release-dockerfile.sh`, ADR-0458):
-  keep that layer one instruction and the pins of both files the same, and add no `FROM` without a
-  digest, which build-supervisor refuses. A supervisor build after a change to its requirements, or to its base's
-  digest when the image that digest names for linux/arm64 is new to the device, reruns apt-get
-  and pip there: tell the owner first. `deploy.sh build-supervisor` says before the build
+  keep that layer one instruction and the pins of both files and of the stage `arm-wheels` the same.
+  Each `FROM` names a base by digest or an earlier stage, and the last one `packages-${TARGETARCH}`,
+  for which amd64, arm64, riscv64 and arm each have a stage: build-supervisor refuses anything else.
+  amd64, arm64 and riscv64 so build the layers of the one-stage file, which the devices have cached,
+  and only 32-bit ARM builds `arm-wheels`, whose compilers stay out of every image (ADR-0498). A
+  supervisor build after a change to its requirements, or to its base's digest when the image that
+  digest names for linux/arm64 is new to the device, reruns apt-get and pip there: tell the owner
+  first. `deploy.sh build-supervisor` says before the build
   whether the device has the pinned base.
 - Checks start no container (ADR-0183), keep scratch data in `/dev/shm` and call the API through
   `scripts/dev/api.py`, which runs on the device against `https://127.0.0.1/api/v1` (the device's

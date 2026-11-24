@@ -48,8 +48,9 @@ is not enough; the script then stops before it changes anything.
   [Banana Pi BPI-W3](#banana-pi-bpi-w3-rockchip-rk3588-arm64)
 - **RISCV64** - Debian 13 or Ubuntu 24.04 only; see
   [Banana Pi BPI-F3](#banana-pi-bpi-f3-spacemit-k1-riscv64)
-- **ARMv7** - Limited support, may have performance issues; the web UI's image
-  comes from another machine: see [ARMv7](#armv7)
+- **ARMv7** - Limited support, may have performance issues; the supervisor is
+  built on the host and the web UI's image comes from another machine: see
+  [ARMv7](#armv7)
 
 Each release of UNOS, a git tag `v<x.y.z>`, publishes its images for AMD64,
 ARM64 and RISCV64 on GHCR (`ghcr.io/und3f1ned/unos-supervisor` and
@@ -82,10 +83,25 @@ the build and prints these commands; load the image and run it again. Before
 `update.sh`, load the image of the new version; when an update is rolled
 back, load it again.
 
-The supervisor's build on an ARMv7 host has not been checked: cffi and
-greenlet, among others, publish no ARMv7 wheel, and their sources need
-libffi's headers and a C++ compiler, which the supervisor's image does not
-install, so the build probably stops there (ADR-0458).
+The supervisor is built on the host. cffi, psutil, PyYAML, uvloop, greenlet
+and httptools publish no ARMv7 wheel, so the build stage `arm-wheels` of
+`supervisor/Dockerfile` installs gcc, g++, libffi's headers and make and
+compiles a wheel of each package; the image installs those wheels, and g++,
+libffi's headers and make stay out of it (gcc and python3-dev are in the
+supervisor's image on every platform) (ADR-0498). Checked under QEMU on a
+workstation, not yet on a board: the build took 22 minutes, 13 of them
+uvloop's, and the supervisor started and answered its health check. Plan for
+as long or longer on a small board; how much RAM the compile takes there was
+not measured. Plan for 2 GB free in Docker's data root: the image takes
+475 MB and the build stage about 220 MB more in Docker's build cache, and
+`update.sh` builds both again without Docker's cache, so every update
+compiles again while the previous image stays as `:previous` and the build
+stages of earlier updates stay in the build cache until Docker's garbage
+collection or `sudo docker builder prune`.
+
+Docker's architecture decides, not the kernel's: a 32-bit system on a 64-bit
+Arm kernel, such as the 32-bit Raspberry Pi OS on a Raspberry Pi 4, runs
+`arm` images and is installed as ARMv7.
 
 ### Banana Pi BPI-F3 (SpacemiT K1, RISCV64)
 
