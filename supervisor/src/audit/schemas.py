@@ -157,6 +157,12 @@ class AuditAction(str, Enum):
     STANDBY_RETURNED = "standby_returned"
     STANDBY_DISCARDED = "standby_discarded"
     STANDBY_SWITCHED = "standby_switched"
+    # Its critical apps (ADR-0498): a mark or an interval by an administrator, a move of apps to the card
+    # (by the system when their pool failed, by an administrator as a drill or before a repair) and
+    # their return to the pool
+    APP_CRITICAL_CHANGED = "app_critical_changed"
+    STANDBY_APPS_MOVED = "standby_apps_moved"
+    STANDBY_APPS_RETURNED = "standby_apps_returned"
     # How the move of Docker's data onto the first pool ended, by the system (ADR-0487); its start is
     # part of the administrator's pool_created
     DOCKER_DATA_MOVED = "docker_data_moved"

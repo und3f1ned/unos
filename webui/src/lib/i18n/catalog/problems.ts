@@ -41,9 +41,10 @@ export const en = {
 	'problems.kind.system_disk_errors': 'The system disk {subject} reports I/O or filesystem errors',
 	'problems.kind.system_disk_failed': 'The system disk {subject} is failing',
 	// The SD card standby (ADR-0471): {subject} is its card, /dev/mmcblk1, or for running_on_standby the
-	// chooser's reason (marked, tries, emmc_unreadable, emmc_boot_failed).
+	// chooser's reason (marked, tries, emmc_unreadable, emmc_boot_failed); for a critical app's
+	// standby_copy_old the app, and for apps_on_standby the apps (ADR-0498).
 	'problems.kind.standby_sync_failed': 'The last sync of the SD standby {subject} failed',
-	'problems.kind.standby_copy_old': 'The SD standby {subject} had no complete sync for 3 days',
+	'problems.kind.standby_copy_old': 'No complete sync of the SD standby ({subject}) for 3 days',
 	'problems.kind.standby_card_missing': 'The SD standby is set up, but its card {subject} is missing',
 	'problems.kind.standby_not_in_boot_path':
 		"This boot did not pass the SD standby's chooser on {subject}: an eMMC failure would not switch to the card",
@@ -51,6 +52,7 @@ export const en = {
 	'problems.kind.standby_leftover':
 		'The SD card {subject} holds a standby that is not set up, and its chooser counts the boots: remove it',
 	'problems.kind.running_on_standby': 'UNOS runs from the SD standby ({subject})',
+	'problems.kind.apps_on_standby': 'Critical apps run from the SD standby: {subject}',
 	// A kind that this web UI does not know yet.
 	'problems.kind.other': 'A problem with {subject}'
 };
@@ -88,7 +90,7 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.system_disk_errors': 'Системный диск {subject} сообщает об ошибках ввода-вывода или файловой системы',
 	'problems.kind.system_disk_failed': 'Системный диск {subject} отказывает',
 	'problems.kind.standby_sync_failed': 'Последняя синхронизация резерва на SD {subject} не удалась',
-	'problems.kind.standby_copy_old': 'Резерв на SD {subject} не синхронизировался полностью 3 дня',
+	'problems.kind.standby_copy_old': 'Резерв на SD ({subject}) не синхронизировался полностью 3 дня',
 	'problems.kind.standby_card_missing': 'Резерв на SD настроен, но его карты {subject} нет',
 	'problems.kind.standby_not_in_boot_path':
 		'Эта загрузка прошла мимо выбора резерва на SD {subject}: при отказе eMMC переключения на карту не будет',
@@ -96,5 +98,6 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.standby_leftover':
 		'На карте SD {subject} резерв, который не настроен, а его выбор загрузки считает загрузки: удалите его',
 	'problems.kind.running_on_standby': 'UNOS работает с резерва на SD ({subject})',
+	'problems.kind.apps_on_standby': 'Критичные приложения работают с резерва на SD: {subject}',
 	'problems.kind.other': 'Проблема: {subject}'
 };

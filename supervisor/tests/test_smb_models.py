@@ -155,11 +155,11 @@ class TestTablesOnAnOldDatabase:
         # authentication, the limits of the apps' containers kept for their next install (ADR-0390),
         # the network interfaces that SMB listens on (ADR-0391), the dashboard layouts (ADR-0395),
         # the users' themes (ADR-0405), their security keys (ADR-0409) and the iSCSI targets with their
-        # initiators (ADR-0418), new beside them.
+        # initiators (ADR-0418), and the critical apps of the SD standby (ADR-0498), new beside them.
         renames = {"smb_uid_names", "usernames_taken", "smb_share_options", "user_groups", "user_group_members",
                    "smb_share_group_access", "two_factor_requirement", "app_resource_limits",
                    "smb_bind_interfaces", "dashboard_layouts", "user_themes", "security_keys",
-                   "iscsi_targets", "iscsi_initiators"}
+                   "iscsi_targets", "iscsi_initiators", "standby_apps"}
         # sqlite_sequence is SQLite's own: it keeps the AUTOINCREMENT counter of user_groups.
         # alembic_version records the revision (ADR-0444).
         assert _tables(old_db) == OLD_TABLES | SMB_TABLES | {"user_sessions", "smb_uids", "sqlite_sequence",

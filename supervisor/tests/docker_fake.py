@@ -116,6 +116,7 @@ class Image:
         return {
             "Id": self.id,
             "Created": self.created,
+            "Size": sum(self.layers),
             "RepoTags": sorted(n for n in self.names if "@" not in n),
             "RepoDigests": sorted(n for n in self.names if "@" in n),
             "RootFS": {"Type": "layers", "Layers": list(self.diff_ids)},
@@ -514,6 +515,20 @@ class _Api:
         return self._create(image=image, command=command, ports=ports, environment=environment, name=name,
                             host_config=host_config, labels=labels, networking_config=networking_config,
                             stop_timeout=stop_timeout, healthcheck=healthcheck)
+
+    def create_container_from_config(self, config: dict, name: str | None = None, platform: str | None = None) -> dict:
+        """docker-py's create of a container from the body of Docker's create: its Config, HostConfig and
+        NetworkingConfig, as a container's inspect gives the first two (the SD standby's critical apps,
+        ADR-0498)."""
+        self._docker._call("api.create_container_from_config", name, copy.deepcopy(config))
+        known = {"Image", "Cmd", "Env", "Labels", "StopTimeout", "Healthcheck", "HostConfig", "NetworkingConfig",
+                 "ExposedPorts", "Hostname", "Volumes", "Entrypoint", "WorkingDir", "User"}
+        if set(config) - known:
+            raise TypeError(f"the fake does not create from {sorted(set(config) - known)}")
+        return self._create(image=config["Image"], command=config.get("Cmd"), environment=config.get("Env"), name=name,
+                            host_config=copy.deepcopy(config.get("HostConfig") or {}), labels=config.get("Labels"),
+                            networking_config=config.get("NetworkingConfig"), stop_timeout=config.get("StopTimeout"),
+                            healthcheck=config.get("Healthcheck"))
 
     def _create(self, *, image: str, command: Any = None, ports: list | None = None,
                 environment: dict | list | None = None, name: str | None = None, host_config: dict | None = None,

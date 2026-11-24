@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.changes import audit_change
+from ..standby import apps as standby_apps
 from ..standby import service as standby_service
 from ..audit.schemas import AuditAction, AuditSeverity
 from ..auth.models import User
@@ -59,6 +60,9 @@ from .schemas import (
     is_app_data_path,
 )
 from .stacks import APP_POOL_LABEL, COMPANION_LABEL, UNOS_APP_LABEL, VERSION_LABEL
+
+# The label of a container that runs from the SD standby's card (standby.apps.CARD_LABEL, ADR-0498).
+STANDBY_CARD_LABEL = "unos.standby.card"
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 logger = logging.getLogger(__name__)
@@ -182,12 +186,20 @@ def _images_size(app: AppTemplate) -> int:
 )
 async def list_installed(_: dict = Depends(verify_token)) -> list[InstalledApp]:
     """The installed apps, each with its companion containers, the host folders that they really
-    use, their container limits and use, the app update on offer and the earlier version kept."""
+    use, their container limits and use, the app update on offer, the earlier version kept and whether
+    it is a critical app of the SD standby (ADR-0498)."""
+    from ..standby import apps as standby_apps
+
+    try:
+        critical = set(await standby_apps.marks())
+    except SQLAlchemyError as e:
+        logger.warning("The critical apps cannot be read: %s", e)
+        critical = set()
     # Docker calls block, and statvfs on a failing disk can hang.
-    return await asyncio.to_thread(_list_installed)
+    return await asyncio.to_thread(_list_installed, critical)
 
 
-def _list_installed() -> list[InstalledApp]:
+def _list_installed(critical: set[str] | frozenset[str] = frozenset()) -> list[InstalledApp]:
     try:
         client = get_client()
         containers = client.containers.list(
@@ -205,7 +217,9 @@ def _list_installed() -> list[InstalledApp]:
     result = []
     for key, found in members.items():
         app = stacks.group(key, found, get_app_by_id(found[0].labels.get(UNOS_APP_LABEL, "")))
-        result.append(_installed_app(app, pools, bases))
+        listed = _installed_app(app, pools, bases)
+        listed.critical = key in critical
+        result.append(listed)
     return result
 
 
@@ -233,7 +247,9 @@ def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases:
             volumes.append(AppVolume(host=b.source, container=b.target, readonly=b.readonly, companion=companion))
             if _is_data(b, bases) and _pool_containing(b.source, pools) is None and b.source not in outside:
                 outside.append(b.source)
-    pool = next((c.labels[APP_POOL_LABEL] for c in app.containers if c.labels.get(APP_POOL_LABEL)), None)
+    # A container that runs from the SD standby's card names the pool it left (ADR-0498).
+    pool = next((c.labels.get(APP_POOL_LABEL) or c.labels.get(STANDBY_CARD_LABEL) for c in app.containers
+                 if c.labels.get(APP_POOL_LABEL) or c.labels.get(STANDBY_CARD_LABEL)), None)
 
     return InstalledApp(
         id=first.short_id,
@@ -255,6 +271,7 @@ def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases:
         version=stacks.app_version(app),
         update_to=stacks.update_to(app),
         previous=_earlier_version(app, pools),
+        on_standby_card=any(STANDBY_CARD_LABEL in (c.labels or {}) for c in app.containers),
     )
 
 
@@ -1722,6 +1739,7 @@ async def install_app(
     ADR-0350, ADR-0381, ADR-0384, ADR-0403.
     """
     standby_service.refuse_on_standby("an app's install")
+    standby_apps.refuse_failed_over(req.template_id, "its install")
     template = get_app_by_id(req.template_id)
     if not template:
         raise HTTPException(404, f"App {req.template_id} not found")
@@ -2120,6 +2138,7 @@ def _uninstall(container_id: str) -> tuple[stacks.InstalledContainers, list[str]
     networks removed and those left because other containers use them. The data folders, password
     files and images stay (ADR-0256)."""
     client, app = _get_app(container_id)
+    standby_apps.refuse_failed_over(app.key, "its uninstall")
     with stacks.app_lock(app.key, app.name):
         done = _Done(app)
         _stop_all(app, done, action="remove")

@@ -86,12 +86,23 @@ def _upgrade(path: Path, target: str) -> None:
         engine.dispose()
 
 
+# The tables that revisions after the baseline added: create_all never made them on a database from before
+# the migrations, such as the dev device's.
+AFTER_THE_BASELINE = ("standby_apps",)
+
+
+def _before_the_revisions(schema: list[tuple]) -> list[tuple]:
+    """The schema without the tables, and their indexes, of the revisions after the baseline."""
+    return [entry for entry in schema if entry[2] not in AFTER_THE_BASELINE]
+
+
 def _create_all(path: Path, *, without: tuple[str, ...] = ()) -> None:
     """The database as create_all made it before the migrations, with one administrator."""
     database.import_models()
     engine = create_engine(f"sqlite:///{path}")
+    left_out = (*without, *AFTER_THE_BASELINE)
     try:
-        Base.metadata.create_all(engine, tables=[t for name, t in Base.metadata.tables.items() if name not in without])
+        Base.metadata.create_all(engine, tables=[t for name, t in Base.metadata.tables.items() if name not in left_out])
         with engine.begin() as conn:
             conn.exec_driver_sql(
                 "INSERT INTO users (username, hashed_password, is_admin) VALUES ('owner', 'hash', 1)")
@@ -294,7 +305,9 @@ class TestTheDevDevicesDatabase:
             _start(path, monkeypatch)
 
         assert _revision(path) == _head()
-        assert _schema(path) == schema
+        # The revisions after the baseline add their tables; the baseline's stay as they were.
+        assert _before_the_revisions(_schema(path)) == schema
+        assert {entry[2] for entry in _schema(path)} >= set(AFTER_THE_BASELINE)
         assert _users(path) == [("owner", "hash", 1)]
         assert _diff(path) == []
         assert [(r.levelname, r.getMessage()) for r in caplog.records if r.name == "src.database"] == [
@@ -320,7 +333,9 @@ class TestTheDevDevicesDatabase:
             _start(path, monkeypatch)
 
         assert _revision(path) == _head()
-        assert _schema(path) == schema
+        # The revisions after the baseline add their tables; the baseline's stay as they were.
+        assert _before_the_revisions(_schema(path)) == schema
+        assert {entry[2] for entry in _schema(path)} >= set(AFTER_THE_BASELINE)
         with sqlite3.connect(path) as conn:
             assert conn.execute("SELECT id, next_uid FROM smb_state").fetchall() == [(1, 70003)]
         warnings = [r.getMessage() for r in caplog.records if r.name == "src.database" and r.levelname == "WARNING"]

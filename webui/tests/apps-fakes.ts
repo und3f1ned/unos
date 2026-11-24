@@ -130,6 +130,8 @@ export interface FakeInstalledApp {
   version: string | null;
   update_to: string | null;
   previous: FakeEarlierVersion | null;
+  critical: boolean;
+  on_standby_card: boolean;
 }
 
 /** The earlier version that an app's update kept (AppEarlierVersion, ADR-0408). */
@@ -167,6 +169,8 @@ export function oneContainerApp(
     version: null,
     update_to: null,
     previous: null,
+    critical: false,
+    on_standby_card: false,
   };
 }
 
@@ -250,6 +254,8 @@ export function installedImmich(
     version: 'v3.4.1',
     update_to: null,
     previous: null,
+    critical: false,
+    on_standby_card: false,
   };
 }
 

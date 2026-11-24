@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -133,3 +135,73 @@ async def discard(body: Confirmed, request: Request, user=Depends(require_admin)
     ADR-0471.
     """
     return await service.discard(body.model, dry_run=body.dry_run, request=request, username=user.username)
+
+
+class AppsMove(DryRun):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"reason": "planned", "pool": "usb", "dry_run": False}]})
+
+    reason: Literal["drill", "planned"] = Field(description=(
+        "drill: Move the critical apps to the card on the Standby tab; planned: before an unmount or a removal "
+        "of their pool on the Storage page."))
+    pool: str | None = Field(default=None, max_length=64, description=(
+        "The pool whose critical apps move; null: every critical app (a drill)."))
+
+
+class AppsReturn(Confirmed):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"apps": ["vaultwarden"], "model": "SC32G"}]})
+
+    apps: list[str] | None = Field(default=None, max_length=64, description=(
+        "The apps that return; null: every app that runs from the card and whose pool can take it back."))
+
+
+class AppMoved(BaseModel):
+    app: str = Field(description="The app.")
+    has_copy: bool = Field(description="Whether it runs from its copy; false: it had none and stays stopped.")
+    age: str | None = Field(description="Its copy's age, such as 3 h.")
+    error: str | None = Field(description="Why its move failed; null when it did not.")
+
+
+class AppsAction(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "dry_run": False, "apps": [{"app": "vaultwarden", "has_copy": True, "age": "3 h", "error": None}],
+        "message": "1 critical app(s) to the card"}]})
+
+    dry_run: bool = Field(description="Whether nothing was changed.")
+    apps: list[AppMoved] = Field(description="The apps the action took, with what happened to each.")
+    message: str = Field(description="What was done, in English.")
+
+
+@router.post("/apps/move", response_model=AppsAction, summary="Move the critical apps to the card",
+             responses=errors(BODY, {409: "The standby is not set up, its card is missing, or no critical app is left "
+                                          "to move.", 500: "Every app's move failed: the detail names why."}))
+async def move_apps(body: AppsMove, request: Request, user=Depends(require_admin)) -> AppsAction:
+    """Recreate the critical apps' containers on their copies on the card, as the failover of a pool does:
+    the binds under {pool}/apps/<app>/ on the copy, a cache on a tmpfs, every other pool bind on an empty
+    read-only folder of the card; those that ran start. Audited as standby_apps_moved, alerted
+    (apps_on_standby).
+    \f
+    ADR-0471, ADR-0498.
+    """
+    moved = await service.move_apps(body.reason, body.pool, dry_run=body.dry_run, request=request,
+                                    username=user.username)
+    return AppsAction(dry_run=body.dry_run, apps=[
+        AppMoved(app=item.app, has_copy=item.copy, age=item.age, error=item.error) for item in moved],
+        message=("A dry run: " if body.dry_run else "") + f"{len(moved)} critical app(s) to the card")
+
+
+@router.post("/apps/return", response_model=AppsAction, summary="Return the critical apps to their pool, discarding "
+             "the card's changes", responses=errors(BODY, {409: "The typed model does not match, no app runs from the "
+                                                                 "card, or an app's pool cannot take it back.",
+                                                            500: "A return failed."}))
+async def return_apps(body: AppsReturn, request: Request, user=Depends(require_admin)) -> AppsAction:
+    """Recreate the pool-bound containers of the apps that run from the card from their definitions, start
+    those that ran and delete the card's run copies: what the apps changed on the card is discarded. Each
+    app's pool must be mounted, writable and healthy. Audited as standby_apps_returned.
+    \f
+    ADR-0471, ADR-0498.
+    """
+    returned = await service.return_apps(body.apps, body.model, dry_run=body.dry_run, request=request,
+                                         username=user.username)
+    return AppsAction(dry_run=body.dry_run, apps=[
+        AppMoved(app=app, has_copy=True, age=None, error=None) for app in returned],
+        message=("A dry run: " if body.dry_run else "") + f"{len(returned)} app(s) back on their pool")

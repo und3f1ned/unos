@@ -128,6 +128,7 @@ def import_models() -> None:
     from .security.models import LoginAttempt  # noqa: F401
     from .shares.models import SmbAccount, SmbShare, SmbShareAccess, SmbState, SmbUid  # noqa: F401
     from .apps.models import AppResourceLimit  # noqa: F401
+    from .standby.models import StandbyApp  # noqa: F401
 
 
 def server_default_differs(context, inspected_column, metadata_column, inspected_default, metadata_default,

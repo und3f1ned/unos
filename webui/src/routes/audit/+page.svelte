@@ -162,6 +162,9 @@
 		standby_returned: 'audit.action.standbyReturned',
 		standby_discarded: 'audit.action.standbyDiscarded',
 		standby_switched: 'audit.action.standbySwitched',
+		app_critical_changed: 'audit.action.appCriticalChanged',
+		standby_apps_moved: 'audit.action.standbyAppsMoved',
+		standby_apps_returned: 'audit.action.standbyAppsReturned',
 		docker_data_moved: 'audit.action.dockerDataMoved',
 		other: 'audit.action.other'
 	};
