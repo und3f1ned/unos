@@ -144,8 +144,8 @@ export interface AppTemplate extends ContainerSpec {
 	host_platform: string | null;
 	/** False when an image of one of its containers publishes no build for the host's platform: the server refuses its install (409). */
 	available: boolean;
-	/** About what the images that its install pulls on this host take on the system disk, in bytes (ADR-0415). */
-	system_disk_bytes: number | null;
+	/** About what the images that its install pulls on this host take where Docker keeps its images, in bytes (ADR-0415). */
+	images_bytes: number | null;
 }
 
 /** A container of an app: its Docker name, its companion's name (null for the main container) and its spec. */
@@ -295,10 +295,12 @@ export interface AppUpdatePlan {
 	version_to: string;
 	platform: string;
 	containers: ContainerUpdate[];
-	/** What the pulls download, what they write to the system disk and what it has free now. */
+	/** What the pulls download, what they write where Docker keeps its images and what is free there now. */
 	download_bytes: number;
-	system_disk_bytes: number;
-	system_disk_free_bytes: number | null;
+	images_bytes: number;
+	images_free_bytes: number | null;
+	/** The pool that holds Docker's images; null for the system disk (ADR-0490). */
+	images_pool: string | null;
 	copies: DatabaseCopy[];
 }
 

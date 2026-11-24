@@ -34,7 +34,7 @@ interface Expected {
   id: string;
   name: string;
   companion: string;
-  // The estimate of its images on the system disk, as the App Store writes it (the sum of its pins).
+  // The estimate of its images where Docker keeps them, as the App Store writes it (the sum of its pins).
   size: string;
   // Its generated password and key files, below its folder on the pool.
   secrets: string[];
@@ -180,7 +180,7 @@ test.describe('Apps that came back with companions', () => {
       await expect(catalogCard(page, app.name).getByText('Install', { exact: true })).toBeVisible();
       const dialog = await details(page, app.name);
 
-      // Overview: its two containers with their images, what they take on the system disk, and
+      // Overview: its two containers with their images, what their images take (Disk space), and
       // what keeps the pool's disks awake.
       const list = dialog.locator('section', { has: page.getByRole('heading', { name: 'Containers and images', exact: true }) });
       const items = list.getByRole('listitem');
@@ -189,7 +189,7 @@ test.describe('Apps that came back with companions', () => {
         await expect(items.nth(i).locator('p')).toHaveText(name);
         await expect(items.nth(i).locator('code')).toHaveText(images[i]);
       }
-      await expect(dialog.locator('.kv', { hasText: 'System disk' })).toContainText(`About ${app.size} for its images`);
+      await expect(dialog.locator('.kv', { hasText: 'Disk space' })).toContainText(`About ${app.size} for its images`);
       await expect(dialog.getByText(diskAwake(app.name))).toBeVisible();
       // Its passwords and keys: files on the pool that UNOS generates, never their values.
       const locations = dialog.locator('section', { hasText: `Data locations on ${POOL.name}` });

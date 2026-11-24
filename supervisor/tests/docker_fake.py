@@ -660,8 +660,10 @@ class StackDocker:
 
     def __init__(self) -> None:
         self.calls: list[Call] = []
-        # The folder that Docker's info names as its root (DockerRootDir).
+        # The folder that Docker's info names as its root (DockerRootDir), and its DriverStatus,
+        # which names the containerd image store when Docker keeps its images there.
         self.root_dir = "/var/lib/docker"
+        self.driver_status: list[list[str]] = []
         self.failures: dict[tuple[str, str | None], BaseException] = {}
         # Docker's containers by name, as Docker has them now (a Container is a client's copy).
         self.containers_: dict[str, _Live] = {}
@@ -697,9 +699,9 @@ class StackDocker:
         self.api = _Api(self)
 
     def info(self) -> dict:
-        """What Docker says of itself: here only the folder of its data."""
+        """What Docker says of itself: here only the folder of its data and its store."""
         self._call("info", None)
-        return {"DockerRootDir": self.root_dir}
+        return {"DockerRootDir": self.root_dir, "DriverStatus": self.driver_status}
 
     def events(self, since: int | None = None, until: int | None = None, filters: dict | None = None,
                decode: bool | None = None) -> Any:

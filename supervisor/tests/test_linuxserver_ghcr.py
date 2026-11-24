@@ -25,7 +25,7 @@ from . import test_apps, test_catalog_platforms_script
 from .docker_fake import StackDocker
 from .test_app_stacks import clock  # noqa: F401
 from .test_app_updates import _job
-from .test_apps import CONTAINERD_ROOT, DOCKER_ROOT, GIB, INSTALLED, TRANSMISSION, install
+from .test_apps import DOCKER_ROOT, INSTALLED, TRANSMISSION, install
 
 api = test_apps.api
 pools = test_apps.pools
@@ -211,7 +211,7 @@ class TestTheInstall:
         image.names.add(TRANSMISSION_BY_DIGEST)
         docker.images_[image.ref] = image
         pin = catalog_module.APP_IMAGES["transmission"]
-        soc.free = {DOCKER_ROOT: preflight_module.FREE_SPACE_FLOOR + pin.disk_bytes - 1, CONTAINERD_ROOT: 64 * GIB}
+        soc.free = {DOCKER_ROOT: preflight_module.FREE_SPACE_FLOOR + pin.disk_bytes - 1}
 
         response = install(api, TRANSMISSION)
 
@@ -221,7 +221,7 @@ class TestTheInstall:
 
     def test_an_image_that_docker_lacks_counts_its_estimate(self, api, pools, docker, soc):
         pin = catalog_module.APP_IMAGES["transmission"]
-        soc.free = {DOCKER_ROOT: preflight_module.FREE_SPACE_FLOOR + pin.disk_bytes - 1, CONTAINERD_ROOT: 64 * GIB}
+        soc.free = {DOCKER_ROOT: preflight_module.FREE_SPACE_FLOOR + pin.disk_bytes - 1}
 
         response = install(api, TRANSMISSION)
 
@@ -278,7 +278,7 @@ class TestTheDevDevicesTransmission:
             "name": "transmission", "companion": None, "image_from": DEVICE_IMAGE, "image_to": TRANSMISSION_PIN,
             "changed": True, "built_from": "2026-10-27T05:12:30.123456Z", "built_to": "2026-11-17T19:16:46.128214Z",
         }]
-        assert (plan["download_bytes"], plan["system_disk_bytes"], plan["copies"]) == (0, 0, [])
+        assert (plan["download_bytes"], plan["images_bytes"], plan["copies"]) == (0, 0, [])
         hosts = {urllib.parse.urlsplit(url).hostname for url in ghcr.requests}
         assert hosts == {"ghcr.io", "pkg-containers.githubusercontent.com"}
         assert device_transmission.called("api.pull", "container.stop", "api.create_container") == []
@@ -349,7 +349,7 @@ class TestTheDevDevicesTransmission:
         # No layer of the image that runs is the pin's: all of its arm64 layers are pulled, and its
         # whole estimate is counted.
         layers = sum(layer["size"] for layer in ARM64["layers"])
-        assert (plan.json()["download_bytes"], plan.json()["system_disk_bytes"]) == (
+        assert (plan.json()["download_bytes"], plan.json()["images_bytes"]) == (
             layers, catalog_module.APP_IMAGES["transmission"].disk_bytes)
 
         job = _job(api, api.post(f"{INSTALLED}/transmission/update"))

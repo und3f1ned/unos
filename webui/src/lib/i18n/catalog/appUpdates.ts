@@ -17,6 +17,8 @@ export const en = {
 	'appUpdates.added': 'Added',
 	'appUpdates.leftOut': 'Kept with the earlier version',
 	'appUpdates.download': 'Download',
+	// Where the pulls write: the pool that holds Docker's images, or the system disk (ADR-0490).
+	'appUpdates.imagesPool': 'Pool {pool}',
 	'appUpdates.systemDisk': 'System disk',
 	'appUpdates.writes': 'About {writes}, of {free} free',
 	'appUpdates.writesNoFree': 'About {writes}',
@@ -87,6 +89,7 @@ export const ru: Translation<typeof en> = {
 	'appUpdates.added': 'Добавляется',
 	'appUpdates.leftOut': 'Остаётся с прежней версией',
 	'appUpdates.download': 'Скачивание',
+	'appUpdates.imagesPool': 'Пул {pool}',
 	'appUpdates.systemDisk': 'Системный диск',
 	'appUpdates.writes': 'Около {writes} из свободных {free}',
 	'appUpdates.writesNoFree': 'Около {writes}',

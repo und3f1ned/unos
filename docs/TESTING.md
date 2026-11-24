@@ -1087,8 +1087,9 @@ The stack has no fake disks, pools or containers. The supervisor sees:
   share specs. It is not a pool that UNOS manages, and the unprivileged supervisor cannot make one.
 - Disks: those of the machine that runs Docker, as `lsblk` sees them inside the container.
 - Containers: the host's real containers and images, through the mounted Docker socket. The
-  container has neither Docker's root folder nor `/var/lib/containerd`, so an app's install
-  checks no free space of the system disk: it logs a warning and pulls (ADR-0381).
+  container has neither Docker's data root nor containerd's root (nor the systemctl that tells
+  whether containerd keeps the images), so an app's install checks no free space where Docker
+  keeps its images: it logs a warning and pulls (ADR-0381, ADR-0490).
 - The JWT secret that the supervisor generated into the `test-data` volume.
 - Users: the administrator `admin` / `unos-e2e-pass`, created by `scripts/test-cycle.sh` and the
   `test-runner`.

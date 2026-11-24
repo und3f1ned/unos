@@ -2,7 +2,7 @@
 	import { messageOf } from '$lib/errors';
 	// The update of an installed app to the catalog's newer pinned images (ADR-0408): before it
 	// runs, the dialog shows what the server read for it (each container's image before and
-	// after, what the pulls write to the system disk, the copy of the database on the pool) or why
+	// after, what the pulls write where Docker keeps its images, the copy of the database on the pool) or why
 	// it cannot run; Update now starts its job, whose progress the App Store's job cards show.
 	import { untrack } from 'svelte';
 	import { Alert, Badge, Button, Modal, Skeleton, TechDetails } from '$lib/components/ui';
@@ -134,14 +134,19 @@
 					<span class="kv-value" data-field="download">{formatSize(plan.download_bytes, $intlLocale, $t)}</span>
 				</div>
 				<div>
-					<span class="kv-label">{$t('appUpdates.systemDisk')}</span>
-					<span class="kv-value" data-field="system-disk">
-						{plan.system_disk_free_bytes !== null
+					<!-- Where Docker keeps its images: its pool, or the system disk (ADR-0490). -->
+					<span class="kv-label">
+						{plan.images_pool !== null
+							? $t('appUpdates.imagesPool', { pool: plan.images_pool })
+							: $t('appUpdates.systemDisk')}
+					</span>
+					<span class="kv-value" data-field="images">
+						{plan.images_free_bytes !== null
 							? $t('appUpdates.writes', {
-									writes: formatSize(plan.system_disk_bytes, $intlLocale, $t),
-									free: formatSize(plan.system_disk_free_bytes, $intlLocale, $t)
+									writes: formatSize(plan.images_bytes, $intlLocale, $t),
+									free: formatSize(plan.images_free_bytes, $intlLocale, $t)
 								})
-							: $t('appUpdates.writesNoFree', { writes: formatSize(plan.system_disk_bytes, $intlLocale, $t) })}
+							: $t('appUpdates.writesNoFree', { writes: formatSize(plan.images_bytes, $intlLocale, $t) })}
 					</span>
 				</div>
 			</div>

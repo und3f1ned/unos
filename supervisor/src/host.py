@@ -62,8 +62,9 @@ logger = logging.getLogger(__name__)
 # network/ (ip, ss, systemd-run, hostnamectl; resolvectl only where
 # systemd-resolved runs, else /etc/resolv.conf; networkctl, sed and cp for the bonds,
 # VLANs and bridges of network/virtual.py, ADR-0424), apps/preflight.py (ss: the host
-# ports that an app's install would take; sh with df: the free space of the system
-# disk before its pulls, ADR-0381), power/router.py (shutdown,
+# ports that an app's install would take; sh with df: the free space where Docker
+# keeps its images before its pulls, and test: whether Docker's data root is there,
+# ADR-0381, ADR-0490), power/router.py (shutdown,
 # busctl, systemctl, ip, ethtool: ADR-0233), power/schedule.py (shutdown, busctl and ss; sh
 # with cat, which read and set the RTC's wake alarm: ADR-0407), logs/router.py (journalctl, under
 # timeout: ADR-0257, ADR-0258), system/router.py (timedatectl under timeout, hostname:

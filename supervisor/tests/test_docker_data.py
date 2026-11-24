@@ -206,6 +206,22 @@ class TestPlacement:
         with pytest.raises(DockerDataError, match="not valid TOML"):
             docker_data.placement()
 
+    @pytest.mark.parametrize(("info", "containerd_root", "loaded", "images"), [
+        # The W3: the containerd image store of the host's containerd, on the pool.
+        (W3, "/mnt/pools/data/.containerd", True, "/mnt/pools/data/.containerd"),
+        # The F3: Docker's classic store keeps its images below its data root.
+        (F3, "/var/lib/containerd", True, "/mnt/pools/data/.docker"),
+        # The containerd image store of a containerd of Docker's own, below its data root.
+        (W3, "/var/lib/containerd", False, "/mnt/pools/data/.docker"),
+        # A fresh Docker 29 on the system disk.
+        (FRESH, "/var/lib/containerd", True, "/var/lib/containerd"),
+    ], ids=["w3", "f3", "dockers-own-containerd", "fresh"])
+    def test_the_folder_of_dockers_images(self, host, info, containerd_root, loaded, images):
+        # ADR-0490: the folder whose free space the App Store's checks read.
+        on_the_pool(host, info, containerd_root=containerd_root)
+        host.commands.containerd_loaded = loaded
+        assert docker_data.images_root(dict(info)) == images
+
     @pytest.mark.parametrize(("path", "pool"), [
         ("/mnt/pools/data/.docker", "data"), ("/mnt/pools/data", "data"), ("/mnt/pools/media/x/y", "media"),
         ("/var/lib/docker", None), ("/mnt/pools", None), ("/mnt/poolsdata/.docker", None),

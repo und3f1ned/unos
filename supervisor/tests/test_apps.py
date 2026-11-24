@@ -295,13 +295,20 @@ def _reads_device_tree(cmd: list[str]) -> bool:
 # The host's listening TCP and bound UDP sockets with their programs, which every install of an
 # app that publishes a port reads before the pull (src/apps/preflight.py, ADR-0381).
 SS = ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]
-# Docker's root folder, as Docker's info names it, and the containerd image store's: every install
-# reads the free space of their file systems before the pull (ADR-0381).
+# Docker's data root, as Docker's info names it, and containerd's root by default: every install
+# reads the free space of the file system of the one that holds Docker's images before the pull
+# (ADR-0381, ADR-0490): containerd's root with the containerd image store and the host's containerd
+# service, else Docker's data root.
 DOCKER_ROOT = "/var/lib/docker"
 CONTAINERD_ROOT = "/var/lib/containerd"
 GIB = 1024**3
-# The read of the free space exits with this status where the host has none of the folders.
+# The read of the free space exits with this status where the host lacks the folder.
 NO_FREE_SPACE_FOLDER = 3
+# What Docker's info says of the containerd image store, and the reads of the host that then name
+# containerd's root: whether containerd runs as a service of its own, and its configuration.
+CONTAINERD_STORE = [["driver-type", "io.containerd.snapshotter.v1"]]
+CONTAINERD_SERVICE = ["systemctl", "show", "--property=LoadState", "--value", "containerd.service"]
+CONTAINERD_CONFIG = ["cat", "--", "/etc/containerd/config.toml"]
 # src/host.py's own run_on_host, which the fixture ``soc`` replaces: tests of the scripts that
 # the host runs put it back and run them on this machine (UNOS_HOST_EXEC=local).
 REAL_RUN_ON_HOST = host_module.run_on_host
@@ -311,9 +318,9 @@ def _reads_free_space(cmd: list[str]) -> bool:
     return cmd[:2] == ["/bin/sh", "-c"] and cmd[3:4] == ["unos-free-space"]
 
 
-def _free_space_read(root: str = DOCKER_ROOT) -> list[str]:
-    """The read of the free space of the system disk, for Docker's root folder ``root``."""
-    return ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", root, CONTAINERD_ROOT]
+def _free_space_read(folder: str = DOCKER_ROOT) -> list[str]:
+    """The read of the free space of the file system of ``folder``, which holds Docker's images."""
+    return ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", folder]
 
 
 def _df(free: dict[str, int], paths: list[str]) -> str:
@@ -344,13 +351,17 @@ def soc(monkeypatch):
     an exception to raise) answers only the look for the device nodes, after a device tree it
     read. ``sockets`` are the lines that ``ss`` prints for the host's listening sockets (none by
     default), and ``ss`` (a HostResult, or an exception to raise) answers only that read.
-    ``free`` gives the free bytes of the file systems of the folders that exist (Docker's root
-    folder and the containerd image store, 64 GiB each by default); where none of them exists the
+    ``free`` gives the free bytes of the file systems of the folders that exist (Docker's data
+    root and containerd's root, 64 GiB each by default); where the folder read does not exist the
     read exits NO_FREE_SPACE_FOLDER, as its script does. ``df`` (a HostResult, or an exception to
-    raise) answers only the read of the free space."""
+    raise) answers only the read of the free space. ``containerd`` is the LoadState of the host's
+    containerd service (or an exception to raise, as where there is no systemctl), and
+    ``containerd_config`` the text of its config.toml (None: no file), which an install reads only
+    when Docker's info names the containerd image store; ``test -e`` finds the folders of ``free``."""
     fake = SimpleNamespace(
         compatible=None, devices=set(), commands=[], tree=None, lookup=None, sockets=[], ss=None,
-        free={DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB}, df=None,
+        free={DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB}, df=None, containerd="loaded",
+        containerd_config=None,
     )
 
     def run(cmd, **kwargs):
@@ -363,6 +374,16 @@ def soc(monkeypatch):
             if not any(path in fake.free for path in cmd[4:]):
                 return HostResult(NO_FREE_SPACE_FOLDER, "", "")
             return HostResult(0, _df(fake.free, cmd[4:]), "")
+        if cmd == CONTAINERD_SERVICE:
+            if isinstance(fake.containerd, BaseException):
+                raise fake.containerd
+            return HostResult(0, f"{fake.containerd}\n", "")
+        if cmd[:2] == ["test", "-e"]:
+            return HostResult(0 if cmd[2] in fake.free else 1, "", "")
+        if cmd == CONTAINERD_CONFIG:
+            if fake.containerd_config is None:
+                return HostResult(1, "", f"cat: {cmd[-1]}: No such file or directory\n")
+            return HostResult(0, fake.containerd_config, "")
         if cmd == SS:
             if isinstance(fake.ss, BaseException):
                 raise fake.ss
@@ -3994,7 +4015,7 @@ class TestStackCatalog:
 
 
 # ---------------------------------------------------------------------------
-# The free space of the system disk before a pull (ADR-0381)
+# The free space where Docker keeps its images, before a pull (ADR-0381, ADR-0490)
 # ---------------------------------------------------------------------------
 
 FREE_SPACE_FLOOR = 2 * GIB
@@ -4002,54 +4023,133 @@ NO_SPACE_REMEDY = "Remove unused images on Containers > Images first."
 
 
 def _unread_free_space(reason: str) -> dict:
-    return {"detail": f"Could not read the free space of the system disk: {reason}; nothing was pulled"}
+    return {"detail": f"Could not read the free space where Docker keeps its images: {reason}; nothing was pulled"}
 
 
-class TestSystemDiskSpace:
-    def test_every_install_reads_the_free_space_where_docker_keeps_images(self, api, pools, docker_client, soc):
+def _on_the_pool(docker_client, soc, pools, *, store: bool = True) -> tuple[str, str]:
+    """Docker's data root and containerd's root on the pool alpha, as on the BPI-W3 (ADR-0486); with
+    ``store`` Docker keeps its images in the containerd image store. Both have 64 GiB free."""
+    docker_root, containerd_root = f"{pools.alpha}/.docker", f"{pools.alpha}/.containerd"
+    docker_client.info.return_value = {"DockerRootDir": docker_root, "DriverStatus": CONTAINERD_STORE if store else []}
+    soc.containerd_config = f'version = 2\nroot = "{containerd_root}"\n'
+    soc.free = {docker_root: 64 * GIB, containerd_root: 64 * GIB}
+    return docker_root, containerd_root
+
+
+def _space_reads(soc) -> list[list[str]]:
+    """The host commands of ``soc`` but the reads of the ports in use and of the device tree: those
+    that tell where Docker keeps its images and the free space there."""
+    return [cmd for cmd in soc.commands if cmd != SS and not _reads_device_tree(cmd)]
+
+
+class TestImageSpace:
+    def test_with_dockers_own_store_its_data_root_is_read(self, api, pools, docker_client, soc):
+        # Docker's classic overlay2 store keeps the images below its data root, as on the BPI-F3.
         docker_client.info.return_value = {"DockerRootDir": "/srv/docker"}
         soc.free = {"/srv/docker": 64 * GIB, CONTAINERD_ROOT: 64 * GIB}
 
         response = install(api, {"template_id": "tailscale"})
 
         assert response.status_code == 200, response.text
-        # Docker's root folder as Docker names it, and the containerd image store's folder.
+        # Docker's data root as Docker names it, and nothing of containerd.
         assert soc.commands == [_free_space_read("/srv/docker")]
 
-    @pytest.mark.parametrize("lower", [DOCKER_ROOT, CONTAINERD_ROOT])
-    def test_the_lower_free_space_of_the_two_counts(self, api, pools, docker_client, soc, lower):
-        soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: 64 * GIB, lower: FREE_SPACE_FLOOR - GIB // 2}
+    def test_with_the_containerd_image_store_containerds_root_is_read(self, api, pools, docker_client, soc):
+        _, containerd_root = _on_the_pool(docker_client, soc, pools)
+
+        response = install(api, {"template_id": "tailscale"})
+
+        assert response.status_code == 200, response.text
+        assert soc.commands == [CONTAINERD_SERVICE, CONTAINERD_CONFIG, _free_space_read(containerd_root)]
+
+    def test_the_images_pool_is_named_when_it_lacks_room(self, api, pools, docker_client, soc):
+        _, containerd_root = _on_the_pool(docker_client, soc, pools)
+        # The system disk's folders have room: they no longer count.
+        soc.free[containerd_root] = FREE_SPACE_FLOOR - GIB // 2
 
         response = install(api, {"template_id": "jellyfin"})
 
         need = preflight_module._gib(catalog_module.APP_IMAGES["jellyfin"].disk_bytes)
         assert (response.status_code, response.json()) == (409, {
-            "detail": f"Jellyfin's images need about {need} on the system disk, which has 1.5 GiB free; at least "
+            "detail": f"Jellyfin's images need about {need} on the pool alpha, which has 1.5 GiB free; at least "
             "2 GiB must stay free. " + NO_SPACE_REMEDY
         })
         docker_client.api.post.assert_not_called()
         docker_client.containers.create.assert_not_called()
         assert not (pools.alpha / "apps").exists()
 
+    def test_docker_data_root_on_the_pool_does_not_count_with_the_containerd_store(
+        self, api, pools, docker_client, soc
+    ):
+        docker_root, containerd_root = _on_the_pool(docker_client, soc, pools)
+        soc.free[docker_root] = GIB
+
+        assert install(api, {"template_id": "jellyfin"}).status_code == 200
+        assert [cmd for cmd in soc.commands if _reads_free_space(cmd)] == [_free_space_read(containerd_root)]
+
+    def test_with_dockers_own_store_on_the_pool_its_data_root_counts(self, api, pools, docker_client, soc):
+        docker_root, containerd_root = _on_the_pool(docker_client, soc, pools, store=False)
+        soc.free[docker_root] = FREE_SPACE_FLOOR - GIB // 2
+
+        response = install(api, {"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert " on the pool alpha, which has 1.5 GiB free; " in response.json()["detail"]
+        assert _space_reads(soc) == [_free_space_read(docker_root)]
+
+    def test_the_containerd_store_without_a_containerd_service_keeps_the_images_in_dockers_root(
+        self, api, pools, docker_client, soc
+    ):
+        # Docker runs its own containerd, whose root is below Docker's data root.
+        docker_root, _ = _on_the_pool(docker_client, soc, pools)
+        soc.containerd = "not-found"
+
+        assert install(api, {"template_id": "tailscale"}).status_code == 200
+        assert soc.commands == [CONTAINERD_SERVICE, _free_space_read(docker_root)]
+
+    def test_containerds_default_root_on_the_system_disk_is_named_the_system_disk(
+        self, api, pools, docker_client, soc
+    ):
+        # A config.toml without root (or none at all): containerd keeps its data in /var/lib/containerd.
+        docker_client.info.return_value = {"DockerRootDir": f"{pools.alpha}/.docker", "DriverStatus": CONTAINERD_STORE}
+        soc.containerd_config = None
+        soc.free = {f"{pools.alpha}/.docker": 64 * GIB, CONTAINERD_ROOT: FREE_SPACE_FLOOR - GIB // 2}
+
+        response = install(api, {"template_id": "jellyfin"})
+
+        assert response.status_code == 409
+        assert " on the system disk, which has 1.5 GiB free; " in response.json()["detail"]
+        assert _space_reads(soc) == [CONTAINERD_SERVICE, CONTAINERD_CONFIG, _free_space_read(CONTAINERD_ROOT)]
+
     def test_a_pinned_image_that_docker_lacks_counts_its_estimate(self, api, pools, docker_client, soc):
         pin = catalog_module.APP_IMAGES["jellyfin"]
-        soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR + pin.disk_bytes - 1, CONTAINERD_ROOT: 64 * GIB}
+        soc.free = {DOCKER_ROOT: FREE_SPACE_FLOOR + pin.disk_bytes - 1}
 
         response = install(api, {"template_id": "jellyfin"})
 
         assert response.status_code == 409, response.text
-        assert "Jellyfin's images need about" in response.json()["detail"]
+        assert response.json()["detail"].startswith("Jellyfin's images need about ")
+        assert " on the system disk, which has " in response.json()["detail"]
         docker_client.api.post.assert_not_called()
 
-    def test_a_folder_that_the_host_lacks_is_left_out(self, api, pools, docker_client, soc):
-        # Docker's own image store keeps everything in its root folder: no /var/lib/containerd.
-        soc.free = {DOCKER_ROOT: 64 * GIB}
+        soc.free[DOCKER_ROOT] += 1024  # df counts whole KiB
+
+        assert install(api, {"template_id": "jellyfin"}).status_code == 200
+
+    def test_images_that_docker_has_need_only_the_floor(self, api, pools, docker_client, soc):
+        _, containerd_root = _on_the_pool(docker_client, soc, pools)
+        soc.free[containerd_root] = FREE_SPACE_FLOOR - GIB // 2
+        # Docker has every image of the app: nothing is pulled, and only the floor counts.
+        docker_client.images.get.side_effect = None
 
         response = install(api, {"template_id": "jellyfin"})
 
-        assert response.status_code == 200, response.text
+        assert (response.status_code, response.json()) == (409, {
+            "detail": "The pool alpha has 1.5 GiB free; at least 2 GiB must stay free when Jellyfin is installed. "
+            + NO_SPACE_REMEDY
+        })
 
-    def test_a_host_without_either_folder_is_logged_and_the_install_goes_on(
+    def test_a_host_without_the_folder_is_logged_and_the_install_goes_on(
         self, api, pools, docker_client, soc, caplog
     ):
         # A supervisor that does not run on Docker's host, as in the compose test stack
@@ -4064,8 +4164,8 @@ class TestSystemDiskSpace:
         assert response.status_code == 200, response.text
         assert [cmd for cmd in soc.commands if _reads_free_space(cmd)] == [_free_space_read()]
         assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [
-            f"Could not read the free space of the system disk: the host has none of {DOCKER_ROOT}, "
-            f"{CONTAINERD_ROOT}; the install goes on"
+            f"Could not read the free space where Docker keeps its images: the host has no {DOCKER_ROOT}; "
+            "it is not checked"
         ]
         docker_client.api.post.assert_called_once()
         docker_client.containers.create.return_value.start.assert_called_once()
@@ -4089,12 +4189,60 @@ class TestSystemDiskSpace:
 
     @pytest.mark.parametrize("info", [{}, {"DockerRootDir": ""}, {"DockerRootDir": "var/lib/docker"}],
                              ids=["none", "empty", "relative"])
-    def test_a_docker_that_names_no_root_folder_answers_500(self, api, pools, docker_client, soc, info):
+    def test_a_docker_that_names_no_data_root_answers_500(self, api, pools, docker_client, soc, info):
         docker_client.info.return_value = info
 
         response = install(api, {"template_id": "jellyfin"})
 
-        assert (response.status_code, response.json()) == (500, _unread_free_space("Docker names no root folder"))
+        assert (response.status_code, response.json()) == (500, _unread_free_space("Docker names no data root"))
+        assert not [cmd for cmd in soc.commands if _reads_free_space(cmd)]
+        docker_client.api.post.assert_not_called()
+
+    def test_docker_without_its_host_and_systemctl_is_logged_and_the_install_goes_on(
+        self, api, pools, docker_client, soc, caplog
+    ):
+        # The compose test stack with a Docker of the containerd image store: its container has
+        # neither systemctl nor Docker's data root.
+        docker_client.info.return_value = {"DockerRootDir": DOCKER_ROOT, "DriverStatus": CONTAINERD_STORE}
+        soc.containerd = FileNotFoundError(2, "No such file or directory", "systemctl")
+        soc.free = {}
+
+        with caplog.at_level("WARNING", logger="src.apps.preflight"):
+            response = install(api, {"template_id": "dozzle"})
+
+        assert response.status_code == 200, response.text
+        assert _space_reads(soc) == [CONTAINERD_SERVICE, ["test", "-e", DOCKER_ROOT]]
+        assert [r.getMessage() for r in caplog.records if r.name == "src.apps.preflight"] == [
+            f"Could not read the free space where Docker keeps its images: the host has no {DOCKER_ROOT}; "
+            "it is not checked"
+        ]
+        docker_client.api.post.assert_called_once()
+
+    def test_a_containerd_service_that_cannot_be_told_on_dockers_host_answers_500(
+        self, api, pools, docker_client, soc
+    ):
+        docker_client.info.return_value = {"DockerRootDir": DOCKER_ROOT, "DriverStatus": CONTAINERD_STORE}
+        soc.containerd = FileNotFoundError(2, "No such file or directory", "systemctl")
+
+        response = install(api, {"template_id": "jellyfin"})
+
+        assert (response.status_code, response.json()) == (500, _unread_free_space(
+            "systemctl could not say whether containerd.service exists: [Errno 2] No such file or directory: "
+            "'systemctl'"
+        ))
+        assert _space_reads(soc) == [CONTAINERD_SERVICE, ["test", "-e", DOCKER_ROOT]]
+        docker_client.api.post.assert_not_called()
+
+    def test_a_containerd_configuration_that_cannot_be_read_answers_500(self, api, pools, docker_client, soc):
+        _on_the_pool(docker_client, soc, pools)
+        soc.containerd_config = "root = [\n"
+
+        response = install(api, {"template_id": "jellyfin"})
+
+        assert response.status_code == 500
+        assert response.json()["detail"].startswith(
+            "Could not read the free space where Docker keeps its images: /etc/containerd/config.toml is not valid TOML"
+        )
         assert not [cmd for cmd in soc.commands if _reads_free_space(cmd)]
         docker_client.api.post.assert_not_called()
 
@@ -4117,49 +4265,37 @@ class TestSystemDiskSpace:
         assert soc.commands == [SS]
         docker_client.info.assert_not_called()
 
-    def test_the_script_skips_a_folder_that_is_not_there(self, tmp_path):
-        # The script as the host runs it, on this machine's sh and df.
-        result = subprocess.run(
-            ["/bin/sh", "-c", preflight_module.FREE_SPACE_SCRIPT, "unos-free-space", str(tmp_path), str(tmp_path / "x")],
-            capture_output=True, text=True, check=False,
-        )
-
-        assert (result.returncode, result.stderr) == (0, "")
-        [free] = preflight_module._available(result.stdout)
-        assert abs(free - shutil.disk_usage(tmp_path).free) < GIB // 4
-
-    def test_the_script_reads_nothing_where_the_host_has_neither_folder(self, monkeypatch, tmp_path):
-        # The script as the host runs it, through src/host.py on this machine's sh.
+    def test_the_script_reads_the_folders_file_system(self, monkeypatch, tmp_path):
+        # The script as the host runs it, through src/host.py on this machine's sh and df.
         monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
         monkeypatch.setenv("UNOS_HOST_EXEC", "local")
 
-        assert preflight_module._free_bytes([str(tmp_path / "docker"), str(tmp_path / "containerd")]) is None
+        free = preflight_module._free_bytes(str(tmp_path))
 
-    def test_a_df_that_fails_for_one_folder_answers_500_though_another_is_read(self, monkeypatch, tmp_path):
-        # df fails for Docker's root folder (an I/O error on the system disk) and reads the
-        # containerd image store: the lower free space is not known, so none is used.
+        assert free is not None and abs(free - shutil.disk_usage(tmp_path).free) < GIB // 4
+
+    def test_the_script_reads_nothing_where_the_host_lacks_the_folder(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
+        monkeypatch.setenv("UNOS_HOST_EXEC", "local")
+
+        assert preflight_module._free_bytes(str(tmp_path / "containerd")) is None
+
+    def test_a_df_that_fails_answers_500(self, monkeypatch, tmp_path):
+        # df fails for the folder (an I/O error on its disk): its status and error are the answer.
         monkeypatch.setattr(host_module, "run_on_host", REAL_RUN_ON_HOST)
         monkeypatch.setenv("UNOS_HOST_EXEC", "local")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
-        (bin_dir / "df").write_text(
-            "#!/bin/sh\n"
-            'case "$*" in */docker) echo "df: $4: Input/output error" >&2; exit 1;; esac\n'
-            "printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'\n"
-            "printf '/dev/sda1 67110912 2048 67108864 1%% /\\n'\n"
-        )
+        (bin_dir / "df").write_text('#!/bin/sh\necho "df: $4: Input/output error" >&2\nexit 1\n')
         (bin_dir / "df").chmod(0o755)
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-        (tmp_path / "docker").mkdir()
         (tmp_path / "containerd").mkdir()
-        # The stub reads the containerd store when it is the only folder.
-        assert preflight_module._free_bytes([str(tmp_path / "containerd")]) == 64 * GIB
 
         with pytest.raises(HTTPException) as raised:
-            preflight_module._free_bytes([str(tmp_path / "docker"), str(tmp_path / "containerd")])
+            preflight_module._free_bytes(str(tmp_path / "containerd"))
 
         assert (raised.value.status_code, raised.value.detail) == (
-            500, _unread_free_space(f"df: {tmp_path / 'docker'}: Input/output error")["detail"]
+            500, _unread_free_space(f"df: {tmp_path / 'containerd'}: Input/output error")["detail"]
         )
 
     def test_a_file_system_whose_name_or_folder_holds_spaces_is_read(self):

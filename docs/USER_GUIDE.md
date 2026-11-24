@@ -1819,12 +1819,14 @@ Before it downloads anything, the install checks that:
   the **Ports** tab. Home Assistant and Scrypted run in the NAS's own network
   and listen on its ports, which cannot be changed: stop the program or remove
   the container that the message names;
-- the system disk keeps at least 2 GiB free once the images that the app lacks
-  are downloaded, each counted with its estimated size: four times the download
-  of its larger build for 64-bit ARM and x86 PCs, whatever your NAS's platform,
-  so the estimate errs high (Ollama's is about 13.6 GB, Frigate's 8.6 GB). When
-  there is too little space, remove unused images on **Containers** >
-  **Images** first.
+- the disk where Docker keeps its images, the pool that holds Docker's data
+  (see "The first pool takes Docker's data"), or the system disk before the
+  first pool, keeps at least 2 GiB free once the images that the app lacks are downloaded,
+  each counted with its estimated size: four times the download of its larger
+  build for 64-bit ARM and x86 PCs, whatever your NAS's platform, so the
+  estimate errs high (Ollama's is about 13.6 GB, Frigate's 8.6 GB). The message
+  names the pool, or the system disk. When there is too little space, remove
+  unused images on **Containers** > **Images** first.
 
 Downloading an app's images can take several minutes. An image that the NAS
 already has shows as **Already on the NAS** and is not downloaded again. A download that makes no progress at all for
@@ -1855,14 +1857,15 @@ changed.
 
 - **Pinned images.** UNOS installs each of Immich's images by its digest, so
   that the install gets the version that UNOS was checked with (Immich
-  v3.4.1). They take about 3.6 GB on the system disk.
+  v3.4.1). They take about 3.6 GB where Docker keeps its images, on its pool.
 - **Where the data is.** Everything Immich keeps is on the pool you choose: the
   photos and videos, their thumbnails and Immich's daily dumps of its database
   in `apps/immich/library`, the database in `apps/immich/postgres/data`,
   Valkey's in `apps/immich/redis`, and the machine learning's models (about
   2.6 GB, downloaded when they are first used) in `apps/immich/model-cache`.
-  The system disk holds only Immich's images, its containers' records and
-  their logs: what the containers write while they run is kept in memory.
+  Docker's data, on its pool, holds only Immich's images, its containers'
+  records and their logs: what the containers write while they run is kept in
+  memory.
 - **The database's password.** UNOS generates it at the install, keeps it in
   the file `apps/immich/postgres/password` on the pool, which only root can
   read, and gives it to the server and the database as that file: it is never
@@ -1925,9 +1928,10 @@ awake while they run, as with Immich. Paperless-ngx and Linkwarden run without
 their images' health checks, which would write to the system disk every 30
 seconds, so the **Installed** tab shows no health for them.
 
-The details of every app say about how much its images take on the system
-disk (BookStack's about 770 MB, Paperless-ngx's 3.1 GB, Linkwarden's 2.6 GB),
-by the estimate that the install's space check counts.
+The details of every app say, under **Disk space**, about how much its images
+take where Docker keeps them (BookStack's about 770 MB, Paperless-ngx's
+3.1 GB, Linkwarden's 2.6 GB), by the estimate that the install's space check
+counts.
 
 Open WebUI reaches Ollama, and Zigbee2MQTT reaches its MQTT broker, through
 `host.docker.internal`, which names the NAS in their containers: Open WebUI
@@ -2083,9 +2087,10 @@ and then:
   image**: the update reads the catalog's image for this NAS's platform from its
   registry and accepts it only when it was built after the image that runs, so
   an app never moves to an older image;
-- what the update downloads, and about what it writes to the system disk, where
-  Docker keeps its images, of what is free there: only what the NAS does not have
-  yet. At least 2 GB of the system disk must stay free;
+- what the update downloads, and about what it writes where Docker keeps its
+  images, of what is free there: only what the NAS does not have yet. The row
+  is named after the pool that holds Docker's data, or **System disk** before
+  the first pool, and at least 2 GiB must stay free there;
 - the copy of the app's database: Immich's `apps/immich/postgres/data` is
   copied to `data.previous` beside it on the same pool, never on the system
   disk. The pool must have the database's size and 1 GB more free; on a btrfs

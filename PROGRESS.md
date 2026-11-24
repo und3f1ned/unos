@@ -852,6 +852,29 @@ Open owner actions:
 - The pre-commit `make check-fast` under that load timed out the new guard test's inner pytest at
   120 s (8 to 58 s in later runs): it runs one worker now and waits up to 600 s, as it checks
   that the run ends, not how soon.
+### 2026-11-24: The App Store's free-space checks measure the pool of Docker's images (ADR-0490)
+
+- On a branch of its own from 80fe1f51, at the lead's brief: the open item
+  of `system.docker-root-on-pool`. An install's check (`apps/preflight.py`) and an update's plan
+  (`apps/updates.py`) read `df` of the one folder that holds Docker's images, containerd's root with
+  the containerd image store of the host's containerd service, else Docker's data root
+  (`docker_data.images_root`, the rule of GET /system/docker-data), no longer the lower of Docker's
+  data root and a fixed `/var/lib/containerd`. Their 409 texts name the pool ("on the pool data")
+  or the system disk; ADR-0381's 2 GiB floor stays. The catalog's and the update plan's
+  `system_disk_*` fields are `images_bytes`, `images_free_bytes` and `images_pool`; the update
+  dialog's row is "Pool <name>" or "System disk", the details' row "Disk space" (English and
+  Russian), and the user guide and `docs/TESTING.md` say so. Read-only on the W3 before: GET
+  /system/docker-data names `/mnt/pools/data/.containerd` (pool data, 581 GiB free) and the host
+  has no `/var/lib/containerd`.
+- The review in a fresh context found: an E2E locator that matched nothing (`has:` from the
+  dialog), the compose test stack answering 500 where its container has no systemctl (now logged
+  and not checked when Docker's data root is missing too, `test -e`), the open entry
+  `apps.catalog-companions` and the feature-pass skill still naming `system_disk_bytes`, ADR-0490
+  not naming ADR-0415 and ADR-0437, stale comments (registry.py, host.py, a spec), "2 GB" for
+  2 GiB in the guide, and no test of `images_root` or of an update with the containerd store. All
+  fixed. Left: ADR-0490 changes parts of ADR-0381, ADR-0408, ADR-0415 and ADR-0437 without
+  superseding them, since the rest of each stays.
+- Left: the lead's device check after the deploy (the entry's notes). `passes` stays false.
 
 ### 2026-11-24: The SD standby passes on the BPI-W3 and the BPI-F3 (system.sd-standby-boot, system.sd-standby-bpi-f3)
 

@@ -118,7 +118,7 @@ async def list_apps(
 ):
     """The apps of the catalog as this host would install them: each container with the hardware
     profiles that apply here and the image its install pulls here, whether the app is available
-    for the host's platform, and what its images take on the system disk.
+    for the host's platform, and what its images take where Docker keeps them.
     \f
     ADR-0382, ADR-0403, ADR-0415.
     """
@@ -162,14 +162,14 @@ async def _for_this_host(apps: list[AppTemplate]) -> list[AppTemplate]:
         app.model_copy(update={
             "host_platform": host,
             "available": not platforms.lacking(app, host),
-            "system_disk_bytes": _images_size(app),
+            "images_bytes": _images_size(app),
         })
         for app in apps
     ]
 
 
 def _images_size(app: AppTemplate) -> int:
-    """About what the images of ``app``, each once, take on the system disk: the estimates of their
+    """About what the images of ``app``, each once, take where Docker keeps them: the estimates of their
     pins (ADR-0415). ``app`` is the host's copy (for_host), whose containers name the images that
     its install pulls here, those of its hardware profiles included."""
     images = dict.fromkeys(spec.image for spec in (app, *app.companions))
@@ -1256,7 +1256,7 @@ def _install(
         c.hardware = container_hardware(c.spec, host_hardware)
     # The images that the hardware chose must have the host's platform too (ADR-0403).
     _check_platform(template, platforms.host_platform(), [c.image for c in containers])
-    # Room on the system disk for the images that the hardware chose (ADR-0381).
+    # Room where Docker keeps its images for those that the hardware chose (ADR-0381, ADR-0490).
     preflight.check_space(client, template, [c.image for c in containers])
 
     progress.check()

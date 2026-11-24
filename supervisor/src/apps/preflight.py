@@ -13,14 +13,16 @@ itself: Docker discards the port bindings of such a container, so its ports cann
 (400 for an override that moves one), they are the ports checked, and a taken one asks to
 remove the container or stop the program that holds it.
 
-The system disk, where Docker keeps the images: it must keep FREE_SPACE_FLOOR free once the
-install's images are there. An image of the catalog (a PinnedImage, ADR-0410) counts its
-estimated size unless Docker has it already. The free space is the lower of those of the file systems of Docker's root
-folder (Docker's info) and of the containerd image store, read on the host with df through
-src/host.py; when it cannot be read, the install answers 500 and pulls nothing. A host that has
-neither folder, as when the supervisor does not run on Docker's host (the compose test stack), has
-no file system to read: that is logged, the install goes on, and Docker's own pull is then the
-last check.
+The file system of Docker's images (ADR-0490): containerd's root when Docker keeps its images in
+the containerd image store of the host's containerd service, else Docker's data root as Docker's
+info names it (src/system/docker_data.py), on a pool since ADR-0486. It must keep FREE_SPACE_FLOOR
+free once the install's images are there. An image of the catalog (a PinnedImage, ADR-0410) counts
+its estimated size unless Docker has it already. The free space is read on the host with df
+through src/host.py, and the texts name the place: the pool that holds the folder, else the system
+disk. When it cannot be read, the install answers 500 and pulls nothing. A host without the folder,
+as when the supervisor does not run on Docker's host (the compose test stack, whose container also
+lacks the systemctl that the containerd image store makes it ask), has no file system to read: that
+is logged, the install goes on, and Docker's own pull is then the last check.
 """
 
 from __future__ import annotations
@@ -29,12 +31,14 @@ import logging
 import re
 import subprocess
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from docker.errors import NotFound
 from fastapi import HTTPException
 
 from .. import host
+from ..system import docker_data
 from .catalog import PINNED_IMAGES, PinnedImage
 from .schemas import AppTemplate
 from .stacks import DOCKER_ERRORS
@@ -164,78 +168,97 @@ def _host_listeners() -> dict[tuple[int, str], str | None]:
     return listening
 
 
-# The system disk keeps this much free after an install's pulls (ADR-0381).
+# The file system of Docker's images keeps this much free after an install's pulls (ADR-0381).
 FREE_SPACE_FLOOR = 2 * 1024**3
-# The containerd image store keeps the images' layers and unpacked snapshots here, outside
-# Docker's root folder.
-CONTAINERD_ROOT = "/var/lib/containerd"
-# For each of its arguments that exists on the host, df's POSIX listing of its file system: a
-# header, then one line with its free 1024-byte blocks. One that does not exist is skipped; a df
-# that fails ends the script with its status. Where none exists, the script exits 3, a status
-# that neither nsenter nor df uses. The paths reach the shell as positional arguments, never as
+# df's POSIX listing of the file system of its argument, a folder of the host: a header, then one
+# line with its free 1024-byte blocks. Where the host lacks the folder, the script exits 3, a status
+# that neither nsenter nor df uses. The path reaches the shell as a positional argument, never as
 # script text.
-FREE_SPACE_SCRIPT = (
-    'seen=; for p do if [ -e "$p" ]; then df -P -k -- "$p" || exit; seen=1; fi; done; [ -n "$seen" ] || exit 3'
-)
+FREE_SPACE_SCRIPT = '[ -e "$1" ] || exit 3; exec df -P -k -- "$1"'
 _NO_FOLDER = 3
 # A line of df -P: the file system (whose name may hold spaces), its 1024-byte blocks, the used
 # and the free ones, the capacity in percent, then the mount point.
 _DF_LINE = re.compile(r"\s(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s")
 
 
-def check_space(client: Any, template: AppTemplate, images: Iterable[str]) -> None:
-    """409 when the system disk would keep less than FREE_SPACE_FLOOR free once those of
-    ``images`` (the references the install pulls) that Docker lacks are pulled, each counted
-    with its PinnedImage.disk_bytes. The free space is the lower of those of
-    the file systems of Docker's root folder and of the containerd image store, read on the host
-    with df; 500 when it cannot be read. A host that has neither folder is logged and not checked.
-    Blocks: call it in a worker thread, before any pull."""
+@dataclass(frozen=True)
+class ImageStore:
+    """Where Docker keeps its images (ADR-0490): the folder, the pool that holds it (None: the
+    system disk) and the free space of its file system (None: the host has no such folder)."""
+
+    folder: str
+    pool: str | None
+    free: int | None
+
+    @property
+    def place(self) -> str:
+        """The place in a text: "the pool data", "the system disk"."""
+        return f"the pool {self.pool}" if self.pool else "the system disk"
+
+
+def image_store(client: Any) -> ImageStore:
+    """Where Docker keeps its images and the free space there; a host without the folder is logged.
+    500 when Docker's info, containerd's configuration or the free space cannot be read. Blocks."""
     try:
-        need = sum(pin.disk_bytes for pin in _missing_pins(client, images))
-        root = client.info().get("DockerRootDir")
+        info = client.info()
     except DOCKER_ERRORS as exc:
         raise _unread(str(exc)) from exc
-    if not isinstance(root, str) or not root.startswith("/"):
-        raise _unread("Docker names no root folder")
-    folders = [root, CONTAINERD_ROOT]
-    free = _free_bytes(folders)
+    info = info if isinstance(info, dict) else {}
+    try:
+        folder = docker_data.images_root(info)
+    except docker_data.DockerDataError as exc:
+        # Docker's socket without Docker's host, as in the compose test stack: where its data root
+        # is missing, so is what told where containerd keeps the images.
+        root = info.get("DockerRootDir")
+        if isinstance(root, str) and root.startswith("/") and _host_lacks(root):
+            _not_checked(root)
+            return ImageStore(root, None, None)
+        raise _unread(str(exc)) from exc
+    free = _free_bytes(folder)
     if free is None:
-        logger.warning(
-            "Could not read the free space of the system disk: the host has none of %s; the install goes on",
-            ", ".join(folders),
-        )
-        return
-    if free - need >= FREE_SPACE_FLOOR:
+        _not_checked(folder)
+    return ImageStore(folder, docker_data.pool_of(folder), free)
+
+
+def _not_checked(folder: str) -> None:
+    logger.warning(
+        "Could not read the free space where Docker keeps its images: the host has no %s; it is not checked", folder
+    )
+
+
+def _host_lacks(folder: str) -> bool:
+    """Whether the host lacks ``folder``; False when that cannot be told."""
+    try:
+        return host.run_on_host(["test", "-e", folder], timeout=HOST_TIMEOUT).returncode == 1
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def check_space(client: Any, template: AppTemplate, images: Iterable[str]) -> None:
+    """409 when the file system of Docker's images would keep less than FREE_SPACE_FLOOR free once
+    those of ``images`` (the references the install pulls) that Docker lacks are pulled, each
+    counted with its PinnedImage.disk_bytes; the text names the pool or the system disk. 500 when
+    the free space cannot be read; a host without the folder is not checked. Blocks: call it in a
+    worker thread, before any pull."""
+    try:
+        need = sum(pin.disk_bytes for pin in _missing_pins(client, images))
+    except DOCKER_ERRORS as exc:
+        raise _unread(str(exc)) from exc
+    store = image_store(client)
+    if store.free is None or store.free - need >= FREE_SPACE_FLOOR:
         return
     remedy = "Remove unused images on Containers > Images first."
     if need:
         detail = (
-            f"{template.name}'s images need about {_gib(need)} on the system disk, which has {_gib(free)} free; "
+            f"{template.name}'s images need about {_gib(need)} on {store.place}, which has {_gib(store.free)} free; "
             f"at least {_gib(FREE_SPACE_FLOOR)} must stay free. {remedy}"
         )
     else:
         detail = (
-            f"The system disk has {_gib(free)} free; at least {_gib(FREE_SPACE_FLOOR)} must stay free when "
-            f"{template.name} is installed. {remedy}"
+            f"{store.place[0].upper()}{store.place[1:]} has {_gib(store.free)} free; at least "
+            f"{_gib(FREE_SPACE_FLOOR)} must stay free when {template.name} is installed. {remedy}"
         )
     raise HTTPException(409, detail)
-
-
-def system_disk_free(client: Any) -> int | None:
-    """The free space of the system disk for Docker's images: the lower of those of the file
-    systems of Docker's root folder and of the containerd image store; None for a host that has
-    neither (logged by the caller's check); 500 when it cannot be read. Blocks."""
-    try:
-        root = client.info().get("DockerRootDir")
-    except DOCKER_ERRORS as exc:
-        raise _unread(str(exc)) from exc
-    if not isinstance(root, str) or not root.startswith("/"):
-        raise _unread("Docker names no root folder")
-    free = _free_bytes([root, CONTAINERD_ROOT])
-    if free is None:
-        logger.warning("Could not read the free space of the system disk: the host has none of %s, %s", root,
-                       CONTAINERD_ROOT)
-    return free
 
 
 def _missing_pins(client: Any, images: Iterable[str]) -> list[PinnedImage]:
@@ -253,12 +276,12 @@ def _missing_pins(client: Any, images: Iterable[str]) -> list[PinnedImage]:
     return missing
 
 
-def _free_bytes(paths: list[str]) -> int | None:
-    """The lowest free space of the file systems of those of ``paths`` that exist on the host;
-    None when none of them exists; 500 when it cannot be read."""
+def _free_bytes(folder: str) -> int | None:
+    """The free space of the file system of ``folder`` on the host; None when the host lacks it;
+    500 when it cannot be read."""
     try:
         result = host.run_on_host(
-            ["/bin/sh", "-c", FREE_SPACE_SCRIPT, "unos-free-space", *paths], timeout=HOST_TIMEOUT, errors="replace"
+            ["/bin/sh", "-c", FREE_SPACE_SCRIPT, "unos-free-space", folder], timeout=HOST_TIMEOUT, errors="replace"
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise _unread(str(exc)) from exc
@@ -278,7 +301,9 @@ def _available(listing: str) -> list[int]:
 
 
 def _unread(reason: str) -> HTTPException:
-    return HTTPException(500, f"Could not read the free space of the system disk: {reason}; nothing was pulled")
+    return HTTPException(
+        500, f"Could not read the free space where Docker keeps its images: {reason}; nothing was pulled"
+    )
 
 
 def _gib(size: int) -> str:
