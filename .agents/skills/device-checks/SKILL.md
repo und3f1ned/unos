@@ -5,8 +5,8 @@ description: Check the UNOS dev device (health, API answers, Samba's real testpa
 
 # Checks on the dev device
 
-The device runs from its eMMC, a soldered chip that wears with every write, and its SD card is
-wiped and unused (ADR-0214, ADR-0470), and Docker keeps its data on the pool (ADR-0486). Run every check from the repository root, through
+The device runs from its eMMC, a soldered chip that wears with every write, and its SD card
+holds the SD standby, changed only through its API (ADR-0214, ADR-0471, ADR-0487), and Docker keeps its data on the pool (ADR-0486). Run every check from the repository root, through
 `scripts/dev`:
 
 - `check.sh`, the API relay of `api.py`, the testparm shim `bin/testparm`, `linux-tests.sh`

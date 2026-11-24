@@ -14,7 +14,9 @@ standby_card_missing, standby_not_in_boot_path, running_on_standby and standby_h
 
 When the eMMC's monitor finds ``system_disk_failed`` and the standby is set up, in this boot's path
 and holds a complete generation, ``on_system_disk_failed`` stops a sync, writes the mark, alerts the
-switch, makes a last copy of the database and reboots at once (``switch``).
+switch, makes a last copy of the database and reboots at once (``switch``). When the pool that holds
+Docker fails, UNOS is down with Docker: the host's ``unos-standby-watch.service`` switches then
+(``host/unos-standby-watch.sh``, ADR-0487).
 """
 
 from __future__ import annotations
@@ -125,9 +127,13 @@ class StandbyStatus(BaseModel):
         "wipes it."))
     card: StandbyCard | None = Field(description="The standby's card when set up, else the free card that would become it.")
     card_present: bool | None = Field(description="Whether the standby's card is in its slot and mounted; null when not set up.")
-    in_boot_path: bool | None = Field(description="Whether this boot passed the card's chooser (unos.chooser=card).")
+    in_boot_path: bool | None = Field(description=(
+        "Whether this boot passed the card's chooser (unos.chooser=card); null when not set up or when this boot "
+        "predates the setup."))
     root: Literal["emmc", "card"] | None = Field(description="Which root the chooser booted: emmc, card, or null without the chooser.")
-    boot_reason: str | None = Field(description="The chooser's reason of this boot (unos.reason).")
+    boot_reason: str | None = Field(description=(
+        "The chooser's reason of this boot (unos.reason); on the card's root after the mark, the mark's reason: drill, "
+        "system_disk_failed, docker_pool_failed or the chooser's of the card's first boot."))
     generation: int | None = Field(description="The current generation of the system's copy; null before the first.")
     marked_failed: bool = Field(description="Whether unos/emmc-failed is on the card: every boot takes the card's root.")
     drill_pending: bool = Field(description="Whether unos/drill.txt is on the card.")
@@ -167,13 +173,21 @@ class _State:
     stored: dict[str, Any] = field(default_factory=dict)
     current: tuple[int, int, str] | None = None
     marked: bool = False
+    # The reason that unos/emmc-failed names: drill, system_disk_failed, docker_pool_failed or the
+    # chooser's of the first boot of the card.
+    mark_reason: str | None = None
     drill: bool = False
     last_complete_at: str | None = None
     syncing: bool = False
     switching: bool = False
     change_at: float | None = None
-    daily_done: str | None = None
+    # The day's slot of the daily sync that started in this run of the supervisor (UTC text).
+    daily_slot: str | None = None
     start_synced: bool = False
+    # The kernel's id of this boot: the boot in which the standby was set up cannot have passed the chooser.
+    boot_id: str | None = None
+    # On the card's root: when (monotonic) the run was recorded on a clock not yet synchronized.
+    run_recorded_at: float | None = None
     # The result of the last sync that found nothing changed: in RAM only, as nothing was written.
     memory_sync: dict[str, Any] | None = None
 
@@ -222,16 +236,39 @@ def _refresh_card(ops: StandbyHost, state: _State) -> None:
                        generation.STATE_FILE)
         state.stored = {}
     state.current = generation.read_generations(ops)[0]
-    state.marked = ops.exists(generation.MARK)
+    mark = ops.read_file(generation.MARK)
+    state.marked = mark is not None or ops.exists(generation.MARK)
+    reason = dict(line.split("=", 1) for line in (mark or "").splitlines() if "=" in line).get("reason", "")
+    state.mark_reason = reason if re.fullmatch(r"[a-z_]{1,40}", reason) else None
     state.drill = ops.exists(generation.DRILL)
     if state.last_complete_at is None:
         state.last_complete_at = state.stored.get("last_complete_at")
+
+
+BOOT_ID = "/proc/sys/kernel/random/boot_id"
+
+
+def _boot_id(ops: StandbyHost) -> str | None:
+    """The kernel's id of this boot, new at every boot; not the clock, which Armbian restores from
+    fake-hwclock early in a boot."""
+    value = (ops.read_file(BOOT_ID) or "").strip()
+    return value if re.fullmatch(r"[0-9a-f-]{36}", value) else None
+
+
+def booted_since_setup() -> bool:
+    """Whether this boot came after the standby was set up, so that it could have passed the card's
+    chooser: right after Set up the running boot is the setup's (ADR-0487)."""
+    armed = _state.stored.get("armed_boot_id")
+    if _state.boot_id is None or not isinstance(armed, str):
+        return True
+    return _state.boot_id != armed
 
 
 def refresh() -> None:
     """Read the standby's state (blocking): at the start and after each action."""
     ops = StandbyHost()
     state = _state
+    state.boot_id = _boot_id(ops)
     fstab = ops.read_file(card.FSTAB) or ""
     state.armed = card.is_armed(fstab)
     values = _cmdline(ops.read_file("/proc/cmdline") or "")
@@ -244,6 +281,10 @@ def refresh() -> None:
     else:
         state.card_present, state.card_device, state.stored, state.current = None, None, {}, None
         state.marked = state.drill = False
+        state.mark_reason = None
+    if state.root == "card" and state.reason == "marked" and state.mark_reason:
+        # The chooser took the card for the mark: the mark says why (a drill, a failed eMMC or pool).
+        state.reason = state.mark_reason
     state.read = True
 
 
@@ -267,14 +308,23 @@ def _host_zone() -> Any:
     return schedule_zone()
 
 
-def _daily_due(now: datetime, zone: Any) -> tuple[bool, datetime]:
-    """Whether today's daily sync is due (its time passed and it did not run today), and when the next is."""
+def _daily_due(now: datetime, zone: Any) -> tuple[bool, datetime, datetime]:
+    """Whether today's daily sync is due, today's time of it and when the next is. It is due once its
+    time passed and no sync ran since then, whatever started it (Set up, the start, a change, Sync
+    now): the last sync's time comes from RAM or state.json, so neither a start of the supervisor nor
+    the setup's own sync is followed by another (ADR-0487)."""
     local = now.astimezone(zone)
     hour, minute = (int(part) for part in sync_time().split(":"))
     today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    due = local >= today and _state.daily_done != local.date().isoformat()
+    record = last_sync()
+    try:
+        last = parse_time(record["at"]) if record and isinstance(record.get("at"), str) else None
+    except ValueError:
+        last = None
+    due = (local >= today and (last is None or last < today)
+           and _state.daily_slot != utc_text(today.astimezone(UTC)))
     upcoming = today if local < today else today + timedelta(days=1)
-    return due, upcoming
+    return due, today, upcoming
 
 
 def ran() -> dict[str, Any] | None:
@@ -402,9 +452,9 @@ async def _due_sync() -> None:
         await _run_sync("change")
         return
     zone = await asyncio.to_thread(_host_zone)
-    due, _ = _daily_due(utc_now(), zone)
+    due, slot, _ = _daily_due(utc_now(), zone)
     if due:
-        _state.daily_done = utc_now().astimezone(zone).date().isoformat()
+        _state.daily_slot = utc_text(slot.astimezone(UTC))
         await _run_sync("daily")
 
 
@@ -434,7 +484,7 @@ def _found() -> dict[str, problems.Problem]:
         add("standby_card_missing", "error", "The SD standby's card is missing",
             "The standby is set up, but its card is not in its slot or not mounted: a failure of the eMMC has no "
             "standby. Put the card back.")
-    elif state.card_present and not state.chooser:
+    elif state.card_present and not state.chooser and booted_since_setup():
         add("standby_not_in_boot_path", "error", "The SD standby is not in the boot path",
             "This boot did not pass the card's chooser (unos.chooser=card is not on the kernel's command line): the "
             "board started another loader, and a failure of the eMMC would not boot the card.")
@@ -497,7 +547,7 @@ async def status() -> StandbyStatus:
     if _can_sync() is None or state.syncing:
         try:
             zone = await asyncio.to_thread(_host_zone)
-            _, upcoming = _daily_due(utc_now(), zone)
+            _, _, upcoming = _daily_due(utc_now(), zone)
             next_at = utc_text(upcoming.astimezone(UTC))
         except Exception:  # the host's zone: the time stays unknown
             next_at = None
@@ -512,7 +562,7 @@ async def status() -> StandbyStatus:
         leftover=not state.armed and conditions.standby_card(facts) is not None,
         card=shown,
         card_present=state.card_present if state.armed else None,
-        in_boot_path=state.chooser if state.armed else None,
+        in_boot_path=state.chooser if state.armed and (state.chooser or booted_since_setup()) else None,
         root=state.root,  # type: ignore[arg-type]  # emmc, card or None, as refresh reads it
         boot_reason=state.reason,
         generation=state.current[0] if state.current else None,
@@ -581,7 +631,7 @@ async def arm(model: str, *, dry_run: bool, request: Request, username: str) -> 
         await asyncio.to_thread(refresh)
         stored = {"card": {"model": prepared.card.model, "serial": prepared.card.serial, "size": prepared.card.size},
                   "sync_time": DEFAULT_SYNC_TIME, "armed_at": utc_text(utc_now()),
-                  "counter_sector": prepared.counter_sector}
+                  "counter_sector": prepared.counter_sector, "armed_boot_id": _state.boot_id}
         try:
             await asyncio.to_thread(_save_stored, stored)
         except StandbyError as e:
@@ -659,7 +709,6 @@ async def set_sync_time(value: str, *, request: Request, username: str) -> None:
             await asyncio.to_thread(_save_stored, stored)
         except StandbyError as e:
             raise _http(e) from None
-        _state.daily_done = None
         await _audit(AuditAction.STANDBY_SETTINGS_CHANGED, request, username, f"Daily sync time ({old} to {value})")
 
 
@@ -851,8 +900,21 @@ async def _announce_switch(generation_number: int, detail: str, marked: threadin
 # --- the start -------------------------------------------------------------------------------------
 
 
+TIME_SYNCHRONIZED = "/run/systemd/timesync/synchronized"
+# How long a run's time waits for the synchronized clock before it stays as recorded.
+RUN_TIME_WAIT_SECONDS = 3600
+
+
+def _clock_synchronized() -> bool:
+    """Whether systemd's time sync set the host's clock in this boot."""
+    return StandbyHost().exists(TIME_SYNCHRONIZED)
+
+
 async def _on_start() -> None:
-    """On the card's root: record that the standby ran (time, generation, reason) once."""
+    """On the card's root: record that the standby ran (time, generation, reason) once, at once, so that
+    the eMMC's system knows it. The card's root starts on the clock that fake-hwclock saved at the last
+    sync: a time recorded before systemd's time sync set the clock is corrected later
+    (_correct_run_time, ADR-0487)."""
     if _state.root != "card" or ran() is not None or not _state.card_present:
         return
     stored = {**_state.stored, "standby_ran": {"at": utc_text(utc_now()),
@@ -860,9 +922,32 @@ async def _on_start() -> None:
                                                "reason": _state.reason}}
     try:
         await asyncio.to_thread(_save_stored, stored)
+        if not await asyncio.to_thread(_clock_synchronized):
+            _state.run_recorded_at = _monotonic()
     except StandbyError as e:
         logger.error("The SD standby's state.json could not record the run: %s", e)
     logger.warning("UNOS runs from the SD standby: %s", _state.reason)
+
+
+async def _correct_run_time() -> None:
+    """The run's time again, once the clock is synchronized: now less the time since it was recorded."""
+    recorded = _state.run_recorded_at
+    run = ran()
+    if recorded is None or run is None:
+        return
+    elapsed = _monotonic() - recorded
+    if elapsed > RUN_TIME_WAIT_SECONDS:
+        _state.run_recorded_at = None
+        return
+    if not await asyncio.to_thread(_clock_synchronized):
+        return
+    _state.run_recorded_at = None
+    at = utc_text((utc_now() - timedelta(seconds=elapsed)).replace(microsecond=0))
+    if run.get("at") != at:
+        try:
+            await asyncio.to_thread(_save_stored, {**_state.stored, "standby_ran": {**run, "at": at}})
+        except StandbyError as e:
+            logger.error("The SD standby's state.json could not correct the run's time: %s", e)
 
 
 async def standby_loop() -> None:
@@ -877,6 +962,7 @@ async def standby_loop() -> None:
         try:
             if passes and passes % CARD_CHECK_EVERY == 0 and (_state.armed or _state.root == "card"):
                 await asyncio.to_thread(_refresh_card, StandbyHost(), _state)
+            await _correct_run_time()
             await _due_syncs()
             await update_problems()
         except Exception:

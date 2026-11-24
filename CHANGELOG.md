@@ -13,25 +13,30 @@ manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
 - **System → SD Standby**: on a BPI-W3 whose system is on its eMMC, a free SD card becomes a standby
-  of the system after its model is typed: its own loader from Armbian's package, a FAT partition
-  with the chooser `boot.scr` and a btrfs partition with generations of the system's copy (the
-  root filesystem by rsync without Docker's data, logs and caches, UNOS's compose volumes and
-  database, archives of its images, the card's own fstab and units), made current only once
-  complete. It is synced daily (04:00 by default, settable), 10 minutes after the last audited
-  change, at each start of UNOS and by **Sync now**; a sync that finds nothing writes nothing and
-  one that writes says its MiB. Every boot passes the card's chooser, which counts the eMMC's
-  boots in a raw sector of the card and boots the card's root when the eMMC is marked failed, did
-  not come up three times or cannot be read. When `system_disk_failed` is found, UNOS marks the
-  eMMC failed on the card, alerts, makes a last copy of the database and reboots to the card,
-  where UNOS starts from the copy, says so on the banner and refuses app installs, updates and
-  uninstalls. Drills (mark, an unreadable eMMC, a missing root) and the ways back (Return to the
-  eMMC, Return through the standby, Discard the standby's changes) are on the tab; **Remove the
-  standby** wipes the card. The card is in no list of disks, pools or off-device copy targets.
-  Every action has a dry run (`"dry_run": true`) that answers the host's commands; the problems
-  `standby_sync_failed`, `standby_copy_old`, `standby_card_missing`, `standby_not_in_boot_path`,
-  `running_on_standby` and `standby_has_changes` reach the channels and the banner. Elsewhere the
-  tab names the unmet conditions. `/api/v1/system/standby`; `install.sh` installs rsync,
-  dosfstools and fdisk (ADR-0471, ADR-0481).
+  of the system after its model is typed: its own loader from Armbian's package, a GPT (the W3's
+  U-Boot reads no partition of an MBR card) with a FAT partition holding the chooser `boot.scr` and
+  a btrfs partition with generations of the system's copy (the root filesystem by rsync without
+  Docker's data, logs and caches, UNOS's compose volumes and database, archives of its images, the
+  card's own fstab, units and Docker settings, which keep Docker's data on the card), made current
+  only once complete. It is synced daily (04:00 by default, settable, never right after another
+  sync), 10 minutes after the last audited change, at each start of UNOS and by **Sync now**; a
+  sync that finds nothing writes nothing, what the host rewrites at every boot and the sync's own
+  audit entry write no generation alone, one that writes says its MiB, and no sync writes the
+  eMMC (its unit sees the host read-only). Every boot passes the card's chooser, which counts the
+  eMMC's boots in a raw sector of the card and boots the card's root when the eMMC is marked
+  failed, did not come up three times or cannot be read. When `system_disk_failed` is found, UNOS
+  marks the eMMC failed on the card, alerts, makes a last copy of the database and reboots to the
+  card; when the pool that holds Docker's data is not mounted or read-only for 5 minutes, a host
+  unit marks it and reboots to the card. There UNOS starts from the copy, says why on the banner
+  and refuses app installs, updates and uninstalls. Drills (mark, an unreadable eMMC, a missing
+  root) and the ways back (Return to the eMMC, Return through the standby, Discard the standby's
+  changes) are on the tab; **Remove the standby** wipes the card and leaves nothing of it on the
+  eMMC. The card is in no list of disks, pools or off-device copy targets. Every action has a dry
+  run (`"dry_run": true`) that answers the host's commands; the problems `standby_sync_failed`,
+  `standby_copy_old`, `standby_card_missing`, `standby_not_in_boot_path` (from the first boot after
+  the setup), `running_on_standby` and `standby_has_changes` reach the channels and the banner.
+  Elsewhere the tab names the unmet conditions. `/api/v1/system/standby`; `install.sh` installs
+  rsync, dosfstools and fdisk (ADR-0471, ADR-0481, ADR-0487).
 - Notifications name the NAS that sends them by the host's name (here `nas-w3`), so that several
   NASes can be told apart: an e-mail's subject starts with `[nas-w3]`; the footer of e-mail,
   Telegram, Discord and Slack, the sender's name of Discord and Slack (unless the channel sets

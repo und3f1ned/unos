@@ -15,13 +15,10 @@ const W3_CONDITIONS = [
   { id: 'loader', met: true, detail: "Armbian's loader package /usr/lib/linux-u-boot-vendor-armsom-w3 with write_uboot_platform" },
   { id: 'emmc_root', met: true, detail: 'The root filesystem is ext4 on the eMMC /dev/mmcblk0p1, mounted with errors=remount-ro' },
   { id: 'sd_card', met: true, detail: 'The free SD card /dev/mmcblk1 (SC32G, 31.9 GB)' },
-  { id: 'docker_root', met: true, detail: "Docker's data root /var/lib/docker is on the system disk" },
   { id: 'host_tools', met: true, detail: 'rsync, dosfstools and sfdisk are on the host' },
 ];
 const F3_PROFILE =
   'Armbian on Banana Pi BPI-F3 (bananapif3), which has no board profile: the standby is offered only on the BPI-W3 for now';
-const F3_DOCKER =
-  "Docker's data root /mnt/pools/data/.docker is not on the system disk (it is on /mnt/pools/data): a data root on a pool would stop UNOS itself with the pool";
 const CARD = { device: '/dev/mmcblk1', model: 'SC32G', serial: '0x8f3a1b2c', size: 31914983424 };
 const WROTE = {
   at: '2026-11-23T10:05:00Z', trigger: 'setup', result: 'wrote', mib: 2310.5,
@@ -86,20 +83,21 @@ test.describe('System > Standby', () => {
   test('a board without a profile names the unmet conditions and offers no action', async ({ authenticatedPage: page }) => {
     const conditions = W3_CONDITIONS.map((item) =>
       item.id === 'profile' ? { ...item, met: false, detail: F3_PROFILE }
-      : item.id === 'docker_root' ? { ...item, met: false, detail: F3_DOCKER }
       : item.id === 'loader' ? { ...item, met: false, detail: 'No board profile names the loader package' } : item);
     await fakeStandby(page, { ...FREE, available: false, profile: null, card: null, conditions });
     await page.goto('/system/standby');
     await expect(page.getByText('The SD card standby is not offered on this NAS')).toBeVisible();
     await expect(page.getByTestId('standby-condition-profile')).toContainText(F3_PROFILE);
     await expect(page.getByTestId('standby-condition-profile')).toContainText('Not met');
-    await expect(page.getByTestId('standby-condition-docker_root')).toContainText(F3_DOCKER);
+    // Docker's data root is no condition: it is on a pool, which the standby covers (ADR-0486, ADR-0487).
+    await expect(page.locator('[data-testid^="standby-condition-"]')).toHaveCount(5);
     await expect(page.getByTestId('standby-condition-emmc_root')).toContainText('Met');
     await expect(page.getByRole('button', { name: 'Set up the standby' })).toHaveCount(0);
   });
 
   test('sets up the standby on the free card after its model is typed', async ({ authenticatedPage: page }) => {
-    const sent = await fakeStandby(page, FREE, { 'POST /arm': ARMED });
+    // Right after Set up this boot predates it: the chooser counts from the next boot (ADR-0487).
+    const sent = await fakeStandby(page, FREE, { 'POST /arm': { ...ARMED, in_boot_path: null, switch_ready: false } });
     await page.goto('/system/standby');
     await expect(page.getByTestId('standby-free-card')).toContainText('/dev/mmcblk1 · SC32G');
     await page.getByRole('button', { name: 'Set up the standby' }).click();
@@ -114,7 +112,8 @@ test.describe('System > Standby', () => {
     const status = page.getByTestId('standby-status');
     await expect(page.locator('.badge', { hasText: 'Ready' })).toBeVisible();
     await expect(status).toContainText('Generation 1');
-    await expect(status).toContainText("From the eMMC, through the card's chooser");
+    await expect(status).toContainText("Through the card's chooser from the next boot");
+    await expect(page.locator('.badge', { hasText: 'Not in the boot path' })).toHaveCount(0);
     await expect(page.getByTestId('standby-last-sync')).toContainText('Wrote');
     await expect(page.getByTestId('standby-last-sync')).toContainText("system, UNOS's volumes, database, images, boot files");
     await expect(page.getByTestId('standby-zone')).toContainText('Europe/Berlin');
@@ -165,6 +164,12 @@ test.describe('System > Standby', () => {
     expect(sent).toEqual([{ method: 'POST', path: '/return', body: {} }]);
   });
 
+  test("on the card after the pool that holds Docker failed: the mark's reason", async ({ authenticatedPage: page }) => {
+    await fakeStandby(page, { ...ON_CARD, boot_reason: 'docker_pool_failed' });
+    await page.goto('/system/standby');
+    await expect(page.getByText("From the card: the pool that holds Docker's data failed").first()).toBeVisible();
+  });
+
   test('after the standby ran: return through it, or discard its changes', async ({ authenticatedPage: page }) => {
     const sent = await fakeStandby(page, RAN, { 'POST /discard': ARMED });
     await page.goto('/system/standby');
@@ -211,6 +216,14 @@ test.describe('System > Standby', () => {
     await page.goto('/system/standby');
     await page.getByText('What the last sync found changed').click();
     await expect(page.getByText('>f..t...... etc/hostname')).toBeVisible();
+  });
+
+  test("a sync that rewrote the card's own parts names them in words", async ({ authenticatedPage: page }) => {
+    await fakeStandby(page, { ...ARMED, last_sync: { ...WROTE, trigger: 'start', mib: 0.1, parts: ['loader', 'chooser', 'units'] } });
+    await page.goto('/system/standby');
+    await expect(page.getByTestId('standby-last-sync')).toContainText(
+      "the card's loader, the card's chooser, the standby's services on the eMMC",
+    );
   });
 
   test('a failed sync says why on the card', async ({ authenticatedPage: page }) => {

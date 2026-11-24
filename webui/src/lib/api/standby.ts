@@ -2,7 +2,7 @@ import { api } from './client';
 
 // The SD card standby of a system on an eMMC (ADR-0471): /system/standby, an administrator's.
 
-export type StandbyConditionId = 'profile' | 'loader' | 'emmc_root' | 'sd_card' | 'docker_root' | 'host_tools';
+export type StandbyConditionId = 'profile' | 'loader' | 'emmc_root' | 'sd_card' | 'host_tools';
 
 export interface StandbyCondition {
 	id: StandbyConditionId;

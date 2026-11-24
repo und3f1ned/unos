@@ -9,6 +9,9 @@ that fails raises ``StandbyFailed`` with what failed; a change after ``stop`` wa
 Long commands (rsync, docker save) run in the transient unit ``unos-standby-sync.service``
 (``systemd-run --wait --pipe``) with a deadline of their own: ``kill_sync`` ends one at once, which
 the timeout of ``run_on_host`` could not (it ends only the command that enters the host, ADR-0258).
+The unit sees the host read-only but the card (``ProtectSystem=strict``, ``ReadWritePaths=`` the
+card's folder, ADR-0487): a read through a read-only mount sets no access time, so rsync's reads of
+the eMMC's root write nothing to it, and no command of a sync can write the eMMC.
 """
 
 from __future__ import annotations
@@ -26,6 +29,9 @@ STANDBY_DIR = f"{get_settings().mounts_base_path.rstrip('/')}/.unos-standby"
 BOOT_DIR = f"{STANDBY_DIR}/boot"
 CARD_DIR = f"{STANDBY_DIR}/card"
 SYNC_UNIT = "unos-standby-sync"
+# The sync's unit sees the host read-only but the card's mounts: no access time of the eMMC's files
+# and folders is written by its reads (ADR-0487).
+READ_ONLY_HOST = ("--property=ProtectSystem=strict", f"--property=ReadWritePaths=-{STANDBY_DIR}")
 SYSTEMD_RUN_GRACE = 60
 
 
@@ -132,7 +138,7 @@ class StandbyHost:
     def _in_unit(self, cmd: list[str], *, timeout: float) -> host.HostResult:
         wrapped = [
             "systemd-run", f"--unit={SYNC_UNIT}", "--wait", "--pipe", "--quiet", "--collect",
-            f"--property=RuntimeMaxSec={int(timeout)}", "--", *cmd,
+            f"--property=RuntimeMaxSec={int(timeout)}", *READ_ONLY_HOST, "--", *cmd,
         ]
         try:
             return host.run_on_host(wrapped, timeout=timeout + SYSTEMD_RUN_GRACE, errors="replace")

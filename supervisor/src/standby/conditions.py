@@ -8,11 +8,13 @@
 - ``sd_card``: an SD card of at least 14 GiB that ADR-0472 offers as free (no part of the running
   system), with nothing mounted and no filesystem that the host's fstab names; once set up, the
   standby's own card;
-- ``docker_root``: Docker's data root is on the system disk;
 - ``host_tools``: rsync, mkfs.vfat (dosfstools) and sfdisk (fdisk) are on the host.
 
+Docker's data root is no condition (ADR-0486, ADR-0487): it is on a pool, and the standby takes over
+when that pool fails too.
+
 Everything here only reads: the host's files through ``cat``, its disks through
-``storage.disks.mmc_cards``, Docker's data root through ``docker info``.
+``storage.disks.mmc_cards``.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from ..storage import disks
 from . import profiles
 from .hostops import StandbyHost
 
-ConditionId = Literal["profile", "loader", "emmc_root", "sd_card", "docker_root", "host_tools"]
+ConditionId = Literal["profile", "loader", "emmc_root", "sd_card", "host_tools"]
 ARMBIAN_RELEASE = "/etc/armbian-release"
 PLATFORM_INSTALL = "/usr/lib/u-boot/platform_install.sh"
 MOUNTINFO = "/proc/1/mountinfo"
@@ -38,7 +40,7 @@ _MMC_PARTITION = re.compile(r"/dev/(mmcblk[0-9]+)p([0-9]+)")
 
 
 class Condition(BaseModel):
-    id: ConditionId = Field(description="Which condition: profile, loader, emmc_root, sd_card, docker_root or host_tools.")
+    id: ConditionId = Field(description="Which condition: profile, loader, emmc_root, sd_card or host_tools.")
     met: bool = Field(description="Whether this host meets it.")
     detail: str = Field(description="What was found, in English: the reason when it is not met.")
 
@@ -74,9 +76,6 @@ class Facts:
     boot_prefix: str | None = None
     cards: list[disks.MmcCard] = field(default_factory=list)
     cards_error: str | None = None
-    docker_root: str | None = None
-    docker_detail: str = ""
-    docker_ok: bool = False
     missing_tools: list[str] | None = None
 
 
@@ -198,22 +197,19 @@ def _read_root(ops: StandbyHost, facts: Facts) -> None:
     facts.root_detail = f"The root filesystem is ext4 on the eMMC {root.source}, mounted with errors=remount-ro"
 
 
-def _read_docker(ops: StandbyHost, facts: Facts) -> None:
-    result = ops.read(["docker", "info", "--format", "{{.DockerRootDir}}"])
-    directory = result.stdout.strip() if result.ok else ""
-    if not directory.startswith("/"):
-        facts.docker_detail = "Docker's data root cannot be read (docker info)"
-        return
-    facts.docker_root = directory
-    mount = mount_of(facts.mounts, directory)
-    match = _MMC_PARTITION.fullmatch(mount.source) if mount is not None else None
-    if facts.root_disk is None or match is None or match.group(1) != facts.root_disk:
-        where = mount.target if mount is not None else "an unknown filesystem"
-        facts.docker_detail = (f"Docker's data root {directory} is not on the system disk (it is on {where}): a "
-                               "data root on a pool would stop UNOS itself with the pool")
-        return
-    facts.docker_ok = True
-    facts.docker_detail = f"Docker's data root {directory} is on the system disk"
+def loader_version(ops: StandbyHost, profile: profiles.BoardProfile) -> str:
+    """The version of the package that installed the board's loader images, as dpkg has it; "" when dpkg
+    names none. The package's name comes from dpkg, not from the folder: Armbian's
+    linux-u-boot-armsom-w3-vendor installs /usr/lib/linux-u-boot-vendor-armsom-w3."""
+    image = f"{profile.loader_dir}/{profile.loader_images[-1][0]}"
+    # In the read-only unit: dpkg-query -S reads every package's file list, whose access times a read
+    # of the host would set on the eMMC at every sync (ADR-0487).
+    owner = ops.long_read(["dpkg-query", "-S", image], timeout=120)
+    package = owner.stdout.split(":", 1)[0].split(",")[0].strip() if owner.ok else ""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9.+-]+", package):
+        return ""
+    version = ops.long_read(["dpkg-query", "-W", "-f=${Version}", package], timeout=120)
+    return version.stdout.strip() if version.ok else ""
 
 
 def read_facts() -> Facts:
@@ -227,7 +223,6 @@ def read_facts() -> Facts:
         facts.cards = read_cards()
     except Exception as e:  # lsblk or its reads: the card condition says why
         facts.cards_error = str(e) or type(e).__name__
-    _read_docker(ops, facts)
     facts.missing_tools = host.missing_host_binaries(list(TOOLS))
     return facts
 
@@ -300,7 +295,6 @@ def evaluate(facts: Facts, *, armed: bool, fstab_uuids: set[str] | None = None) 
                       + (": " + "; ".join(reason for reason in reasons if reason) if any(reasons) else
                          " is in a slot"))
         items.append(Condition(id="sd_card", met=card is not None, detail=detail))
-    items.append(Condition(id="docker_root", met=facts.docker_ok, detail=facts.docker_detail))
     if facts.missing_tools is None:
         items.append(Condition(id="host_tools", met=False, detail="The host's programs cannot be checked"))
     elif facts.missing_tools:

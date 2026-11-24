@@ -468,7 +468,7 @@ const LOGS = {
 // the free card that it would take.
 const STANDBY_ARMED = {
   available: true, unavailable_reason: null, profile: 'BPI-W3', armed: true,
-  conditions: [{ id: 'docker_root', met: true, detail: "Docker's data root /var/lib/docker is on the system disk" }],
+  conditions: [{ id: 'host_tools', met: true, detail: 'rsync, dosfstools and sfdisk are on the host' }],
   card: { device: '/dev/mmcblk1', model: 'SC32G', serial: '0x8f3a1b2c', size: 31914983424 },
   card_present: true, in_boot_path: true, root: 'emmc', boot_reason: 'emmc', generation: 12, marked_failed: false,
   drill_pending: true, syncing: false, sync_time: '04:00', next_sync_at: '2026-11-24T03:00:00Z',

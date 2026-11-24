@@ -301,8 +301,11 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   (Samsung, 29.1 GB): one GPT partition `mmcblk0p1` from sector 32768 (ext4, label `armbi_emmc`,
   UUID 1ccf0051-691b-4a89-92cc-4294a651e3ed) and U-Boot of Armbian's package
   `linux-u-boot-vendor-armsom-w3` (fwver uboot-rmbian 11/12/2026) at sectors 64 and 16384. UGREEN's
-  partitions are wiped from it. The SD card `mmcblk1` (SanDisk, 32 GB) is wiped and unused in its
-  slot; a card with a loader would boot before the eMMC. No SPI flash. `UNOS_DEV_SYSTEM_DISK` is
+  partitions are wiped from it. The SD card `mmcblk1` (SD32G, 31.9 GB) holds the SD standby since
+  2026-11-23 (ADR-0471, ADR-0487): a GPT (the W3's U-Boot reads no partition of an MBR card), its
+  own loader, the FAT `UNOS-BOOT` with the chooser and the btrfs `UNOS-STANDBY` with the
+  generations; every boot passes its chooser, which U-Boot runs before the eMMC's script. Change
+  it only through `/api/v1/system/standby`. No SPI flash. `UNOS_DEV_SYSTEM_DISK` is
   `mmcblk0` in `dev.env`, so the `SD writes` lines count the eMMC: 12.0 MiB since the boot from it
   on 2026-11-23.
 - Docker (ADR-0486): its data root and containerd's root are the subvolumes `.docker` and
@@ -311,6 +314,13 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
+- Runs the fixes of `system.sd-standby-boot` (the working tree of 2026-11-24 of their branch, committed
+  after the device check) since 2026-11-24 00:12 UTC, deployed with `scripts/dev/deploy.sh all` six times
+  during the device check of `system.sd-standby-boot` at the owner's standing permission for the
+  W3; the last: SD MiB sync 0.270, build-supervisor 0.406, build-webui 0.199, up 0.016, check 0.000;
+  total 0.891 (the six: 1.090, 1.445, 3.359, 0.875, 0.840, 0.891). check: OK. The SD standby is set
+  up, through the chooser, generation 12 current (Log, 2026-11-24). The commit differs from the
+  deployed tree only in docstrings and comments of `supervisor/src/standby` and in docs.
 - Runs `main` 0b7ba73e since the evening of 2026-11-22, deployed at the owner's word ("yes,
   deploy", in translation). SD MiB: sync 2.664, build-supervisor 1586.949 (pip's layer rebuilt for
   Dependabot's pins), build-webui 18.734, up 6.215, check 0.543; total 1615.250. check: OK.
@@ -804,6 +814,48 @@ Open owner actions:
     GB on the eMMC).
 
 ## Log
+
+### 2026-11-24: The SD standby boots through its chooser on the BPI-W3, and its drills pass (ADR-0487)
+
+- On a branch from origin/main 8328a9e7, at the lead's brief after the
+  first device check of `system.sd-standby-boot` had failed at step (4). The cause, found without a
+  serial console by U-Boot scripts that put what they found on the kernel's command line through
+  `${extraboardargs}`: the W3's vendor U-Boot 2017.09 scans the card before the eMMC and reads its
+  raw sectors and IDB, but sees no partition of its MBR (`part list mmc 1` empty, also after
+  `mmc rescan`; the eMMC's GPT lists 1), so the card's `boot.scr` never loaded. The boot ROM's order
+  did not decide it. The card now gets the profile's partition table, GPT on the W3; after that, every
+  boot passed the chooser. A UNOS hook `/boot/boot.scr.uimg` on the eMMC was proved to run before
+  Armbian's `/boot/boot.scr` (the way for a board whose U-Boot scans the eMMC first) and removed again.
+- ADR-0487 supersedes ADR-0471 and ADR-0481 and keeps what it does not change: the profile's table and
+  board-neutral fields for the BPI-F3 (the owner: "Yes, for F3 too"; a ledger entry of its
+  own), Docker's data root no condition (ADR-0486), the card's Docker and
+  containerd roots on the card, `unos-standby-watch.service` for a failed Docker pool, the seven
+  defects of the first check, and three found by the drills: a third boot folder that did not fit
+  the FAT partition (a discard failed with rsync's status 11), the run's time on the card's stale
+  clock, and Caddy's and the SMART monitor's writes at every start. The card's btrfs is no longer
+  logged as an unmanaged pool at each start.
+- Device check on the W3 (card SD32G, 31.9 GB; eMMC MiB by `scripts/dev/sd.sh measure`, card MiB
+  from its stat): (1) five conditions met, dry run 0.000. (2) Set up: eMMC 0.605 MiB (was 32.363),
+  card 1733 MiB (@sys-1 2.51 GiB, image archives 218 MiB), the card's loader byte-identical to the
+  package's images; Remove before it left no folder (0.332 MiB). (3) Sync now twice: unchanged, 0 on
+  both disks; a channel and Sync now: 2.1 MiB on the card, eMMC 0.016; 10 minutes after another
+  change: trigger change. (4) reboot through the chooser (`unos.chooser=card unos.root=emmc
+  unos.reason=emmc panic=10`), counter back to 0, watchdog 1min, switch ready. D1 to D4 each booted
+  the card's root and returned: UNOS answered 95 to 108 s after a drill's call (D1, D2), 319 s after
+  D3's write to `trigger_fs_error` (the mark at 3 min 41 s), 237 s after D4's call (three failed
+  boots, then `tries`); the card's root wrote nothing to the eMMC, served Samba with the pool mounted,
+  refused an app's uninstall (409) and stayed on the card at a reboot; each discard 6.5 to 226 MiB on
+  the card, 0.000 to 0.016 on the eMMC. (10) after the reboot
+  check on the last build the start sync found nothing to write; an idle hour wrote 0.355 MiB to the
+  eMMC and nothing to the card (an hour before it, Armbian's daily logrotate wrote 12.570 MiB).
+- Left: step (9), the card pulled, needs hands. D3's switch audit entry and the supervisor's last
+  log lines, on the pool, were lost to the SysRq reboot, as by a power cut; the card's FAT is left
+  marked dirty by it (Linux warns at the next mount). `passes` stays false.
+- Review in a fresh context: fixed the reads of dpkg's lists outside the read-only unit, a watch
+  that would switch to a card whose btrfs is not mounted or for a disk that came up late, the loader
+  rewrite's order (the first stage's header now last), the clock-based boot test (now the kernel's
+  boot_id), the eMMC's own units copied to the card, Remove leaving the watch running, part names
+  shown as keys, and stale user docs.
 
 ### 2026-11-23: The BPI-W3 runs from its eMMC, its SD card wiped (ADR-0470)
 
