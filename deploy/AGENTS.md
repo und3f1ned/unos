@@ -33,7 +33,7 @@
   changes, pulls them while UNOS runs, backs up, switches, waits for health and rolls back on
   failure with the backup's database (ADR-0049, ADR-0050); both build only where Docker is neither
   amd64, arm64 nor riscv64 (32-bit arm), which has no release images (ADR-0458), and its supervisor's
-  build compiles the packages without an armv7l wheel in a build stage (ADR-0498). The in-app
+  build compiles the packages without an armv7l wheel in a build stage (ADR-0499). The in-app
   updater runs `update.sh --fetch` and, in a transient systemd unit, `update.sh --in-app`
   (`supervisor/src/updates/installer.py`); the compose file keeps building `deploy-supervisor` and
   `deploy-webui` for `scripts/dev/deploy.sh`, and the
@@ -102,7 +102,7 @@ write counts; its SD card holds the SD standby, changed only through its API (AD
   Each `FROM` names a base by digest or an earlier stage, and the last one `packages-${TARGETARCH}`,
   for which amd64, arm64, riscv64 and arm each have a stage: build-supervisor refuses anything else.
   amd64, arm64 and riscv64 so build the layers of the one-stage file, which the devices have cached,
-  and only 32-bit ARM builds `arm-wheels`, whose compilers stay out of every image (ADR-0498). A
+  and only 32-bit ARM builds `arm-wheels`, whose compilers stay out of every image (ADR-0499). A
   supervisor build after a change to its requirements, or to its base's digest when the image that
   digest names for linux/arm64 is new to the device, reruns apt-get and pip there: tell the owner
   first. `deploy.sh build-supervisor` says before the build

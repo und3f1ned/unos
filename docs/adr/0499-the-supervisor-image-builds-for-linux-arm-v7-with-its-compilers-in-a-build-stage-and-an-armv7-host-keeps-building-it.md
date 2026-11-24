@@ -5,7 +5,7 @@ area: deploy
 decided-by: agent
 ---
 
-# ADR-0498: The supervisor's image builds for linux/arm/v7 with its compilers in a build stage, and an ARMv7 host keeps building it
+# ADR-0499: The supervisor's image builds for linux/arm/v7 with its compilers in a build stage, and an ARMv7 host keeps building it
 
 ## Context
 

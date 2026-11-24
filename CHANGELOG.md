@@ -2018,7 +2018,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
-- The supervisor builds on ARMv7 (ADR-0498): cffi and greenlet, which publish no armv7l wheel,
+- The supervisor builds on ARMv7 (ADR-0499): cffi and greenlet, which publish no armv7l wheel,
   stopped the build of `supervisor/Dockerfile` for linux/arm/v7 (libffi's headers and a C++ compiler
   were missing). Its new build stage `arm-wheels` compiles wheels of the requirements with gcc, g++,
   libffi-dev and make, and 32-bit ARM's image installs them through a mount, without g++, libffi-dev

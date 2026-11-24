@@ -88,7 +88,7 @@ and httptools publish no ARMv7 wheel, so the build stage `arm-wheels` of
 `supervisor/Dockerfile` installs gcc, g++, libffi's headers and make and
 compiles a wheel of each package; the image installs those wheels, and g++,
 libffi's headers and make stay out of it (gcc and python3-dev are in the
-supervisor's image on every platform) (ADR-0498). Checked under QEMU on a
+supervisor's image on every platform) (ADR-0499). Checked under QEMU on a
 workstation, not yet on a board: the build took 22 minutes, 13 of them
 uvloop's, and the supervisor started and answered its health check. Plan for
 as long or longer on a small board; how much RAM the compile takes there was
