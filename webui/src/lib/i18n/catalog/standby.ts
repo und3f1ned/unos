@@ -135,7 +135,7 @@ export const en = {
 
 	'standby.leftover.title': 'A card holds an unfinished standby',
 	'standby.leftover.text':
-		"Setting up the standby stopped midway: its card holds the standby's partitions but is not set up. Remove the standby wipes it.",
+		"The card holds the standby's partitions, but the standby is not set up: a setup stopped midway, or the card was not in its slot when the standby was removed. Remove the standby wipes it.",
 	'standby.remove.title': 'Remove the standby',
 	'standby.remove.help': 'The card is wiped and offered as a free card again.',
 	'standby.remove.button': 'Remove the standby',
@@ -277,7 +277,7 @@ export const ru: Translation<typeof en> = {
 
 	'standby.leftover.title': 'На карте незаконченный резерв',
 	'standby.leftover.text':
-		'Настройка резерва остановилась на полпути: на карте есть разделы резерва, но он не настроен. «Удалить резерв» сотрёт её.',
+		'На карте есть разделы резерва, но он не настроен: настройка остановилась на полпути, или карты не было в слоте, когда резерв удаляли. «Удалить резерв» сотрёт её.',
 	'standby.remove.title': 'Удалить резерв',
 	'standby.remove.help': 'Карта стирается и снова предлагается как свободная.',
 	'standby.remove.button': 'Удалить резерв',

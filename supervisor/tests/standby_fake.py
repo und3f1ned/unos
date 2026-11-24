@@ -17,6 +17,8 @@ import re
 import shlex
 from dataclasses import replace
 
+import pytest
+
 from src import host
 from src.standby import conditions
 from src.standby.hostops import BOOT_DIR, CARD_DIR
@@ -76,6 +78,11 @@ UUID={POOL_UUID} /mnt/pools/data btrfs defaults,noatime,nofail 0 0
 CMDLINE_THROUGH_CHOOSER = (f"root=UUID={ROOT_UUID} rootwait rootfstype=ext4 ubootpart={EMMC_PARTUUID} "
                            "unos.chooser=card unos.root=emmc unos.reason=emmc panic=10")
 CMDLINE_WITHOUT_CHOOSER = f"root=UUID={ROOT_UUID} rootwait rootfstype=ext4 ubootpart={EMMC_PARTUUID}"
+
+
+class PowerCut(BaseException):
+    """The host stopped at a change (a power cut, a crash): neither it nor any later command ran. Not an
+    Exception, so that no handler of the code under test takes it for a failed command."""
 
 
 def mountinfo_line(number: int, target: str, fstype: str, source: str, options: str = "rw") -> str:
@@ -156,6 +163,9 @@ class StandbyFakeHost:
         self.failing: set[str] = set()
         self.uuids: dict[str, str] = {}
         self.loader_version = "26.11.0-trunk.133"
+        # The units that systemctl enabled, and the number of changes after which the host stops (PowerCut).
+        self.enabled: set[str] = set()
+        self.cut_at: int | None = None
 
     # --- the host's state -----------------------------------------------------------------------------
 
@@ -200,6 +210,18 @@ class StandbyFakeHost:
         for key, value in (sync_digests_from or {}).items():
             self.files[key.replace("@sys-N", f"@sys-{number}")] = value
 
+    def counts_tries_unanswered(self) -> bool:
+        """Whether a boot would run the card's chooser while the eMMC lacks the enabled unit that sets its
+        tries counter back to 0: each boot then counts a try that nothing resets, and the fourth boots the
+        card's root (ADR-0490). The chooser runs while the card's FAT partition (labelled UNOS-BOOT) holds
+        boot.scr, mounted or not, whichever loader the boot ROM took."""
+        chooser = any("UNOS-BOOT" in card.labels for card in self.cards) and (
+            f"{BOOT_DIR}/boot.scr" in self.files or f"{BOOT_DIR}/boot.scr" in self.hidden.get(BOOT_DIR, {}))
+        unit = "unos-standby-boot-ok.service"
+        reset = (unit in self.enabled and f"/etc/systemd/system/{unit}" in self.files
+                 and "/usr/local/lib/unos-standby/unos-standby-boot-ok.sh" in self.files)
+        return chooser and not reset
+
     def sectors_written(self) -> str:
         return " ".join(["1", "0", "2", "0", "3", "0", str(self.card_sectors_written), "0", "0", "0", "0"])
 
@@ -230,6 +252,8 @@ class StandbyFakeHost:
         return result
 
     def _change(self, cmd: list[str]) -> None:
+        if self.cut_at is not None and len(self.changes) >= self.cut_at:
+            raise PowerCut(cmd)
         self.changes.append(cmd)
         if any(part.startswith(("/mnt/.unos-standby", f"of=/dev/{self.card}", f"/dev/{self.card}")) for part in cmd):
             self.card_sectors_written += 2048
@@ -287,6 +311,8 @@ class StandbyFakeHost:
             return self._ls(cmd[-1])
         if program == "mountpoint":
             return ok if cmd[-1] in self.mounted else fail
+        if program == "systemctl" and cmd[1] == "is-enabled":
+            return ok if cmd[-1] in self.enabled else fail
         if program == "btrfs":
             return self._btrfs(cmd)
         if program == "rsync":
@@ -357,16 +383,28 @@ class StandbyFakeHost:
             self.sectors = {sector: data for sector, data in self.sectors.items()
                             if not start <= sector * 512 < end}
         elif program == "wipefs" and cmd[-1].startswith(f"/dev/{self.card}"):
-            # The signatures of the card's filesystems or of its table: lsblk finds none of UNOS's labels.
-            self.cards = [replace(self.cards[0], labels=(), use=None, uuids=frozenset())]
+            # The signatures of one of the card's filesystems, whose label and files go with them, or of its
+            # table: then lsblk finds none of UNOS's labels.
+            filesystems = {f"/dev/{self.card}p1": ("UNOS-BOOT", BOOT_DIR), f"/dev/{self.card}p2": ("UNOS-STANDBY", CARD_DIR)}
+            label, folder = filesystems.get(cmd[-1], (None, None))
+            labels = tuple(name for name in self.cards[0].labels if label is not None and name != label)
+            for gone in [folder] if folder else [BOOT_DIR, CARD_DIR]:
+                self.hidden.pop(gone, None)
+            self.cards = [replace(self.cards[0], labels=labels, use=self.cards[0].use if labels else None,
+                                  uuids=self.cards[0].uuids if labels else frozenset())]
         elif program == "mkfs.vfat":
             self.uuids[cmd[-1]] = BOOT_UUID
+            self.hidden.pop(BOOT_DIR, None)
         elif program == "mkfs.btrfs":
+            self.hidden.pop(CARD_DIR, None)
             self.uuids[cmd[-1]] = CARD_UUID
             self.block_devices |= {f"/dev/{self.card}p1", f"/dev/{self.card}p2"}
             self.cards = [replace(self.cards[0], labels=("UNOS-BOOT", "UNOS-STANDBY"), use="The SD card standby")]
         elif program == "systemctl" and cmd[1] == "reboot":
             self.reboots += 1
+        elif program == "systemctl" and cmd[1] in ("enable", "disable"):
+            names = {part for part in cmd[2:] if not part.startswith("-")}
+            self.enabled = self.enabled | names if cmd[1] == "enable" else self.enabled - names
         elif program in ("bash", "dd", "wipefs", "sfdisk", "blockdev", "udevadm", "chattr", "ln", "sync", "systemctl"):
             if program == "bash" and "docker save" in cmd[2]:
                 self.files[cmd[-1]] = "archive"
@@ -517,6 +555,22 @@ def _excluded(path: str, patterns: list[str]) -> bool:
         elif path == anchored or path.startswith(anchored + "/"):
             return True
     return False
+
+
+def stopped_at_each_step(make, run) -> list[StandbyFakeHost]:
+    """``run`` on a fresh fake from ``make`` once to the end, then once stopped before each of its changes:
+    the fakes as each stop left them."""
+    whole = make()
+    run()
+    stopped = []
+    for step in range(len(whole.changes)):
+        fake = make()
+        fake.cut_at = step
+        with pytest.raises(PowerCut):
+            run()
+        fake.cut_at = None
+        stopped.append(fake)
+    return stopped
 
 
 def install(monkeypatch, fake: StandbyFakeHost) -> StandbyFakeHost:

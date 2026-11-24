@@ -47,6 +47,7 @@
 		standby_card_missing: 'problems.kind.standby_card_missing',
 		standby_not_in_boot_path: 'problems.kind.standby_not_in_boot_path',
 		standby_has_changes: 'problems.kind.standby_has_changes',
+		standby_leftover: 'problems.kind.standby_leftover',
 		running_on_standby: 'problems.kind.running_on_standby'
 	};
 

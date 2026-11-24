@@ -37,7 +37,7 @@ from src.standby.hostops import BOOT_DIR, CARD_DIR, STANDBY_DIR, StandbyFailed, 
 from tests.audit_helpers import audit_entries
 from tests.standby_fake import (
     BOOT_ID, CARD_UUID, CMDLINE_THROUGH_CHOOSER, POOL_UUID, ROOT_UUID, SETUP_BOOT_ID,
-    SUPERVISOR_IMAGE, StandbyFakeHost, install,
+    SUPERVISOR_IMAGE, StandbyFakeHost, install, stopped_at_each_step,
 )
 
 STATE = f"{CARD_DIR}/state.json"
@@ -309,8 +309,9 @@ class TestTheSetup:
             "write /etc/fstab",
             f"mount {BOOT_DIR}",
             f"mount {CARD_DIR}",
-            f"write {BOOT_DIR}/boot.scr",
+            # The chooser after the eMMC's units that set its counter back (ADR-0490).
             "systemctl enable unos-standby-boot-ok.service unos-standby-watch.service",
+            f"write {BOOT_DIR}/boot.scr",
             f"write {CURRENT.replace('current', 'next')}",
         ]
         positions = [done.index(step) for step in order]
@@ -1353,6 +1354,211 @@ class TestTheRemoval:
         with pytest.raises(HTTPException) as refused:
             await service.remove("SC32G", dry_run=False, request=None, username="admin")
         assert refused.value.status_code == 409
+
+
+def assert_nothing_of_the_standby_left(fake: StandbyFakeHost) -> None:
+    """After Remove: no fstab line, unit, script, drop-in or folder of the standby, and the card a free card.
+    A wipe stopped after the card's signatures leaves its counter sector, which no chooser reads any more,
+    for the next Set up's wipe."""
+    assert not card.is_armed(fake.files["/etc/fstab"])
+    for path in (*(path for path, _, _ in card.emmc_units(conditions.profiles.BPI_W3)), card.WATCHDOG_DROPIN):
+        assert path not in fake.files
+    assert fake.enabled == set() and not fake.exists(STANDBY_DIR)
+    assert all(conditions.card_refusal(item) is None for item in fake.cards) and fake.raw == {}
+    assert not fake.counts_tries_unanswered()
+
+
+class TestAStopMidway:
+    """A Set up, a sync or a Remove that stops at any step (a power cut, a crash) never leaves a card whose
+    chooser counts tries while the eMMC lacks the unit that sets the counter back: after three such boots
+    the fourth would boot the card's root (ADR-0490)."""
+
+    def prepared(self, monkeypatch) -> StandbyFakeHost:
+        fake = install(monkeypatch, StandbyFakeHost())
+        card.prepare("SC32G", dry_run=False)
+        fake.changes.clear()
+        return fake
+
+    def test_a_removal_takes_the_emmcs_units_away_only_after_the_card_is_wiped(self, fake, monkeypatch):
+        for stopped in stopped_at_each_step(lambda: self.prepared(monkeypatch),
+                                            lambda: card.remove("SC32G", dry_run=False, running_on_card=False)):
+            assert not stopped.counts_tries_unanswered(), commands(stopped)
+
+    def test_a_second_removal_ends_one_that_stopped_at_any_step(self, fake, monkeypatch):
+        for stopped in stopped_at_each_step(lambda: self.prepared(monkeypatch),
+                                            lambda: card.remove("SC32G", dry_run=False, running_on_card=False)):
+            install(monkeypatch, stopped)
+            # Remove as the Standby tab offers it: while the standby is set up or its card left, with the card's
+            # model while the card still holds the standby, else none. A stop right before the last step, the
+            # reload of systemd's units, left nothing to remove.
+            left = conditions.standby_card(SimpleNamespace(cards=stopped.cards))
+            if card.is_armed(stopped.files["/etc/fstab"]) or left:
+                card.remove(left.model if left else "", dry_run=False, running_on_card=False)
+            assert_nothing_of_the_standby_left(stopped)
+
+    def test_the_fstab_lines_go_last_so_that_a_stopped_removal_shows_as_set_up(self, fake, monkeypatch):
+        for stopped in stopped_at_each_step(lambda: self.prepared(monkeypatch),
+                                            lambda: card.remove("SC32G", dry_run=False, running_on_card=False)):
+            if stopped.changes and stopped.changes[-1] != ["write", "/etc/fstab"]:
+                assert card.is_armed(stopped.files["/etc/fstab"]), commands(stopped)
+
+    def test_a_setup_writes_the_chooser_only_after_the_emmcs_units(self, fake, monkeypatch):
+        def make() -> StandbyFakeHost:
+            return install(monkeypatch, StandbyFakeHost())
+
+        for stopped in stopped_at_each_step(make, lambda: card.prepare("SC32G", dry_run=False)):
+            assert not stopped.counts_tries_unanswered(), commands(stopped)
+
+    @pytest.mark.parametrize("units", ["missing", "not enabled"])
+    def test_a_sync_writes_the_chooser_only_after_the_emmcs_units(self, fake, monkeypatch, units):
+        """A card set up without its chooser and with its units missing or not enabled (a Set up that
+        stopped after the mounts or before it enabled them): the sync writes and enables them first."""
+        def make() -> StandbyFakeHost:
+            made = install(monkeypatch, StandbyFakeHost())
+            armed(made, generation_number=None)
+            if units == "not enabled":
+                made.files.update({path: text for path, text, _ in card.emmc_units(conditions.profiles.BPI_W3)})
+            return made
+
+        for stopped in stopped_at_each_step(make, lambda: generation.sync(force=True)):
+            assert not stopped.counts_tries_unanswered(), commands(stopped)
+        whole = make()
+        generation.sync(force=True)
+        # The watch is enabled when it was missing; one that is there stays as the administrator left it.
+        assert whole.enabled == ({"unos-standby-boot-ok.service"} if units == "not enabled"
+                                 else {"unos-standby-boot-ok.service", "unos-standby-watch.service"})
+        assert f"{BOOT_DIR}/boot.scr" in whole.files and not whole.counts_tries_unanswered()
+
+    async def test_a_failed_removal_reads_the_state_again_and_a_second_one_ends_it(self, fake, monkeypatch):
+        """A wipe that fails at the card's re-read: the card holds no standby any more, so the tab offers the
+        Remove without a model to type, which ends it."""
+        monkeypatch.setattr(card, "REREAD_PAUSE", 0)
+        with Client() as client:
+            assert client.post("/api/v1/system/standby/arm", json={"model": "SC32G"}).status_code == 200
+            fake.busy_rereads = card.REREAD_TRIES
+            failed = client.request("DELETE", "/api/v1/system/standby", json={"model": "SC32G"})
+            assert failed.status_code == 500, failed.text
+            body = client.get("/api/v1/system/standby").json()
+            assert body["armed"] is True and body["card_present"] is False and body["card"]["model"] is None
+            assert {problem["kind"] for problem in body["problems"]} == {"standby_card_missing"}
+            again = client.request("DELETE", "/api/v1/system/standby", json={"model": body["card"]["model"] or ""})
+            assert again.status_code == 200, again.text
+        assert_nothing_of_the_standby_left(fake)
+
+
+class TestALeftoverCard:
+    """A card that holds a standby which is not set up here: a Remove that ran without the card in its slot,
+    a Set up that stopped before UNOS's fstab lines, a card from another installation (ADR-0490)."""
+
+    def left(self, fake: StandbyFakeHost, *, through_chooser: bool = True) -> None:
+        card.prepare("SC32G", dry_run=False)
+        fake.files["/etc/fstab"] = card.without_standby_lines(fake.files["/etc/fstab"])
+        for path, _, _ in card.emmc_units(conditions.profiles.BPI_W3):
+            del fake.files[path]
+        fake.enabled.clear()
+        for target in (BOOT_DIR, CARD_DIR):  # not mounted at the boot without UNOS's lines
+            fake.run(["umount", target])
+        if through_chooser:
+            fake.files["/proc/cmdline"] = CMDLINE_THROUGH_CHOOSER
+        service.refresh()
+
+    async def test_a_boot_through_its_chooser_is_an_error_until_remove_wipes_it(self, fake):
+        self.left(fake)
+        assert fake.counts_tries_unanswered()
+        await service.update_problems()
+        assert kinds() == {"standby_leftover"}
+        problem = next(iter(problems.of_source(service.SOURCE).values()))
+        assert problem.severity == "error" and problem.subject == "/dev/mmcblk1"
+        with Client() as client:
+            body = client.get("/api/v1/system/standby").json()
+        assert body["leftover"] is True and [item["kind"] for item in body["problems"]] == ["standby_leftover"]
+        await service.remove("SC32G", dry_run=False, request=None, username="admin")
+        # The same boot, through the chooser still: the card holds no standby any more.
+        assert kinds() == set() and not fake.counts_tries_unanswered()
+        assert [entry["details"] for entry in audit_log()] == ["Removed the standby and wiped /dev/mmcblk1"]
+
+    async def test_without_its_chooser_in_this_boot_it_is_no_problem(self, fake):
+        self.left(fake, through_chooser=False)
+        await service.update_problems()
+        assert kinds() == set()
+        with Client() as client:
+            assert client.get("/api/v1/system/standby").json()["leftover"] is True
+
+    async def test_a_card_that_cannot_be_read_is_no_leftover(self, fake, monkeypatch):
+        self.left(fake)
+
+        def unreadable():
+            raise OSError("lsblk failed")
+
+        monkeypatch.setattr(conditions, "read_cards", unreadable)
+        service.refresh()
+        await service.update_problems()
+        assert kinds() == set()
+
+    async def test_a_leftover_card_pulled_out_is_no_problem_at_the_next_check_of_the_card(self, fake):
+        self.left(fake)
+        await service.update_problems()
+        assert kinds() == {"standby_leftover"}
+        fake.cards = []
+        service._read_leftover(service._state)
+        await service.update_problems()
+        assert kinds() == set() and not service._state.leftover
+
+
+class TestARemovalWithoutTheCard:
+    """The card of a standby is not in its slot when Remove runs: it cannot be wiped, so the unit that sets
+    its counter back stays for the day it comes back with its chooser (ADR-0490)."""
+
+    async def test_it_keeps_the_counters_reset_for_the_card_that_may_come_back(self, fake):
+        card.prepare("SC32G", dry_run=False)
+        service.refresh()
+        for target in (BOOT_DIR, CARD_DIR):  # the card pulled: its filesystems are gone
+            fake.run(["umount", target])
+        pulled, fake.cards = fake.cards, []
+        with pytest.raises(HTTPException, match="leave the model empty"):
+            await service.remove("SC32G", dry_run=False, request=None, username="admin")
+        await service.remove("", dry_run=False, request=None, username="admin")
+        assert not card.is_armed(fake.files["/etc/fstab"])
+        assert fake.enabled == {"unos-standby-boot-ok.service"}
+        assert "/etc/systemd/system/unos-standby-boot-ok.service" in fake.files
+        assert "/usr/local/lib/unos-standby/unos-standby-boot-ok.sh" in fake.files
+        for path in ("/etc/systemd/system/unos-standby-watch.service", "/usr/local/lib/unos-standby/unos-standby-watch.sh",
+                     card.WATCHDOG_DROPIN):
+            assert path not in fake.files
+        # The card back, and a boot through its chooser: its counter is set back, and the tab asks for Remove.
+        fake.cards = pulled
+        fake.files["/proc/cmdline"] = CMDLINE_THROUGH_CHOOSER
+        service.refresh()
+        assert not fake.counts_tries_unanswered()
+        await service.update_problems()
+        assert kinds() == {"standby_leftover"}
+        await service.remove("SC32G", dry_run=False, request=None, username="admin")
+        assert_nothing_of_the_standby_left(fake)
+
+    def test_a_wiped_card_in_the_slot_takes_the_reset_away(self, fake, monkeypatch):
+        """A Remove that stopped after the wipe: the card in the slot is the standby's, wiped."""
+        monkeypatch.setattr(card, "REREAD_PAUSE", 0)
+        card.prepare("SC32G", dry_run=False)
+        fake.busy_rereads = card.REREAD_TRIES
+        with pytest.raises(StandbyFailed):
+            card.remove("SC32G", dry_run=False, running_on_card=False)
+        assert fake.enabled == {"unos-standby-boot-ok.service", "unos-standby-watch.service"}
+        card.remove("", dry_run=False, running_on_card=False)
+        assert_nothing_of_the_standby_left(fake)
+
+    def test_its_dry_run_wipes_the_card_before_the_units_and_drops_the_lines_last(self, fake):
+        card.prepare("SC32G", dry_run=False)
+        plan = card.remove("SC32G", dry_run=True, running_on_card=False)
+        assert plan.index("dd if=/dev/zero of=/dev/mmcblk1 bs=1M count=16 conv=fsync status=none") < plan.index(
+            "systemctl disable --now unos-standby-boot-ok.service unos-standby-watch.service")
+        assert plan[-2:] == ["write /etc/fstab", "systemctl daemon-reload"]
+
+    def test_the_banner_names_every_kind_of_the_standby(self):
+        banner = (Path(__file__).resolve().parents[2] / "webui/src/lib/components/ProblemsBanner.svelte").read_text(
+            encoding="utf-8")
+        for kind in ("standby_sync_failed", "standby_copy_old", "standby_card_missing", "standby_not_in_boot_path",
+                     "standby_has_changes", "standby_leftover", "running_on_standby"):
+            assert f"{kind}: 'problems.kind.{kind}'" in banner, kind
 
 
 # ---------------------------------------------------------------------------

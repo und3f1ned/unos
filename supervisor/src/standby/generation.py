@@ -561,8 +561,8 @@ def _sectors_written(disk: str) -> int | None:
 
 def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> list[str]:
     """What the card and the eMMC's system hold besides the generations, rewritten only when it
-    differs: the board's loader after its package's version changed, the chooser boot.scr, and the
-    eMMC's units of the standby with their scripts (an update of UNOS may change them). Without
+    differs: the board's loader after its package's version changed, the eMMC's units of the standby with
+    their scripts (an update of UNOS may change them), and the chooser boot.scr after them. Without
     ``apply`` it only reads, and names what differs."""
     from .card import emmc_units
 
@@ -585,6 +585,27 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         write_loader(ops, profile, f"/dev/{context.card_disk}")
         ops.write_file(LOADER_VERSION, version + "\n", what="The loader's version")
         parts.append("loader")
+    enable = []
+    for path, text, mode in emmc_units(profile):
+        before = ops.read_file(path)
+        name = path.rsplit("/", 1)[1]
+        # A unit is enabled when it was missing, and the one that sets the card's counter back also when it
+        # is there but not enabled (a Set up that stopped before it enabled it, ADR-0490).
+        disabled = (before is None and name.endswith(".service")) or (
+            name == BOOT_OK_UNIT and not ops.read(["systemctl", "is-enabled", "--quiet", name]).ok)
+        if before != text or disabled:
+            if apply:
+                if before != text:
+                    ops.write_file(path, text, what=f"{path} of the eMMC's system", mode=mode)
+                if disabled:
+                    enable.append(name)
+            if "units" not in parts:
+                parts.append("units")
+    if "units" in parts and apply:
+        ops.change(["systemctl", "daemon-reload"], what="The standby's units")
+        if enable:
+            ops.change(["systemctl", "enable", *enable], what="The standby's units")
+    # The chooser after the units that set its tries counter back (ADR-0490).
     image = bootscript.script_image(bootscript.chooser_text(profile, emmc_part=facts.boot_number,
                                                            emmc_prefix=facts.boot_prefix, emmc_label=context.label))
     shown = ops.read(["sha256sum", "--", BOOT_SCR]).stdout.split()
@@ -592,20 +613,6 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         if apply:
             ops.write_file(BOOT_SCR, image, what="The chooser boot.scr")
         parts.append("chooser")
-    enable = []
-    for path, text, mode in emmc_units(profile):
-        before = ops.read_file(path)
-        if before != text:
-            if apply:
-                ops.write_file(path, text, what=f"{path} of the eMMC's system", mode=mode)
-                if before is None and path.endswith(".service"):
-                    enable.append(path.rsplit("/", 1)[1])
-            if "units" not in parts:
-                parts.append("units")
-    if "units" in parts and apply:
-        ops.change(["systemctl", "daemon-reload"], what="The standby's units")
-        if enable:
-            ops.change(["systemctl", "enable", *enable], what="The standby's units")
     return parts
 
 

@@ -3208,7 +3208,12 @@ or more, and rsync, dosfstools and sfdisk on the host.
   NAS at once. On the card, **Return to the eMMC** removes the mark and reboots
   from the eMMC; the changes made on the card stay on the card. Back on the
   eMMC, **Return through the standby** or **Discard the standby's changes**.
-- **Remove the standby** wipes the card and offers it as a free card again.
+- **Remove the standby** wipes the card and offers it as a free card again. A
+  removal that stopped midway (a power cut) shows the standby as set up with
+  its card missing: run **Remove the standby** again. Without the card in its
+  slot, the removal wipes nothing and keeps the eMMC's unit that sets the
+  card's counter back; should the card come back, the error "An SD card holds
+  a standby that is not set up" asks you to remove it, which wipes it.
 
 The standby is no backup: it sits in the same device and copies a mistake at
 the next sync. Keep the off-device copies. To boot the card by hand from any
