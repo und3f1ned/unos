@@ -657,9 +657,8 @@ class TestTheReviewedEdges:
         monkeypatch.setattr(service, "REBOOT_DELAY_SECONDS", 0)
         armed(fake)
         fake.files[STATE] = json.dumps({**json.loads(fake.files[STATE]), "counter_sector": 2048})
-        fake.files["/proc/cmdline"] = "root=UUID=c unos.chooser=card unos.root=card unos.reason=tries"
-        service.refresh()
-        await service.return_to_emmc(dry_run=False, request=None, username="admin")
+        on_the_cards_root(fake)
+        await service.return_to_emmc(discard=True, dry_run=False, request=None, username="admin")
         assert 32767 in fake.sectors and 2048 not in fake.sectors
         await service._reboot_task
 
@@ -1317,6 +1316,14 @@ class TestTheDrills:
         await reboot_ran(fake, monkeypatch)
 
 
+def on_the_cards_root(fake: StandbyFakeHost) -> None:
+    """The host runs from the card's root, which holds the eMMC's own fstab lines that the sync kept."""
+    fake.on_card_root = True
+    fake.files["/proc/cmdline"] = "root=UUID=c unos.chooser=card unos.root=card unos.reason=tries"
+    fake.files[f"{generation.LIB}/emmc-fstab"] = f"UUID={ROOT_UUID} / ext4 defaults,noatime 0 1\n"
+    service.refresh()
+
+
 class TestTheReturn:
     async def test_on_the_card_it_removes_the_mark_and_the_drill_resets_the_counter_and_reboots(self, fake, monkeypatch):
         monkeypatch.setattr(service, "REBOOT_DELAY_SECONDS", 0)
@@ -1324,9 +1331,8 @@ class TestTheReturn:
         fake.files[generation.MARK] = "reason=tries\n"
         fake.files[generation.DRILL] = "unos_drill_args=root=UUID=x\n"
         fake.sectors[32767] = bootscript.counter_block(3)
-        fake.files["/proc/cmdline"] = "root=UUID=c unos.chooser=card unos.root=card unos.reason=tries"
-        service.refresh()
-        await service.return_to_emmc(dry_run=False, request=None, username="admin")
+        on_the_cards_root(fake)
+        await service.return_to_emmc(discard=True, dry_run=False, request=None, username="admin")
         assert generation.MARK not in fake.files and generation.DRILL not in fake.files
         assert fake.sectors[32767] == bootscript.counter_block(0)
         await reboot_ran(fake, monkeypatch)

@@ -19,9 +19,10 @@ from src import host
 from src.apps.stacks import APP_POOL_LABEL
 from src.health import problems
 from src.standby import apps as standby_apps
-from src.standby import failback, service
+from src.standby import failback, generation, service
 from src.standby.hostops import CARD_DIR
-from tests.test_standby import Client, audit_log
+from tests.standby_fake import CARD_UUID, ROOT_UUID, mountinfo_line
+from tests.test_standby import STATE, Client, armed, audit_log
 from tests.test_standby_apps import FOLDER, POOL, binds, mark, pool_info, run, stored, synced
 from tests import test_standby, test_standby_apps
 
@@ -273,3 +274,88 @@ class TestThePlannedRepairsReturn:
         assert standby.files[f"{FOLDER}/config/system.xml"] == "<made while the pool was away/>"
         assert backups(standby)["config/system.xml"] == "<config/>"
         assert json.loads(standby.files[f"{CARD_DIR}/state.json"])["apps"]["jellyfin"].get("failed_over") is None
+
+
+# --- the return to the eMMC -------------------------------------------------------------------------------
+
+
+EMMC_OWN = f"UUID={ROOT_UUID} / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1\n"
+
+
+def on_the_card(fake, *, generation_number: int = 1) -> None:
+    """The host runs from the card's root of generation ``generation_number``: its fstab (the card's), the
+    eMMC's own lines kept at the sync, the run recorded."""
+    armed(fake, generation_number=generation_number)
+    fake.on_card_root = True
+    fake.files["/proc/cmdline"] = (f"root=UUID={CARD_UUID} rootflags=subvolid=256 unos.chooser=card unos.root=card "
+                                   "unos.reason=marked")
+    fake.files[generation.MARK] = "reason=drill\ntime=2026-11-24T10:00:00Z\n"
+    card_fstab, own = generation.card_fstab(fake.files["/etc/fstab"], CARD_UUID, {f"UUID={ROOT_UUID}"})
+    fake.files["/etc/fstab"] = card_fstab
+    assert own == EMMC_OWN
+    fake.files[f"{generation.LIB}/emmc-fstab"] = own
+    fake.files[STATE] = json.dumps({**json.loads(fake.files[STATE]), "standby_ran": {
+        "at": "2026-11-24T10:02:00Z", "generation": generation_number, "reason": "drill"}})
+    service.refresh()
+
+
+def fsck_calls(fake) -> list[list[str]]:
+    return [cmd[cmd.index("fsck.ext4"):] for cmd in fake.calls if "fsck.ext4" in cmd]
+
+
+class TestTheEmmcCheck:
+    def test_the_return_is_offered_when_the_emmc_s_root_passes_fsck(self, fake):
+        on_the_card(fake)
+        run(service.check_emmc())
+        with Client() as api:
+            status = api.get("/api/v1/system/standby").json()
+        found = status["emmc_return"]
+        assert found["offered"] is True and found["device"] == "/dev/mmcblk0p1"
+        assert "passes fsck.ext4 -n" in found["detail"] and found["checked_at"]
+        assert fsck_calls(fake) == [["fsck.ext4", "-n", "/dev/mmcblk0p1"]]
+        assert fake.changes == []
+
+    @pytest.mark.parametrize("broken, why", [
+        ("fsck", "does not pass fsck.ext4 -n (exit status 4): /dev/mmcblk0p1: UNEXPECTED INCONSISTENCY"),
+        ("gone", f"The eMMC's root UUID={ROOT_UUID} is not found: the eMMC does not read"),
+        ("btrfs", "The eMMC's root is btrfs, not ext4"),
+        ("no lines", "The card's copy holds no fstab line of the eMMC's root"),
+        ("mounted", "The eMMC's root /dev/mmcblk0p1 is mounted at /media/emmc"),
+    ])
+    def test_otherwise_the_card_stays_the_system_disk(self, fake, monkeypatch, broken, why):
+        monkeypatch.setattr(service, "REBOOT_DELAY_SECONDS", 0)
+        on_the_card(fake)
+        if broken == "fsck":
+            fake.fsck["-n"] = (4, "/dev/mmcblk0p1: Inode 12 has an invalid extent\n\n"
+                                  "/dev/mmcblk0p1: UNEXPECTED INCONSISTENCY; RUN fsck MANUALLY.\n")
+        elif broken == "gone":
+            fake.tagged.clear()
+        elif broken == "btrfs":
+            fake.files[f"{generation.LIB}/emmc-fstab"] = EMMC_OWN.replace(" ext4 ", " btrfs ")
+        elif broken == "no lines":
+            del fake.files[f"{generation.LIB}/emmc-fstab"]
+        else:
+            fake.extra_mounts.append(mountinfo_line(50, "/media/emmc", "ext4", "/dev/mmcblk0p1"))
+        run(service.check_emmc())
+        with Client() as api:
+            status = api.get("/api/v1/system/standby").json()
+            refused = [api.post("/api/v1/system/standby/return", json=body) for body in ({}, {"discard": True})]
+        assert status["emmc_return"]["offered"] is False and why in status["emmc_return"]["detail"]
+        for answer in refused:
+            assert answer.status_code == 409, answer.text
+            assert why in answer.json()["detail"]
+            assert "The card stays the system disk, and no standby is left" in answer.json()["detail"]
+        assert fake.changes == [] and fake.reboots == 0
+        assert generation.MARK in fake.files
+
+    def test_on_the_emmc_there_is_no_check(self, fake):
+        armed(fake)
+        with Client() as api:
+            status = api.get("/api/v1/system/standby").json()
+        assert status["emmc_return"] is None and fsck_calls(fake) == []
+
+    def test_the_standby_s_start_checks_the_emmc(self, fake):
+        on_the_card(fake)
+        run(service.on_card_start())
+        assert fsck_calls(fake) == [["fsck.ext4", "-n", "/dev/mmcblk0p1"]]
+        assert service._state.emmc_check["ok"] is True

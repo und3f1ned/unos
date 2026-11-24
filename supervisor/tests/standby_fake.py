@@ -176,13 +176,22 @@ class StandbyFakeHost:
         self.file_sizes: dict[str, int] = {}
         self.card_df = (31_000_000_000, 20_000_000_000)
         self.loaded_images: set[str] = set()
+        # The return to the eMMC (system.sd-standby-failback): whether the host runs from the card's root,
+        # the filesystems that blkid finds by a tag (UUID=..., PARTUUID=..., LABEL=...), and what fsck.ext4
+        # answers (its exit status and output) per its options.
+        self.on_card_root = False
+        self.tagged: dict[str, str] = {f"UUID={ROOT_UUID}": f"/dev/{emmc}p1"}
+        self.fsck: dict[str, tuple[int, str]] = {}
 
     # --- the host's state -----------------------------------------------------------------------------
 
     def mountinfo(self) -> str:
         text = mountinfo_line(20, "/proc", "proc", "proc") + mountinfo_line(21, "/sys", "sysfs", "sysfs")
         text += mountinfo_line(22, "/dev", "devtmpfs", "udev") + mountinfo_line(23, "/run", "tmpfs", "tmpfs")
-        text += mountinfo_line(1, "/", "ext4", f"/dev/{self.emmc}p1", "rw,errors=remount-ro,commit=600")
+        if self.on_card_root:
+            text += mountinfo_line(1, "/", "btrfs", f"/dev/{self.card}p2", "rw,compress=zstd:1")
+        else:
+            text += mountinfo_line(1, "/", "ext4", f"/dev/{self.emmc}p1", "rw,errors=remount-ro,commit=600")
         text += mountinfo_line(24, "/tmp", "tmpfs", "tmpfs")
         text += mountinfo_line(25, "/mnt/pools/data", "btrfs", "/dev/sda", "rw,space_cache=v2")
         text += mountinfo_line(26, "/run/docker/netns/abc", "nsfs", "nsfs")
@@ -321,6 +330,15 @@ class StandbyFakeHost:
             return host.HostResult(0, json.dumps({"blockdevices": [{"path": f"/dev/{self.emmc}", "uuid": None, "partuuid": None,
                 "label": None, "children": [{"path": f"/dev/{self.emmc}p1", "uuid": ROOT_UUID, "partuuid": EMMC_PARTUUID,
                                              "label": "armbi_emmc"}]}]}), "")
+        if program == "blkid" and "-t" in cmd:
+            device = self.tagged.get(cmd[cmd.index("-t") + 1])
+            return host.HostResult(0, f"{device}\n", "") if device else host.HostResult(2, "", "")
+        if program == "timeout" and "fsck.ext4" in cmd:
+            # A read-only check (-n) of the eMMC's root; -f checks a clean one too.
+            inner = cmd[cmd.index("fsck.ext4"):]
+            assert "-n" in inner and "-y" not in inner and "-p" not in inner, inner
+            status, output = self.fsck.get(" ".join(inner[1:-1]), (0, f"{inner[-1]}: clean, 61234/7618560 files\n"))
+            return host.HostResult(status, output, "")
         if program == "blkid":
             uuid = self.uuids.get(cmd[-1])
             # While udev re-reads the table of a card with nothing mounted after a write to the whole

@@ -115,15 +115,29 @@ async def drill(body: Drill, request: Request, user=Depends(require_admin)) -> S
     return await service.drill(body.kind, dry_run=body.dry_run, request=request, username=user.username)
 
 
+class EmmcReturn(DryRun):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"discard": False, "dry_run": True}]})
+
+    discard: bool = Field(default=False, description=(
+        "false: copy the card's changes to the eMMC, then reboot to it; true: reboot to the eMMC as it was, whose "
+        "system then offers to discard the card's changes."))
+
+
 @router.post("/return", response_model=StandbyAction, summary="On the standby: return to the eMMC and reboot",
-             responses=errors(BODY, _REFUSED))
-async def return_to_emmc(body: DryRun, request: Request, user=Depends(require_admin)) -> StandbyAction:
-    """On the card's root: delete the mark and the drill, set the tries counter to 0 and reboot to the
-    eMMC. Audited as standby_returned.
+             responses=errors(BODY, {409: "Refused: UNOS does not run from the card, the eMMC does not read or its "
+                                          "root does not pass fsck.ext4 -n (the card stays the system disk), or a "
+                                          "condition of the copy is not met."}, _FAILED))
+async def return_to_emmc(body: EmmcReturn, request: Request, user=Depends(require_admin)) -> StandbyAction:
+    """On the card's root, once the eMMC reads and its root passes fsck.ext4 -n: in a transient unit of the
+    host, stop Docker and Samba, copy the standby's root into the eMMC's root and UNOS's volumes into the
+    eMMC's Docker volumes, write the eMMC's fstab, delete the mark, the drill and the run, set the tries
+    counter to 0 and reboot. With discard: delete the mark and the drill, set the counter to 0 and reboot.
+    Audited as standby_returned.
     \f
     ADR-0471.
     """
-    return await service.return_to_emmc(dry_run=body.dry_run, request=request, username=user.username)
+    return await service.return_to_emmc(discard=body.discard, dry_run=body.dry_run, request=request,
+                                        username=user.username)
 
 
 @router.post("/discard", response_model=StandbyAction, summary="Discard the changes of a standby that ran",
