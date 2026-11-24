@@ -30,7 +30,7 @@ const FREE = {
   available: true, unavailable_reason: null, conditions: W3_CONDITIONS, profile: 'BPI-W3', armed: false, leftover: false, card: CARD,
   card_present: null, in_boot_path: null, root: null, boot_reason: null, generation: null, marked_failed: false,
   drill_pending: false, syncing: false, sync_time: '04:00', next_sync_at: null, last_sync: null,
-  last_complete_at: null, standby_ran: null, switch_ready: false, problems: [], apps: [], space: null,
+  last_complete_at: null, standby_ran: null, switch_ready: false, problems: [], apps: [], space: null, emmc_return: null,
 };
 const ARMED = {
   ...FREE, armed: true, card_present: true, in_boot_path: true, root: 'emmc', boot_reason: 'emmc', generation: 1,
@@ -38,11 +38,18 @@ const ARMED = {
   conditions: W3_CONDITIONS.map((item) =>
     item.id === 'sd_card' ? { ...item, detail: "The standby's card /dev/mmcblk1 (SC32G, 31.9 GB)" } : item),
 };
+// On the card's root, the eMMC checked for the return (system.sd-standby-failback).
+const EMMC_OK = {
+  offered: true, detail: "The eMMC's root /dev/mmcblk0p1 passes fsck.ext4 -n", device: '/dev/mmcblk0p1',
+  checked_at: '2026-11-23T12:01:00Z', failed: null,
+};
 const ON_CARD = {
   ...ARMED, root: 'card', boot_reason: 'tries', in_boot_path: true, marked_failed: true, switch_ready: false,
   next_sync_at: null, standby_ran: { at: '2026-11-23T12:00:00Z', generation: 1, reason: 'tries' },
-  problems: [{ kind: 'running_on_standby', severity: 'error' }],
+  problems: [{ kind: 'running_on_standby', severity: 'error' }], emmc_return: EMMC_OK,
 };
+const FSCK_FAILED =
+  "The eMMC's root /dev/mmcblk0p1 does not pass fsck.ext4 -n (exit status 4): /dev/mmcblk0p1: UNEXPECTED INCONSISTENCY; RUN fsck MANUALLY.";
 const RAN = { ...ARMED, standby_ran: ON_CARD.standby_ran, switch_ready: true, problems: [{ kind: 'standby_has_changes', severity: 'warning' }] };
 
 // The critical apps (ADR-0500): Jellyfin on the test pool usb, synced every 6 hours, and the card by part.
@@ -62,8 +69,10 @@ const MOVED = {
 
 type Sent = { method: string; path: string; body: unknown };
 
-/** GET /system/standby answers `state()`; each action is recorded, answered, and may change the state. */
-async function fakeStandby(page: Page, initial: object, after: Record<string, object> = {}): Promise<Sent[]> {
+/** GET /system/standby answers `state()`; each action is recorded, answered, and may change the state, but for a dry
+ * run. An action in `refused` answers 409 with its detail. */
+async function fakeStandby(page: Page, initial: object, after: Record<string, object> = {},
+  refused: Record<string, string> = {}): Promise<Sent[]> {
   const sent: Sent[] = [];
   let state = initial;
   await page.route('**/api/v1/scheduler/timezone', (route) => route.fulfill({ json: { timezone: 'Europe/Berlin' } }));
@@ -74,12 +83,17 @@ async function fakeStandby(page: Page, initial: object, after: Record<string, ob
     const body = request.postDataJSON();
     sent.push({ method: request.method(), path, body });
     const key = `${request.method()} ${path}`;
-    if (after[key]) state = after[key];
+    const dryRun = Boolean((body as { dry_run?: boolean } | null)?.dry_run);
+    if (refused[key]) return route.fulfill({ status: 409, json: { detail: refused[key] } });
+    if (after[key] && !dryRun) state = after[key];
     if (key === 'PUT /settings') return route.fulfill({ status: 204 });
     if (key === 'POST /apps/move' || key === 'POST /apps/return') {
-      // The critical apps' moves (ADR-0500): the server's AppsAction.
-      return route.fulfill({ json: { dry_run: false, message: 'done',
-        apps: [{ app: 'jellyfin', has_copy: true, age: key === 'POST /apps/move' ? '6 h' : null, error: null }] } });
+      // The critical apps' moves (ADR-0500) and returns: the server's AppsAction; a dry run of the pool return
+      // answers the MiB its copy writes.
+      const back = key === 'POST /apps/return';
+      return route.fulfill({ json: { dry_run: dryRun, message: 'done',
+        apps: [{ app: 'jellyfin', has_copy: true, age: back ? null : '6 h', error: null, mib: back ? 12.5 : null,
+          backup: back && !dryRun ? '/mnt/pools/usb/apps/jellyfin.before-failback-20261124T120000Z' : null }] } });
     }
     const message = key === 'POST /drill' ? 'Drill mark: the host reboots now' : 'done';
     const sync = key === 'POST /sync' ? { ...WROTE, trigger: 'manual', result: 'unchanged', mib: null, parts: [] } : null;
@@ -178,10 +192,34 @@ test.describe('System > Standby', () => {
     await expect(page.getByText('From the card: three boots of the eMMC did not come up').first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sync now' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Remove the standby' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Return to the eMMC' }).click();
-    await answerConfirmation(page, { title: 'Return to the eMMC?', action: 'Reboot to the eMMC' });
+    await expect(page.getByTestId('standby-emmc-check')).toContainText("The eMMC's root /dev/mmcblk0p1 passes fsck.ext4 -n");
+    await page.getByRole('button', { name: 'Return to the eMMC', exact: true }).click();
+    await answerConfirmation(page, { title: 'Return to the eMMC with the card’s changes?', action: 'Copy and reboot' });
+    await expect(toasts(page)).toContainText('UNOS stops now; the NAS reboots to the eMMC once the copy is done');
+    await page.getByRole('button', { name: 'Return without the card’s changes' }).click();
+    await answerConfirmation(page, { title: 'Return to the eMMC without the card’s changes?', action: 'Reboot to the eMMC' });
     await expect(toasts(page)).toContainText('The NAS reboots to the eMMC now');
-    expect(sent).toEqual([{ method: 'POST', path: '/return', body: {} }]);
+    expect(sent).toEqual([
+      { method: 'POST', path: '/return', body: {} },
+      { method: 'POST', path: '/return', body: { discard: true } },
+    ]);
+  });
+
+  test("on the card with an eMMC that fails its check: the card stays the system disk", async ({ authenticatedPage: page }) => {
+    const failing = { ...EMMC_OK, offered: false, detail: FSCK_FAILED, failed: {
+      at: '2026-11-23T12:30:00Z', step: 'copy', message: 'rsync: write failed: No space left on device (28); Docker and Samba run again' } };
+    const sent = await fakeStandby(page, { ...ON_CARD, emmc_return: failing }, {},
+      { 'POST /return': `${FSCK_FAILED}. The card stays the system disk, and no standby is left: UNOS keeps running from the card` });
+    await page.goto('/system/standby');
+    await expect(page.getByText('The card stays the system disk', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('standby-emmc-check')).toContainText('UNEXPECTED INCONSISTENCY');
+    await expect(page.getByTestId('standby-emmc-check')).toContainText('no standby is left');
+    await expect(page.getByTestId('standby-emmc-failed')).toContainText('It failed at the copy: rsync: write failed');
+    await expect(page.getByRole('button', { name: 'Return to the eMMC', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Return without the card’s changes' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Check the eMMC again' }).click();
+    await expect(toasts(page)).toContainText('The card stays the system disk, and no standby is left');
+    expect(sent).toEqual([{ method: 'POST', path: '/return', body: { dry_run: true } }]);
   });
 
   test("on the card after the pool that holds Docker failed: the mark's reason", async ({ authenticatedPage: page }) => {
@@ -256,7 +294,7 @@ test.describe('System > Standby', () => {
     await expect(page.getByText('The sync failed')).toBeVisible();
   });
 
-  test('critical apps: the card by part, a move to the card and the return that discards its changes', async ({
+  test("critical apps: the card by part, a move to the card and the return with the card's changes", async ({
     authenticatedPage: page,
   }) => {
     const sent = await fakeStandby(page, WITH_APPS, { 'POST /apps/move': MOVED, 'POST /apps/return': WITH_APPS });
@@ -276,17 +314,41 @@ test.describe('System > Standby', () => {
     await expect(app.locator('.badge', { hasText: 'On the card' })).toBeVisible();
     await expect(app).toContainText('a drill (usb)');
 
-    await page.getByRole('button', { name: 'Return to the pool, discarding the card’s changes' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Return the apps to their pools?' });
+    await page.getByRole('button', { name: 'Return to the pool', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Return the apps to their pools with the card’s changes?' });
+    await expect(dialog).toContainText('The copy writes about 12.5 MB to the pools.');
+    await expect(dialog).toContainText('<app>.before-failback-<time>');
+    await dialog.getByRole('button', { name: 'Return with the changes', exact: true }).click();
+    await expect(toasts(page)).toContainText('1 app is back on its pool');
+    await expect(app.locator('.badge', { hasText: 'On usb' })).toBeVisible();
+    expect(sent).toEqual([
+      { method: 'POST', path: '/apps/move', body: { reason: 'drill', pool: null } },
+      { method: 'POST', path: '/apps/return', body: { apps: null, dry_run: true } },
+      { method: 'POST', path: '/apps/return', body: { apps: null } },
+    ]);
+  });
+
+  test("critical apps: the other choice, the return that discards the card's changes", async ({ authenticatedPage: page }) => {
+    const sent = await fakeStandby(page, MOVED, { 'POST /apps/return': WITH_APPS });
+    await page.goto('/system/standby');
+    await page.getByRole('button', { name: 'Return, discarding the card’s changes' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Return the apps and discard the card’s changes?' });
     const confirm = dialog.getByRole('button', { name: 'Return and discard', exact: true });
     await expect(confirm).toBeDisabled();
     await dialog.getByRole('textbox').fill('SC32G');
     await confirm.click();
     await expect(toasts(page)).toContainText('1 app is back on its pool');
-    expect(sent).toEqual([
-      { method: 'POST', path: '/apps/move', body: { reason: 'drill', pool: null } },
-      { method: 'POST', path: '/apps/return', body: { model: 'SC32G', apps: null } },
-    ]);
+    expect(sent).toEqual([{ method: 'POST', path: '/apps/return', body: { model: 'SC32G', apps: null, discard: true } }]);
+  });
+
+  test('a critical app whose return failed names the step, stays stopped and is offered again', async ({ authenticatedPage: page }) => {
+    const failed = { at: '2026-11-24T11:00:00Z', step: 'copy', error: 'rsync: write failed: No space left on device (28)',
+      backup: '/mnt/pools/usb/apps/jellyfin.before-failback-20261124T110000Z' };
+    await fakeStandby(page, { ...MOVED, apps: [{ ...MOVED.apps[0], moved: { ...MOVED.apps[0].moved, return_failed: failed } }] });
+    await page.goto('/system/standby');
+    await expect(page.getByTestId('standby-app-return-failed')).toContainText(
+      'Its last return failed at the copy: rsync: write failed: No space left on device (28). It stays stopped');
+    await expect(page.getByRole('button', { name: 'Return to the pool', exact: true })).toBeVisible();
   });
 
   test('a critical app whose pool is not back yet cannot return, and says why', async ({ authenticatedPage: page }) => {
@@ -294,6 +356,7 @@ test.describe('System > Standby', () => {
     await page.goto('/system/standby');
     await expect(page.getByTestId('standby-app-jellyfin')).toContainText('Not back yet: the pool usb is not mounted.');
     await expect(page.getByRole('button', { name: /^Return to the pool/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /discarding the card’s changes/ })).toHaveCount(0);
   });
 
   test('in Russian', async ({ authenticatedPage: page }) => {
@@ -308,5 +371,15 @@ test.describe('System > Standby', () => {
     await expect(page.getByTestId('standby-condition-profile')).toContainText('Выполнено');
     await expect(page.getByText('Критичные приложения', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Резерв на SD' })).toBeVisible();
+  });
+
+  test('the ways back in Russian', async ({ authenticatedPage: page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, 'ru'), LOCALE_KEY);
+    await fakeStandby(page, { ...ON_CARD, apps: MOVED.apps, space: SPACE });
+    await page.goto('/system/standby');
+    await expect(page.getByRole('button', { name: 'Вернуться на eMMC', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Вернуться без изменений карты' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Вернуть в пул', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Вернуть, отбросив изменения на карте' })).toBeVisible();
   });
 });
