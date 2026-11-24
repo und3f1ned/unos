@@ -19,6 +19,8 @@ from __future__ import annotations
 import fnmatch
 import importlib
 import json
+import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -435,6 +437,10 @@ def fake(monkeypatch):
     monkeypatch.setattr(importlib.import_module("subprocess"), "run", _forbidden)
     monkeypatch.setattr(virtual, "VERIFY_SECONDS", 0)
     monkeypatch.setattr(virtual, "VERIFY_INTERVAL", 0)
+    # The wall clock stands still for virtual: revert_in is the deadline, taken when a change starts,
+    # less the clock when it ends, so a second that began during a request (often, under load) made
+    # it 119. Its monotonic clock, for _verify, runs.
+    monkeypatch.setattr(virtual, "time", SimpleNamespace(time=lambda: 1_800_000_000.0, monotonic=time.monotonic))
     return fake
 
 

@@ -85,6 +85,15 @@ finish() {
 # A signal that reaches this script goes on to the check, whose clean-up runs before it ends; then the
 # teardown.
 stop() {
+    # The PIDs of the supervisor and the check are kept by the command after the one that starts each: a
+    # signal between the two runs this trap first and finds the PID in $! alone (unset, and unbound for
+    # bash 3.2's set -u, before the supervisor starts).
+    local last
+    set +u
+    last=$!
+    set -u
+    [ -n "$supervisor" ] || supervisor=$last
+    [ -n "$checker" ] || [ "$last" = "$supervisor" ] || checker=$last
     if [ -n "$checker" ] && kill -TERM "$checker" 2> /dev/null; then
         wait "$checker" || exit "$1"
     fi

@@ -5830,6 +5830,33 @@
         "ADR-0331"
       ],
       "notes": "Asked by the owner on 2026-11-23. Built on origin/main 7006a10d. supervisor/src/notifications/router.py: host_name() reads `hostname` on the host when a message is built (one read at a time in a daemon thread; the messages wait until HOST_NAME_WAIT, 6 s, after its start; a read is shared for HOST_NAME_REUSE, 1 s, and after a failed one none starts for HOST_NAME_RETRY, 60 s), keeps the last name in RAM and falls back to it, or to UNOS alone; _sender() makes UNOS · <name>. Discord and Slack's username defaults to null (UNOS · <name>); channels stored with the old default \"UNOS\" keep it as their sender's name, their footers name the host (ADR-0207: no conversion). TestTheHostsName checks each channel through the fake host's hostname, a renamed host, one read for a test and for an alert, a read that exits non-zero, prints no name, cannot start nsenter or times out, no new read for a while after one that failed late, a read that hangs (one wait at most) and an e-mail alert beside a hung read (the alert loop's asyncio.run does not wait for it); conftest gives every other test a host named nas-test. Review (fresh context): a read that failed after its timeout was retried for every channel (fixed: HOST_NAME_RETRY); the test read the name twice (fixed: HOST_NAME_REUSE); the last name could be set by a stale waiter (fixed: the read's thread sets it); the hang test slept instead of waiting for the read (fixed); the 6 s were not pinned (fixed); the error of an empty name (fixed); the docs claimed a sender's name of its own for channels that store the former default UNOS (the guide and CHANGELOG now say it is kept; no conversion, ADR-0207). Not host-level: it only reads the host's name. On the dev device: send a test from System > Notifications and see UNOS · <the device's name> in the channel. Device check on the BPI-W3, 2026-11-23: the test notification went to the enabled Telegram channel (sent), and the history holds the test's text with the device's host name; the footer UNOS · <host name> shows only in Telegram, for the owner to confirm. The owner confirmed the Telegram message's footer UNOS · <host name> (\"all ok\", in translation). Passes."
+    },
+    {
+      "id": "testing.btrfs-ci-under-load",
+      "category": "testing",
+      "description": "test_btrfs_ci.py, test_ws_stats.py and test_virtual_interfaces.py pass under the load of parallel runs, and a backend test that waits forever ends its worker instead of holding make check",
+      "steps": [
+        "The fake check of test_btrfs_ci.py waits until the fake supervisor is up, its TERM trap set, as the real check waits for GET /health; before, a check that ended at once had the script stop a supervisor that had not set its trap or written its PID yet",
+        "scripts/ci/btrfs-loop.sh passes a signal on also when it comes after the supervisor or the check started and before the script kept its PID: its trap takes the PID from $! then; test_a_signal_before_the_supervisors_pid_is_kept_stops_the_supervisor_before_the_teardown and test_a_signal_goes_on_to_the_check_and_the_teardown_runs[before-the-checks-pid-is-kept] hold a copy of the script there in a loop that the trap ends",
+        "test_only_the_listed_processes_are_read_in_full reads in full only the listed processes and those that ended before their read, and its listing starts with a process that has ended, which the stats leave out",
+        "The fake host of test_virtual_interfaces.py stands virtual's wall clock still: revert_in is 120 whatever second a request ends in",
+        "supervisor/pytest.ini sets faulthandler_timeout = 900 and faulthandler_exit_on_timeout = true: a test that waits forever ends its worker and the run fails naming it, and the limit is above every timeout that a test gives a command (test_repo_tooling.py, ADR-0490)",
+        "Under load (three loops of the three files beside two full make check runs, and the other worktrees' runs), every run is green"
+      ],
+      "passes": false,
+      "verified_by": [
+        "supervisor/tests/test_btrfs_ci.py",
+        "supervisor/tests/test_ws_stats.py",
+        "supervisor/tests/test_virtual_interfaces.py",
+        "supervisor/tests/test_repo_tooling.py"
+      ],
+      "adr": [
+        "ADR-0490",
+        "ADR-0383",
+        "ADR-0464",
+        "ADR-0186"
+      ],
+      "notes": "Built 2026-11-24 on origin/main 80fe1f51. Reproduced under load (five other builders, load average 60 to 150 on 10 cores): three loops of make test TESTS=tests/test_btrfs_ci.py beside a make check failed 29 of 33 runs, and that make check failed with two of the same tests after 19.5 minutes. Causes, all in the tests or the script, none in src: (1) test_btrfs_ci.py: the fake check with CHECK_STATUS 0 ended at once while the fake supervisor had not yet set its TERM trap or written its PID, and the script's teardown TERMed it: StopIteration (no python serve line), FileNotFoundError on log.serve, or status 143 instead of 137 with SERVE_HANGS (test_the_script_runs_the_supervisor_and_the_check..., test_a_supervisor_that_ignores_term...). The fake check now waits for the supervisor to be up, as btrfs_loop.py's wait_for_start waits for GET /health; run() removes log.serve between runs. (2) btrfs-loop.sh kept each PID one command after starting the process: a signal in between (seen by reading, then forced by holding the script there) left the check, or the supervisor, running and the test's communicate timed out; found by the fresh-context review for the supervisor. (3) test_ws_stats.py: the test counted a process as read in full before the read, and a busy process that ended between the listing and its read (events._top_processes skips it, correctly) made the counts differ (2 of 4 runs under load). (4) test_virtual_interfaces.py: virtual.py takes the revert deadline as int(time.time()) + 120 when a change starts and revert_in as the deadline less int(time.time()) when it ends, and a second that began in between gave 119 (1 of 4 runs under load). The make check that hung at 99% left no trace of its test: the guard (ADR-0490) names it next time. Each new or changed case was watched failing on the old code: the held cases on the old script (TimeoutExpired), the ended process with the old counting. Proof: pending."
     }
   ]
 }
