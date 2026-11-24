@@ -55,8 +55,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3
-  runs the tree of `mvp.batch-24` a234cfce since 2026-11-24 (SD MiB 7.250 in all; check: OK). Before
-  it `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
+  runs the tree of `mvp.batch-24` 8df52c5d (v0.1.2's tree with the way back from the standby) since
+  2026-11-24 (SD MiB 3.898 in all; check: OK). Before it a234cfce (SD MiB 7.250 in all). Before
+  that `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
   eMMC: 2.180 in all; check: OK), the standby removed and set up again, its NVMe once lost at a warm
   reboot and back at the next (Log). Before it `main` 20e6754f (`mvp.batch-22` with
   `system.sd-standby-bpi-f3`, ADR-0489) since 2026-11-24,
@@ -324,8 +325,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the tree of `mvp.batch-24` a234cfce (critical apps, the ARMv7 build, the public tree) since
-  2026-11-24, deployed with `scripts/dev/deploy.sh all` (SD MiB 7.496 in all; check: OK). Before it
+- Runs the tree of `mvp.batch-24` 8df52c5d (v0.1.2's tree with the way back from the standby) since
+  2026-11-24, deployed with `scripts/dev/deploy.sh all` (SD MiB 3.918 in all; check: OK). Before it the
+  tree of a234cfce (SD MiB 7.496 in all; check: OK); before that
   `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24, deployed with
   `scripts/dev/deploy.sh all` at the owner's standing permission (SD MiB, its eMMC: 2.004 in all; check:
   OK), with the SD standby removed and set up again (generation 1) and two reboots through its chooser (Log).
@@ -829,6 +831,24 @@ Open owner actions:
     GB on the eMMC).
 
 ## Log
+
+### 2026-11-24: v0.1.2 released; the way back from the SD standby on both boards (ADR-0501)
+
+- v0.1.2, tagged on main ed9ff7ea after its CI passed (131 commits since v0.1.1): `release.yml`
+  ran 18 minutes (the riscv64 wheels' key unchanged), and published the GitHub release with
+  `unos-supervisor` and `unos-webui` 0.1.2 for linux/amd64, linux/arm64 and linux/riscv64 on GHCR,
+  which pull without credentials.
+- `system.sd-standby-failback` (ADR-0501), built from the batch with the critical apps: the return
+  of the critical apps to their pool copies the card's changes back, keeping each replaced file in
+  `{pool}/apps/<app>.before-failback-<time>/`, and the return to the eMMC runs in the transient unit
+  `unos-standby-return` after an `fsck.ext4 -n` of the eMMC's root, keeping the card bootable until
+  the copy is checked; 47 tests, a fresh-context review with no blocking finding. Gates on the batch:
+  `make check` 12109 passed, the standby, critical apps, storage and phone specs 373 passed.
+  Deployed with `scripts/dev/deploy.sh all`, the W3 first, then the F3: SD MiB 3.918 and 3.898,
+  check: OK, the standby armed with no problem on both. Its drills (F0 to F6 in the entry's notes)
+  need the owner's USB stick, as the critical apps' do.
+- Dependabot's first security update after the switch to public, minimatch through typescript-eslint
+  (the lint tools only; no image holds it), merged as pull request 124 with its checks green.
 
 ### 2026-11-24: The twenty-fourth batch, the repository public (ADR-0498 to ADR-0500)
 
