@@ -847,7 +847,7 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     ]);
   });
 
-  // A planned repair (ADR-0498): critical apps of the SD standby among the containers that use the pool
+  // A planned repair (ADR-0500): critical apps of the SD standby among the containers that use the pool
   // move to the card first, and the unmount goes on. The standby's answers are the server's fields.
   test('an unmount refused for critical apps offers to move them to the card first, then goes on', async ({
     authenticatedPage: page,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The critical mark of an installed app (ADR-0498): its folders under {pool}/apps/<app>/ that the SD
+	// The critical mark of an installed app (ADR-0500): its folders under {pool}/apps/<app>/ that the SD
 	// standby copies and those it does not (its other pool folders, its caches, the copies an update
 	// keeps), their sizes, its images' size and the card's space; the mark and the sync interval, with
 	// the writes to the card a week that the interval costs (ADR-0214). The server refuses a mark that

@@ -428,7 +428,7 @@ and this index, and `make check-fast` runs it.
 | [0489](0489-the-bpi-f3s-sd-standby-uses-spacemits-official-sd-layout-and-its-chooser-boots-the-emmcs-extlinux-label-with-booti.md) | The BPI-F3's SD standby uses SpacemiT's official SD layout, and its chooser boots the eMMC's extlinux label itself with booti | accepted | 2026-11-24 |
 | [0494](0494-the-sd-standbys-card-holds-a-chooser-only-while-the-emmcs-unit-that-sets-its-counter-back-is-enabled.md) | The SD standby's card holds a chooser only while the eMMC's unit that sets its counter back is enabled | accepted | 2026-11-24 |
 | [0496](0496-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner-and-a-pool-unos-released-is-not-alerted.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool that UNOS released is not alerted as not mounted | accepted | 2026-11-24 |
-| [0498](0498-critical-apps-are-copied-from-a-snapshot-into-card-generations-and-move-to-the-card-as-recreated-containers.md) | Critical apps are copied from a pool snapshot into generations on the card and move to the card as containers created again from their definitions | accepted | 2026-11-24 |
+| [0500](0500-critical-apps-are-copied-from-a-snapshot-into-card-generations-and-move-to-the-card-as-recreated-containers.md) | Critical apps are copied from a pool snapshot into generations on the card and move to the card as containers created again from their definitions | accepted | 2026-11-24 |
 
 ## Web UI
 

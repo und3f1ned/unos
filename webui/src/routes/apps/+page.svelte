@@ -98,7 +98,7 @@
 
 	// The installed app whose update the dialog shows (ADR-0408).
 	let updating = $state<InstalledApp | null>(null);
-	// The SD standby's critical mark (ADR-0498): whether it is offered, and the app whose dialog is open.
+	// The SD standby's critical mark (ADR-0500): whether it is offered, and the app whose dialog is open.
 	let standby = $state<AppsStandby | null>(null);
 	let criticalOf = $state<string | null>(null);
 
@@ -420,7 +420,7 @@
 	onstarted={() => (updating = null)}
 />
 
-<!-- The critical mark of an installed app: its copy on the SD standby (ADR-0498) -->
+<!-- The critical mark of an installed app: its copy on the SD standby (ADR-0500) -->
 <AppCriticalDialog app={criticalOf} onclose={() => (criticalOf = null)} onsaved={criticalSaved} />
 
 <!-- The limits of one container of an installed app (ADR-0390) -->

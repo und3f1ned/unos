@@ -1,4 +1,4 @@
-"""The critical mark of an installed app: its copy on the SD card standby (ADR-0471, ADR-0498).
+"""The critical mark of an installed app: its copy on the SD card standby (ADR-0471, ADR-0500).
 
 ``GET /apps/standby`` says whether the mark is offered here and whether UNOS runs from the standby's
 card; ``GET /apps/installed/{id}/critical`` answers the mark's dialog (what is copied and what is not,
@@ -64,7 +64,7 @@ async def apps_standby(_: User = Depends(require_admin)) -> AppsStandby:
     """Whether the SD standby is set up and UNOS runs from the eMMC, so that the Apps page offers the
     critical mark, and whether UNOS runs from the standby's card, where only the critical apps are.
     \f
-    ADR-0498.
+    ADR-0500.
     """
     if not standby_service._state.read:
         await asyncio.to_thread(standby_service.refresh)
@@ -85,7 +85,7 @@ async def critical_plan(container_id: base.AppContainerId, _: User = Depends(req
     pool folders, its caches, the copies an update keeps), their sizes, its images' size, the card's space
     and reserve, and the MiB of its recent syncs. Reads the pool's folders (du); changes nothing.
     \f
-    ADR-0471, ADR-0498.
+    ADR-0471, ADR-0500.
     """
     reason = standby_apps.offered()
     if reason:
@@ -104,7 +104,7 @@ async def set_critical(container_id: base.AppContainerId, body: CriticalRequest,
     copies on the card. A new mark that would leave the card less than its reserve (10% of the card, at
     least 2 GiB) is refused. Audited as app_critical_changed when it changed.
     \f
-    ADR-0471, ADR-0498.
+    ADR-0471, ADR-0500.
     """
     reason = standby_apps.offered()
     if reason:

@@ -157,7 +157,7 @@ class AuditAction(str, Enum):
     STANDBY_RETURNED = "standby_returned"
     STANDBY_DISCARDED = "standby_discarded"
     STANDBY_SWITCHED = "standby_switched"
-    # Its critical apps (ADR-0498): a mark or an interval by an administrator, a move of apps to the card
+    # Its critical apps (ADR-0500): a mark or an interval by an administrator, a move of apps to the card
     # (by the system when their pool failed, by an administrator as a drill or before a repair) and
     # their return to the pool
     APP_CRITICAL_CHANGED = "app_critical_changed"

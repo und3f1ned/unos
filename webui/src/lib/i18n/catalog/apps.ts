@@ -301,7 +301,7 @@ export const en = {
 	'apps.detail.jobLost':
 		'UNOS restarted during the install, and its progress was lost. The Installed tab shows what it made.',
 
-	// The critical mark of an installed app on the SD standby (AppCriticalDialog, ADR-0498).
+	// The critical mark of an installed app on the SD standby (AppCriticalDialog, ADR-0500).
 	'apps.critical.menu': 'Critical on the SD standby…',
 	'apps.critical.badge': 'Critical',
 	'apps.critical.onCard': 'Runs from the SD card',
@@ -602,7 +602,7 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.jobLost':
 		'UNOS перезапустился во время установки, и её ход потерян. Что она успела сделать, видно на вкладке «Установленные».',
 
-	// The critical mark of an installed app on the SD standby (AppCriticalDialog, ADR-0498).
+	// The critical mark of an installed app on the SD standby (AppCriticalDialog, ADR-0500).
 	'apps.critical.menu': 'Критичное на резерве SD…',
 	'apps.critical.badge': 'Критичное',
 	'apps.critical.onCard': 'Работает с карты SD',

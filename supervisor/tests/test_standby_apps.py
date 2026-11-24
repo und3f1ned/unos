@@ -1,4 +1,4 @@
-"""The critical apps of the SD card standby (system.sd-standby-critical-apps, ADR-0471, ADR-0498).
+"""The critical apps of the SD card standby (system.sd-standby-critical-apps, ADR-0471, ADR-0500).
 
 The host is the fake BPI-W3 of ``tests/standby_fake.py`` with a test pool ``usb`` beside the data pool,
 Docker the fake client of ``tests/docker_fake.py``, and the database a file of the test's own. The

@@ -478,7 +478,7 @@ const STANDBY_ARMED = {
     error: 'The copy of the system: rsync: [sender] read errors mapping "/var/lib/samba/private/passdb.tdb": Input/output error (5) (exit status 23)' },
   last_complete_at: '2026-11-22T04:00:41Z', standby_ran: null, switch_ready: true,
   problems: [{ kind: 'standby_sync_failed', severity: 'warning' }],
-  // A critical app that runs from the card, its pool not back yet, with long names (ADR-0498).
+  // A critical app that runs from the card, its pool not back yet, with long names (ADR-0500).
   apps: [{ app: 'paperless-ngx', pool: 'documents_of_the_whole_family', interval_hours: 6, generation: 41,
     synced_at: '2026-11-23T10:00:00Z', mib_per_sync: 12.5, data_bytes: 2_300_000_000, images_bytes: 1_400_000_000,
     error: null, moved: { at: '2026-11-23T11:00:00Z', reason: 'pool_failed', pool: 'documents_of_the_whole_family', has_copy: true },
@@ -488,7 +488,7 @@ const STANDBY_ARMED = {
 };
 const STANDBY_FREE = { ...STANDBY_ARMED, armed: false, card_present: null, in_boot_path: null, root: null, generation: null,
   drill_pending: false, last_sync: null, last_complete_at: null, switch_ready: false, problems: [], apps: [], space: null };
-// The critical mark's dialog of Jellyfin (GET /apps/installed/{id}/critical, ADR-0498), with long paths.
+// The critical mark's dialog of Jellyfin (GET /apps/installed/{id}/critical, ADR-0500), with long paths.
 const CRITICAL_PLAN = {
   app: 'jellyfin', name: 'jellyfin', pool: 'e2e_media', critical: true, interval_hours: 6, intervals: [1, 2, 4, 6, 12, 24],
   folders: [
@@ -1867,7 +1867,7 @@ const VIEWS: View[] = [
     end: dialogEnd,
   },
   {
-    // The critical mark of an app on the SD standby: what is copied, the card and the interval (ADR-0498).
+    // The critical mark of an app on the SD standby: what is copied, the card and the interval (ADR-0500).
     name: 'Dialog: the critical mark of an app',
     path: '/apps',
     fake: (page) => serve(page, {

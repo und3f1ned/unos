@@ -24,7 +24,7 @@
 
 	let busy = $state(false);
 	let error = $state('');
-	// The critical apps of the pool that a refused unmount offers to move to the SD standby first (ADR-0498).
+	// The critical apps of the pool that a refused unmount offers to move to the SD standby first (ADR-0500).
 	let critical = $state<string[]>([]);
 
 	function close() {
@@ -34,7 +34,7 @@
 		onclose();
 	}
 
-	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0498). */
+	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0500). */
 	async function offer(name: string) {
 		const apps = await criticalAppsOf(name);
 		if (action?.pool.name === name && error) critical = apps;

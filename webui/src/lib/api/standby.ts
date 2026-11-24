@@ -68,7 +68,7 @@ export interface StandbyStatus {
 	standby_ran: StandbyRun | null;
 	switch_ready: boolean;
 	problems: StandbyProblem[];
-	/** The critical apps and their copies (ADR-0498). */
+	/** The critical apps and their copies (ADR-0500). */
 	apps: StandbyApp[];
 	/** The card's space by part; null when it is not read. */
 	space: StandbySpace | null;

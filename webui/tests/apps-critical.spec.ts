@@ -2,7 +2,7 @@ import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { installedCard, oneContainerApp, type FakeInstalledApp } from './apps-fakes';
 
-// The critical mark of an installed app on the SD standby (system.sd-standby-critical-apps, ADR-0498):
+// The critical mark of an installed app on the SD standby (system.sd-standby-critical-apps, ADR-0500):
 // its ⋯ menu opens the dialog that lists what the standby copies and what it does not, with their sizes,
 // the card's space and the writes a week of the interval, and saves the mark. The stand-in has no standby
 // and no Docker: the installed apps, /apps/standby and the mark are answered here with the server's fields

@@ -1,5 +1,5 @@
 """The table standby_apps: the critical apps of the SD standby and their sync intervals
-(system.sd-standby-critical-apps, ADR-0498).
+(system.sd-standby-critical-apps, ADR-0500).
 
 Revision 0002, after 0001 (ADR-0444). IF NOT EXISTS, as the baseline: a database that create_all made
 has the table already.

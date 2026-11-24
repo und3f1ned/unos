@@ -5,7 +5,7 @@
 	import { intlLocale, t } from '$lib/i18n';
 	import { formatDateTime } from '$lib/time';
 
-	// The card's space by part and the critical apps of the SD standby (ADR-0498): each app's interval,
+	// The card's space by part and the critical apps of the SD standby (ADR-0500): each app's interval,
 	// its copy and whether it runs from the card; Move the critical apps to the card (a drill) and
 	// Return to the pool, discarding the card's changes, which the page asks first. An app moved for a
 	// repair of its pool is offered back once the pool is mounted again (its return_blocked is null).

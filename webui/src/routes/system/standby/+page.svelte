@@ -195,7 +195,7 @@
 		}, 'standby.discard.failed');
 	}
 
-	// The critical apps (ADR-0498): all of them to the card as a drill, and back to their pool.
+	// The critical apps (ADR-0500): all of them to the card as a drill, and back to their pool.
 	async function moveApps() {
 		const asked = await confirm({
 			title: $t('standby.apps.moveTitle'),

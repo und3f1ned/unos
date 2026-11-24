@@ -22,7 +22,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   containers run from the card's copy, alerted and on the banner; **System → SD Standby** shows the
   card's space by part, moves the apps to the card as a drill and returns them to their pool,
   discarding the card's changes, and the Storage page's unmount or removal of a pool they use offers
-  to move them first. On the standby the critical apps start from their copies (ADR-0498).
+  to move them first. On the standby the critical apps start from their copies (ADR-0500).
 - **The first pool takes Docker's data**: when an administrator makes the host's first managed pool
   and Docker's data root or containerd's root is on the system disk, UNOS moves both into the
   pool's subvolumes `.docker` and `.containerd` in the transient unit `unos-docker-move` of the host:

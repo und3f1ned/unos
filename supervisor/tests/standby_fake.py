@@ -168,7 +168,7 @@ class StandbyFakeHost:
         # The units that systemctl enabled, and the number of changes after which the host stops (PowerCut).
         self.enabled: set[str] = set()
         self.cut_at: int | None = None
-        # The critical apps (ADR-0498): the btrfs subvolumes other than the system's generations (the pools'
+        # The critical apps (ADR-0500): the btrfs subvolumes other than the system's generations (the pools'
         # top levels, their snapshots, the apps' copies on the card), the sizes of files that du counts
         # (else their text's), the card's size and free bytes as df reports them, and the image ids that
         # the card's Docker has.
@@ -460,7 +460,7 @@ class StandbyFakeHost:
             ]
             return host.HostResult(0, json.dumps(containers), "")
         if cmd[1:3] == ["image", "inspect"] and cmd[-1].startswith("sha256:"):
-            # Whether the card's Docker has an image of a critical app (ADR-0498).
+            # Whether the card's Docker has an image of a critical app (ADR-0500).
             return host.HostResult(0 if cmd[-1] in self.loaded_images else 1, "", "")
         if cmd[1:3] == ["image", "inspect"]:
             return host.HostResult(0, self.images[cmd[-1]] + "\n", "")

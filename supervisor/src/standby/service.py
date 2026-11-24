@@ -234,7 +234,7 @@ class _State:
 _state = _State()
 _lock = asyncio.Lock()
 # One change of state.json at a time, and its read: the moves of the critical apps run beside the syncs
-# and the reads of the card (ADR-0498).
+# and the reads of the card (ADR-0500).
 _stored_lock = threading.Lock()
 _stop_sync = threading.Event()
 _loop_task: asyncio.Task | None = None
@@ -1133,7 +1133,7 @@ BEFORE_SERVING_SECONDS = 120
 async def before_serving() -> None:
     """Before the supervisor serves (the lifespan of src/main.py): a pool-bound container of a critical app
     that state.json records as moved to the card, which this system's Docker may have started at boot, is
-    moved again (ADR-0498). Bounded; never raises."""
+    moved again (ADR-0500). Bounded; never raises."""
     from . import apps as standby_apps
 
     if host.runs_locally():
@@ -1156,7 +1156,7 @@ async def before_serving() -> None:
 
 
 async def _start_apps_on_standby() -> None:
-    """On the card's root: the critical apps' images, networks and containers (ADR-0498)."""
+    """On the card's root: the critical apps' images, networks and containers (ADR-0500)."""
     from . import apps as standby_apps
 
     try:
@@ -1213,7 +1213,7 @@ async def stop() -> None:
         await asyncio.gather(_loop_task, return_exceptions=True)
 
 
-# --- the critical apps' moves (ADR-0498) ----------------------------------------------------------------
+# --- the critical apps' moves (ADR-0500) ----------------------------------------------------------------
 
 
 async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dry_run: bool, request: Request,

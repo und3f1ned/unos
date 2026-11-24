@@ -1,5 +1,5 @@
 <script lang="ts">
-	// A planned repair of a pool (ADR-0498): its unmount or removal was refused because containers use it,
+	// A planned repair of a pool (ADR-0500): its unmount or removal was refused because containers use it,
 	// and critical apps of the SD standby are among them. The offer moves those apps to the card first, as
 	// their pool's failure would, and the dialog then tries again; another container that still uses the
 	// pool is named by the server's answer.

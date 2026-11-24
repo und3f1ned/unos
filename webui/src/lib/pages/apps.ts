@@ -22,7 +22,7 @@ export const INSTALLED_GRACE_MS = 1000;
 export type AppsSnapshot = {
 	catalog: Settled<AppTemplate[]>;
 	installed: Later<DockerRead<InstalledApp[]>>;
-	/** Whether the critical mark of the SD standby is offered, and whether UNOS runs from its card (ADR-0498):
+	/** Whether the critical mark of the SD standby is offered, and whether UNOS runs from its card (ADR-0500):
 	 * the server's RAM, read beside the catalog. */
 	standby: Settled<AppsStandby>;
 };

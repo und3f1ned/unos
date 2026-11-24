@@ -3218,7 +3218,7 @@ or more, and rsync, dosfstools and sfdisk on the host.
 #### Critical apps
 
 Once the standby is set up, the ⋯ menu of an installed app on the **Apps** page
-offers **Critical on the SD standby…** (ADR-0498). Its dialog lists the app's
+offers **Critical on the SD standby…** (ADR-0500). Its dialog lists the app's
 folders under `{pool}/apps/<app>/` that the standby copies, with their sizes,
 and those it does not: its caches, which the app makes again, the copy of its
 database that an update keeps, and its folders on other pools, such as media.

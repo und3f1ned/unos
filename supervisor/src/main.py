@@ -180,7 +180,7 @@ async def lifespan(app: FastAPI):
         # apps start writing to /mnt/pools. Logs the outcome, never raises.
         await reconcile_pools_on_startup()
         # A critical app that runs from the SD standby's card, whose pool-bound containers Docker started at
-        # boot, runs from the card again before the first request (ADR-0498). Bounded, never raises.
+        # boot, runs from the card again before the first request (ADR-0500). Bounded, never raises.
         await standby_service.before_serving()
         # The SMB startup reconcile (shares/service.py) runs beside the rest of
         # startup and holds smb_lock while it runs: SMB changes, and the first

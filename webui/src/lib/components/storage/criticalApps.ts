@@ -1,4 +1,4 @@
-// The critical apps of the SD standby that a pool holds and that still run from it (ADR-0498): what a
+// The critical apps of the SD standby that a pool holds and that still run from it (ADR-0500): what a
 // refused unmount or removal of the pool offers to move to the card first. None when the standby cannot
 // be read or is not set up.
 import { getStandby } from '$lib/api/standby';

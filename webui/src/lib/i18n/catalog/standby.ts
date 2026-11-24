@@ -145,7 +145,7 @@ export const en = {
 	'standby.remove.done': 'The standby is removed',
 	'standby.remove.failed': 'The standby was not removed',
 
-	// The critical apps (StandbyAppsCard, ADR-0498).
+	// The critical apps (StandbyAppsCard, ADR-0500).
 	'standby.apps.title': 'Critical apps',
 	'standby.apps.none': 'No app is marked critical: the Apps page marks one in its menu.',
 	'standby.apps.daily': 'Daily, with the system',
@@ -335,7 +335,7 @@ export const ru: Translation<typeof en> = {
 	'standby.remove.done': 'Резерв удалён',
 	'standby.remove.failed': 'Резерв не удалён',
 
-	// The critical apps (StandbyAppsCard, ADR-0498).
+	// The critical apps (StandbyAppsCard, ADR-0500).
 	'standby.apps.title': 'Критичные приложения',
 	'standby.apps.none':
 		'Ни одно приложение не отмечено критичным: это делается в меню приложения на странице «Приложения».',

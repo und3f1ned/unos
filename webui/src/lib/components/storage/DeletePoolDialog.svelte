@@ -25,7 +25,7 @@
 
 	let deleting = $state(false);
 	let deleteError = $state('');
-	// The critical apps of the pool that a refused removal offers to move to the SD standby first (ADR-0498).
+	// The critical apps of the pool that a refused removal offers to move to the SD standby first (ADR-0500).
 	let critical = $state<string[]>([]);
 
 	function closeDeleteModal() {
@@ -35,7 +35,7 @@
 		onclose();
 	}
 
-	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0498). */
+	/** The pool's critical apps, read after the refusal without holding the dialog (ADR-0500). */
 	async function offer(name: string) {
 		const apps = await criticalAppsOf(name);
 		if (pool?.name === name && deleteError) critical = apps;

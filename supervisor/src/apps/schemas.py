@@ -129,7 +129,7 @@ class VolumeMapping(BaseModel):
     )
 
     # What the app makes again by itself (thumbnails, transcodes, downloaded models): the SD standby
-    # copies none of it, and an app that runs from the standby's card gets a tmpfs there (ADR-0498).
+    # copies none of it, and an app that runs from the standby's card gets a tmpfs there (ADR-0500).
     cache: bool = Field(
         default=False,
         description="Whether it is a cache of the app's own folder on the pool ({pool}/apps/<app>/...), which the app "
@@ -660,7 +660,7 @@ class InstalledApp(BaseModel):
         description="The earlier version that the app's last app update kept, until an app rollback or its "
                           "removal; null: none."
     )
-    # ADR-0498.
+    # ADR-0500.
     critical: bool = Field(
         default=False,
         description="Whether it is a critical app of the SD standby: kept on its card and moved there when its pool "

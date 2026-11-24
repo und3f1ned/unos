@@ -37,7 +37,7 @@
 		onrollback: (app: InstalledApp) => void;
 		onremoveearlier: (app: InstalledApp) => void;
 		onlimits: (target: { container: string; resources: ContainerResources }) => void;
-		/** The SD standby is set up here: its menu offers the critical mark (ADR-0498). */
+		/** The SD standby is set up here: its menu offers the critical mark (ADR-0500). */
 		standbyOffered?: boolean;
 		oncritical?: (app: InstalledApp) => void;
 	};

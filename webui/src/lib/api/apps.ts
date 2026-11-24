@@ -252,7 +252,7 @@ export interface InstalledApp {
 	update_to: string | null;
 	/** The earlier version that the app's last update kept, until a rollback or its removal. */
 	previous: AppEarlierVersion | null;
-	/** A critical app of the SD standby: kept on its card and moved there when its pool fails (ADR-0498). */
+	/** A critical app of the SD standby: kept on its card and moved there when its pool fails (ADR-0500). */
 	critical: boolean;
 	/** Its containers run from the SD standby's copy of its data, not from its pool. */
 	on_standby_card: boolean;
@@ -605,7 +605,7 @@ export function describeApiError(e: unknown, fallback: string): string {
 	return message;
 }
 
-// --- The critical apps of the SD standby (ADR-0498) ---------------------------------------------------
+// --- The critical apps of the SD standby (ADR-0500) ---------------------------------------------------
 
 /** GET /apps/standby: whether apps can be marked critical here, and whether UNOS runs from the standby's card. */
 export interface AppsStandby {

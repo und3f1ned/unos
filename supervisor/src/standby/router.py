@@ -180,7 +180,7 @@ async def move_apps(body: AppsMove, request: Request, user=Depends(require_admin
     read-only folder of the card; those that ran start. Audited as standby_apps_moved, alerted
     (apps_on_standby).
     \f
-    ADR-0471, ADR-0498.
+    ADR-0471, ADR-0500.
     """
     moved = await service.move_apps(body.reason, body.pool, dry_run=body.dry_run, request=request,
                                     username=user.username)
@@ -198,7 +198,7 @@ async def return_apps(body: AppsReturn, request: Request, user=Depends(require_a
     those that ran and delete the card's run copies: what the apps changed on the card is discarded. Each
     app's pool must be mounted, writable and healthy. Audited as standby_apps_returned.
     \f
-    ADR-0471, ADR-0498.
+    ADR-0471, ADR-0500.
     """
     returned = await service.return_apps(body.apps, body.model, dry_run=body.dry_run, request=request,
                                          username=user.username)

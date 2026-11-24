@@ -45,7 +45,7 @@ const ON_CARD = {
 };
 const RAN = { ...ARMED, standby_ran: ON_CARD.standby_ran, switch_ready: true, problems: [{ kind: 'standby_has_changes', severity: 'warning' }] };
 
-// The critical apps (ADR-0498): Jellyfin on the test pool usb, synced every 6 hours, and the card by part.
+// The critical apps (ADR-0500): Jellyfin on the test pool usb, synced every 6 hours, and the card by part.
 const JELLYFIN = {
   app: 'jellyfin', pool: 'usb', interval_hours: 6, generation: 4, synced_at: '2026-11-24T06:00:00Z', mib_per_sync: 2.5,
   data_bytes: 310 * 1024 * 1024, images_bytes: 290 * 1024 * 1024, error: null, moved: null, return_blocked: null,
@@ -77,7 +77,7 @@ async function fakeStandby(page: Page, initial: object, after: Record<string, ob
     if (after[key]) state = after[key];
     if (key === 'PUT /settings') return route.fulfill({ status: 204 });
     if (key === 'POST /apps/move' || key === 'POST /apps/return') {
-      // The critical apps' moves (ADR-0498): the server's AppsAction.
+      // The critical apps' moves (ADR-0500): the server's AppsAction.
       return route.fulfill({ json: { dry_run: false, message: 'done',
         apps: [{ app: 'jellyfin', has_copy: true, age: key === 'POST /apps/move' ? '6 h' : null, error: null }] } });
     }

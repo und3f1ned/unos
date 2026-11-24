@@ -1237,7 +1237,7 @@ async def raid_monitor_loop():
         if read is not None:
             await _update_volume_usage(read.pools)
             # The critical apps of the SD standby: those of a failed pool move to the card, and the syncs
-            # that are due run while their pool's disks are awake (ADR-0498). Never raises.
+            # that are due run while their pool's disks are awake (ADR-0500). Never raises.
             from ..standby import apps as standby_apps
 
             await standby_apps.on_pools_read(read.pools, read.managed, read.released.names)

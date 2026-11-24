@@ -42,7 +42,7 @@ export const en = {
 	'problems.kind.system_disk_failed': 'The system disk {subject} is failing',
 	// The SD card standby (ADR-0471): {subject} is its card, /dev/mmcblk1, or for running_on_standby the
 	// chooser's reason (marked, tries, emmc_unreadable, emmc_boot_failed); for a critical app's
-	// standby_copy_old the app, and for apps_on_standby the apps (ADR-0498).
+	// standby_copy_old the app, and for apps_on_standby the apps (ADR-0500).
 	'problems.kind.standby_sync_failed': 'The last sync of the SD standby {subject} failed',
 	'problems.kind.standby_copy_old': 'No complete sync of the SD standby ({subject}) for 3 days',
 	'problems.kind.standby_card_missing': 'The SD standby is set up, but its card {subject} is missing',

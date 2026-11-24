@@ -61,7 +61,7 @@ from .schemas import (
 )
 from .stacks import APP_POOL_LABEL, COMPANION_LABEL, UNOS_APP_LABEL, VERSION_LABEL
 
-# The label of a container that runs from the SD standby's card (standby.apps.CARD_LABEL, ADR-0498).
+# The label of a container that runs from the SD standby's card (standby.apps.CARD_LABEL, ADR-0500).
 STANDBY_CARD_LABEL = "unos.standby.card"
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -187,7 +187,7 @@ def _images_size(app: AppTemplate) -> int:
 async def list_installed(_: dict = Depends(verify_token)) -> list[InstalledApp]:
     """The installed apps, each with its companion containers, the host folders that they really
     use, their container limits and use, the app update on offer, the earlier version kept and whether
-    it is a critical app of the SD standby (ADR-0498)."""
+    it is a critical app of the SD standby (ADR-0500)."""
     from ..standby import apps as standby_apps
 
     try:
@@ -247,7 +247,7 @@ def _installed_app(app: stacks.InstalledContainers, pools: list[AppPool], bases:
             volumes.append(AppVolume(host=b.source, container=b.target, readonly=b.readonly, companion=companion))
             if _is_data(b, bases) and _pool_containing(b.source, pools) is None and b.source not in outside:
                 outside.append(b.source)
-    # A container that runs from the SD standby's card names the pool it left (ADR-0498).
+    # A container that runs from the SD standby's card names the pool it left (ADR-0500).
     pool = next((c.labels.get(APP_POOL_LABEL) or c.labels.get(STANDBY_CARD_LABEL) for c in app.containers
                  if c.labels.get(APP_POOL_LABEL) or c.labels.get(STANDBY_CARD_LABEL)), None)
 
@@ -2230,7 +2230,7 @@ async def uninstall_app(container_id: AppContainerId, request: Request, user: Us
         details=_uninstalled_details(app, removed, left), severity=AuditSeverity.WARNING,
     )
     # An uninstalled app is no critical app of the SD standby any more: its mark and its copies on the card
-    # go, as an unmark's do (ADR-0498).
+    # go, as an unmark's do (ADR-0500).
     await standby_apps.unmark_uninstalled(app.key, request, user.username)
     return {"status": "removed", "id": container_id}
 

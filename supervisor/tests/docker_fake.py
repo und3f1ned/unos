@@ -519,7 +519,7 @@ class _Api:
     def create_container_from_config(self, config: dict, name: str | None = None, platform: str | None = None) -> dict:
         """docker-py's create of a container from the body of Docker's create: its Config, HostConfig and
         NetworkingConfig, as a container's inspect gives the first two (the SD standby's critical apps,
-        ADR-0498)."""
+        ADR-0500)."""
         self._docker._call("api.create_container_from_config", name, copy.deepcopy(config))
         known = {"Image", "Cmd", "Env", "Labels", "StopTimeout", "Healthcheck", "HostConfig", "NetworkingConfig",
                  "ExposedPorts", "Hostname", "Volumes", "Entrypoint", "WorkingDir", "User"}

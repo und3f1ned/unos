@@ -5,7 +5,7 @@ area: system
 decided-by: agent
 ---
 
-# ADR-0498: Critical apps are copied from a pool snapshot into generations on the card and move to the card as containers created again from their definitions
+# ADR-0500: Critical apps are copied from a pool snapshot into generations on the card and move to the card as containers created again from their definitions
 
 ## Context
 

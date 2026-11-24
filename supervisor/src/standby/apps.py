@@ -1,4 +1,4 @@
-"""The critical apps of the SD card standby (ADR-0471, phase 3; ADR-0498).
+"""The critical apps of the SD card standby (ADR-0471, phase 3; ADR-0500).
 
 An administrator marks an installed app critical (``standby_apps``, ``models.py``). Its copy on the
 card's btrfs top level is a generation ``@app-<app>-<n>``:

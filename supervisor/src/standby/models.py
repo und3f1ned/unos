@@ -1,4 +1,4 @@
-"""The critical apps of the SD card standby (system.sd-standby-critical-apps, ADR-0471, ADR-0498).
+"""The critical apps of the SD card standby (system.sd-standby-critical-apps, ADR-0471, ADR-0500).
 
 A row marks one installed app critical: its configuration, databases and images are kept on the
 standby's card, it runs from the card on the standby, and it moves to the card by itself when the
