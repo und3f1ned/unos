@@ -66,7 +66,7 @@ FLUSH_TIMEOUT = 60     # sync /etc
 
 # Samba's passdb: smb.conf's passdb backend = tdbsam (smbconf.py), in the private directory of
 # Debian's and Ubuntu's Samba. GET /shares/smb-status lists it with pdbedit again only when its
-# stat changed (status_passdb_names, ADR-0490).
+# stat changed (status_passdb_names, ADR-0495).
 PASSDB_FILE = "/var/lib/samba/private/passdb.tdb"
 PASSDB_STAMP = ["stat", "--format=%d %i %s %.9Y %.9Z", "--", PASSDB_FILE]
 # A passdb.tdb whose last change is fewer seconds ago than this may change again within the same
@@ -427,7 +427,7 @@ def read_passdb_names() -> dict[str, str]:
 
 
 # The passdb names that GET /shares/smb-status last listed, with passdb.tdb's stat of before the
-# list (ADR-0490); only for the status: every flow lists passdb itself (ADR-0192).
+# list (ADR-0495); only for the status: every flow lists passdb itself (ADR-0192).
 _status_passdb: tuple[str, dict[str, str]] | None = None
 
 
@@ -453,7 +453,7 @@ def passdb_stamp() -> str | None:
 
 def status_passdb_names(stamp: str | None) -> dict[str, str]:
     """read_passdb_names() for GET /shares/smb-status, where ``stamp`` is passdb_stamp() of before
-    this call: the names that pdbedit listed after the same stamp, else pdbedit's list (ADR-0490).
+    this call: the names that pdbedit listed after the same stamp, else pdbedit's list (ADR-0495).
     pdbedit's start alone takes 50 to 165 ms on the BPI-W3; every write of tdbsam changes the
     file's times, so a list kept for a stamp is passdb's while the stamp is the same."""
     global _status_passdb

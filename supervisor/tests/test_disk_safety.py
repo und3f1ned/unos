@@ -514,7 +514,7 @@ class TestCreatePoolGuards:
     @pytest.mark.parametrize("name", ["UNOS-STANDBY", "UNOS-BOOT"])
     def test_the_sd_standbys_labels_are_no_pool_names(self, nas, name):
         """disks.py takes a device with either label for the SD standby's card, and the pool list
-        leaves such a filesystem out (ADR-0488, ADR-0490)."""
+        leaves such a filesystem out (ADR-0488, ADR-0495)."""
         with pytest.raises(ValueError, match="SD card standby"):
             create(["/dev/sdb"], name=name)
         assert nas.calls == []

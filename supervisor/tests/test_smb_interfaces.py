@@ -5,7 +5,7 @@ host's interfaces as ``ip -j addr show`` reports them, and an smbd that binds as
 when it starts: with ``interfaces`` and ``bind interfaces only = yes`` the addresses of the named
 interfaces that are up and broadcast-capable (or the loopback), IPv6 link-local ones excepted,
 and otherwise every address; a reload binds nothing new. Its listeners, and the clients' open
-connections to its port, are what ``ss`` prints (ADR-0490).
+connections to its port, are what ``ss`` prints (ADR-0495).
 """
 
 import json
@@ -275,7 +275,7 @@ class TestList:
         assert listen.read_smbd_sockets() == (["0.0.0.0", "192.168.7.20", "::", "fe80::5"], 2)
 
     def test_the_open_connections_are_what_ss_prints_without_smbstatus(self, net):
-        """smbstatus starts in 75 to 165 ms on the BPI-W3 (ADR-0490): the page counts the
+        """smbstatus starts in 75 to 165 ms on the BPI-W3 (ADR-0495): the page counts the
         connections that a restart closes from the ss that lists the listeners."""
         net.host.sessions = 3
         net.host.calls.clear()

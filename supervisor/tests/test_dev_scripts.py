@@ -1779,7 +1779,7 @@ def test_api_cli_timeout_reaches_the_request(device):
 
 def test_api_cli_repeat_prints_the_times_of_the_reads_on_the_device(device):
     """--repeat N: the relay reads the path once and then N times more, timing each read on the
-    device itself, through Caddy and without SSH (architecture.fast-page-reads, ADR-0490); the
+    device itself, through Caddy and without SSH (architecture.fast-page-reads, ADR-0495); the
     CLI prints their p50 and p95 by the nearest rank, not the body."""
     times = [float(ms) for ms in range(60, 35, -1)]  # 25 reads: 36 to 60 ms
     (device.log / "reply").write_text(json.dumps(

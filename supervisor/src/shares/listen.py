@@ -6,7 +6,7 @@ and an apply that changes those lines restarts smbd (``service.install_smb_confi
 listening sockets only when it starts.
 
 The host's interfaces come from ``ip -j addr show``, and smbd's listeners and the clients' open
-connections to them from ``ss`` (ADR-0490), both run on
+connections to them from ``ss`` (ADR-0495), both run on
 the host through src/host.py (ADR-0020), so in the host's network namespace, not the container's.
 What Samba 4.22 binds, read from its source: the addresses of the named interfaces that are up and
 broadcast-capable (or the loopback) when smbd reads the list, except IPv6 link-local ones.
@@ -243,7 +243,7 @@ def read_smbd_sockets() -> tuple[list[str], int]:
     """The addresses on which smbd listens on TCP 445, sorted, and the open SMB connections, which
     a restart of smbd closes: the established TCP connections to the host's port 445 (sync);
     Unreadable when ss fails. One ss, without smbstatus, whose start alone takes 75 to 165 ms on
-    the BPI-W3 (ADR-0490).
+    the BPI-W3 (ADR-0495).
 
     A listener whose program ss does not name counts as smbd's: smb ports gives smbd that port. A
     connection counts whatever ss names its process: smbd serves each client in a process that

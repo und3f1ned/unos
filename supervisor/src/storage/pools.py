@@ -587,7 +587,7 @@ def _is_system_filesystem(fs: BtrfsFilesystem, mounts: list[disks.HostMount] | N
 
 def _pool_filesystems(name: str, mounts: list[disks.HostMount] | None) -> list[BtrfsFilesystem]:
     """The filesystems labelled ``name`` that can be the pool of that name: none for a label of
-    the SD standby's card (disks.STANDBY_LABELS, ADR-0490), which no pool action reads or mounts."""
+    the SD standby's card (disks.STANDBY_LABELS, ADR-0495), which no pool action reads or mounts."""
     if name in disks.STANDBY_LABELS:
         return []
     return [
@@ -619,7 +619,7 @@ def _pool_choices(
     A pool is a btrfs filesystem of the host, other than its system
     filesystem and the SD standby's card (its labels, disks.STANDBY_LABELS:
     never a data disk, ADR-0488; left out before lsblk could be asked about
-    its devices, ADR-0490), whose label is a valid pool name. Of several with one label,
+    its devices, ADR-0495), whose label is a valid pool name. Of several with one label,
     the pool is the one mounted at the pool's mountpoint, or else the one
     that UNOS manages under the name; when neither tells them apart, the
     name has no pool, and each of them is found on the disks
@@ -1724,7 +1724,7 @@ def _new_filesystem_uuid(mkfs_output: str, device: str) -> str:
 
 def _new_pool_name(name: str) -> str:
     """validate_pool_name for a pool's new label: also not one of the SD standby's labels, which
-    disks.py takes for its card and the pool list leaves out (ADR-0488, ADR-0490). ValueError."""
+    disks.py takes for its card and the pool list leaves out (ADR-0488, ADR-0495). ValueError."""
     name = validate_pool_name(name)
     if name in disks.STANDBY_LABELS:
         raise ValueError(f"'{name}' is a label of the SD card standby: choose another pool name")

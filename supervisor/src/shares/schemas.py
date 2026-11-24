@@ -527,7 +527,7 @@ class SmbInterfaces(BaseModel):
     problems: list[str] = Field(description="Where smbd's listeners and the choice differ, and why.")
     # a restart of smbd would make them agree
     restart_needed: bool = Field(description="Whether Restart SMB would make smbd's listeners and the choice agree.")
-    # open SMB connections, which a restart ends: the established TCP connections to port 445 (ADR-0490); None: unknown
+    # open SMB connections, which a restart ends: the established TCP connections to port 445 (ADR-0495); None: unknown
     sessions: int | None = Field(
         description="The open SMB connections, which a restart ends: the established TCP connections to the "
         "host's port 445; null when they could not be counted."

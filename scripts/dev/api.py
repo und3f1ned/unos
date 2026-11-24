@@ -36,7 +36,7 @@ seconds have passed, so its --timeout must exceed the wait.
 then N times more with the same token, each timed from the request to the end of the answer's
 body, through Caddy and without SSH, and the output is "HTTP <statuses>" and the p50, p95, minimum
 and maximum of the N reads in ms (by the nearest rank), not the body; exit status 1 when a read,
-the first included, was not answered 2xx (architecture.fast-page-reads, ADR-0490). --timeout
+the first included, was not answered 2xx (architecture.fast-page-reads, ADR-0495). --timeout
 bounds each read.
 
 Output: "HTTP <status>", then the body (JSON pretty-printed) with secrets redacted: values of

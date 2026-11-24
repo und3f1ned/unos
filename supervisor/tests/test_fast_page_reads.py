@@ -474,7 +474,7 @@ def _get(c, path: str) -> dict | list:
 
 def test_the_smb_interfaces_read_the_host_at_once_without_smbstatus(pool_cycle, overlap):  # noqa: F811
     """ip and ss, one command's time: the open connections are what ss prints with the listeners,
-    not smbstatus, which takes 75 to 165 ms on the dev device to start (ADR-0490)."""
+    not smbstatus, which takes 75 to 165 ms on the dev device to start (ADR-0495)."""
     c = pool_cycle
     smbd = SmbdHost(SimpleNamespace(run=host_module.run_on_host), c.conf)
     recorder = overlap(smbd.run)
@@ -506,7 +506,7 @@ def test_the_smb_status_reads_the_host_in_two_rounds(pool_cycle, overlap):  # no
 
 
 def test_the_smb_status_lists_samba_passdb_again_only_when_passdb_tdb_changed(pool_cycle, overlap):  # noqa: F811
-    """pdbedit starts in 50 to 165 ms on the dev device (ADR-0490): while passdb.tdb's stat is the
+    """pdbedit starts in 50 to 165 ms on the dev device (ADR-0495): while passdb.tdb's stat is the
     same, the status answers the names that pdbedit listed for it; a change of passdb lists them
     again, and so does a passdb.tdb that changed within the last PASSDB_SETTLE seconds."""
     c = pool_cycle
@@ -561,7 +561,7 @@ def test_the_pool_list_reads_the_host_in_two_rounds(pool_cycle, overlap):  # noq
 def test_the_pool_list_leaves_the_sd_standbys_card_out_without_reading_its_disks(pool_cycle, overlap):  # noqa: F811
     """The BPI-W3 with its SD standby: the card's btrfs (UNOS-STANDBY, ADR-0488) is no pool, so the
     pool list does not check its devices with lsblk, findmnt, swapon and the kernel's command line,
-    a third round on the dev device (ADR-0490)."""
+    a third round on the dev device (ADR-0495)."""
     c = pool_cycle
     c.pool_host.add_disk("mmcblk1", rota=False, size=31_914_983_424)
     c.pool_host.add_partition("mmcblk1", "mmcblk1p1", fstype="vfat", label="UNOS-BOOT")

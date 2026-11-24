@@ -2026,7 +2026,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   for an image tagged in several repositories, which shows the first tag of the repository its
   container was created from, in the list and in a single container's answer alike.
 - The Shares page's SMB reads no longer wait for Samba's tools, which take 50 to 165 ms each to
-  start on the BPI-W3 (ADR-0490, which supersedes ADR-0478): `GET /shares/smb-interfaces` counts
+  start on the BPI-W3 (ADR-0495, which supersedes ADR-0478): `GET /shares/smb-interfaces` counts
   the open SMB connections, `sessions`, from the `ss` that lists smbd's listeners (the established
   TCP connections to port 445, what a restart closes) instead of `smbstatus`, and
   `GET /shares/smb-status` lists Samba's passdb with `pdbedit -L` only when passdb.tdb's stat

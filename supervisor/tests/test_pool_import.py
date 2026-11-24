@@ -323,7 +323,7 @@ class TestImport:
         assert response.json()["name"] == "media"
 
     def test_the_sd_standbys_label_is_no_pool_name(self, api, host):
-        """The pool list leaves a filesystem labelled UNOS-STANDBY out (ADR-0490)."""
+        """The pool list leaves a filesystem labelled UNOS-STANDBY out (ADR-0495)."""
         response = import_as(api, FOREIGN_UUID, "UNOS-STANDBY")
         assert response.status_code == 400 and "SD card standby" in response.json()["detail"]
         assert labels(host)[FOREIGN_UUID] is None

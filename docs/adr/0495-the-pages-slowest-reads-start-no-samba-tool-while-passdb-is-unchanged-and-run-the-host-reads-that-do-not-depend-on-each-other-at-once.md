@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0478]
 ---
 
-# ADR-0490: The pages' slowest reads start no Samba tool while passdb is unchanged, ask Docker only for the images they show and run the host reads that do not depend on each other at once
+# ADR-0495: The pages' slowest reads start no Samba tool while passdb is unchanged, ask Docker only for the images they show and run the host reads that do not depend on each other at once
 
 ## Context
 
