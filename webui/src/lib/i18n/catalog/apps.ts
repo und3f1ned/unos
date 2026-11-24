@@ -195,9 +195,10 @@ export const en = {
 	// An app whose database keeps the pool's disks awake while it runs (ADR-0381).
 	'apps.detail.diskAwake':
 		'While {name} runs, the hard disks of its pool do not go to sleep: its database and its jobs keep writing to them. Stop {name} on the Installed tab to let them sleep.',
-	// About what the images of an app take on the system disk, from their pins (ADR-0415).
+	// About what the images of an app take where Docker keeps them, from their pins (ADR-0415):
+	// on its pool, or on the system disk (ADR-0490).
 	'apps.detail.imagesSize': 'About {size} for its images',
-	'apps.detail.imagesDisk': 'System disk',
+	'apps.detail.imagesDisk': 'Disk space',
 	'apps.detail.dataLocations': 'Data locations on {pool}',
 	'apps.detail.mountedAt': 'mounted at {path}',
 	'apps.detail.mountedAtReadOnly': 'mounted at {path} (read-only)',
@@ -474,7 +475,7 @@ export const ru: Translation<typeof en> = {
 	'apps.detail.diskAwake':
 		'Пока {name} работает, жёсткие диски его пула не засыпают: его база данных и задания постоянно пишут на них. Чтобы они могли заснуть, остановите {name} на вкладке «Установленные».',
 	'apps.detail.imagesSize': 'Около {size} под образы',
-	'apps.detail.imagesDisk': 'Системный диск',
+	'apps.detail.imagesDisk': 'Место на диске',
 	'apps.detail.dataLocations': 'Расположение данных в пуле {pool}',
 	'apps.detail.mountedAt': 'монтируется в {path}',
 	'apps.detail.mountedAtReadOnly': 'монтируется в {path} (только чтение)',

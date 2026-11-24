@@ -422,7 +422,7 @@ def docker(monkeypatch):
 @pytest.fixture
 def host_ports(monkeypatch):
     """The host of an install's checks (src/apps/preflight.py, ADR-0381): no program listens on a
-    port, and the system disk has 64 GiB free. Any other host command fails the test."""
+    port, and the folder of Docker's images has 64 GiB free. Any other host command fails the test."""
 
     def run(cmd, **kwargs):
         if cmd == ["ss", "-H", "-l", "-n", "-t", "-u", "-p"]:

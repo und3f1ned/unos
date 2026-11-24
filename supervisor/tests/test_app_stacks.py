@@ -29,7 +29,6 @@ from src.apps.schemas import APPS_DATA_PATH, AppCategory, AppTemplate, Companion
 from . import test_apps
 from .docker_fake import Call, StackDocker
 from .test_apps import (
-    CONTAINERD_ROOT,
     DOCKER_MASKED_PATHS,
     DOCKER_ROOT,
     GIB,
@@ -1534,15 +1533,19 @@ class TestImmich:
         for name, config in _host_configs(docker).items():
             assert not {"Devices", "MaskedPaths", "SecurityOpt", "Privileged", "CapAdd"} & set(config), name
 
-    def test_the_system_disk_keeps_2_gib_free_after_immichs_images(self, api, pools, docker, immich_images, soc):
+    def test_the_pool_of_dockers_images_keeps_2_gib_free_after_immichs_images(
+        self, api, pools, docker, immich_images, soc
+    ):
         c = catalog_module
         need = sum(pin.disk_bytes for pin in (c.IMMICH_POSTGRES, c.VALKEY, c.IMMICH_ML, c.IMMICH_SERVER))
-        soc.free = {DOCKER_ROOT: 64 * GIB, CONTAINERD_ROOT: need + 2 * GIB - 1}
+        # Docker's data root on the pool alpha, in Docker's own store (ADR-0486, ADR-0490).
+        docker.root_dir = f"{pools.alpha}/.docker"
+        soc.free = {DOCKER_ROOT: 64 * GIB, docker.root_dir: need + 2 * GIB - 1}
 
         response = install(api, {"template_id": "immich"})
 
         assert (response.status_code, response.json()) == (409, {
-            "detail": "Immich's images need about 3.4 GiB on the system disk, which has 5.4 GiB free; at least "
+            "detail": "Immich's images need about 3.4 GiB on the pool alpha, which has 5.4 GiB free; at least "
             "2 GiB must stay free. Remove unused images on Containers > Images first."
         })
         # Docker was asked which of the images it has, after the checks of the ports and before
@@ -1553,7 +1556,7 @@ class TestImmich:
         assert docker.called("api.pull", "networks.create", "api.create_container") == []
         assert not (pools.alpha / "apps").exists()
 
-        soc.free[CONTAINERD_ROOT] += 1
+        soc.free[docker.root_dir] += 1
 
         assert install(api, {"template_id": "immich"}).status_code == 200
 

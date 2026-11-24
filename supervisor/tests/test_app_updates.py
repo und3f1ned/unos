@@ -30,7 +30,7 @@ from src.audit.schemas import AuditAction
 from . import test_apps
 from .docker_fake import StackDocker
 from .test_app_stacks import CACHE, DATABASE, LEARNING, LEARNING_NPU, NAMES, PHOTOS, SERVER, _audit, clock  # noqa: F401
-from .test_apps import GIB, INSTALL, INSTALLED, UNINSTALL, install
+from .test_apps import DOCKER_ROOT, GIB, INSTALL, INSTALLED, UNINSTALL, install
 
 api = test_apps.api
 user_api = test_apps.user_api
@@ -363,8 +363,9 @@ class TestThePlan:
         # The base layer is there (1.0's images have it): only each image's own layer is pulled,
         # 5000 and 7000 bytes of 6000 and 8000, and each writes that share of its size record.
         assert plan["download_bytes"] == 12000
-        assert plan["system_disk_bytes"] == 18000 * 5000 // 6000 + 24000 * 7000 // 8000
-        assert plan["system_disk_free_bytes"] == 64 * GIB
+        assert plan["images_bytes"] == 18000 * 5000 // 6000 + 24000 * 7000 // 8000
+        # Docker's data root, which holds its images, is on the system disk here (ADR-0490).
+        assert (plan["images_free_bytes"], plan["images_pool"]) == (64 * GIB, None)
         [copy] = plan["copies"]
         assert copy["folder"] == str(_database(pools)) and copy["copy_folder"] == f"{_database(pools)}.previous"
         assert (copy["container"], copy["pool"]) == ("photos-database", "alpha") and copy["bytes"] > 0
@@ -479,6 +480,37 @@ class TestThePlan:
         response = api.get(f"{INSTALLED}/photos/update")
         assert response.status_code == 409
         assert response.json()["detail"].startswith("The update of Photos writes about 1 MiB to the system disk")
+
+    def test_the_pool_of_dockers_images_is_measured_and_named(self, api, installed, catalog, versions, soc, pools):
+        # Docker's data root on the pool alpha (ADR-0486), whose file system holds the images (ADR-0490).
+        _to_v2(catalog, versions)
+        installed.root_dir = f"{pools.alpha}/.docker"
+        soc.free = {installed.root_dir: 32 * GIB}
+
+        plan = api.get(f"{INSTALLED}/photos/update").json()
+
+        assert (plan["images_free_bytes"], plan["images_pool"]) == (32 * GIB, "alpha")
+
+        soc.free[installed.root_dir] = preflight_module.FREE_SPACE_FLOOR + 1000
+        response = api.get(f"{INSTALLED}/photos/update")
+        assert response.status_code == 409
+        assert response.json()["detail"].startswith(
+            "The update of Photos writes about 1 MiB to the pool alpha, which has 2 GiB free; at least 2 GiB must "
+            "stay free."
+        )
+
+    def test_with_the_containerd_image_store_containerds_root_on_its_pool_counts(
+        self, api, installed, catalog, versions, soc, pools
+    ):
+        _to_v2(catalog, versions)
+        installed.driver_status = [["driver-type", "io.containerd.snapshotter.v1"]]
+        containerd_root = f"{pools.beta}/.containerd"
+        soc.containerd_config = f'root = "{containerd_root}"\n'
+        soc.free = {DOCKER_ROOT: 64 * GIB, containerd_root: 16 * GIB}
+
+        plan = api.get(f"{INSTALLED}/photos/update").json()
+
+        assert (plan["images_free_bytes"], plan["images_pool"]) == (16 * GIB, "beta")
 
     def test_an_incomplete_app_is_refused(self, api, installed, catalog, versions):
         _to_v2(catalog, versions)

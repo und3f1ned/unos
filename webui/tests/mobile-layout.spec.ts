@@ -356,7 +356,7 @@ const UPDATE_PLAN = {
     name: c.container, companion: c.name, image_from: c.image, image_to: `${c.image.split('@')[0]}:v3.5.0@sha256:${'c'.repeat(64)}`,
     changed: true, built_from: '2026-10-01T00:00:00Z', built_to: '2026-11-15T00:00:00Z',
   })),
-  download_bytes: 900 * 2 ** 20, system_disk_bytes: 2 * 2 ** 30, system_disk_free_bytes: 20 * 2 ** 30,
+  download_bytes: 900 * 2 ** 20, images_bytes: 2 * 2 ** 30, images_free_bytes: 20 * 2 ** 30, images_pool: null,
   copies: [{
     container: 'immich-database', folder: `${DATA}/apps/immich/postgres/data`,
     copy_folder: `${DATA}/apps/immich/postgres/data.previous`, bytes: 2 ** 30, pool: 'e2e_data', pool_free_bytes: 2 ** 40,

@@ -69,8 +69,9 @@ const PLAN = {
       image_to: NEW_SERVER, changed: true, built_from: '2026-10-01T00:00:00Z', built_to: '2026-11-15T00:00:00Z' },
   ],
   download_bytes: 300 * MIB,
-  system_disk_bytes: 700 * MIB,
-  system_disk_free_bytes: 20 * 1024 * MIB,
+  images_bytes: 700 * MIB,
+  images_free_bytes: 20 * 1024 * MIB,
+  images_pool: 'e2e_data',
   copies: [{ container: 'immich-database', folder: DATABASE, copy_folder: `${DATABASE}.previous`, bytes: 512 * MIB,
              pool: 'e2e_data', pool_free_bytes: 900 * 1024 * MIB }],
 };
@@ -137,11 +138,13 @@ test.describe('Updating an installed app', () => {
   }) => {
     const fakes = await fakeApps(page, withUpdate());
     const containers = PLAN.containers.map((c) => (c.name === 'immich' ? c : { ...c, changed: false }));
-    fakes.plan = { status: 200, json: { ...PLAN, containers } };
+    // Docker's images on the system disk, as before the first pool takes them (ADR-0490).
+    fakes.plan = { status: 200, json: { ...PLAN, containers, images_pool: null } };
     const card = await openInstalled(page);
     await card.getByRole('button', { name: 'Update to v3.5.0' }).click();
     const dialog = page.getByRole('dialog', { name: 'Update Immich' });
     await expect(dialog.locator('[data-field="containers"]')).toHaveText('1 of 4 gets a new image');
+    await expect(dialog.locator('.kv > div', { hasText: 'System disk' })).toContainText('About 700 MB, of 20 GB free');
   });
 
   test('the update shows what it writes and copies, runs as a job, and keeps the earlier version until a rollback', async ({
@@ -157,7 +160,11 @@ test.describe('Updating an installed app', () => {
     // The summary first: what changes, the space it needs, the safety net (webui.ux-apps).
     await expect(dialog.locator('[data-field="containers"]')).toHaveText('2 of 4 get a new image');
     await expect(dialog.locator('[data-field="download"]')).toHaveText('300 MB');
-    await expect(dialog.locator('[data-field="system-disk"]')).toHaveText('About 700 MB, of 20 GB free');
+    // Where the pulls write: the pool that holds Docker's images (ADR-0490).
+    await expect(dialog.locator('[data-field="images"]')).toHaveText('About 700 MB, of 20 GB free');
+    await expect(dialog.locator('.kv > div', { has: page.locator('[data-field="images"]') })).toContainText(
+      'Pool e2e_data',
+    );
     // Each container's image on demand.
     await expect(dialog.getByRole('listitem')).toHaveCount(0);
     await dialog.getByText("What stays, and each container's image").click();

@@ -34,7 +34,7 @@
 
 <div class="space-y-5">
 	<!-- At a glance -->
-	{#if app.recommended_memory || app.min_memory || app.system_disk_bytes || several}
+	{#if app.recommended_memory || app.min_memory || app.images_bytes || several}
 		<div class="kv">
 			{#if app.recommended_memory}
 				<div>
@@ -48,11 +48,11 @@
 					<span class="kv-value" data-field="min-memory">{memory(app.min_memory)}</span>
 				</div>
 			{/if}
-			{#if app.system_disk_bytes}
+			{#if app.images_bytes}
 				<div>
 					<span class="kv-label">{$t('apps.detail.imagesDisk')}</span>
 					<span class="kv-value">
-						{$t('apps.detail.imagesSize', { size: formatSize(app.system_disk_bytes, $intlLocale, $t, { digits: 2 }) })}
+						{$t('apps.detail.imagesSize', { size: formatSize(app.images_bytes, $intlLocale, $t, { digits: 2 }) })}
 					</span>
 				</div>
 			{/if}

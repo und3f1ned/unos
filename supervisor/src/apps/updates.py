@@ -8,8 +8,9 @@ catalog pins an image for a container other than the one its container was creat
 only when each image that changes is newer, built later than the image that runs (the ``created``
 of its configuration for the host's platform, read from its registry, against Docker's ``Created``
 of the installed image). Before it runs, ``GET /apps/installed/{id}/update`` shows what it changes,
-what its pulls write to the system disk (the layers that Docker lacks, from the registry's
-manifests) and the copy of the app's database that it makes on the pool.
+what its pulls write where Docker keeps its images (the layers that Docker lacks, from the
+registry's manifests; its pool or the system disk, ADR-0490) and the copy of the app's database
+that it makes on the pool.
 
 The update is a job of src/apps/install_jobs.py, as an install is (ADR-0384): one change of an app
 at a time, its progress over /ws/v1/events. It checks everything before its first pull and pulls
@@ -96,8 +97,8 @@ COPY_SECONDS = 3600
 # The longest that the main container of a new version may take to be ready: Immich migrates its
 # database at its start, and its health check fails meanwhile.
 READY_SECONDS = 900
-# An image without a size record of the catalog counts its download this many times on the
-# system disk: the compressed blobs and their unpacked layers.
+# An image without a size record of the catalog counts its download this many times where Docker
+# keeps its images: the compressed blobs and their unpacked layers.
 UNRECORDED_FACTOR = 3
 
 
@@ -166,8 +167,9 @@ class _Plan:
     copies: list[_Copy]
     secrets: list[Any]
     download_bytes: int = 0
-    system_disk_bytes: int = 0
-    system_disk_free: int | None = None
+    images_bytes: int = 0
+    # Where Docker keeps its images, with the free space there (ADR-0490).
+    images: preflight.ImageStore | None = None
 
     @property
     def planned(self) -> list[Any]:
@@ -401,9 +403,9 @@ def _plan(client: Any, app: stacks.InstalledContainers, shares: list[Any]) -> _P
 
 def _read_images(plan: _Plan) -> None:
     """Read from the registries each image of the catalog that is not the one its container was
-    created from, tell whether it is newer, and count what its pull writes to the system disk.
-    409 for an image that is not newer or whose age cannot be told, or for too little room on the
-    system disk; 503 for a registry that cannot be read."""
+    created from, tell whether it is newer, and count what its pull writes where Docker keeps its
+    images. 409 for an image that is not newer or whose age cannot be told, or for too little room
+    there (ADR-0490); 503 for a registry that cannot be read."""
     client, template = plan.client, plan.template
     for t in plan.targets:
         installed = _installed_digest(t.old) if t.old is not None else None
@@ -470,16 +472,15 @@ def _read_images(plan: _Plan) -> None:
         pin = PINNED_IMAGES.get(remote.ref)
         total = remote.download_bytes
         if pin is not None and total > 0:
-            plan.system_disk_bytes += pin.disk_bytes * missing // total
+            plan.images_bytes += pin.disk_bytes * missing // total
         else:
-            plan.system_disk_bytes += UNRECORDED_FACTOR * missing
-    plan.system_disk_free = preflight.system_disk_free(client)
-    free = plan.system_disk_free
-    if free is not None and free - plan.system_disk_bytes < preflight.FREE_SPACE_FLOOR:
+            plan.images_bytes += UNRECORDED_FACTOR * missing
+    plan.images = store = preflight.image_store(client)
+    if store.free is not None and store.free - plan.images_bytes < preflight.FREE_SPACE_FLOOR:
         _refuse(
-            f"The update of {template.name} writes about {_size(plan.system_disk_bytes)} to the system disk, which has "
-            f"{_gib(free)} free; at least {_gib(preflight.FREE_SPACE_FLOOR)} must stay free. Remove unused images on "
-            "Containers > Images first."
+            f"The update of {template.name} writes about {_size(plan.images_bytes)} to {store.place}, which has "
+            f"{_gib(store.free)} free; at least {_gib(preflight.FREE_SPACE_FLOOR)} must stay free. Remove unused "
+            "images on Containers > Images first."
         )
 
 
@@ -500,8 +501,9 @@ def _answer(plan: _Plan) -> AppUpdatePlan:
     return AppUpdatePlan(
         template_id=plan.template.id, name=plan.template.name,
         version_from=stacks.app_version(plan.app), version_to=plan.template.version, platform=plan.platform,
-        containers=containers, download_bytes=plan.download_bytes, system_disk_bytes=plan.system_disk_bytes,
-        system_disk_free_bytes=plan.system_disk_free,
+        containers=containers, download_bytes=plan.download_bytes, images_bytes=plan.images_bytes,
+        images_free_bytes=plan.images.free if plan.images else None,
+        images_pool=plan.images.pool if plan.images else None,
         copies=[DatabaseCopy(container=c.container, folder=str(c.folder), copy_folder=str(c.copy), bytes=c.size,
                              pool=c.pool.name, pool_free_bytes=c.free) for c in plan.copies],
     )
@@ -859,16 +861,17 @@ def _restore(plan: _Plan, done: _Progress, progress: install_jobs.Progress, reas
              "install: a share's folder, a snapshot or the trash, or a folder inside another that the app writes to.",
         409: "The app cannot be updated, with the reason as the detail: such as no newer images in the catalog, an "
              "earlier version still kept, a missing container, a pool not mounted, a host port taken, an image that "
-             "is not newer or not built for the host's platform, or too little room on the system disk or the pool.",
-        500: "Docker failed, or the system disk's free space or a data folder could not be read.",
+             "is not newer or not built for the host's platform, or too little room where Docker keeps its images or "
+             "on the pool.",
+        500: "Docker failed, or the free space where Docker keeps its images or a data folder could not be read.",
         503: "Docker or an image's registry does not answer.",
     }),
 )
 async def update_plan(container_id: base.AppContainerId, _: User = Depends(require_admin),
                       db: AsyncSession = Depends(get_db)) -> AppUpdatePlan:
     """What an app update of an installed app to the catalog's newer pinned images would do: each
-    container's image before and after, what its pulls write to the system disk, and the database
-    copies. Reads Docker, the host and the image registries; changes nothing.
+    container's image before and after, what its pulls write where Docker keeps its images, and the
+    database copies. Reads Docker, the host and the image registries; changes nothing.
     \f
     ADR-0408.
     """

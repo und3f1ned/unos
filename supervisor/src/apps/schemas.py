@@ -317,7 +317,7 @@ class AppTemplate(ContainerSpec):
         "restart_policy": "unless-stopped", "privileged": False, "network_mode": None, "capabilities": [],
         "min_memory": "1g", "recommended_memory": "4g",
         "companions": [], "depends_on": [], "host_gateway": False,
-        "host_platform": "linux/arm64", "available": True, "system_disk_bytes": 3005000000,
+        "host_platform": "linux/arm64", "available": True, "images_bytes": 3005000000,
         "platforms": ["linux/amd64", "linux/arm64"], "can_run_in_unos_smb": False,
     }]})
 
@@ -382,10 +382,10 @@ class AppTemplate(ContainerSpec):
                           "cannot be installed here."
     )
     # The sum of the pins' estimates (PinnedImage.disk_bytes), set by the catalog API (ADR-0415).
-    system_disk_bytes: int | None = Field(
+    images_bytes: int | None = Field(
         default=None,
-        description="About how many bytes the images that its install pulls on this host take on the system "
-                          "disk, whether Docker has them or not, as the catalog API counts them."
+        description="About how many bytes the images that its install pulls on this host take where Docker keeps "
+                          "its images, whether Docker has them or not, as the catalog API counts them."
     )
 
     @model_validator(mode="after")
@@ -722,8 +722,9 @@ class AppUpdatePlan(BaseModel):
              "built_from": "2026-09-28T04:12:55Z", "built_to": "2026-10-26T04:20:41Z"},
         ],
         "download_bytes": 95420416,
-        "system_disk_bytes": 241172480,
-        "system_disk_free_bytes": 21474836480,
+        "images_bytes": 241172480,
+        "images_free_bytes": 1893792202752,
+        "images_pool": "data",
         "copies": [{
             "container": "bookstack-database", "folder": f"{_BOOKSTACK_FOLDER}/database/data",
             "copy_folder": f"{_BOOKSTACK_FOLDER}/database/data.previous", "bytes": 241172480, "pool": "data",
@@ -745,11 +746,18 @@ class AppUpdatePlan(BaseModel):
     )
     download_bytes: int = Field(description="The bytes of the compressed layers that Docker lacks, which the pulls "
                                             "download.")
-    system_disk_bytes: int = Field(
-        description="About how many bytes the pulls write to the system disk: the downloads and the unpacked layers."
+    images_bytes: int = Field(
+        description="About how many bytes the pulls write where Docker keeps its images: the downloads and the "
+                    "unpacked layers."
     )
-    system_disk_free_bytes: int | None = Field(
-        default=None, description="The system disk's free space now, in bytes; null when UNOS cannot read it."
+    images_free_bytes: int | None = Field(
+        default=None,
+        description="The free space now where Docker keeps its images, in bytes; null when the host lacks the folder."
+    )
+    images_pool: str | None = Field(
+        default=None,
+        description="The pool that holds Docker's images (containerd's root with the containerd image store, else "
+                    "Docker's data root); null for the system disk (ADR-0490)."
     )
     copies: list[DatabaseCopy] = Field(default=[], description="The database copies that the update makes on the pool.")
 

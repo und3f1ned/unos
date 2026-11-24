@@ -174,20 +174,20 @@ class TestCatalog:
         ("linkwarden", ("LINKWARDEN", "LINKWARDEN_POSTGRES")),
         ("transmission", ()),
     ])
-    def test_the_catalog_answers_the_size_of_an_apps_images_on_the_system_disk(self, api, monkeypatch, app_id, pins):
+    def test_the_catalog_answers_the_size_of_an_apps_images(self, api, monkeypatch, app_id, pins):
         monkeypatch.setattr(platforms_module, "host_platform", lambda: "linux/arm64")
 
         listed = {t["id"]: t for t in api.get("/api/v1/apps/catalog").json()}
         one = api.get(f"/api/v1/apps/catalog/{app_id}").json()
 
         need = sum(getattr(c, name).disk_bytes for name in pins) or c.APP_IMAGES.get(app_id).disk_bytes
-        assert listed[app_id]["system_disk_bytes"] == one["system_disk_bytes"] == need
+        assert listed[app_id]["images_bytes"] == one["images_bytes"] == need
         assert listed[app_id]["available"] and listed[app_id]["host_platform"] == "linux/arm64"
 
     def test_the_size_of_immichs_images_counts_the_machine_learning_that_this_host_runs(self, api, soc):
-        cpu = api.get("/api/v1/apps/catalog/immich").json()["system_disk_bytes"]
+        cpu = api.get("/api/v1/apps/catalog/immich").json()["images_bytes"]
         test_apps._rk3588(soc)
-        npu = api.get("/api/v1/apps/catalog/immich").json()["system_disk_bytes"]
+        npu = api.get("/api/v1/apps/catalog/immich").json()["images_bytes"]
 
         base = c.IMMICH_SERVER.disk_bytes + c.IMMICH_POSTGRES.disk_bytes + c.VALKEY.disk_bytes
         assert (cpu, npu) == (base + c.IMMICH_ML.disk_bytes, base + c.IMMICH_ML_RKNN.disk_bytes)

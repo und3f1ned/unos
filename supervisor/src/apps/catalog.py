@@ -84,7 +84,7 @@ Such an app asks the administrator for no secret.
 
 Every image of the catalog is pinned: a PinnedImage (name:tag@sha256 of the
 multi-platform index, as ADR-0305 pins the Dockerfiles) with its estimated
-size on the system disk and the VOLUMEs it declares, listed in PINNED_IMAGES
+size where Docker keeps its images (ADR-0490) and the VOLUMEs it declares, listed in PINNED_IMAGES
 (ADR-0381, ADR-0410); an app of one container takes its image from
 APP_IMAGES and its version from the pin's tag. A test fails for an image
 that is not pinned; no install, space check or update has a path for one.
@@ -93,8 +93,8 @@ serves them, never lscr.io/linuxserver/<name>, its redirector to the same
 indexes, whose blobs Docker failed to pull on the dev device's network
 (tests/test_linuxserver_ghcr.py; ADR-0426).
 
-Nothing an app writes may land on the system disk, where Docker's data root
-is (ADR-0381): every VOLUME that its image declares lies at or under a bind on
+Nothing an app writes may land in Docker's data root, on the system disk
+until the first pool takes it (ADR-0381, ADR-0486): every VOLUME that its image declares lies at or under a bind on
 the pool or a tmpfs (an install refuses a pinned image whose VOLUME is not),
 and a path that a container writes at run time outside its data (/tmp, a run
 folder, a configuration made at every start) is kept in RAM with
@@ -170,9 +170,9 @@ class PinnedImage:
     name: str
     tag: str
     digest: str
-    # About what it takes on the system disk once pulled, from the registry: its compressed layers
-    # plus their unpacked size (the containerd image store keeps both). The install checks the
-    # free space with it before a pull.
+    # About what it takes where Docker keeps its images once pulled, from the registry: its compressed
+    # layers plus their unpacked size (the containerd image store keeps both). The install checks the
+    # free space there with it before a pull (ADR-0490).
     disk_bytes: int
     # The VOLUMEs that its configuration declares, the same on each of its platforms: each lies at or
     # under a bind on the pool or a tmpfs of the container that runs it (a test; ADR-0381).
@@ -220,7 +220,7 @@ VALKEY = PinnedImage(
 # The images of the apps that came back with companions (ADR-0415): each app's own image by the
 # publisher's version tag of the index that its floating tag named on 2026-11-18, and its database
 # or broker as the app's own docker-compose.yml names it (BookStack's, which names none: MariaDB's
-# 11.8 LTS line), pinned by its version tag, with the estimate on the system disk of
+# 11.8 LTS line), pinned by its version tag, with the estimate where Docker keeps its images of
 # APP_IMAGES (four times the compressed layers of the larger linux/arm64 or linux/amd64 image) and
 # the VOLUMEs of its configuration. Each moves with its app, never with Immich's. Paperless-ngx's and
 # Linkwarden's are the sizes that their pulls took on the dev device on 2026-11-19 with their
@@ -261,7 +261,7 @@ LINKWARDEN_POSTGRES = PinnedImage(
 )
 # The image of each app of one container, by template id (ADR-0410): the publisher's most specific tag
 # for the build (a version, LinuxServer's <version>-ls<build>; never latest, a channel or a branch)
-# and the digest of the index that it named on 2026-11-18, with its estimate on the system disk
+# and the digest of the index that it named on 2026-11-18, with its estimate where Docker keeps images
 # (four times the compressed layers of its larger image of linux/arm64 and linux/amd64) and the
 # VOLUMEs that its configuration declares. LinuxServer's pins name ghcr.io, which served the same
 # index for each tag on 2026-11-19 as lscr.io did on 2026-11-18 (ADR-0426). Traefik's tag is its

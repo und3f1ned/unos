@@ -268,17 +268,36 @@ def pool_of(path: str) -> str | None:
     return name if POOL_NAME_PATTERN.fullmatch(name) else None
 
 
+def _data_root(info: dict[str, Any]) -> str:
+    """Docker's data root as Docker's info names it."""
+    root = info.get("DockerRootDir")
+    if not isinstance(root, str) or not root.startswith("/"):
+        raise DockerDataError("Docker names no data root")
+    return os.path.normpath(root)
+
+
+def _store_root(info: dict[str, Any]) -> str | None:
+    """containerd's root when Docker keeps its images in the containerd image store of the host's containerd
+    service; None when Docker keeps them below its data root (its classic store, or a containerd of its own)."""
+    if _uses_containerd_store(info) and _containerd_service():
+        return configured_containerd_root()
+    return None
+
+
+def images_root(info: dict[str, Any]) -> str:
+    """The folder whose file system holds Docker's images (ADR-0490): containerd's root when Docker keeps them
+    in the containerd image store of the host's containerd service, else Docker's data root, by ``info``
+    (Docker's info). DockerDataError when Docker names no data root or containerd's configuration cannot be
+    read. Blocks."""
+    return _store_root(info) or _data_root(info)
+
+
 def placement() -> Placement:
     """Where Docker keeps its data now. DockerDataError (503) while Docker does not answer, (500) when
     containerd's configuration cannot be read. Blocks: call it in a worker thread."""
     info = _info()
-    docker_root = info.get("DockerRootDir")
-    if not isinstance(docker_root, str) or not docker_root.startswith("/"):
-        raise DockerDataError("Docker names no data root")
-    docker_root = os.path.normpath(docker_root)
-    containerd_root = None
-    if _uses_containerd_store(info) and _containerd_service():
-        containerd_root = _containerd_root(_host_file(CONTAINERD_CONFIG))
+    docker_root = _data_root(info)
+    containerd_root = _store_root(info)
     held = {pool_of(path) for path in (docker_root, containerd_root) if path is not None}
     pool = next(iter(held)) if len(held) == 1 else None
     driver = info.get("Driver")
