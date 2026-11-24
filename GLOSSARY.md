@@ -188,6 +188,11 @@ and keeps on GHCR as `unos-riscv64-wheels:<key>`, the key being the sha256 of th
 `supervisor/requirements.txt`; a release's riscv64 supervisor installs them without the index
 (ADR-0458). Avoid: wheel cache (pip's own cache).
 
+**ARM wheels**: The wheels of the supervisor's Python packages for 32-bit ARM (linux/arm/v7), which the
+build stage `arm-wheels` of `supervisor/Dockerfile` compiles where the image is built, an ARMv7 host's
+own Docker, and its stage `packages-arm` installs without the index through a mount, so that no
+compiler stays in the image (ADR-0498). Avoid: riscv64 wheels (a release's, kept on GHCR).
+
 **Release installer**: The part of an in-app update of UNOS that runs on the host
 (`supervisor/src/updates/installer.py`): `update.sh --fetch`, which gets a release's tag and images,
 and `update.sh --in-app` in a transient systemd unit, which switches the containers, checks the

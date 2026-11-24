@@ -259,10 +259,13 @@ is_spacemit_k1() {
 # publish no binaries for 32-bit ARM with musl, the libc of the web UI's
 # builder (ADR-0456). The image is built on another machine and loaded here.
 # riscv64, which they lack too, pulls the release's
-# (deploy.riscv64-release-images). update.sh has the same function.
+# (deploy.riscv64-release-images). Docker's architecture, as for
+# release_images_here: a 32-bit userland on a 64-bit Arm kernel (uname
+# aarch64) builds arm images too (deploy.armv7-supervisor-build). update.sh has
+# the same function.
 webui_elsewhere_platform() {
-    case "$(uname -m)" in
-        armv7l) echo linux/arm/v7 ;;
+    case "$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" in
+        arm) echo linux/arm/v7 ;;
     esac
 }
 

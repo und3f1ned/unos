@@ -706,11 +706,13 @@ restore_previous() {
 
 # The platform of a host that builds no web UI, and nothing elsewhere: its build
 # tools publish no binaries for 32-bit ARM with musl (ADR-0456); riscv64 pulls
-# the release's (deploy.riscv64-release-images). install.sh has the same
-# function.
+# the release's (deploy.riscv64-release-images). Docker's architecture, as for
+# release_images_here: a 32-bit userland on a 64-bit Arm kernel (uname aarch64)
+# builds arm images too (deploy.armv7-supervisor-build). install.sh has the
+# same function.
 webui_elsewhere_platform() {
-    case "$(uname -m)" in
-        armv7l) echo linux/arm/v7 ;;
+    case "$(docker version --format '{{.Server.Arch}}' 2>/dev/null)" in
+        arm) echo linux/arm/v7 ;;
     esac
 }
 

@@ -502,6 +502,7 @@ and this index, and `make check-fast` runs it.
 | [0413](0413-install-sh-installs-only-the-packages-unos-runs-so-no-mdadm-assembles-an-old-nas.md) | The package list of install.sh holds only what UNOS runs, so no mdadm assembles the arrays of an old NAS | accepted | 2026-11-18 |
 | [0455](0455-releases-publish-their-images-to-ghcr-and-update-sh-switches-to-a-release-on-the-host-also-for-the-in-app-updater.md) | Releases publish their images to GHCR, and update.sh switches to a release on the host, also for the in-app updater | superseded by [0458](0458-releases-also-publish-riscv64-images-whose-supervisor-installs-wheels-built-once-per-requirements-and-kept-on-ghcr.md) | 2026-11-22 |
 | [0458](0458-releases-also-publish-riscv64-images-whose-supervisor-installs-wheels-built-once-per-requirements-and-kept-on-ghcr.md) | Releases also publish linux/riscv64 images, whose supervisor installs wheels built once per requirements.txt and kept on GHCR, and ARMv7 keeps building on the host | accepted | 2026-11-22 |
+| [0498](0498-the-supervisor-image-builds-for-linux-arm-v7-with-its-compilers-in-a-build-stage-and-an-armv7-host-keeps-building-it.md) | The supervisor's image builds for linux/arm/v7 with its compilers in a build stage, and an ARMv7 host keeps building it | accepted | 2026-11-24 |
 
 ## Device
 

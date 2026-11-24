@@ -2,7 +2,14 @@
 # Dependabot follows the tag when it proposes a newer digest. A new digest whose linux/arm64
 # image changed makes the dev device pull the base and run apt-get and pip again, hundreds of
 # MB on its system disk (ADR-0214). supervisor/Dockerfile.test starts from the same base.
-FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+#
+# The stages (deploy.armv7-supervisor-build): system, then the Python packages of the target's
+# architecture, which the last stage starts from (FROM packages-${TARGETARCH}): packages on amd64,
+# arm64 and riscv64, and on 32-bit ARM packages-arm, which installs the wheels that the build stage
+# arm-wheels compiles. On amd64, arm64 and riscv64 the image is made by the same instructions in the
+# same order as before the stages, so that a device keeps its cached layers; no build tool of
+# arm-wheels reaches an image.
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535 AS system
 
 WORKDIR /app
 
@@ -18,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+
+FROM system AS packages
 # pip 26.3 first: the base's pip 24.0 takes no wheel built for linux/riscv64 (pip 24.1 added the
 # platform's manylinux tags). On riscv64, cryptography, bcrypt, cffi, psutil and uvloop publish no
 # wheel, so this layer also installs what compiles them (Rust, the headers of OpenSSL and libffi,
@@ -35,6 +44,31 @@ RUN pip install --no-cache-dir pip==26.3 setuptools==84.2.1 \
         && rm -rf /var/lib/apt/lists/* /root/.cargo; \
     fi
 
+FROM packages AS packages-amd64
+FROM packages AS packages-arm64
+FROM packages AS packages-riscv64
+
+# 32-bit ARM (linux/arm/v7), whose supervisor only its host builds (deploy.armv7-supervisor-build):
+# cffi, psutil, PyYAML, uvloop, greenlet and httptools publish no armv7l wheel for Python 3.11, so
+# this build stage compiles a wheel of every package that packages-arm installs, the pip and
+# setuptools of the pip layer included: cffi with libffi's headers, greenlet with a C++ compiler,
+# uvloop's libuv with make; the base has Python's headers. No image starts from it, so its compilers
+# stay out of every image.
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535 AS arm-wheels
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ libffi-dev make \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN pip install --no-cache-dir pip==26.3 \
+    && pip wheel --no-cache-dir --wheel-dir /wheels pip==26.3 setuptools==84.2.1 -r requirements.txt
+
+# The pip layer of 32-bit ARM: the wheels of arm-wheels, mounted for this one RUN, without the index.
+FROM system AS packages-arm
+RUN --mount=type=bind,from=arm-wheels,source=/wheels,target=/wheels \
+    pip install --no-cache-dir --no-index --find-links /wheels pip==26.3 setuptools==84.2.1 \
+    && pip install --no-cache-dir --no-index --find-links /wheels -r requirements.txt
+
+FROM packages-${TARGETARCH}
+
 # restic for the off-device copy (ADR-0337), Debian's package, in a layer of its own after pip's:
 # the apt-get and pip layers above stay cached, so a device that builds this image downloads and
 # writes only restic.
@@ -49,7 +83,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # The version System > Updates shows: the release's tag, which
 # .github/workflows/release.yml passes, or `git describe --tags --always` of
 # the checkout where the image is built here, which deploy/install.sh and
-# deploy/update.sh pass on riscv64 through deploy/docker-compose.yml
+# deploy/update.sh pass on 32-bit ARM through deploy/docker-compose.yml
 # (ADR-0234). UNOS_RELEASE is the tag too in a release's image and empty in one
 # built here: the in-app updater installs only over a release (ADR-0050).
 # After the code and the packages, so that a new version rebuilds only these

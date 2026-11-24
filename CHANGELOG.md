@@ -2018,6 +2018,19 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The supervisor builds on ARMv7 (ADR-0498): cffi and greenlet, which publish no armv7l wheel,
+  stopped the build of `supervisor/Dockerfile` for linux/arm/v7 (libffi's headers and a C++ compiler
+  were missing). Its new build stage `arm-wheels` compiles wheels of the requirements with gcc, g++,
+  libffi-dev and make, and 32-bit ARM's image installs them through a mount, without g++, libffi-dev
+  or make; the last stage picks the packages of the target's architecture
+  (`packages-${TARGETARCH}`), so the amd64 and arm64 images are built from the same layers as before
+  and do not change (riscv64 by the same rule; not built). `scripts/dev/deploy.sh build-supervisor`
+  accepts the stage references and still refuses an unpinned base. Under QEMU the linux/arm/v7 build
+  took 22 minutes and its supervisor answered its health check; `docs/INSTALL.md` (ARMv7) says how
+  long and how much space to plan for on a board. install.sh and update.sh keep building the
+  supervisor on an ARMv7 host and taking the web UI's image from another machine, now also on a
+  32-bit system with a 64-bit Arm kernel (Docker's `arm`, where `uname -m` says aarch64), which
+  tried to build the web UI before.
 - The container list no longer waits for Docker's list of every image (ADR-0478, which supersedes
   ADR-0468): it asks only for the images of the repositories that its containers name, or, once a
   container names its image by its ID, for the images that have a name, and for none without a
