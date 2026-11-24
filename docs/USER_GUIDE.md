@@ -3164,16 +3164,17 @@ NUT server on another machine).
 ### SD Standby
 
 On a board whose system runs from its eMMC, an SD card in the slot can keep a
-copy of the system and boot it by itself when the eMMC fails (ADR-0471). For
-now UNOS offers it on the BPI-W3 only; elsewhere the **SD Standby** tab lists
-its conditions and says which are not met: Armbian with a board profile and
-its loader package, the root filesystem ext4 on the eMMC, a free SD card of
-16 GB or more, Docker's data on the system disk, and rsync, dosfstools and
-sfdisk on the host.
+copy of the system and boot it by itself when the eMMC, or the pool that holds
+Docker's data, fails (ADR-0471, ADR-0487). For now UNOS offers it on the BPI-W3
+only (the BPI-F3 follows); elsewhere the **SD Standby** tab lists its
+conditions and says which are not met: Armbian with a board profile and its
+loader package, the root filesystem ext4 on the eMMC, a free SD card of 16 GB
+or more, and rsync, dosfstools and sfdisk on the host.
 
 - **Set up the standby** erases the free card after you type its model, and
   writes the board's loader, a FAT partition and a btrfs partition, then the
-  first copy of the system. The card is no longer listed among the disks.
+  first copy of the system. The card is no longer listed among the disks. The
+  card's chooser takes part from the next boot on.
 - The copy is synced daily at the time you set (04:00 by default, on the NAS's
   clock), 10 minutes after a change of the settings, at each start of UNOS and
   with **Sync now**. A sync that finds nothing changed writes nothing; the card
@@ -3182,6 +3183,12 @@ sfdisk on the host.
   failed on the card, sends an alert and reboots to the card, where UNOS
   starts from the copy; the banner says so until you return. Changes made
   since the last sync are lost, but the database's last copy.
+- When the pool that holds Docker's data is not mounted or read-only for 5
+  minutes, UNOS is down with Docker; a service of the host then marks the eMMC
+  failed on the card and reboots to it, where Docker keeps its data on the
+  card; a pool that was only unmounted, or whose disk came up late, it mounts
+  again and starts Docker. Before you unmount that pool by hand, stop it:
+  `systemctl stop unos-standby-watch.service`.
 - **Drills** prove it: each makes the next boot take the card and reboots the
   NAS at once. On the card, **Return to the eMMC** removes the mark and reboots
   from the eMMC; the changes made on the card stay on the card. Back on the

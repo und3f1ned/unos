@@ -72,7 +72,9 @@
 					? $t('standby.boot.card', { reason: reasonText($t, status.boot_reason) })
 					: status.in_boot_path
 						? $t('standby.boot.emmc')
-						: $t('standby.boot.none')}
+						: status.armed && status.in_boot_path === null
+							? $t('standby.boot.pending')
+							: $t('standby.boot.none')}
 			</span>
 		</div>
 		<div>

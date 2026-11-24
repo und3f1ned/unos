@@ -10,7 +10,6 @@ export const CONDITIONS: Record<StandbyConditionId, string> = {
 	loader: 'standby.condition.loader',
 	emmc_root: 'standby.condition.emmc_root',
 	sd_card: 'standby.condition.sd_card',
-	docker_root: 'standby.condition.docker_root',
 	host_tools: 'standby.condition.host_tools'
 };
 
@@ -18,7 +17,10 @@ const REASONS: Record<string, string> = {
 	marked: 'standby.reason.marked',
 	tries: 'standby.reason.tries',
 	emmc_unreadable: 'standby.reason.emmc_unreadable',
-	emmc_boot_failed: 'standby.reason.emmc_boot_failed'
+	emmc_boot_failed: 'standby.reason.emmc_boot_failed',
+	drill: 'standby.reason.drill',
+	system_disk_failed: 'standby.reason.system_disk_failed',
+	docker_pool_failed: 'standby.reason.docker_pool_failed'
 };
 
 const PARTS: Record<string, string> = {
@@ -27,7 +29,10 @@ const PARTS: Record<string, string> = {
 	database: 'standby.part.database',
 	images: 'standby.part.images',
 	boot: 'standby.part.boot',
-	fixups: 'standby.part.fixups'
+	fixups: 'standby.part.fixups',
+	loader: 'standby.part.loader',
+	chooser: 'standby.part.chooser',
+	units: 'standby.part.units'
 };
 
 export type StandbyMark = { key: string; variant: 'success' | 'warning' | 'error' | 'neutral' };

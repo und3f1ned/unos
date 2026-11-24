@@ -523,7 +523,7 @@ test('should display dashboard', async ({ authenticatedPage }) => {
 ## The Dev Device
 
 The dev device is a single shared resource whose system disk is its soldered eMMC, which wears
-with every write; its SD card is wiped and unused (ADR-0214, ADR-0470). It is reached only
+with every write; its SD card holds the SD standby (ADR-0214, ADR-0471, ADR-0487). It is reached only
 through `scripts/dev/`, which reads its settings and secrets from the git-ignored `dev.env`
 (ADR-0212):
 

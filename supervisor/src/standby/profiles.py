@@ -12,6 +12,7 @@ that the chooser uses.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 SECTOR = 512
 
@@ -22,9 +23,22 @@ class BoardProfile:
     # The values of BOARD in /etc/armbian-release.
     boards: tuple[str, ...]
     # Armbian's loader package: its folder, and each image with the sector that write_uboot_platform
-    # of /usr/lib/u-boot/platform_install.sh writes it to.
+    # of /usr/lib/u-boot/platform_install.sh writes it to, the first stage first. UNOS writes them to the
+    # card itself, in the reverse order: the first stage's header last, so that a torn rewrite never
+    # leaves a valid header in front of a broken later stage (ADR-0487).
     loader_dir: str
     loader_images: tuple[tuple[str, int], ...]
+    # The card's partition table: the one that both the boot ROM and the board's U-Boot read. The
+    # W3's U-Boot sees no partition of an MBR card (measured, ADR-0487); "dos" for a board whose
+    # loader needs an MBR.
+    partition_table: Literal["gpt", "dos"]
+    # How the eMMC's system boots, which decides how the chooser hands over to it: "boot.scr", Armbian's
+    # boot script that loads relative to ${prefix} and appends the profile's args_variable (the W3).
+    # Another kind, such as extlinux, comes with the board that needs it.
+    emmc_boot: Literal["boot.scr"]
+    # The U-Boot variable of the address where the chooser loads its small files and the counter
+    # sector: not where the board's U-Boot holds the chooser itself.
+    buffer_variable: str
     emmc_mmc: int
     card_mmc: int
     # The card's first partition, the FAT one, starts here (16 MiB); the counter sector is before it,
@@ -45,6 +59,9 @@ BPI_W3 = BoardProfile(
     loader_images=(("idbloader.img", 64), ("u-boot.itb", 16384)),
     emmc_mmc=0,
     card_mmc=1,
+    partition_table="gpt",
+    emmc_boot="boot.scr",
+    buffer_variable="kernel_addr_r",
     first_sector=32768,
     counter_sector=32767,
     args_variable="extraboardargs",

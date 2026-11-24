@@ -1,7 +1,8 @@
 """The SD card standby's boot choice: the card's boot.scr and the small files it reads (ADR-0471).
 
-The boot ROM starts the card's loader, whose standard boot runs ``boot.scr`` of the card's FAT
-partition: the chooser. It imports ``unos/current.txt`` (``unos/previous.txt`` when that one is
+U-Boot's standard boot scans the card before the eMMC, whichever loader the boot ROM took, and
+runs ``boot.scr`` of the card's FAT partition, which the profile's partition table lets it see (GPT on
+the BPI-W3, ADR-0487): the chooser. It imports ``unos/current.txt`` (``unos/previous.txt`` when that one is
 missing or names no generation) and ``unos/drill.txt`` when present, reads the tries counter from the
 card's raw counter sector, then takes the first case that applies. An ``env import`` that names
 variables deletes those its file lacks, as U-Boot's does: the eMMC's partition is set again after the
@@ -56,6 +57,8 @@ def chooser_text(profile: BoardProfile, *, emmc_part: int, emmc_prefix: str) -> 
         raise ValueError(f"the eMMC's boot folder {emmc_prefix!r} is no plain absolute folder ending in /")
     if not 1 <= emmc_part <= 128:
         raise ValueError(f"no partition number: {emmc_part}")
+    if not re.fullmatch(r"[a-z_]+", profile.buffer_variable):
+        raise ValueError(f"no U-Boot variable: {profile.buffer_variable!r}")
     card, emmc, args = profile.card_mmc, profile.emmc_mmc, profile.args_variable
     imported = "unos_gen unos_subvolid unos_bootdir"
     return f"""# UNOS: the boot choice of the SD card standby (ADR-0471), for the {profile.name}.
@@ -65,7 +68,7 @@ setenv unos_emmc {emmc}
 setenv unos_emmc_part {emmc_part:x}
 setenv unos_emmc_prefix {emmc_prefix}
 setenv unos_counter 0x{profile.counter_sector:x}
-setenv unos_buf ${{kernel_addr_r}}
+setenv unos_buf ${{{profile.buffer_variable}}}
 setenv unos_gen
 setenv unos_subvolid
 setenv unos_bootdir

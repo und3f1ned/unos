@@ -7,13 +7,16 @@ points leave out, which rsync neither copies nor deletes), UNOS's compose volume
 ``/var/lib/unos-standby/volumes`` (the database copied by SQLite's backup API first), ``docker save``
 archives of UNOS's images under ``/var/lib/unos-standby/images`` and the fix-ups: the card's fstab,
 the eMMC's own fstab lines kept for the return, ``unos-standby.service`` with its script,
-``unos.service`` masked, and the mount points, the pools' and the standby's immutable. The card's FAT
-partition holds the boot folders ``unos/boot-<n>/`` (what the eMMC's boot script loads, links
-resolved, and an armbianEnv.txt naming the card's btrfs) and the generation files.
+``unos.service`` masked, Docker's and containerd's settings with their roots on the card and without
+the drop-ins that wait for the pool (ADR-0487), and the mount points, the pools' and the standby's
+immutable. The card's FAT partition holds the boot folders ``unos/boot-<n>/`` (what the eMMC's boot
+script loads, links resolved, of the device trees only the board's and its overlays, and an
+armbianEnv.txt naming the card's btrfs) and the generation files.
 
 A sync first compares, with reads only: rsync's dry run of the root and of each volume, a digest of
 the database's content, the images' ids, the boot files and the fix-ups. When nothing changed it
-writes nothing. Otherwise it snapshots the current generation, copies only what changed (``--inplace
+writes nothing; what only follows (ROOT_FOLLOWERS, VOLUME_FOLLOWERS: what changes at every boot or
+start, and the audit log) is no change on its own and comes along with any other. Otherwise it snapshots the current generation, copies only what changed (``--inplace
 --no-whole-file``: the changed blocks), writes ``unos/next.txt``, renames ``current.txt`` to
 ``previous.txt`` and ``next.txt`` to ``current.txt``, and only then deletes the generation before the
 previous one. Any rsync status but 0 fails the sync before the switch, so a sync cut off, or reading
@@ -69,26 +72,56 @@ EXCLUDES = (
     "/var/lib/docker", "/var/lib/containerd", "/var/log*", "/var/cache", "/var/tmp", "/var/lib/apt/lists",
     "/var/lib/unos/backups", LIB, SCRIPT_DIR, FSTAB, f"{UNIT_DIR}/unos.service", f"{UNIT_DIR}/{STANDBY_UNIT}",
     f"{UNIT_DIR}/multi-user.target.wants/{STANDBY_UNIT}",
+    # The eMMC's own units of the standby, which a sync may rewrite and which never run on the card.
+    *(path for unit in ("unos-standby-boot-ok.service", "unos-standby-watch.service")
+      for path in (f"{UNIT_DIR}/{unit}", f"{UNIT_DIR}/multi-user.target.wants/{unit}")),
 )
 # State that the host rewrites on its own while it idles and that the card's system makes anew
 # (ADR-0481): without it, no sync would ever find the root unchanged.
 VOLATILE = (
-    "/var/lib/systemd/timesync", "/var/lib/systemd/random-seed", "/var/lib/systemd/timers", "/var/lib/logrotate",
-    "/var/lib/NetworkManager/timestamps",
+    "/var/lib/systemd/timesync", "/var/lib/systemd/random-seed", "/var/lib/systemd/timers", "/var/lib/systemd/pstore/*",
+    "/var/lib/logrotate", "/var/lib/NetworkManager/timestamps", "/var/lib/apt/daily_lock", "/var/lock/*",
+    "/root/.docker/buildx", "/root/.docker/.token_seed",
 )
+# What the host rewrites at every boot (measured on the BPI-W3: Armbian's services save the clock, the
+# LEDs, the sound state and rewrite logrotate's and journald's settings; NFS its state), the audit log
+# of UNOS's data volume, which Sync now itself appends to, the SMART history, to which the monitor adds
+# a reading at every start of the supervisor, and the configuration that Caddy saves at every start,
+# which it makes again from its Caddyfile: a change of these alone is no reason
+# for a new generation, and they are copied with any other change (ADR-0487). Paths as rsync itemizes
+# them; a folder ends with /.
+ROOT_FOLLOWERS = (
+    "etc/fake-hwclock.data", "etc/armbian-leds.conf", "etc/logrotate.conf", "etc/logrotate.d/",
+    "etc/systemd/journald.conf", "etc/armbianmonitor/", "var/lib/alsa/", "var/lib/nfs/",
+)
+VOLUME_FOLLOWERS = {"unos-data": ("audit/", "smart_history.json"), "caddy-config": ("caddy/autosave.json",)}
+PARTS = ("system", "volumes", "database", "images", "boot", "fixups")
 # Directories' times are not compared nor copied: the fix-ups' files change them in the copy, and
 # what a directory holds is compared file by file.
 ROOT_RSYNC = ("rsync", "-aHAX", "--numeric-ids", "--one-file-system", "--delete", "--omit-dir-times")
 COPY_OPTIONS = ("--inplace", "--no-whole-file")
 COMPARE_OPTIONS = ("--dry-run", "--itemize-changes")
 # What the eMMC's boot script loads from its /boot, links resolved on the card's FAT.
-BOOT_FILES = ("Image", "uInitrd", "dtb", "boot.scr", "boot.bmp", "overlay-user")
+BOOT_FILES = ("Image", "uInitrd", "dtb", "boot.scr", "boot.bmp", "fixup.scr", "overlay-user")
+_FDTFILE = re.compile(r"[A-Za-z0-9_-]+/[A-Za-z0-9._-]+\.dtb")
 # The boot files on the card's FAT: links resolved, the times kept (2 s steps on FAT), no owners.
 BOOT_RSYNC = ("rsync", "-rLt", "--modify-window=1")
 LOADER_VERSION = f"{CARD_DIR}/loader-version"
 BOOT_SCR = f"{BOOT_DIR}/boot.scr"
 BOOT_OK_UNIT = "unos-standby-boot-ok.service"
 BOOT_OK_SCRIPT = f"{SCRIPT_DIR}/unos-standby-boot-ok.sh"
+# The eMMC's system: the switch to the card when the pool that holds Docker fails (ADR-0487).
+WATCH_UNIT = "unos-standby-watch.service"
+WATCH_SCRIPT = f"{SCRIPT_DIR}/unos-standby-watch.sh"
+# Docker's and containerd's settings on the eMMC name their roots on a pool, and drop-ins keep them
+# down while it is not mounted (ADR-0486); on the card's root they keep their data on the card, at the
+# defaults below, and start without the pool (ADR-0487). Rendered by the fix-ups, never copied.
+DOCKER_CONFIG = "/etc/docker/daemon.json"
+CONTAINERD_CONFIG = "/etc/containerd/config.toml"
+CARD_DOCKER_ROOT = "/var/lib/docker"
+CARD_CONTAINERD_ROOT = "/var/lib/containerd"
+DROPIN_DIRS = (f"{UNIT_DIR}/docker.service.d", f"{UNIT_DIR}/containerd.service.d")
+_TOML_ROOT = re.compile(r"\s*root\s*=")
 # The first changed paths of a sync, for its record.
 SAMPLE = 10
 RSYNC_TIMEOUT = 2 * 3600
@@ -130,6 +163,10 @@ class _Context:
     docker_root: str
     # What names the eMMC's partitions in an fstab: UUID=, PARTUUID=, LABEL= and their paths.
     emmc_specs: set[str]
+    # Docker's and containerd's settings as the card's root gets them (path -> text), and the drop-ins
+    # that keep them down without the pool, which the card's root lacks.
+    docker_files: dict[str, str]
+    pool_dropins: list[str]
     facts: Any  # conditions.Facts: the profile and the eMMC's boot partition
 
 
@@ -209,6 +246,30 @@ WantedBy=multi-user.target
 """
 
 
+def card_daemon_json(text: str) -> str:
+    """daemon.json of the card's root: the eMMC's, with Docker's data root on the card."""
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise StandbyFailed(f"{DOCKER_CONFIG} cannot be read: {e}") from None
+    if not isinstance(config, dict):
+        raise StandbyFailed(f"{DOCKER_CONFIG} holds no JSON object")
+    config["data-root"] = CARD_DOCKER_ROOT
+    return json.dumps(config, indent=2, sort_keys=True) + "\n"
+
+
+def card_containerd_config(text: str) -> str:
+    """config.toml of the card's root: the eMMC's, with containerd's root (its top-level key) on the card."""
+    lines, top = [], True
+    for line in text.splitlines():
+        if line.strip().startswith("["):
+            top = False
+        if top and _TOML_ROOT.match(line):
+            line = f'root = "{CARD_CONTAINERD_ROOT}"'
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 def host_script(name: str) -> str:
     return (HOST_SCRIPTS / name).read_text(encoding="utf-8")
 
@@ -244,8 +305,10 @@ def immutable_mountpoints(points: list[str]) -> list[str]:
     return [point for point in points if point.startswith(pools) or point.startswith(STANDBY_DIR + "/")]
 
 
-def fixup_digest(fstab_text: str, own_lines: str, unit: str, script: str, points: list[str]) -> str:
-    manifest = json.dumps([fstab_text, own_lines, unit, script, points], sort_keys=True)
+def fixup_digest(fstab_text: str, own_lines: str, unit: str, script: str, points: list[str],
+                 docker_files: dict[str, str] | None = None, pool_dropins: list[str] | None = None) -> str:
+    manifest = json.dumps([fstab_text, own_lines, unit, script, points, docker_files or {}, pool_dropins or []],
+                          sort_keys=True)
     return hashlib.sha256(manifest.encode()).hexdigest()
 
 
@@ -367,16 +430,42 @@ def _context(ops: StandbyHost) -> _Context:
                 specs.add(f"{prefix}{node[key]}")
         if node.get("path"):
             specs.add(str(node["path"]))
+    docker_files: dict[str, str] = {}
+    for path, render in ((DOCKER_CONFIG, card_daemon_json), (CONTAINERD_CONFIG, card_containerd_config)):
+        text = ops.read_file(path)
+        if text is not None:
+            docker_files[path] = render(text)
     return _Context(card_source=source, card_disk=match.group(1), card_uuid=uuid.lower(), mounts=mounts,
                     fstab=fstab, project=project, workdir=workdir, images=images, image_names=image_names,
                     volumes=volumes, current=current, previous=previous, existing=existing,
-                    docker_root=docker_root.rstrip("/") or "/", emmc_specs=specs, facts=facts)
+                    docker_root=docker_root.rstrip("/") or "/", emmc_specs=specs, facts=facts,
+                    docker_files=docker_files, pool_dropins=_pool_dropins(ops))
+
+
+def _pool_dropins(ops: StandbyHost) -> list[str]:
+    """The drop-ins of docker.service and containerd.service that wait for their roots' mounts
+    (RequiresMountsFor=, ADR-0486): the card's root runs both without the pool."""
+    found = []
+    for folder in DROPIN_DIRS:
+        listing = ops.read(["ls", "-1", "--", folder])
+        for name in listing.stdout.split() if listing.ok else []:
+            path = f"{folder}/{name}"
+            if name.endswith(".conf") and _PLAIN_PATH.fullmatch(path) and "RequiresMountsFor=" in (ops.read_file(path) or ""):
+                found.append(path)
+    return sorted(found)
 
 
 def _swap_files(ops: StandbyHost) -> list[str]:
     text = ops.read_file("/proc/swaps") or ""
     return [line.split()[0] for line in text.splitlines()[1:]
             if len(line.split()) > 1 and line.split()[1] == "file" and _PLAIN_PATH.fullmatch(line.split()[0])]
+
+
+def _follows(line: str, followers: tuple[str, ...]) -> bool:
+    """Whether a line of rsync's itemized changes names one of ``followers``."""
+    path = line.split(None, 1)[-1].split(" -> ", 1)[0].rstrip("/")
+    return any(path == follower.rstrip("/") or (follower.endswith("/") and path.startswith(follower))
+               for follower in followers)
 
 
 def _changes(result: Any, what: str) -> list[str]:
@@ -391,6 +480,21 @@ def _boot_sources(ops: StandbyHost) -> list[str]:
     return [f"/boot/{name}" for name in BOOT_FILES if ops.exists(f"/boot/{name}")]
 
 
+def boot_filters(emmc_env: str) -> list[str]:
+    """rsync's filter of the boot folder: of /boot/dtb only the board's device tree (armbianEnv.txt's
+    fdtfile) and the overlays beside it, which Armbian's boot script loads. /boot/dtb holds every
+    board's of the vendor (118 MiB on the W3), and three boot folders, which a new kernel needs beside
+    the current and the previous one, must fit the card's 512 MiB FAT partition (ADR-0487). Without a
+    plain fdtfile, the whole folder."""
+    values = dict(line.split("=", 1) for line in emmc_env.splitlines() if "=" in line)
+    fdtfile = values.get("fdtfile", "").strip()
+    if not _FDTFILE.fullmatch(fdtfile):
+        return []
+    vendor = fdtfile.split("/", 1)[0]
+    return ["--include=/dtb/", f"--include=/dtb/{vendor}/", f"--include=/dtb/{fdtfile}",
+            f"--include=/dtb/{vendor}/overlay/***", "--exclude=/dtb/**"]
+
+
 def _sectors_written(disk: str) -> int | None:
     stat = host.block_device_attribute(disk, "stat")
     fields = (stat or "").split()
@@ -403,14 +507,15 @@ def _sectors_written(disk: str) -> int | None:
 def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> list[str]:
     """What the card and the eMMC's system hold besides the generations, rewritten only when it
     differs: the board's loader after its package's version changed, the chooser boot.scr, and the
-    eMMC's unos-standby-boot-ok service with its script (an update of UNOS may change them). Without
+    eMMC's units of the standby with their scripts (an update of UNOS may change them). Without
     ``apply`` it only reads, and names what differs."""
-    from .card import boot_ok_unit
+    from .card import emmc_units
 
     facts, profile = context.facts, context.facts.profile
     parts: list[str] = []
-    package = profile.loader_dir.rstrip("/").rsplit("/", 1)[-1]
-    version = ops.read(["dpkg-query", "-W", "-f=${Version}", package]).stdout.strip()
+    from .conditions import loader_version
+
+    version = loader_version(ops, profile)
     stored = (ops.read_file(LOADER_VERSION) or "").strip()
     if version and version != stored and not apply:
         parts.append("loader")
@@ -420,8 +525,9 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         _read_loader(ops, facts)
         if not facts.loader_ok:
             raise StandbyFailed(f"The new loader cannot be written: {facts.loader_detail}")
-        ops.change(["bash", "-c", '. /usr/lib/u-boot/platform_install.sh && write_uboot_platform "$DIR" "$1"',
-                    "unos-standby", f"/dev/{context.card_disk}"], what="The board's loader on the card", timeout=300)
+        from .card import write_loader
+
+        write_loader(ops, profile, f"/dev/{context.card_disk}")
         ops.write_file(LOADER_VERSION, version + "\n", what="The loader's version")
         parts.append("loader")
     image = bootscript.script_image(bootscript.chooser_text(profile, emmc_part=facts.boot_number,
@@ -431,15 +537,20 @@ def _refresh_card_files(ops: StandbyHost, context: _Context, *, apply: bool) -> 
         if apply:
             ops.write_file(BOOT_SCR, image, what="The chooser boot.scr")
         parts.append("chooser")
-    for path, text, mode in ((BOOT_OK_SCRIPT, host_script("unos-standby-boot-ok.sh"), "0755"),
-                             (f"{UNIT_DIR}/{BOOT_OK_UNIT}", boot_ok_unit(profile.counter_sector), "0644")):
-        if ops.read_file(path) != text:
+    enable = []
+    for path, text, mode in emmc_units(profile):
+        before = ops.read_file(path)
+        if before != text:
             if apply:
                 ops.write_file(path, text, what=f"{path} of the eMMC's system", mode=mode)
-            if "boot-ok" not in parts:
-                parts.append("boot-ok")
-    if "boot-ok" in parts and apply:
-        ops.change(["systemctl", "daemon-reload"], what=BOOT_OK_UNIT)
+                if before is None and path.endswith(".service"):
+                    enable.append(path.rsplit("/", 1)[1])
+            if "units" not in parts:
+                parts.append("units")
+    if "units" in parts and apply:
+        ops.change(["systemctl", "daemon-reload"], what="The standby's units")
+        if enable:
+            ops.change(["systemctl", "enable", *enable], what="The standby's units")
     return parts
 
 
@@ -465,11 +576,12 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
     points = mountpoints(context.mounts, context.fstab)
     swaps = _swap_files(ops)
     docker = [context.docker_root] if context.docker_root not in ("/", "/var/lib/docker") else []
-    excludes = [f"--exclude={pattern}" for pattern in (*EXCLUDES, *VOLATILE, *docker, *points, *swaps)]
+    excludes = [f"--exclude={pattern}" for pattern in (*EXCLUDES, *VOLATILE, *docker, *points, *swaps, DOCKER_CONFIG,
+                                                       CONTAINERD_CONFIG, *context.pool_dropins)]
     fstab_text, own_lines = card_fstab(context.fstab, context.card_uuid, context.emmc_specs)
     unit = standby_unit(context.workdir, context.project)
     script = host_script("unos-standby.sh")
-    digest = fixup_digest(fstab_text, own_lines, unit, script, points)
+    digest = fixup_digest(fstab_text, own_lines, unit, script, points, context.docker_files, context.pool_dropins)
     emmc_env = ops.read_file("/boot/armbianEnv.txt")
     if emmc_env is None:
         raise StandbyFailed("/boot/armbianEnv.txt of the eMMC cannot be read")
@@ -477,37 +589,50 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
     boot_sources = _boot_sources(ops)
     if not {"/boot/Image", "/boot/uInitrd", "/boot/dtb", "/boot/boot.scr"} <= set(boot_sources):
         raise StandbyFailed("The eMMC's /boot lacks Image, uInitrd, dtb or boot.scr")
+    boot_rsync = [*BOOT_RSYNC, *boot_filters(emmc_env)]
 
     card_parts = _refresh_card_files(ops, context, apply=False)
     current = context.current
     parts: list[str] = []
     changes: list[str] = []
-    if current is None or force:
-        parts = ["system", "volumes", "database", "images", "boot", "fixups"]
+    if current is not None and force:
+        # A new generation of everything, with the current boot folder when /boot did not change: a
+        # third folder might not fit the FAT partition.
+        parts = [part for part in PARTS if part != "boot" or _boot_changed(ops, boot_rsync, boot_sources, current,
+                                                                            armbian_env)]
+    elif current is None:
+        parts = list(PARTS)
     else:
         gen = generation_path(current[0])
-        changes = _changes(ops.long_read([*ROOT_RSYNC, *COMPARE_OPTIONS, *excludes, "/", f"{gen}/"],
-                                         timeout=RSYNC_TIMEOUT), "The comparison of the system's copy")
+        found = _changes(ops.long_read([*ROOT_RSYNC, *COMPARE_OPTIONS, *excludes, "/", f"{gen}/"],
+                                       timeout=RSYNC_TIMEOUT), "The comparison of the system's copy")
+        changes = [line for line in found if not _follows(line, ROOT_FOLLOWERS)]
+        # What only follows a change: copied when another part is written.
+        following = ["system"] if found and not changes else []
         if changes:
             parts.append("system")
         for short, mountpoint in context.volumes.items():
-            if _changes(ops.long_read(_volume_rsync(short, mountpoint, gen, compare=True), timeout=RSYNC_TIMEOUT),
-                        f"The comparison of the volume {short}"):
+            lines = _changes(ops.long_read(_volume_rsync(short, mountpoint, gen, compare=True), timeout=RSYNC_TIMEOUT),
+                             f"The comparison of the volume {short}")
+            real = [line for line in lines if not _follows(line, VOLUME_FOLLOWERS.get(short, ()))]
+            changes += [f"{short}: {line}" for line in real]
+            if real:
                 parts.append("volumes")
                 break
+            if lines and "volumes" not in following:
+                following.append("volumes")
         if (ops.read_file(f"{gen}{LIB}/volumes/unos-data/{DATABASE_NAME}.sha256") or "").strip() != db_digest:
             parts.append("database")
         for short, image_id in context.images.items():
             if (ops.read_file(f"{gen}{LIB}/images/{short}.id") or "").strip() != image_id:
                 parts.append("images")
                 break
-        bootdir = f"{BOOT_DIR}/{current[2]}"
-        if (_changes(ops.long_read([*BOOT_RSYNC, "--delete", "--exclude=/armbianEnv.txt", *COMPARE_OPTIONS,
-                                    *boot_sources, bootdir], timeout=RSYNC_TIMEOUT), "The comparison of the boot folder")
-                or ops.read_file(f"{bootdir}armbianEnv.txt") != armbian_env):
+        if _boot_changed(ops, boot_rsync, boot_sources, current, armbian_env):
             parts.append("boot")
         if (ops.read_file(f"{gen}{LIB}/fixups.sha256") or "").strip() != digest:
             parts.append("fixups")
+        if parts:
+            parts = sorted({*parts, *following}, key=PARTS.index)
     if not parts and not card_parts:
         return Outcome(result="unchanged", generation=current[0] if current else None)
     before = None
@@ -561,11 +686,11 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
         if clean_docker:
             ops.change(["rm", "-rf", "--", f"{new}/var/lib/docker", f"{new}/var/lib/containerd"],
                        what="The emptying of the copy's Docker data root")
-        _fixups(ops, new, number, parts, fstab_text, own_lines, unit, script, points, digest)
+        _fixups(ops, new, number, parts, fstab_text, own_lines, unit, script, points, digest, context)
         if "boot" in parts or current is None:
             new_bootdir = f"unos/boot-{number}/"
             ops.change(["mkdir", "-p", f"{BOOT_DIR}/{new_bootdir}"], what="The boot folder")
-            ops.long_change([*BOOT_RSYNC, *boot_sources, f"{BOOT_DIR}/{new_bootdir}"],
+            ops.long_change([*boot_rsync, *boot_sources, f"{BOOT_DIR}/{new_bootdir}"],
                             what="The copy of the boot folder", timeout=RSYNC_TIMEOUT)
             ops.write_file(f"{BOOT_DIR}/{new_bootdir}armbianEnv.txt", armbian_env, what="The boot folder's armbianEnv.txt")
             bootdir_name = new_bootdir
@@ -601,6 +726,15 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
                    plan=ops.plan, changes=changes[:SAMPLE])
 
 
+def _boot_changed(ops: StandbyHost, boot_rsync: list[str], boot_sources: list[str], current: tuple[int, int, str],
+                  armbian_env: str) -> bool:
+    """Whether the eMMC's boot files differ from the current generation's boot folder."""
+    bootdir = f"{BOOT_DIR}/{current[2]}"
+    return bool(_changes(ops.long_read([*boot_rsync, "--delete", "--exclude=/armbianEnv.txt", *COMPARE_OPTIONS,
+                                        *boot_sources, bootdir], timeout=RSYNC_TIMEOUT), "The comparison of the boot folder")
+                or ops.read_file(f"{bootdir}armbianEnv.txt") != armbian_env)
+
+
 def _mib(ops: StandbyHost, context: _Context, before: int | None, dry_run: bool) -> float | None:
     """The MiB written to the card since ``before``, after a flush; None when it is not known."""
     if dry_run or before is None:
@@ -623,14 +757,16 @@ def _free_old_mountpoints(ops: StandbyHost, new: str, points: list[str]) -> None
 
 
 def _volume_rsync(short: str, mountpoint: str, gen: str, *, compare: bool) -> list[str]:
+    """A volume's rsync. Folders' times are neither compared nor copied: the database's copy and its
+    digest, written into the copy of unos-data, change that folder's time (ADR-0487)."""
     options = COMPARE_OPTIONS if compare else COPY_OPTIONS
     database = [f"--exclude=/{DATABASE_NAME}*"] if short == "unos-data" else []
-    return ["rsync", "-aHAX", "--numeric-ids", "--delete", *options, *database, f"{mountpoint}/",
+    return ["rsync", "-aHAX", "--numeric-ids", "--delete", "--omit-dir-times", *options, *database, f"{mountpoint}/",
             f"{gen}{LIB}/volumes/{short}/"]
 
 
 def _fixups(ops: StandbyHost, new: str, number: int, parts: list[str], fstab_text: str, own_lines: str, unit: str,
-            script: str, points: list[str], digest: str) -> None:
+            script: str, points: list[str], digest: str, context: _Context) -> None:
     ops.write_file(f"{new}{LIB}/generation", f"{number}\n", what="The generation's number")
     ops.change(["rm", "-f", "--", f"{new}{LIB}/seeded"], what="The generation's volumes to seed")
     if "fixups" not in parts:
@@ -643,6 +779,12 @@ def _fixups(ops: StandbyHost, new: str, number: int, parts: list[str], fstab_tex
     ops.change(["ln", "-sfn", f"{UNIT_DIR}/{STANDBY_UNIT}", f"{new}{UNIT_DIR}/multi-user.target.wants/{STANDBY_UNIT}"],
                what="The standby's unit")
     ops.change(["ln", "-sfn", "/dev/null", f"{new}{UNIT_DIR}/unos.service"], what="unos.service masked on the card")
+    for path, text in context.docker_files.items():
+        ops.change(["mkdir", "-p", f"{new}{path.rsplit('/', 1)[0]}"], what=f"{path} of the card's root")
+        ops.write_file(f"{new}{path}", text, what=f"{path} of the card's root")
+    if context.pool_dropins:
+        ops.change(["rm", "-f", "--", *(f"{new}{path}" for path in context.pool_dropins)],
+                   what="The drop-ins that wait for Docker's pool, left out on the card's root")
     ops.write_file(f"{new}{LIB}/mountpoints", "".join(f"{point}\n" for point in points), what="The copy's mount points")
     immutable = set(immutable_mountpoints(points))
     for point in points:

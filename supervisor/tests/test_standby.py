@@ -33,10 +33,11 @@ from src.auth.utils import verify_token
 from src.health import problems, system_disk
 from src.main import app
 from src.standby import bootscript, card, conditions, generation, service, switch
-from src.standby.hostops import BOOT_DIR, CARD_DIR, StandbyFailed, StandbyHost, StandbyStopped
+from src.standby.hostops import BOOT_DIR, CARD_DIR, STANDBY_DIR, StandbyFailed, StandbyHost, StandbyStopped
 from tests.audit_helpers import audit_entries
 from tests.standby_fake import (
-    CARD_UUID, CMDLINE_THROUGH_CHOOSER, POOL_UUID, ROOT_UUID, SUPERVISOR_IMAGE, StandbyFakeHost, install,
+    BOOT_ID, CARD_UUID, CMDLINE_THROUGH_CHOOSER, POOL_UUID, ROOT_UUID, SETUP_BOOT_ID,
+    SUPERVISOR_IMAGE, StandbyFakeHost, install,
 )
 
 STATE = f"{CARD_DIR}/state.json"
@@ -90,7 +91,8 @@ def audit_log() -> list[dict]:
 def armed(fake: StandbyFakeHost, *, generation_number: int | None = 1, through_chooser: bool = True) -> None:
     fake.armed_card()
     fake.files[STATE] = json.dumps({"card": {"model": "SC32G", "serial": "0x8f3a1b2c", "size": 31_914_983_424},
-                                    "sync_time": "04:00", "armed_at": "2026-11-23T10:00:00Z", "counter_sector": 32767})
+                                    "sync_time": "04:00", "armed_at": "2026-11-23T10:00:00Z", "counter_sector": 32767,
+                                    "armed_boot_id": SETUP_BOOT_ID})
     if generation_number is not None:
         fake.with_generation(generation_number)
     if through_chooser:
@@ -138,12 +140,12 @@ class TestTheConditions:
     def test_the_w3_with_its_free_card_meets_every_condition(self, fake):
         facts = conditions.read_facts()
         items = conditions.evaluate(facts, armed=False)
-        assert met(items) == dict.fromkeys(("profile", "loader", "emmc_root", "sd_card", "docker_root", "host_tools"), True)
+        assert met(items) == dict.fromkeys(("profile", "loader", "emmc_root", "sd_card", "host_tools"), True)
         details = {item.id: item.detail for item in items}
         assert "BPI-W3" in details["profile"]
         assert "/dev/mmcblk1 (SC32G, 31.9 GB)" in details["sd_card"]
         assert (facts.root_disk, facts.boot_number, facts.boot_prefix) == ("mmcblk0", 1, "/boot/")
-        assert all(call[0] in ("cat", "stat", "docker", "/bin/sh") for call in fake.calls), fake.calls
+        assert all(call[0] in ("cat", "stat", "/bin/sh") for call in fake.calls), fake.calls
         assert fake.changes == []
 
     def test_an_x86_host_does_not_boot_through_u_boot(self, fake, monkeypatch):
@@ -153,15 +155,13 @@ class TestTheConditions:
         assert met(items)["profile"] is False
         assert items[0].detail == "This NAS does not boot through U-Boot"
 
-    def test_the_f3_names_its_missing_profile_and_its_docker_root_on_the_pool(self, fake):
+    def test_the_f3_names_its_missing_profile(self, fake):
         fake.files["/etc/armbian-release"] = "BOARD=bananapif3\nBOARD_NAME=\"Banana Pi BPI-F3\"\n"
-        fake.docker_root = "/mnt/pools/data/.docker"
         items = conditions.evaluate(conditions.read_facts(), armed=False)
         state = met(items)
-        assert (state["profile"], state["docker_root"]) == (False, False)
+        assert (state["profile"], state["loader"], state["emmc_root"]) == (False, False, True)
         details = {item.id: item.detail for item in items}
         assert "no board profile" in details["profile"] and "bananapif3" in details["profile"]
-        assert "/mnt/pools/data" in details["docker_root"]
 
     @pytest.mark.parametrize(("root", "why"), [
         ("1 1 0:1 / / rw - ext4 /dev/mmcblk0p1 rw,commit=600\n", "errors=remount-ro"),
@@ -198,7 +198,7 @@ class TestTheConditions:
         fake.missing_tools = ["rsync", "mkfs.vfat"]
         items = conditions.evaluate(conditions.read_facts(), armed=False)
         assert met(items)["host_tools"] is False
-        assert "install dosfstools rsync" in items[5].detail
+        assert "install dosfstools rsync" in items[4].detail
 
     def test_a_loader_whose_images_reach_the_counter_sector_is_refused(self, fake):
         fake.sizes["/usr/lib/linux-u-boot-vendor-armsom-w3/u-boot.itb"] = 9 * 1024 * 1024
@@ -212,7 +212,7 @@ class TestTheConditions:
         body = answer.json()
         assert body["available"] is True and body["armed"] is False and body["profile"] == "BPI-W3"
         assert [item["id"] for item in body["conditions"]] == [
-            "profile", "loader", "emmc_root", "sd_card", "docker_root", "host_tools"]
+            "profile", "loader", "emmc_root", "sd_card", "host_tools"]
         assert body["card"] == {"device": "/dev/mmcblk1", "model": "SC32G", "serial": "0x8f3a1b2c", "size": 31_914_983_424}
         assert fake.changes == []
         fake.calls.clear()
@@ -294,7 +294,12 @@ class TestTheSetup:
         order = [
             "wipefs -a /dev/mmcblk1",
             "dd if=/dev/zero of=/dev/mmcblk1 bs=1M count=16 conv=fsync status=none",
-            'bash -c . /usr/lib/u-boot/platform_install.sh && write_uboot_platform "$DIR" "$1" unos-standby /dev/mmcblk1',
+            # No valid header while the loader is written, the later stage first, the first stage's
+            # header last (ADR-0487).
+            "dd if=/dev/zero of=/dev/mmcblk1 bs=512 seek=64 count=1 conv=notrunc,fsync status=none",
+            "dd if=/usr/lib/linux-u-boot-vendor-armsom-w3/u-boot.itb of=/dev/mmcblk1 bs=512 seek=16384 conv=notrunc,fsync status=none",
+            "dd if=/usr/lib/linux-u-boot-vendor-armsom-w3/idbloader.img of=/dev/mmcblk1 bs=512 skip=1 seek=65 conv=notrunc,fsync status=none",
+            "dd if=/usr/lib/linux-u-boot-vendor-armsom-w3/idbloader.img of=/dev/mmcblk1 bs=512 count=1 seek=64 conv=notrunc,fsync status=none",
             "sfdisk --wipe never --no-tell-kernel /dev/mmcblk1",
             "mkfs.vfat -F 32 -n UNOS-BOOT /dev/mmcblk1p1",
             "mkfs.btrfs -f -L UNOS-STANDBY /dev/mmcblk1p2",
@@ -304,13 +309,17 @@ class TestTheSetup:
             f"mount {BOOT_DIR}",
             f"mount {CARD_DIR}",
             f"write {BOOT_DIR}/boot.scr",
-            "systemctl enable unos-standby-boot-ok.service",
+            "systemctl enable unos-standby-boot-ok.service unos-standby-watch.service",
             f"write {CURRENT.replace('current', 'next')}",
         ]
         positions = [done.index(step) for step in order]
         assert positions == sorted(positions)
+        # GPT: the W3's U-Boot sees no partition of a card with an MBR (ADR-0487).
         layout = fake.inputs["sfdisk --wipe never --no-tell-kernel /dev/mmcblk1"]
-        assert "start=32768, size=1048576, type=c, bootable" in layout and "start=1081344, type=83" in layout
+        assert layout.startswith("label: gpt\n")
+        assert ("start=32768, size=1048576, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, attrs=LegacyBIOSBootable"
+                in layout)
+        assert "start=1081344, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4" in layout
         assert fake.sectors[32767].startswith(b"unos_tries=0\n\0")
         # Nothing of the eMMC is wiped or partitioned.
         assert not [cmd for cmd in fake.changes if any("mmcblk0" in part for part in cmd)]
@@ -325,11 +334,34 @@ class TestTheSetup:
         assert "RuntimeWatchdogSec=60s" in fake.files["/etc/systemd/system.conf.d/unos-standby-watchdog.conf"]
         state = json.loads(fake.files[STATE])
         assert state["card"]["model"] == "SC32G" and state["sync_time"] == "04:00"
+        assert state["armed_boot_id"] == BOOT_ID
         assert state["last_sync"]["result"] == "wrote" and state["last_sync"]["generation"] == 1
         assert fake.files[CURRENT].startswith("unos_gen=1\n")
         entries = audit_log()
         assert [entry["action"] for entry in entries] == ["standby_armed"]
         assert entries[0]["resource_type"] == "standby" and "SC32G" in entries[0]["details"]
+
+    def test_a_board_whose_loader_needs_an_mbr_gets_one(self, fake, monkeypatch):
+        """The table is the profile's: GPT on the W3, whose U-Boot reads no MBR; an MBR for a board whose
+        loader needs one (ADR-0487)."""
+        from dataclasses import replace
+
+        from src.standby import profiles
+
+        monkeypatch.setitem(profiles.PROFILES, "armsom-w3", replace(profiles.BPI_W3, partition_table="dos"))
+        card.prepare("SC32G", dry_run=False)
+        layout = fake.inputs["sfdisk --wipe never --no-tell-kernel /dev/mmcblk1"]
+        assert layout == ("label: dos\nunit: sectors\nstart=32768, size=1048576, type=c, bootable\n"
+                          "start=1081344, type=83\n")
+
+    def test_the_chooser_reads_into_the_profiles_buffer(self):
+        from dataclasses import replace
+
+        from src.standby import profiles
+
+        text = bootscript.chooser_text(replace(profiles.BPI_W3, buffer_variable="loadaddr"), emmc_part=1,
+                                       emmc_prefix="/boot/")
+        assert "setenv unos_buf ${loadaddr}" in text and "${kernel_addr_r}" not in text
 
     def test_a_board_without_a_watchdog_gets_no_drop_in(self, fake):
         fake.watchdog = False
@@ -379,9 +411,9 @@ class TestAGeneration:
                 "/var/lib/unos/backups", "/var/lib/unos-standby", "/etc/fstab", "/etc/systemd/system/unos.service",
                 "/proc", "/sys", "/dev", "/run", "/tmp", "/mnt/pools/data", BOOT_DIR, CARD_DIR} <= excluded
         assert "/run/docker/netns/abc" not in excluded
-        volume = unit_command(fake, ["rsync", "-aHAX", "--numeric-ids", "--delete", "--inplace", "--no-whole-file",
+        volume = unit_command(fake, ["rsync", "-aHAX", "--numeric-ids", "--delete", "--omit-dir-times", "--inplace", "--no-whole-file",
                                      "--exclude=/unos.db*"])
-        assert volume[-2:] == ["/var/lib/docker/volumes/deploy_unos-data/_data/",
+        assert volume[-2:] == ["/mnt/pools/data/.docker/volumes/deploy_unos-data/_data/",
                                f"{CARD_DIR}/@sys-1/var/lib/unos-standby/volumes/unos-data/"]
         assert unit_command(fake, ["rsync", "--inplace"])[-1] == f"{CARD_DIR}/@sys-1/var/lib/unos-standby/volumes/unos-data/unos.db"
         saved = [cmd for cmd in fake.unit_calls if cmd[0] == "bash"]
@@ -419,7 +451,7 @@ class TestAGeneration:
         outcome = generation.sync()
         assert outcome.result == "unchanged"
         assert fake.changes == []
-        assert all("--dry-run" in cmd for cmd in fake.unit_calls)
+        assert all("--dry-run" in cmd or cmd[0] == "dpkg-query" for cmd in fake.unit_calls)
 
     def test_a_change_of_the_root_makes_a_snapshot_and_copies_only_the_system(self, fake):
         synced_once(fake)
@@ -589,7 +621,9 @@ class TestTheReviewedEdges:
         fake.loader_version = "25.05.1-trunk"
         outcome = generation.sync()
         assert outcome.parts == ["loader"] and outcome.result == "wrote"
-        assert [cmd[-1] for cmd in fake.changes if cmd[0] == "bash" and "write_uboot_platform" in cmd[2]] == ["/dev/mmcblk1"]
+        assert [cmd[1] for cmd in fake.changes if cmd[0] == "dd" and "of=/dev/mmcblk1" in cmd and "seek=32767" not in cmd] == [
+            "if=/dev/zero", "if=/usr/lib/linux-u-boot-vendor-armsom-w3/u-boot.itb",
+            "if=/usr/lib/linux-u-boot-vendor-armsom-w3/idbloader.img", "if=/usr/lib/linux-u-boot-vendor-armsom-w3/idbloader.img"]
         assert fake.files[generation.LOADER_VERSION] == "25.05.1-trunk\n"
         fake.changes.clear()
         assert generation.sync().result == "unchanged" and fake.changes == []
@@ -636,6 +670,225 @@ class TestTheReviewedEdges:
         with Client() as client:
             body = client.get("/api/v1/system/standby").json()
         assert body["armed"] is False and body["leftover"] is True and body["card"]["device"] == "/dev/mmcblk1"
+
+
+# ---------------------------------------------------------------------------
+# what the first device check on the BPI-W3 found (2026-11-23, ADR-0487)
+# ---------------------------------------------------------------------------
+
+
+def recorded_syncs(monkeypatch) -> list[str]:
+    """The triggers of the syncs that run from now on, each run for real against the fake."""
+    triggers: list[str] = []
+    original = service._run_sync
+
+    async def run_sync(trigger, **kwargs):
+        triggers.append(trigger)
+        return await original(trigger, **kwargs)
+
+    monkeypatch.setattr(service, "_run_sync", run_sync)
+    return triggers
+
+
+# What the W3's root rewrote at its boot on 2026-11-23 (find -newermt over /etc and /var/lib), as
+# rsync itemizes it against the card's copy.
+BOOT_CHURN = [
+    ">f..t...... etc/fake-hwclock.data", ">f.st...... etc/armbian-leds.conf", ">f..t...... etc/logrotate.conf",
+    ">f..t...... etc/logrotate.d/apt", ">f..t...... etc/systemd/journald.conf",
+    "cL..t...... etc/armbianmonitor/datasources/soctemp -> /sys/class/hwmon/hwmon0/temp1_input",
+    ">f..t...... var/lib/alsa/asound.state", ">f.st...... var/lib/nfs/nfsdcld/main.sqlite",
+    ">f..t...... var/lib/nfs/.etab.lock", ">f+++++++++ var/lib/systemd/pstore/console-ramoops-0",
+    ">f..t...... var/lib/apt/daily_lock", ">f..t...... root/.docker/buildx/current", ">f..t...... root/.docker/.token_seed",
+    ">f..t...... var/lock/asound.state.lock", ">f..t...... var/lock/card0.lock",
+]
+
+
+class TestTheFirstDeviceCheck:
+    async def test_the_daily_sync_does_not_follow_the_setups_own(self, fake, monkeypatch):
+        monkeypatch.setattr(service, "utc_now", lambda: datetime(2026, 11, 24, 15, 0, tzinfo=UTC))
+        await service.arm("SC32G", dry_run=False, request=None, username="admin")
+        triggers = recorded_syncs(monkeypatch)
+        await service._due_syncs()
+        assert triggers == []
+        monkeypatch.setattr(service, "utc_now", lambda: datetime(2026, 11, 25, 4, 0, 30, tzinfo=UTC))
+        await service._due_syncs()
+        await service._due_syncs()
+        assert triggers == ["daily"]
+
+    async def test_the_daily_sync_does_not_follow_a_start_after_its_time(self, fake, monkeypatch):
+        synced_once(fake)
+        monkeypatch.setattr(service, "_state", service._State())  # the supervisor starts again
+        service.refresh()
+        monkeypatch.setattr(service, "utc_now", lambda: datetime(2026, 11, 24, 15, 0, tzinfo=UTC))
+        triggers = recorded_syncs(monkeypatch)
+        await service._due_syncs()
+        await service._due_syncs()
+        assert triggers == ["start"]
+
+    async def test_a_failed_daily_sync_waits_for_the_next_day(self, fake, monkeypatch):
+        synced_once(fake)
+        service._state.start_synced = True
+        fake.compare["system"] = [">f.st...... etc/hostname"]
+        fake.copy_status["system"] = 24
+        monkeypatch.setattr(service, "utc_now", lambda: datetime(2026, 11, 24, 4, 0, 30, tzinfo=UTC))
+        triggers = recorded_syncs(monkeypatch)
+        await service._due_syncs()
+        await service._due_syncs()
+        assert triggers == ["daily"] and service.last_sync()["result"] == "failed"
+
+    def test_the_audit_log_alone_makes_no_generation_and_comes_along_with_a_change(self, fake):
+        synced_once(fake)
+        fake.compare["volume:unos-data"] = [">f.st...... audit/audit.jsonl", ">f+++++++++ audit/audit.jsonl.1"]
+        assert generation.sync().result == "unchanged"
+        with sqlite3.connect(generation.DATABASE) as connection:
+            connection.execute("INSERT INTO users VALUES ('alice')")
+        outcome = generation.sync()
+        assert outcome.parts == ["volumes", "database"]
+        assert unit_command(fake, ["rsync", "-aHAX", "--numeric-ids", "--delete", "--omit-dir-times", "--inplace", "--no-whole-file",
+                                   "--exclude=/unos.db*"])[-1].endswith("/volumes/unos-data/")
+
+    def test_a_folders_time_in_a_volume_makes_no_generation(self, fake):
+        """Measured on the W3: the database's copy and its digest, written into the copy of unos-data,
+        change that folder's time, and every next sync wrote a generation for it."""
+        synced_once(fake)
+        fake.compare["volume:unos-data"] = [".d..t...... ./"]
+        assert generation.sync().result == "unchanged"
+
+    def test_the_boot_folder_holds_only_the_boards_device_tree_and_its_overlays(self, fake):
+        """Measured on the W3: /boot/dtb holds every Rockchip board's (118 MiB), a boot folder 179 MiB,
+        and the third folder that a new kernel needs beside current and previous did not fit the
+        512 MiB FAT partition (rsync's exit status 11)."""
+        armed(fake, generation_number=None)
+        generation.sync(force=True)
+        boot = unit_command(fake, ["rsync", "-rLt", "--modify-window=1"])
+        filters = [part for part in boot if part.startswith(("--include=", "--exclude="))]
+        assert filters == ["--include=/dtb/", "--include=/dtb/rockchip/", "--include=/dtb/rockchip/rk3588-armsom-w3.dtb",
+                           "--include=/dtb/rockchip/overlay/***", "--exclude=/dtb/**"]
+        compare = [cmd for cmd in fake.unit_calls if cmd[:2] == ["rsync", "-rLt"] and "--dry-run" in cmd]
+        assert all("--exclude=/dtb/**" in cmd for cmd in compare)
+
+    def test_a_forced_sync_keeps_an_unchanged_boot_folder(self, fake):
+        """Set up again or the discard: a new generation, but the boot folder of the current one when /boot
+        did not change, so that no third folder is written."""
+        synced_once(fake)
+        outcome = generation.sync(force=True, clean_docker=True)
+        assert outcome.generation == 2 and "boot" not in outcome.parts
+        assert fake.files[CURRENT].endswith("unos_bootdir=unos/boot-1/\n")
+
+    def test_caddys_autosave_alone_makes_no_generation(self, fake):
+        """Measured on the W3: Caddy rewrites autosave.json at every start, so every boot wrote a generation."""
+        synced_once(fake)
+        fake.compare["volume:caddy-config"] = [">f..t...... caddy/autosave.json"]
+        assert generation.sync().result == "unchanged"
+
+    def test_the_smart_history_alone_makes_no_generation(self, fake):
+        """Measured on the W3: the SMART monitor adds a reading at every start of the supervisor."""
+        synced_once(fake)
+        fake.compare["volume:unos-data"] = [">f.st...... smart_history.json"]
+        assert generation.sync().result == "unchanged"
+
+    def test_the_record_names_a_volumes_changes(self, fake):
+        synced_once(fake)
+        fake.compare["volume:caddy-data"] = [">f+++++++++ caddy/certificates/local/nas/nas.crt"]
+        outcome = generation.sync()
+        assert outcome.parts == ["volumes"] and outcome.changes == [
+            "caddy-data: >f+++++++++ caddy/certificates/local/nas/nas.crt"]
+
+    async def test_no_boot_path_error_before_the_first_boot_after_the_setup(self, fake):
+        """By the kernel's boot_id, not the clock, which Armbian restores from fake-hwclock at a boot."""
+        fake.files["/proc/sys/kernel/random/boot_id"] = f"{SETUP_BOOT_ID}\n"
+        armed(fake, through_chooser=False)
+        await service.update_problems()
+        assert kinds() == set()
+        assert (await service.status()).in_boot_path is None
+        fake.files["/proc/sys/kernel/random/boot_id"] = f"{BOOT_ID}\n"
+        service.refresh()
+        await service.update_problems()
+        assert kinds() == {"standby_not_in_boot_path"}
+        assert (await service.status()).in_boot_path is False
+
+    def test_the_loader_version_is_that_of_the_package_dpkg_names_for_the_loader(self, fake):
+        card.prepare("SC32G", dry_run=False)
+        assert fake.files[generation.LOADER_VERSION] == "26.11.0-trunk.133\n"
+
+    def test_dpkg_reads_its_lists_only_in_the_read_only_unit(self, fake):
+        """dpkg-query -S reads every package's file list: outside the unit, each daily sync would set
+        their access times on the eMMC."""
+        card.prepare("SC32G", dry_run=False)
+        service.refresh()
+        generation.sync()
+        assert [cmd for cmd in fake.calls if cmd[0] == "dpkg-query"] == []
+        assert [cmd[:2] for cmd in fake.unit_calls if cmd[0] == "dpkg-query"][:2] == [
+            ["dpkg-query", "-S"], ["dpkg-query", "-W"]]
+
+    def test_what_every_boot_rewrites_makes_no_generation_and_comes_along_with_a_change(self, fake):
+        synced_once(fake)
+        fake.compare["system"] = list(BOOT_CHURN)
+        assert generation.sync().result == "unchanged"
+        fake.compare["system"] = [*BOOT_CHURN, ">f.st...... etc/hostname"]
+        outcome = generation.sync()
+        assert outcome.parts == ["system"] and outcome.changes[0] == ">f.st...... etc/hostname"
+        root = [cmd for cmd in fake.unit_calls if cmd[0] == "rsync" and cmd[-2] == "/" and "--dry-run" not in cmd][-1]
+        assert "--exclude=/etc/fake-hwclock.data" not in root  # copied with the change
+
+    def test_the_syncs_unit_sees_the_host_read_only_but_the_card(self, fake):
+        armed(fake, generation_number=None)
+        generation.sync(force=True)
+        units = [cmd for cmd in fake.calls if cmd[0] == "systemd-run"]
+        assert units
+        for cmd in units:
+            assert {"--property=ProtectSystem=strict", f"--property=ReadWritePaths=-{STANDBY_DIR}"} <= set(cmd), cmd
+
+    async def test_remove_leaves_no_folder_that_the_setup_made(self, fake):
+        card.prepare("SC32G", dry_run=False)
+        service.refresh()
+        folders = (STANDBY_DIR, "/etc/systemd/system.conf.d", generation.SCRIPT_DIR)
+        assert all(fake.exists(folder) for folder in folders)
+        await service.remove("SC32G", dry_run=False, request=None, username="admin")
+        assert [folder for folder in folders if fake.exists(folder)] == []
+
+
+class TestDockerOnThePool:
+    """Docker's and containerd's roots are on the pool (ADR-0486); the card's root runs both from the
+    card (ADR-0487)."""
+
+    def test_the_copy_takes_unos_volumes_from_the_pool_and_nothing_else_of_it(self, fake):
+        armed(fake, generation_number=None)
+        generation.sync(force=True)
+        root = [cmd for cmd in fake.unit_calls if cmd[0] == "rsync" and cmd[-2] == "/"][-1]
+        assert "--one-file-system" in root and "--exclude=/mnt/pools/data" in root
+        sources = sorted(cmd[-2] for cmd in fake.unit_calls
+                         if cmd[0] == "rsync" and "/volumes/" in cmd[-1] and cmd[-1].endswith("/"))
+        assert sources == sorted(f"/mnt/pools/data/.docker/volumes/deploy_{name}/_data/" for name in (
+            "unos-data", "served-certificate", "app-names", "caddy-data", "caddy-config"))
+
+    def test_on_the_cards_root_docker_and_containerd_keep_their_data_on_the_card(self, fake):
+        fake.files["/etc/docker/daemon.json"] = '{"data-root": "/mnt/pools/data/.docker", "log-driver": "local"}\n'
+        armed(fake, generation_number=None)
+        generation.sync(force=True)
+        gen = f"{CARD_DIR}/@sys-1"
+        assert json.loads(fake.files[f"{gen}/etc/docker/daemon.json"]) == {"data-root": "/var/lib/docker",
+                                                                           "log-driver": "local"}
+        config = fake.files[f"{gen}/etc/containerd/config.toml"]
+        assert 'root = "/var/lib/containerd"' in config and "/mnt/pools" not in config
+        assert '[grpc]\n  address = "/run/containerd/containerd.sock"' in config
+        root = [cmd for cmd in fake.unit_calls if cmd[0] == "rsync" and cmd[-2] == "/"][-1]
+        for path in ("/etc/docker/daemon.json", "/etc/containerd/config.toml",
+                     "/etc/systemd/system/docker.service.d/data-root-on-pool.conf",
+                     "/etc/systemd/system/containerd.service.d/root-on-pool.conf"):
+            assert f"--exclude={path}" in root
+            assert f"{gen}{path}" not in fake.files or path.endswith((".json", ".toml"))
+        assert "--exclude=/etc/systemd/system/docker.service.d/override.conf" not in root
+        assert ["rm", "-f", "--", f"{gen}/etc/systemd/system/containerd.service.d/root-on-pool.conf",
+                f"{gen}/etc/systemd/system/docker.service.d/data-root-on-pool.conf"] in fake.changes
+
+    def test_a_changed_daemon_json_renders_the_fix_ups_again(self, fake):
+        synced_once(fake)
+        assert generation.sync().result == "unchanged"
+        fake.files["/etc/docker/daemon.json"] = '{"data-root": "/mnt/pools/data/.docker", "debug": true}\n'
+        outcome = generation.sync()
+        assert outcome.parts == ["fixups"]
+        assert json.loads(fake.files[f"{CARD_DIR}/@sys-2/etc/docker/daemon.json"])["debug"] is True
 
 
 class TestTheRendering:
@@ -792,6 +1045,38 @@ class TestTheBootPath:
         with pytest.raises(HTTPException) as refused:
             service.refuse_on_standby("an app's install")
         assert refused.value.status_code == 409
+
+    async def test_the_runs_time_waits_for_the_synchronized_clock(self, fake, alerts, monkeypatch):
+        """Measured on the W3: the card's root starts on the clock that fake-hwclock saved at the last
+        sync, and the run was recorded up to 30 minutes early. The time is corrected once systemd's
+        time sync says the clock is right (ADR-0487)."""
+        armed(fake)
+        fake.files["/proc/cmdline"] = "root=UUID=c rootfstype=btrfs unos.chooser=card unos.root=card unos.reason=tries"
+        clock = [5000.0]
+        monkeypatch.setattr(service, "_monotonic", lambda: clock[0])
+        monkeypatch.setattr(service, "utc_now", lambda: datetime(2026, 11, 23, 23, 13, 26, tzinfo=UTC))
+        service.refresh()
+        await service._on_start()
+        assert json.loads(fake.files[STATE])["standby_ran"]["at"] == "2026-11-23T23:13:26Z"
+        clock[0] += 240
+        monkeypatch.setattr(service, "utc_now", lambda: datetime(2026, 11, 23, 23, 46, 48, tzinfo=UTC))
+        await service._correct_run_time()
+        assert json.loads(fake.files[STATE])["standby_ran"]["at"] == "2026-11-23T23:13:26Z"  # not synchronized yet
+        fake.files["/run/systemd/timesync/synchronized"] = ""
+        await service._correct_run_time()
+        assert json.loads(fake.files[STATE])["standby_ran"]["at"] == "2026-11-23T23:42:48Z"
+        writes = len(fake.changes)
+        await service._correct_run_time()
+        assert len(fake.changes) == writes
+
+    async def test_on_the_cards_root_the_reason_is_the_marks(self, fake, alerts):
+        armed(fake)
+        fake.files[f"{BOOT_DIR}/unos/emmc-failed"] = "reason=docker_pool_failed\ndetail=not_mounted\ntime=x\n"
+        fake.files["/proc/cmdline"] = "root=UUID=c rootfstype=btrfs unos.chooser=card unos.root=card unos.reason=marked"
+        service.refresh()
+        await service._on_start()
+        assert (await service.status()).boot_reason == "docker_pool_failed"
+        assert json.loads(fake.files[STATE])["standby_ran"]["reason"] == "docker_pool_failed"
 
     async def test_back_on_the_emmc_the_standby_has_changes(self, fake):
         armed(fake)
@@ -1087,6 +1372,19 @@ class TestTheCardIsHidden:
         assert cards["mmcblk1"].use == "The SD card standby"
         assert cards["mmcblk1"].labels == ("UNOS-BOOT", "UNOS-STANDBY")
 
+    def test_the_cards_btrfs_is_no_unmanaged_pool_at_the_start(self, monkeypatch):
+        """Measured on the W3: every start of the supervisor logged the card's btrfs as a pool that is not
+        mounted, to be mounted on the Storage page (ADR-0487)."""
+        from src.storage import disks, pools
+
+        guarded = []
+        monkeypatch.setattr(pools, "btrfs_filesystems", lambda: [
+            pools.BtrfsFilesystem(label="UNOS-STANDBY", uuid="8936ec13-6f6a-4187-b244-e99a5cd25d26",
+                                  total_devices=1, devices=["/dev/mmcblk1p2"])])
+        monkeypatch.setattr(disks, "host_mounts", lambda: [])
+        monkeypatch.setattr(pools, "guard_mountpoint", lambda target: guarded.append(target) or False)
+        assert pools._guard_unmanaged_pools({}) == [] and guarded == []
+
     def test_the_off_device_copy_refuses_a_folder_on_the_card(self):
         from src.offsite import service as offsite
 
@@ -1171,6 +1469,124 @@ class TestTheHostScripts:
         assert _run([script], env).returncode == 0
         assert not [line for line in log.read_text().splitlines() if "create" in line or line.startswith("rsync")]
         assert (boot / "unos" / "emmc-failed").read_text() == "reason=marked\n"
+
+
+class TestThePoolWatch:
+    """unos-standby-watch.sh: the eMMC's system switches to the card when the pool that holds Docker is
+    down, since Docker and UNOS are down with it (ADR-0486, ADR-0487)."""
+
+    def run_watch(self, tmp_path, mounts: list[str], *, generation_ready: bool = True, marked: bool = False,
+                  data_root: str = "{pools}/data/.docker", checks: int = 6, card_mounted: bool = True,
+                  late_mount: bool = False) -> tuple[subprocess.CompletedProcess[str], Path]:
+        boot, card_dir, pools = tmp_path / "boot", tmp_path / "card", tmp_path / "pools"
+        (pools / "data").mkdir(parents=True)
+        data_root = data_root.format(pools=pools)
+        mounts = [mount.format(pools=pools) for mount in mounts]
+        (boot / "unos").mkdir(parents=True)
+        (card_dir / "@sys-1").mkdir(parents=True)
+        if generation_ready:
+            (boot / "unos" / "current.txt").write_text("unos_gen=1\nunos_subvolid=256\nunos_bootdir=unos/boot-1/\n")
+        if marked:
+            (boot / "unos" / "emmc-failed").write_text("reason=drill\n")
+        daemon = tmp_path / "daemon.json"
+        daemon.write_text(f'{{"data-root": "{data_root}", "log-driver": "local"}}\n')
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log = tmp_path / "log"
+        answers = tmp_path / "answers"
+        answers.write_text("".join(f"{line}\n" for line in mounts))
+        # findmnt answers the next line of answers at each call, the last one again at the end, and
+        # records the path it was asked for.
+        stub(bin_dir, "findmnt", f'echo "$5" >> {tmp_path}/asked\n'
+                                 f'line=$(head -n 1 {answers}); rest=$(tail -n +2 {answers})\n'
+                                 f'[ -n "$rest" ] && printf "%s\\n" "$rest" > {answers}\necho "$line"\n')
+        stub(bin_dir, "mountpoint", f'[ "$2" = "{card_dir}" ] && exit {0 if card_mounted else 1}\nexit 1\n')
+        stub(bin_dir, "mount", f'echo "mount $*" >> {log}\nexit {0 if late_mount else 32}\n')
+        stub(bin_dir, "systemctl", f'echo "systemctl $*" >> {log}\n')
+        stub(bin_dir, "sleep", "exit 0\n")
+        stub(bin_dir, "sync", "exit 0\n")
+        env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin", "UNOS_STANDBY_BOOT": str(boot),
+               "UNOS_STANDBY_CARD": str(card_dir),
+               "UNOS_STANDBY_DAEMON_JSON": str(daemon), "UNOS_STANDBY_POOLS": str(pools),
+               "UNOS_STANDBY_CHECK_SECONDS": "60", "UNOS_STANDBY_FAILED_CHECKS": "5",
+               "UNOS_STANDBY_MAX_CHECKS": str(checks)}
+        done = _run([str(HOST_SCRIPTS / "unos-standby-watch.sh")], env)
+        return done, log
+
+    MOUNTED = "{pools}/data rw,noatime rw,space_cache=v2,subvolid=5"
+    NOT_MOUNTED = "/ rw,relatime rw,errors=remount-ro,commit=120"
+    READ_ONLY = "{pools}/data rw,noatime ro,space_cache=v2,subvolid=5"
+
+    def test_a_mounted_pool_changes_nothing(self, tmp_path):
+        done, log = self.run_watch(tmp_path, [self.MOUNTED])
+        assert done.returncode == 0, done.stderr
+        assert not log.exists() and not (tmp_path / "boot" / "unos" / "emmc-failed").exists()
+        # The data root's folder is missing here: findmnt is asked for the nearest folder that exists.
+        assert set((tmp_path / "asked").read_text().split()) == {str(tmp_path / "pools" / "data")}
+
+    def test_a_pool_mounted_late_is_mounted_and_docker_started_instead(self, tmp_path):
+        """A disk that came up after systemd gave up on its mount: no switch for it (ADR-0487)."""
+        done, log = self.run_watch(tmp_path, [self.NOT_MOUNTED, self.MOUNTED], late_mount=True)
+        assert done.returncode == 0, done.stderr
+        assert log.read_text() == f"mount {tmp_path}/pools/data\nsystemctl start docker.service\n"
+        assert not (tmp_path / "boot" / "unos" / "emmc-failed").exists()
+
+    @pytest.mark.parametrize(("mount", "why"), [(NOT_MOUNTED, "not_mounted"), (READ_ONLY, "read_only")])
+    def test_a_pool_down_at_five_checks_in_a_row_marks_the_emmc_failed_and_reboots(self, tmp_path, mount, why):
+        done, log = self.run_watch(tmp_path, [mount])
+        assert done.returncode == 0, done.stderr
+        mark = (tmp_path / "boot" / "unos" / "emmc-failed").read_text()
+        assert mark.startswith(f"reason=docker_pool_failed\ndetail={why}\ntime=")
+        assert log.read_text().splitlines()[-1] == "systemctl reboot"
+        assert log.read_text().count("systemctl reboot") == 1
+
+    def test_a_pool_that_comes_back_starts_the_count_again(self, tmp_path):
+        done, log = self.run_watch(tmp_path, [self.NOT_MOUNTED] * 4 + [self.MOUNTED] + [self.NOT_MOUNTED] * 4, checks=9)
+        assert done.returncode == 0, done.stderr
+        assert "systemctl reboot" not in log.read_text()
+
+    @pytest.mark.parametrize("case", ["no generation", "marked already", "docker on the system disk", "card not mounted"])
+    def test_it_never_switches_without_a_ready_standby_or_a_pool(self, tmp_path, case):
+        done, log = self.run_watch(tmp_path, [self.NOT_MOUNTED], generation_ready=case != "no generation",
+                                   marked=case == "marked already", card_mounted=case != "card not mounted",
+                                   data_root="/var/lib/docker" if case == "docker on the system disk" else "{pools}/data/.docker")
+        assert done.returncode == 0, done.stderr
+        assert "systemctl reboot" not in (log.read_text() if log.exists() else "")
+
+    def test_set_up_installs_it_and_remove_takes_it_away(self, fake):
+        card.prepare("SC32G", dry_run=False)
+        unit = fake.files["/etc/systemd/system/unos-standby-watch.service"]
+        assert "ConditionKernelCommandLine=unos.root=emmc" in unit
+        assert (f"Environment=UNOS_STANDBY_POOLS=/mnt/pools UNOS_STANDBY_BOOT={BOOT_DIR} UNOS_STANDBY_CARD={CARD_DIR}"
+                in unit)
+        assert fake.files["/usr/local/lib/unos-standby/unos-standby-watch.sh"] == (
+            HOST_SCRIPTS / "unos-standby-watch.sh").read_text()
+        assert ["systemctl", "enable", "unos-standby-boot-ok.service", "unos-standby-watch.service"] in fake.changes
+        card.remove("SC32G", dry_run=False, running_on_card=False)
+        assert "/etc/systemd/system/unos-standby-watch.service" not in fake.files
+        assert "/usr/local/lib/unos-standby/unos-standby-watch.sh" not in fake.files
+
+    def test_the_emmcs_own_units_are_not_copied_to_the_card(self, fake):
+        """A sync that rewrote them would otherwise make the next sync write a generation."""
+        armed(fake, generation_number=None)
+        generation.sync(force=True)
+        root = [cmd for cmd in fake.unit_calls if cmd[0] == "rsync" and cmd[-2] == "/"][-1]
+        for name in ("unos-standby-boot-ok.service", "unos-standby-watch.service"):
+            assert f"--exclude=/etc/systemd/system/{name}" in root
+            assert f"--exclude=/etc/systemd/system/multi-user.target.wants/{name}" in root
+
+    def test_remove_stops_the_watch_now(self, fake):
+        card.prepare("SC32G", dry_run=False)
+        card.remove("SC32G", dry_run=False, running_on_card=False)
+        assert ["systemctl", "disable", "--now", "unos-standby-boot-ok.service", "unos-standby-watch.service"] in fake.changes
+
+    def test_a_sync_writes_a_changed_watch_again_without_a_generation(self, fake):
+        synced_once(fake)
+        fake.files["/usr/local/lib/unos-standby/unos-standby-watch.sh"] = "an older watch"
+        outcome = generation.sync()
+        assert outcome.parts == ["units"] and outcome.generation == 1
+        assert fake.files["/usr/local/lib/unos-standby/unos-standby-watch.sh"] == (
+            HOST_SCRIPTS / "unos-standby-watch.sh").read_text()
 
 
 def _run(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
