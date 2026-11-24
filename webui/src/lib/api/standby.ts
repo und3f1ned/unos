@@ -72,6 +72,21 @@ export interface StandbyStatus {
 	apps: StandbyApp[];
 	/** The card's space by part; null when it is not read. */
 	space: StandbySpace | null;
+	/** On the card's root: whether Return to the eMMC is offered, by the last check of the eMMC; null elsewhere. */
+	emmc_return: StandbyEmmcReturn | null;
+}
+
+export interface StandbyEmmcReturn {
+	/** Whether the eMMC reads and its root passes fsck.ext4 -n, as last checked. */
+	offered: boolean;
+	/** What the last check found, in English; null before the first. */
+	detail: string | null;
+	device: string | null;
+	checked_at: string | null;
+	/** The last return to the eMMC that failed in this boot: the card stays the system disk. */
+	failed: { at: string; step: string | null; message: string } | null;
+	/** A return to the eMMC runs now. */
+	running: boolean;
 }
 
 export interface StandbyAppMove {
@@ -80,6 +95,10 @@ export interface StandbyAppMove {
 	pool: string;
 	/** Whether it runs from its copy; false: it had none and stays stopped. */
 	has_copy: boolean;
+	/** The last return to its pool that failed: the app stays stopped, and the return can run again. */
+	return_failed: { at: string; step: string | null; error: string | null; backup: string | null } | null;
+	/** A return with the card's changes began to copy it to its pool: the discarding return is not offered. */
+	copy_started: boolean;
 }
 
 export interface StandbyApp {
@@ -109,7 +128,16 @@ export interface StandbySpace {
 
 export interface StandbyAppsAction {
 	dry_run: boolean;
-	apps: { app: string; has_copy: boolean; age: string | null; error: string | null }[];
+	apps: {
+		app: string;
+		has_copy: boolean;
+		age: string | null;
+		error: string | null;
+		/** The pool return: the MiB its copy writes (a dry run) or wrote; null without a copy. */
+		mib: number | null;
+		/** The pool return: the folder that keeps what the copy replaced or deleted. */
+		backup: string | null;
+	}[];
 	message: string;
 }
 
@@ -146,8 +174,13 @@ export function startDrill(kind: DrillKind): Promise<StandbyAction> {
 	return api.post<StandbyAction>('/system/standby/drill', { kind });
 }
 
-export function returnToEmmc(): Promise<StandbyAction> {
-	return api.post<StandbyAction>('/system/standby/return', {});
+/** On the card: the return to the eMMC with the card's changes; with `discard`, the reboot to the eMMC as it was. A
+ * dry run checks the eMMC again and answers what the return's unit runs. */
+export function returnToEmmc(options: { discard?: boolean; dryRun?: boolean } = {}): Promise<StandbyAction> {
+	const body: Record<string, boolean> = {};
+	if (options.discard) body.discard = true;
+	if (options.dryRun) body.dry_run = true;
+	return api.post<StandbyAction>('/system/standby/return', body);
 }
 
 export function discardStandby(model: string): Promise<StandbyAction> {
@@ -159,7 +192,13 @@ export function moveCriticalApps(reason: 'drill' | 'planned', pool: string | nul
 	return api.post<StandbyAppsAction>('/system/standby/apps/move', { reason, pool });
 }
 
+/** The pool return of the apps that run from the card, with what they changed there; a dry run answers the MiB each
+ * copy writes. */
+export function returnCriticalApps(dryRun = false, apps: string[] | null = null): Promise<StandbyAppsAction> {
+	return api.post<StandbyAppsAction>('/system/standby/apps/return', dryRun ? { apps, dry_run: true } : { apps });
+}
+
 /** Return the apps that run from the card to their pool, discarding the card's changes; the card's model typed. */
-export function returnCriticalApps(model: string, apps: string[] | null = null): Promise<StandbyAppsAction> {
-	return api.post<StandbyAppsAction>('/system/standby/apps/return', { model, apps });
+export function discardCriticalApps(model: string, apps: string[] | null = null): Promise<StandbyAppsAction> {
+	return api.post<StandbyAppsAction>('/system/standby/apps/return', { model, apps, discard: true });
 }

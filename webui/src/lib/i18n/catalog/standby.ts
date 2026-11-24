@@ -120,12 +120,42 @@ export const en = {
 	'standby.returnThrough.message':
 		'The NAS reboots to the card, which keeps its changes; the return from there brings UNOS back to the eMMC.',
 	'standby.return.button': 'Return to the eMMC',
-	'standby.return.title': 'Return to the eMMC?',
+	'standby.return.title': 'Return to the eMMC with the card’s changes?',
 	'standby.return.message':
-		'The mark of the eMMC is removed and the NAS reboots from the eMMC. Changes made on the card stay on the card.',
-	'standby.return.confirm': 'Reboot to the eMMC',
-	'standby.return.started': 'The NAS reboots to the eMMC now',
+		'UNOS stops, the system and UNOS’s data are copied from the card to the eMMC, and the NAS reboots to the eMMC. The card stays bootable until the copy is complete and checked.',
+	'standby.return.consequence': 'Shares, apps and this page are unavailable until UNOS answers from the eMMC.',
+	'standby.return.apps': 'Critical apps that run from the card stay there until their pool’s return.',
+	'standby.return.confirm': 'Copy and reboot',
+	'standby.return.started': 'UNOS stops now; the NAS reboots to the eMMC once the copy is done',
 	'standby.return.failed': 'The return did not start',
+	'standby.returnDiscard.button': 'Return without the card’s changes',
+	'standby.returnDiscard.title': 'Return to the eMMC without the card’s changes?',
+	'standby.returnDiscard.message':
+		'The NAS reboots to the eMMC as it was. The card keeps its changes, and the eMMC’s system offers to discard them.',
+	'standby.returnDiscard.confirm': 'Reboot to the eMMC',
+	'standby.returnDiscard.started': 'The NAS reboots to the eMMC now',
+	'standby.emmc.notOffered': 'The card stays the system disk',
+	'standby.emmc.notOfferedText':
+		'{detail}. The return to the eMMC waits for an eMMC that reads and whose root passes its check; until then UNOS runs from the card, and no standby is left.',
+	'standby.emmc.notChecked': 'The eMMC has not been checked yet: check it before the return.',
+	'standby.emmc.running': 'The return to the eMMC runs',
+	'standby.emmc.runningText':
+		'UNOS stops for the copy, then the NAS reboots to the eMMC. Nothing else changes the card meanwhile.',
+	'standby.emmc.passed': '{detail} (checked {time}).',
+	'standby.emmc.check': 'Check the eMMC again',
+	'standby.emmc.checkPassed': 'The eMMC passes its check: the return to the eMMC is offered',
+	'standby.emmc.checkFailed': 'The return to the eMMC is not offered',
+	'standby.emmc.failedTitle': 'The return to the eMMC failed',
+	'standby.emmc.failedText':
+		'It failed at {step}: {message}. UNOS runs from the card again, and the return can run again.',
+	'standby.emmc.step.check': 'the check of the eMMC',
+	'standby.emmc.step.stop': 'the stop of Docker and Samba',
+	'standby.emmc.step.mount': 'the mount of the eMMC',
+	'standby.emmc.step.copy': 'the copy',
+	'standby.emmc.step.fstab': 'the eMMC’s fstab',
+	'standby.emmc.step.verify': 'the check of the copy',
+	'standby.emmc.step.finish': 'the card’s marks',
+	'standby.emmc.step.other': 'a step',
 	'standby.discard.button': "Discard the standby's changes",
 	'standby.discard.title': "Discard the standby's changes?",
 	'standby.discard.message': 'A new copy of the eMMC replaces what UNOS changed while it ran from the card.',
@@ -172,14 +202,30 @@ export const en = {
 	'standby.apps.moveOthers': 'Their folders on other pools, such as media, look empty to them.',
 	'standby.apps.moved': { one: '{n} app runs from the card', other: '{n} apps run from the card' },
 	'standby.apps.moveFailed': 'The apps could not be moved',
-	'standby.apps.return': {
-		one: 'Return to the pool, discarding the card’s changes',
-		other: 'Return {n} apps to their pools, discarding the card’s changes'
-	},
-	'standby.apps.returnTitle': 'Return the apps to their pools?',
+	'standby.apps.return': { one: 'Return to the pool', other: 'Return {n} apps to their pools' },
+	'standby.apps.returnTitle': 'Return the apps to their pools with the card’s changes?',
 	'standby.apps.returnMessage':
+		'They stop, what they changed on the card is copied into their folders on the pool, and their containers are created again there.',
+	'standby.apps.returnMib': 'The copy writes about {size} to the pools.',
+	'standby.apps.returnBackup':
+		'Every file that it replaces or deletes on a pool is kept beside the app’s folder, in <app>.before-failback-<time>.',
+	'standby.apps.returnLeft': 'Their caches and the copies that updates keep stay on the pool as they are.',
+	'standby.apps.returnConfirm': 'Return with the changes',
+	'standby.apps.returnFailedAt':
+		'Its last return failed at {step}: {error}. It stays stopped, its copy on the card is kept, and the return can run again.',
+	'standby.apps.step.stop': 'the stop of its containers',
+	'standby.apps.step.copy': 'the copy',
+	'standby.apps.step.containers': 'the creation of its containers',
+	'standby.apps.step.record': 'the record of the return',
+	'standby.apps.step.other': 'a step',
+	'standby.apps.discard': {
+		one: 'Return, discarding the card’s changes',
+		other: 'Return {n} apps, discarding the card’s changes'
+	},
+	'standby.apps.discardTitle': 'Return the apps and discard the card’s changes?',
+	'standby.apps.discardMessage':
 		'Their containers are created again on their pools as before the move. What they changed on the card is discarded.',
-	'standby.apps.returnConfirm': 'Return and discard',
+	'standby.apps.discardConfirm': 'Return and discard',
 	'standby.apps.returned': { one: '{n} app is back on its pool', other: '{n} apps are back on their pools' },
 	'standby.apps.returnFailed': 'The apps could not return',
 	'standby.apps.help':
@@ -310,12 +356,42 @@ export const ru: Translation<typeof en> = {
 	'standby.returnThrough.message':
 		'NAS перезагрузится на карту, которая хранит свои изменения; возврат оттуда вернёт UNOS на eMMC.',
 	'standby.return.button': 'Вернуться на eMMC',
-	'standby.return.title': 'Вернуться на eMMC?',
+	'standby.return.title': 'Вернуться на eMMC с изменениями карты?',
 	'standby.return.message':
-		'Отметка eMMC снимается, и NAS перезагружается с eMMC. Изменения, сделанные на карте, остаются на карте.',
-	'standby.return.confirm': 'Перезагрузить на eMMC',
-	'standby.return.started': 'NAS перезагружается на eMMC',
+		'UNOS останавливается, система и данные UNOS копируются с карты на eMMC, и NAS перезагружается с eMMC. Карта остаётся загрузочной, пока копия не завершена и не проверена.',
+	'standby.return.consequence': 'Общие папки, приложения и эта страница недоступны, пока UNOS не ответит с eMMC.',
+	'standby.return.apps': 'Критичные приложения, работающие с карты, остаются на ней до возврата в их пул.',
+	'standby.return.confirm': 'Скопировать и перезагрузить',
+	'standby.return.started': 'UNOS останавливается; NAS перезагрузится на eMMC, когда копия будет готова',
 	'standby.return.failed': 'Возврат не начался',
+	'standby.returnDiscard.button': 'Вернуться без изменений карты',
+	'standby.returnDiscard.title': 'Вернуться на eMMC без изменений карты?',
+	'standby.returnDiscard.message':
+		'NAS перезагружается на eMMC в прежнем виде. Карта хранит свои изменения, а система на eMMC предложит их отбросить.',
+	'standby.returnDiscard.confirm': 'Перезагрузить на eMMC',
+	'standby.returnDiscard.started': 'NAS перезагружается на eMMC',
+	'standby.emmc.notOffered': 'Карта остаётся системным диском',
+	'standby.emmc.notOfferedText':
+		'{detail}. Возврат на eMMC ждёт eMMC, которая читается и корень которой проходит проверку; до тех пор UNOS работает с карты, и резерва нет.',
+	'standby.emmc.notChecked': 'eMMC ещё не проверена: проверьте её перед возвратом.',
+	'standby.emmc.running': 'Идёт возврат на eMMC',
+	'standby.emmc.runningText':
+		'UNOS останавливается на время копирования, затем NAS перезагружается на eMMC. Пока он идёт, ничто другое карту не меняет.',
+	'standby.emmc.passed': '{detail} (проверено {time}).',
+	'standby.emmc.check': 'Проверить eMMC снова',
+	'standby.emmc.checkPassed': 'eMMC проходит проверку: возврат на eMMC доступен',
+	'standby.emmc.checkFailed': 'Возврат на eMMC недоступен',
+	'standby.emmc.failedTitle': 'Возврат на eMMC не удался',
+	'standby.emmc.failedText':
+		'Сбой на шаге «{step}»: {message}. UNOS снова работает с карты, и возврат можно повторить.',
+	'standby.emmc.step.check': 'проверка eMMC',
+	'standby.emmc.step.stop': 'остановка Docker и Samba',
+	'standby.emmc.step.mount': 'монтирование eMMC',
+	'standby.emmc.step.copy': 'копирование',
+	'standby.emmc.step.fstab': 'fstab на eMMC',
+	'standby.emmc.step.verify': 'проверка копии',
+	'standby.emmc.step.finish': 'отметки на карте',
+	'standby.emmc.step.other': 'один из шагов',
 	'standby.discard.button': 'Отбросить изменения резерва',
 	'standby.discard.title': 'Отбросить изменения резерва?',
 	'standby.discard.message': 'Новая копия eMMC заменит то, что UNOS изменил, пока работал с карты.',
@@ -368,14 +444,34 @@ export const ru: Translation<typeof en> = {
 	},
 	'standby.apps.moveFailed': 'Не удалось перенести приложения',
 	'standby.apps.return': {
-		one: 'Вернуть в пул, отбросив изменения на карте',
-		few: 'Вернуть {n} приложения в их пулы, отбросив изменения на карте',
-		many: 'Вернуть {n} приложений в их пулы, отбросив изменения на карте'
+		one: 'Вернуть в пул',
+		few: 'Вернуть {n} приложения в их пулы',
+		many: 'Вернуть {n} приложений в их пулы'
 	},
-	'standby.apps.returnTitle': 'Вернуть приложения в их пулы?',
+	'standby.apps.returnTitle': 'Вернуть приложения в их пулы с изменениями на карте?',
 	'standby.apps.returnMessage':
+		'Они останавливаются, то, что они изменили на карте, копируется в их папки на пуле, и их контейнеры создаются там заново.',
+	'standby.apps.returnMib': 'Копия запишет на пулы около {size}.',
+	'standby.apps.returnBackup':
+		'Каждый файл, который она заменит или удалит на пуле, сохраняется рядом с папкой приложения, в <app>.before-failback-<время>.',
+	'standby.apps.returnLeft': 'Их кэши и копии, которые хранят обновления, остаются на пуле как есть.',
+	'standby.apps.returnConfirm': 'Вернуть с изменениями',
+	'standby.apps.returnFailedAt':
+		'Последний возврат не удался на шаге «{step}»: {error}. Приложение остановлено, его копия на карте сохранена, и возврат можно повторить.',
+	'standby.apps.step.stop': 'остановка его контейнеров',
+	'standby.apps.step.copy': 'копирование',
+	'standby.apps.step.containers': 'создание его контейнеров',
+	'standby.apps.step.record': 'запись о возврате',
+	'standby.apps.step.other': 'один из шагов',
+	'standby.apps.discard': {
+		one: 'Вернуть, отбросив изменения на карте',
+		few: 'Вернуть {n} приложения, отбросив изменения на карте',
+		many: 'Вернуть {n} приложений, отбросив изменения на карте'
+	},
+	'standby.apps.discardTitle': 'Вернуть приложения и отбросить изменения на карте?',
+	'standby.apps.discardMessage':
 		'Их контейнеры создаются заново на их пулах, как до переноса. То, что они изменили на карте, отбрасывается.',
-	'standby.apps.returnConfirm': 'Вернуть и отбросить',
+	'standby.apps.discardConfirm': 'Вернуть и отбросить',
 	'standby.apps.returned': {
 		one: '{n} приложение снова на своём пуле',
 		few: '{n} приложения снова на своих пулах',

@@ -145,9 +145,18 @@ important app, pinned app.
 
 **Move to the card**: Critical apps' containers created again on the run copy `@app-<app>-run` of their
 copy on the SD standby: by themselves when their pool fails, as a drill, or before a repair of the pool
-(planned). The **return** to the pool creates the pool-bound containers again and discards the card's
-changes (ADR-0500). Avoid: failback (the copy back of the card's changes,
-`system.sd-standby-failback`), migration.
+(planned) (ADR-0500). Avoid: migration.
+
+**Pool return**: The way back of critical apps that run from the SD standby's card: what they changed on
+the card is copied into `{pool}/apps/<app>/`, every file it replaces or deletes kept in
+`{pool}/apps/<app>.before-failback-<time>/`, and their pool-bound containers are created again
+(ADR-0501). The **discarding return** creates them again without the card's changes (ADR-0500). Avoid:
+failback (the whole way back), restore.
+
+**Return to the eMMC**: The way back from the SD standby's root to the eMMC: offered while the eMMC's
+root passes `fsck.ext4 -n`, it copies the standby's system and UNOS's volumes to the eMMC in the host's
+unit `unos-standby-return` and reboots to it once the copy is checked; the return without the card's
+changes only reboots to the eMMC (ADR-0471, ADR-0501). Avoid: failback, switch back.
 
 **Drill**: A switch to the SD standby on purpose, to prove it: the eMMC marked failed, its partition
 or its root made missing for the chooser or the kernel, then a reboot; Return to the eMMC ends it

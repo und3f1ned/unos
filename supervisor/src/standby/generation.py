@@ -6,7 +6,7 @@ filesystem (``rsync -aHAX --delete --one-file-system`` of ``/``, without what EX
 points leave out, which rsync neither copies nor deletes), UNOS's compose volumes under
 ``/var/lib/unos-standby/volumes`` (the database copied by SQLite's backup API first), ``docker save``
 archives of UNOS's images under ``/var/lib/unos-standby/images`` and the fix-ups: the card's fstab,
-the eMMC's own fstab lines kept for the return, ``unos-standby.service`` with its script,
+the eMMC's own fstab lines and its Docker's volumes kept for the return, ``unos-standby.service`` with its script,
 ``unos.service`` masked, Docker's and containerd's settings with their roots on the card and without
 the drop-ins that wait for the pool (ADR-0488), and the mount points, the pools' and the standby's
 immutable. The card's FAT partition holds the boot folders ``unos/boot-<n>/`` (what the eMMC's boot
@@ -353,9 +353,10 @@ def immutable_mountpoints(points: list[str]) -> list[str]:
 
 
 def fixup_digest(fstab_text: str, own_lines: str, unit: str, script: str, points: list[str],
-                 docker_files: dict[str, str] | None = None, pool_dropins: list[str] | None = None) -> str:
-    manifest = json.dumps([fstab_text, own_lines, unit, script, points, docker_files or {}, pool_dropins or []],
-                          sort_keys=True)
+                 docker_files: dict[str, str] | None = None, pool_dropins: list[str] | None = None,
+                 volumes: dict[str, str] | None = None) -> str:
+    manifest = json.dumps([fstab_text, own_lines, unit, script, points, docker_files or {}, pool_dropins or [],
+                           volumes or {}], sort_keys=True)
     return hashlib.sha256(manifest.encode()).hexdigest()
 
 
@@ -643,7 +644,8 @@ def _sync(ops: StandbyHost, context: _Context, staged: Path, db_digest: str, *, 
     fstab_text, own_lines = card_fstab(context.fstab, context.card_uuid, context.emmc_specs)
     unit = standby_unit(context.workdir, context.project)
     script = host_script("unos-standby.sh")
-    digest = fixup_digest(fstab_text, own_lines, unit, script, points, context.docker_files, context.pool_dropins)
+    digest = fixup_digest(fstab_text, own_lines, unit, script, points, context.docker_files, context.pool_dropins,
+                          context.volumes)
     boot_sources, boot_rsync, boot_file = _boot_folder(ops, context)
 
     card_parts = _refresh_card_files(ops, context, apply=False)
@@ -853,6 +855,9 @@ def _fixups(ops: StandbyHost, new: str, number: int, parts: list[str], fstab_tex
         return
     ops.write_file(f"{new}/etc/fstab", fstab_text, what="The card's fstab")
     ops.write_file(f"{new}{LIB}/emmc-fstab", own_lines, what="The eMMC's fstab lines")
+    # Where the eMMC's Docker keeps UNOS's volumes, for the return to the eMMC (system.sd-standby-failback).
+    ops.write_file(f"{new}{LIB}/emmc-volumes", json.dumps(context.volumes, indent=1, sort_keys=True) + "\n",
+                   what="The eMMC's volumes")
     ops.change(["mkdir", "-p", f"{new}{SCRIPT_DIR}", f"{new}{UNIT_DIR}/multi-user.target.wants"], what="The standby's unit")
     ops.write_file(f"{new}{STANDBY_SCRIPT}", script, what="The standby's script", mode="0755")
     ops.write_file(f"{new}{UNIT_DIR}/{STANDBY_UNIT}", unit, what="The standby's unit")

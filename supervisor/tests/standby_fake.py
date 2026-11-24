@@ -176,13 +176,23 @@ class StandbyFakeHost:
         self.file_sizes: dict[str, int] = {}
         self.card_df = (31_000_000_000, 20_000_000_000)
         self.loaded_images: set[str] = set()
+        # The return to the eMMC (system.sd-standby-failback): whether the host runs from the card's root,
+        # the filesystems that blkid finds by a tag (UUID=..., PARTUUID=..., LABEL=...), and what fsck.ext4
+        # answers (its exit status and output) per its options.
+        self.on_card_root = False
+        self.tagged: dict[str, str] = {f"UUID={ROOT_UUID}": f"/dev/{emmc}p1"}
+        self.fsck: dict[str, tuple[int, str]] = {}
+        self.return_unit = "inactive"
 
     # --- the host's state -----------------------------------------------------------------------------
 
     def mountinfo(self) -> str:
         text = mountinfo_line(20, "/proc", "proc", "proc") + mountinfo_line(21, "/sys", "sysfs", "sysfs")
         text += mountinfo_line(22, "/dev", "devtmpfs", "udev") + mountinfo_line(23, "/run", "tmpfs", "tmpfs")
-        text += mountinfo_line(1, "/", "ext4", f"/dev/{self.emmc}p1", "rw,errors=remount-ro,commit=600")
+        if self.on_card_root:
+            text += mountinfo_line(1, "/", "btrfs", f"/dev/{self.card}p2", "rw,compress=zstd:1")
+        else:
+            text += mountinfo_line(1, "/", "ext4", f"/dev/{self.emmc}p1", "rw,errors=remount-ro,commit=600")
         text += mountinfo_line(24, "/tmp", "tmpfs", "tmpfs")
         text += mountinfo_line(25, "/mnt/pools/data", "btrfs", "/dev/sda", "rw,space_cache=v2")
         text += mountinfo_line(26, "/run/docker/netns/abc", "nsfs", "nsfs")
@@ -250,6 +260,10 @@ class StandbyFakeHost:
     def run(self, cmd, *, timeout=60, check=False, input=None, errors=None):
         cmd = list(cmd)
         self.calls.append(cmd)
+        if cmd[0] == "systemd-run" and "--unit=unos-standby-return" in cmd:
+            # The return to the eMMC's unit (system.sd-standby-failback): started, it runs on its own.
+            self._change(cmd)
+            return host.HostResult(0, "", "")
         if cmd[0] == "systemd-run":
             assert "--wait" in cmd and "--pipe" in cmd and any(part.startswith("--unit=unos-standby-sync") for part in cmd)
             inner = cmd[cmd.index("--") + 1:]
@@ -321,6 +335,15 @@ class StandbyFakeHost:
             return host.HostResult(0, json.dumps({"blockdevices": [{"path": f"/dev/{self.emmc}", "uuid": None, "partuuid": None,
                 "label": None, "children": [{"path": f"/dev/{self.emmc}p1", "uuid": ROOT_UUID, "partuuid": EMMC_PARTUUID,
                                              "label": "armbi_emmc"}]}]}), "")
+        if program == "blkid" and "-t" in cmd:
+            device = self.tagged.get(cmd[cmd.index("-t") + 1])
+            return host.HostResult(0, f"{device}\n", "") if device else host.HostResult(2, "", "")
+        if program == "timeout" and "fsck.ext4" in cmd:
+            # A read-only check (-n) of the eMMC's root; -f checks a clean one too.
+            inner = cmd[cmd.index("fsck.ext4"):]
+            assert "-n" in inner and "-y" not in inner and "-p" not in inner, inner
+            status, output = self.fsck.get(" ".join(inner[1:-1]), (0, f"{inner[-1]}: clean, 61234/7618560 files\n"))
+            return host.HostResult(status, output, "")
         if program == "blkid":
             uuid = self.uuids.get(cmd[-1])
             # While udev re-reads the table of a card with nothing mounted after a write to the whole
@@ -333,6 +356,8 @@ class StandbyFakeHost:
             return self._ls(cmd[-1])
         if program == "mountpoint":
             return ok if cmd[-1] in self.mounted else fail
+        if program == "systemctl" and cmd[1] == "show":
+            return host.HostResult(0, f"{self.return_unit}\n", "")
         if program == "systemctl" and cmd[1] == "is-enabled":
             return ok if cmd[-1] in self.enabled else fail
         if program == "btrfs":
@@ -586,8 +611,50 @@ class StandbyFakeHost:
         self.dirs.add(destination)
         return host.HostResult(0, "", "")
 
+    def _app_rsync_back(self, cmd: list[str], source: str, destination: str) -> host.HostResult:
+        """rsync of an app's run copy back to its folder on the pool (system.sd-standby-failback), with its
+        excludes, --delete and --backup-dir: each file it replaces or deletes moves into the backup folder; a
+        dry run with --stats answers the bytes it would transfer. ``copy_status["back:<app>"]`` fails it."""
+        app = source.split("/@app-", 1)[1].split("/", 1)[0].rsplit("-", 1)[0]
+        source, destination = source.rstrip("/"), destination.rstrip("/")
+        excludes = [part[len("--exclude="):] for part in cmd if part.startswith("--exclude=")]
+
+        def left_out(relative: str) -> bool:
+            parts = relative.split("/")
+            for pattern in excludes:
+                if pattern.startswith("*") and any(part.endswith(pattern[1:]) for part in parts):
+                    return True
+                anchored = pattern.lstrip("/")
+                if pattern.startswith("/") and (relative == anchored or relative.startswith(anchored + "/")):
+                    return True
+            return False
+
+        wanted = {name[len(source) + 1:]: text for name, text in self.files.items()
+                  if name.startswith(source + "/") and not left_out(name[len(source) + 1:])}
+        have = {name[len(destination) + 1:]: text for name, text in self.files.items()
+                if name.startswith(destination + "/") and not left_out(name[len(destination) + 1:])}
+        changed = [relative for relative, text in wanted.items() if have.get(relative) != text]
+        gone = [relative for relative in have if relative not in wanted]
+        size = sum(self.file_sizes.get(f"{source}/{relative}", len(wanted[relative])) for relative in changed)
+        if "--dry-run" in cmd:
+            return host.HostResult(0, f"Number of files: {len(wanted)}\nTotal transferred file size: {size:,} bytes\n", "")
+        self._change(cmd)
+        status = self.copy_status.get(f"back:{app}", 0)
+        if status:
+            return host.HostResult(status, "", f"rsync: write failed: No space left on device (28)\nrsync error (code {status})\n")
+        backup = next(part[len("--backup-dir="):] for part in cmd if part.startswith("--backup-dir="))
+        for relative in [*changed, *gone]:
+            if relative in have:
+                self.files[f"{backup}/{relative}"] = self.files.pop(f"{destination}/{relative}")
+        for relative in changed:
+            self.files[f"{destination}/{relative}"] = wanted[relative]
+        self.dirs.add(destination)
+        return host.HostResult(0, f"Total transferred file size: {size:,} bytes\n", "")
+
     def _rsync(self, cmd: list[str]) -> host.HostResult:
         destination = cmd[-1]
+        if "/@app-" in cmd[-2] and "/@app-" not in destination:
+            return self._app_rsync_back(cmd, cmd[-2], destination)
         if "/@app-" in destination:
             return self._app_rsync(cmd, cmd[-2], destination)
         if destination.endswith("/unos.db"):

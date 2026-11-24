@@ -273,7 +273,7 @@ failure that stopped UNOS first), mark the eMMC failed from any computer:
 2. Open its small partition labelled `UNOS-BOOT`, which every computer reads, and create in its
    folder `unos` an empty file named `emmc-failed` (no extension).
 3. Eject the card, put it back into the NAS and start it: the card's chooser now boots the card's
-   copy at every boot. System → SD Standby offers **Return to the eMMC**: use it once the eMMC
-   works again.
+   copy at every boot. System → SD Standby offers **Return to the eMMC**, which copies the card's
+   changes to the eMMC, once the eMMC reads again and its root passes `fsck.ext4 -n` (ADR-0501).
 
 Changes made since the card's last sync are not on it.

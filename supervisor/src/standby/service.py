@@ -83,7 +83,9 @@ class StandbyCard(BaseModel):
 
 class StandbySync(BaseModel):
     at: str = Field(description="When the sync ended, in UTC.")
-    trigger: str = Field(description="What started it: setup, start, daily, change, manual or discard.")
+    trigger: str = Field(description=(
+        "What started it: setup, start, daily, change, manual, discard, or return (the first after the return to the "
+        "eMMC with the card's changes)."))
     result: Literal["wrote", "unchanged", "failed"] = Field(description="wrote a generation, found nothing changed, or failed.")
     mib: float | None = Field(description="The MiB it wrote to the card; null when it wrote nothing or it is not known.")
     parts: list[str] = Field(description="What changed: system, volumes, database, images, boot, fixups.")
@@ -148,7 +150,33 @@ class StandbyStatus(BaseModel):
     switch_ready: bool = Field(description="Whether a failure of the eMMC switches to the card: set up, in the boot path, complete.")
     problems: list[StandbyProblem] = Field(description="The standby's problems that are there now.")
     apps: list[StandbyAppStatus] = Field(default_factory=list, description="The critical apps and their copies.")
+    emmc_return: StandbyEmmcReturn | None = Field(default=None, description=(
+        "On the card's root: whether Return to the eMMC is offered, by the last check of the eMMC; null elsewhere."))
     space: StandbySpace | None = Field(default=None, description="The card's space by part; null when it is not read.")
+
+
+class StandbyEmmcFailure(BaseModel):
+    at: str = Field(description="When UNOS learned that it failed, in UTC.")
+    step: str | None = Field(description="The step of the return's unit that failed: check, stop, mount, copy, fstab, "
+                                         "verify or finish.")
+    message: str = Field(description="Why it failed, and what the unit put back.")
+
+
+class StandbyEmmcReturn(BaseModel):
+    offered: bool = Field(description="Whether the eMMC reads and its root passes fsck.ext4 -n, as last checked.")
+    detail: str | None = Field(description="What the last check found; null before the first.")
+    device: str | None = Field(description="The eMMC's root device, such as /dev/mmcblk0p1.")
+    checked_at: str | None = Field(description="When the eMMC was last checked, in UTC.")
+    failed: StandbyEmmcFailure | None = Field(default=None, description=(
+        "The last return to the eMMC that failed in this boot: the card stays the system disk; null when none did."))
+    running: bool = Field(default=False, description="Whether a return to the eMMC runs now.")
+
+
+class StandbyReturnFailure(BaseModel):
+    at: str = Field(description="When the return started, in UTC.")
+    step: str | None = Field(description="The step that failed: stop, copy, containers or record.")
+    error: str | None = Field(description="Why it failed.")
+    backup: str | None = Field(description="The folder that keeps what the copy replaced or deleted.")
 
 
 class StandbyAppMove(BaseModel):
@@ -156,6 +184,11 @@ class StandbyAppMove(BaseModel):
     reason: str = Field(description="pool_failed, pool_read_only, drill or planned.")
     pool: str = Field(description="The pool it left.")
     has_copy: bool = Field(description="Whether it runs from its copy; false: it had none and stays stopped.")
+    return_failed: StandbyReturnFailure | None = Field(default=None, description=(
+        "The last return to the pool that failed: the app stays stopped, and the return can run again."))
+    copy_started: bool = Field(default=False, description=(
+        "A return with the card's changes began to copy it to its pool: only that return is offered, not the "
+        "discarding one."))
 
 
 class StandbyAppStatus(BaseModel):
@@ -229,6 +262,12 @@ class _State:
     memory_sync: dict[str, Any] | None = None
     # Not set up, but a card holds the standby's partitions: its device is card_device (ADR-0494).
     leftover: bool = False
+    # On the card's root: the last check of the eMMC for the return (emmc_return.EmmcCheck as a record),
+    # and how the last return to the eMMC that failed ended (its unit's result).
+    emmc_check: dict[str, Any] | None = None
+    emmc_return_failed: dict[str, Any] | None = None
+    # A return to the eMMC's unit was started and has not ended: no other action changes the card meanwhile.
+    emmc_returning: bool = False
 
 
 _state = _State()
@@ -483,9 +522,10 @@ async def _run_sync(trigger: str, *, force: bool = False, clean_docker: bool = F
         stored["last_complete_at"] = record["at"]
     else:
         _state.memory_sync = record
+    drop = ("emmc_return",) if trigger == "return" and error is None else ()
     try:
-        if stored:
-            await asyncio.to_thread(merge_stored, stored)
+        if stored or drop:
+            await asyncio.to_thread(merge_stored, stored, drop)
         await asyncio.to_thread(refresh)
     except StandbyError as e:
         logger.warning("The SD standby's state could not be saved: %s", e)
@@ -531,20 +571,34 @@ async def _due_syncs() -> None:
             await _due_sync()
 
 
+def returned() -> bool:
+    """Whether the eMMC took the card's changes at a return and no sync wrote a generation since."""
+    return isinstance(_state.stored.get("emmc_return"), dict)
+
+
+async def _scheduled_sync(trigger: str) -> None:
+    """A scheduled sync; after the return with the card's changes, until one wrote, the sync ``return``: a
+    new generation without the Docker data that the card's run loaded (ADR-0471)."""
+    if returned():
+        await _run_sync("return", force=True, clean_docker=True)
+    else:
+        await _run_sync(trigger)
+
+
 async def _due_sync() -> None:
     if not _state.start_synced:
         _state.start_synced = True
-        await _run_sync("start")
+        await _scheduled_sync("start")
         return
     if _state.change_at is not None and _monotonic() - _state.change_at >= CHANGE_WAIT_SECONDS:
         _state.change_at = None
-        await _run_sync("change")
+        await _scheduled_sync("change")
         return
     zone = await asyncio.to_thread(_host_zone)
     due, slot, _ = _daily_due(utc_now(), zone)
     if due:
         _state.daily_slot = utc_text(slot.astimezone(UTC))
-        await _run_sync("daily")
+        await _scheduled_sync("daily")
 
 
 # --- the problems ----------------------------------------------------------------------------------
@@ -702,6 +756,7 @@ async def status() -> StandbyStatus:
         switch_ready=switch_ready(),
         problems=[StandbyProblem(kind=problem.kind, severity=problem.severity) for problem in _found(critical).values()],
         apps=await asyncio.to_thread(_apps_status, critical or {}),
+        emmc_return=_emmc_return() if state.root == "card" else None,
         space=await asyncio.to_thread(_space) if state.card_present else None,
     )
 
@@ -723,9 +778,28 @@ def _apps_status(critical: dict[str, Any]) -> list[StandbyAppStatus]:
             synced_at=record.get("synced_at"), mib_per_sync=round(sum(recent) / len(recent), 1) if recent else None,
             data_bytes=sizes.get("data"), images_bytes=sizes.get("images"), error=record.get("error"),
             moved=StandbyAppMove(at=moved.get("at", ""), reason=moved.get("reason", ""), pool=moved.get("pool", ""),
-                                 has_copy=bool(moved.get("copy"))) if moved else None,
+                                 has_copy=bool(moved.get("copy")),
+                                 return_failed=_return_failure(moved.get("returning")),
+                                 copy_started=standby_apps.copy_started(moved)) if moved else None,
             return_blocked=standby_apps.pool_unfit(str(moved.get("pool"))) if moved else None))
     return shown
+
+
+def _emmc_return() -> StandbyEmmcReturn:
+    check = _state.emmc_check or {}
+    failed = _state.emmc_return_failed
+    return StandbyEmmcReturn(offered=bool(check.get("ok")) and not _state.emmc_returning, detail=check.get("detail"),
+                             device=check.get("device"), checked_at=check.get("at"),
+                             failed=StandbyEmmcFailure.model_validate(failed) if failed else None,
+                             running=_state.emmc_returning)
+
+
+def _return_failure(value: Any) -> StandbyReturnFailure | None:
+    """The record of a pool return that failed; None when none did (or one runs now)."""
+    if not isinstance(value, dict) or not value.get("error"):
+        return None
+    return StandbyReturnFailure(at=str(value.get("at") or ""), step=value.get("step"), error=str(value.get("error")),
+                                backup=value.get("backup"))
 
 
 def _space() -> StandbySpace | None:
@@ -949,11 +1023,41 @@ def _return_plan(dry_run: bool) -> list[str]:
     return ops.plan
 
 
-async def return_to_emmc(*, dry_run: bool, request: Request, username: str) -> StandbyAction:
+async def check_emmc() -> dict[str, Any]:
+    """On the card's root: check the eMMC for the return (system.sd-standby-failback), and keep the result."""
+    from . import emmc_return
+
+    found = await asyncio.to_thread(emmc_return.check)
+    _state.emmc_check = found.as_record()
+    if not found.ok:
+        logger.warning("The return to the eMMC is not offered: %s", found.detail)
+    return _state.emmc_check
+
+
+NO_RETURN = "The card stays the system disk, and no standby is left"
+
+
+def refuse_while_returning() -> None:
+    """409 for an action that changes the card's state while a return to the eMMC runs: its unit stops at a
+    state.json that changed after the supervisor read it, and Docker is down meanwhile."""
+    if _state.emmc_returning:
+        raise HTTPException(409, detail="A return to the eMMC runs: UNOS stops for its copy, then the NAS reboots")
+
+
+async def return_to_emmc(*, discard: bool = False, dry_run: bool, request: Request, username: str) -> StandbyAction:
+    """On the card's root, once the eMMC passed its check: the return with the card's changes, or with
+    ``discard`` the reboot to the eMMC as it was (its system then offers to discard the card's changes)."""
     _refuse_locally()
     async with _lock:
         if _state.root != "card":
             raise HTTPException(409, detail="UNOS does not run from the standby")
+        refuse_while_returning()
+        check = await check_emmc()
+        if not check["ok"]:
+            raise HTTPException(409, detail=f"{check['detail']}. {NO_RETURN}: UNOS keeps running from the card")
+        if not discard:
+            return await _return_with_changes(dry_run=dry_run, request=request, username=username,
+                                              device=str(check["device"]))
         try:
             plan = await asyncio.to_thread(_return_plan, dry_run)
         except StandbyError as e:
@@ -962,12 +1066,62 @@ async def return_to_emmc(*, dry_run: bool, request: Request, username: str) -> S
             raise _http(e) from None
         if dry_run:
             return StandbyAction(dry_run=True, plan=[*plan, "systemctl reboot"], message="Return to the eMMC: a dry run")
-        logger.warning("SD standby: the return to the eMMC, the host reboots")
+        logger.warning("SD standby: the return to the eMMC without the card's changes, the host reboots")
         await _audit(AuditAction.STANDBY_RETURNED, request, username,
-                     "Return to the eMMC: the mark and the drill removed, the tries counter at 0; the host reboots",
-                     severity=AuditSeverity.WARNING)
+                     "Return to the eMMC without the card's changes: the mark and the drill removed, the tries "
+                     "counter at 0; the host reboots", severity=AuditSeverity.WARNING)
         _reboot_soon()
     return StandbyAction(dry_run=False, plan=[], message="Return to the eMMC: the host reboots now")
+
+
+def _counter_sector(ops: StandbyHost) -> int:
+    facts = conditions.Facts()
+    conditions._read_profile(ops, facts)
+    if facts.profile is None:
+        raise StandbyRefused(f"The board's profile cannot be read: {facts.profile_detail}")
+    return facts.profile.counter_sector
+
+
+def _emmc_plan(device: str, username: str) -> Any:
+    from . import emmc_return
+
+    ops = StandbyHost()
+    return emmc_return.plan(device=device, card_device=_state.card_device or "", sector=_counter_sector(ops),
+                            generation=_state.current[0] if _state.current else None, username=username, ops=ops)
+
+
+async def _return_with_changes(*, dry_run: bool, request: Request, username: str, device: str) -> StandbyAction:
+    """The return with the card's changes (system.sd-standby-failback): its unit's files staged in the host's
+    RAM and the unit started, which stops UNOS, copies the card's system to the eMMC and reboots to it."""
+    from . import emmc_return
+
+    try:
+        found = await asyncio.to_thread(_emmc_plan, device, username)
+    except StandbyError as e:
+        raise _http(e) from None
+    if dry_run:
+        return StandbyAction(dry_run=True, plan=found.lines,
+                             message="Return to the eMMC with the card's changes: a dry run")
+    if await asyncio.to_thread(emmc_return.unit_runs):
+        raise HTTPException(409, detail="A return to the eMMC runs already")
+    try:
+        await asyncio.to_thread(emmc_return.stage, found)
+    except StandbyError as e:
+        logger.error("The return to the eMMC did not start: %s", e)
+        await _audit(AuditAction.STANDBY_RETURNED, request, username, f"Failed: {e}", success=False)
+        raise _http(e) from None
+    _state.emmc_return_failed = None
+    _state.emmc_returning = True
+    _spawn(_follow_return())
+    logger.warning("SD standby: the return to the eMMC with the card's changes runs in the unit %s; the host "
+                   "reboots after it", emmc_return.UNIT)
+    # The unit waits a few seconds before it stops Docker: this entry is written, and copied to the eMMC.
+    await _audit(AuditAction.STANDBY_RETURNED, request, username,
+                 f"Return to the eMMC {device} with the card's changes: UNOS stops, the unit {emmc_return.UNIT} "
+                 "copies the card's system and UNOS's volumes, then the host reboots to the eMMC",
+                 severity=AuditSeverity.WARNING)
+    return StandbyAction(dry_run=False, plan=[], message=(
+        "Return to the eMMC: UNOS stops now, the card's changes are copied to the eMMC, and the NAS reboots to it"))
 
 
 async def discard(model: str, *, dry_run: bool, request: Request, username: str) -> StandbyAction:
@@ -1174,13 +1328,104 @@ async def _start_apps_on_standby() -> None:
         logger.exception("The critical apps could not be started on the SD standby")
 
 
+async def _alert(kind: str, title: str, message: str) -> None:
+    event = NotificationEvent.model_validate({"type": kind, "title": title, "message": message,
+                                              "timestamp": utc_text(utc_now())})
+    try:
+        await importlib.import_module("..health.router", __package__)._deliver_alert(event)
+    except Exception:
+        logger.exception("The SD standby's alert could not be sent")
+
+
+_tasks: set[asyncio.Task] = set()
+FOLLOW_SECONDS = 3
+
+
+def _spawn(coroutine: Any) -> None:
+    task = asyncio.create_task(coroutine, name="unos-standby-return")
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+async def _record_return_result(result: dict[str, str]) -> None:
+    """How a return to the eMMC's unit ended without rebooting: recorded, audited and alerted; its folder goes."""
+    from . import emmc_return
+
+    _state.emmc_returning = False
+    if result["outcome"] == "failed":
+        step = result["step"] or None
+        _state.emmc_return_failed = {"at": utc_text(utc_now()), "step": step, "message": result["message"]}
+        text = (f"The return to the eMMC failed{f' at its step {step}' if step else ''}: {result['message']}. UNOS runs "
+                "from the SD standby's card.")
+        logger.error("%s", text)
+        await _audit(AuditAction.STANDBY_RETURNED, None, "system", text, success=False, severity=AuditSeverity.WARNING)
+        await _alert("error", "The return to the eMMC failed", text)
+    await asyncio.to_thread(emmc_return.forget_result)
+
+
+async def _follow_return() -> None:
+    """While this supervisor runs, the return's unit is followed: a unit that fails before it stops Docker (its
+    check of the eMMC, say) is recorded at once; one that stops Docker stops this supervisor, and the next start
+    records it (on_card_start)."""
+    from . import emmc_return
+
+    while True:
+        await asyncio.sleep(FOLLOW_SECONDS)
+        try:
+            result = await asyncio.to_thread(emmc_return.read_result)
+            if result is None and not await asyncio.to_thread(emmc_return.unit_runs):
+                result = await asyncio.to_thread(emmc_return.read_result) or {
+                    "outcome": "failed", "step": "", "message": f"The unit {emmc_return.UNIT} ended without a result: "
+                    f"journalctl -u {emmc_return.UNIT} says why"}
+            if result is not None:
+                await _record_return_result(result)
+                return
+        except Exception:
+            logger.exception("The return to the eMMC could not be followed")
+            _state.emmc_returning = False
+            return
+
+
+async def on_card_start() -> None:
+    """On the card's root, at the supervisor's start: a return to the eMMC that failed in this boot is
+    recorded (its unit's result), a record of one that did not end is dropped, and the eMMC is checked."""
+    from . import emmc_return
+
+    if _state.stored.get("emmc_return") is not None:
+        await asyncio.to_thread(merge_stored, {}, ("emmc_return",))
+    result = await asyncio.to_thread(emmc_return.read_result)
+    if result is not None:
+        await _record_return_result(result)
+    await check_emmc()
+
+
+async def on_emmc_after_return() -> None:
+    """On the eMMC's system after the return with the card's changes: alerted once; the next sync writes a
+    new generation and empties the copy's Docker data (``_due_sync``)."""
+    record = _state.stored.get("emmc_return")
+    if _state.root != "emmc" or not isinstance(record, dict) or record.get("announced"):
+        return
+    text = ("UNOS runs from the eMMC again, with the changes made on the SD standby's card; the next sync writes a "
+            "new generation of the standby.")
+    logger.info("%s", text)
+    await _audit(AuditAction.STANDBY_RETURNED, None, "system", text)
+    await _alert("success", "UNOS is back on the eMMC", text)
+    try:
+        await asyncio.to_thread(merge_stored, {"emmc_return": {**record, "announced": True}})
+    except StandbyError as e:
+        logger.warning("The SD standby's state.json could not record the return's alert: %s", e)
+
+
 async def standby_loop() -> None:
     try:
         await asyncio.to_thread(refresh)
         await _on_start()
+        await on_emmc_after_return()
         await update_problems()
         if _state.root == "card" and _state.card_present:
             await _start_apps_on_standby()
+            # The eMMC's check may take minutes: the loop's passes do not wait for it.
+            _spawn(on_card_start())
     except Exception:
         logger.exception("SD standby error")
     passes = 0
@@ -1222,6 +1467,7 @@ async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dr
     from . import apps as standby_apps
 
     _refuse_locally()
+    refuse_while_returning()
     if not (_state.armed or _state.root == "card") or not _state.card_present:
         raise HTTPException(409, detail="The standby is not set up, or its card is not in its slot")
     critical = await standby_apps.marks()
@@ -1246,16 +1492,20 @@ async def move_apps(reason: Literal["drill", "planned"], pool: str | None, *, dr
     return moved
 
 
-async def return_apps(apps: list[str] | None, model: str, *, dry_run: bool, request: Request,
-                      username: str) -> list[str]:
-    """The discarding return of the apps that run from the card, after the card's model was typed."""
+async def return_apps(apps: list[str] | None, model: str, *, discard: bool = False, dry_run: bool, request: Request,
+                      username: str) -> list[Any]:
+    """The return of the apps that run from the card to their pool: with the card's changes (the pool return,
+    system.sd-standby-failback), or, after the card's model was typed, discarding them."""
     from . import apps as standby_apps
+    from . import failback
 
     _refuse_locally()
-    stored_card = _state.stored.get("card") or {}
-    if not model.strip() or model.strip() != str(stored_card.get("model") or "").strip():
-        raise HTTPException(409, detail=f"Type the card's model, {stored_card.get('model')}, to return the apps and "
-                                        "discard the card's changes")
+    refuse_while_returning()
+    if discard:
+        stored_card = _state.stored.get("card") or {}
+        if not model.strip() or model.strip() != str(stored_card.get("model") or "").strip():
+            raise HTTPException(409, detail=f"Type the card's model, {stored_card.get('model')}, to return the apps and "
+                                            "discard the card's changes")
     moved = sorted(app for app, record in standby_apps.stored_apps().items()
                    if isinstance(record.get("failed_over"), dict))
     if apps is not None and (not apps or set(apps) - set(moved)):
@@ -1269,5 +1519,6 @@ async def return_apps(apps: list[str] | None, model: str, *, dry_run: bool, requ
         if not apps:
             raise HTTPException(409, detail="No app that runs from the card can return: " + "; ".join(
                 f"{app}: {why}" for app, why in blocked.items()) if blocked else "No app runs from the card")
-    chosen = apps
-    return await standby_apps.return_apps(chosen, request=request, username=username, dry_run=dry_run)
+    if discard:
+        return await standby_apps.return_apps(apps, request=request, username=username, dry_run=dry_run)
+    return await failback.return_apps(apps, request=request, username=username, dry_run=dry_run)

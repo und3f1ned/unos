@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		armStandby,
+		discardCriticalApps,
 		discardStandby,
 		moveCriticalApps,
 		removeStandby,
@@ -165,10 +166,13 @@
 		}, 'standby.drill.failed');
 	}
 
+	// On the card: the return to the eMMC with the card's changes, or without them; the eMMC's check again
+	// (a dry run of the return) (system.sd-standby-failback).
 	async function returnBack() {
 		const asked = await confirm({
 			title: $t('standby.return.title'),
 			message: $t('standby.return.message'),
+			consequences: [$t('standby.return.consequence'), $t('standby.return.apps')],
 			confirmLabel: $t('standby.return.confirm'),
 			tone: 'warning'
 		});
@@ -177,6 +181,27 @@
 			await returnToEmmc();
 			return $t('standby.return.started');
 		}, 'standby.return.failed');
+	}
+
+	async function returnDiscarding() {
+		const asked = await confirm({
+			title: $t('standby.returnDiscard.title'),
+			message: $t('standby.returnDiscard.message'),
+			confirmLabel: $t('standby.returnDiscard.confirm'),
+			tone: 'warning'
+		});
+		if (!asked) return;
+		await act(async () => {
+			await returnToEmmc({ discard: true });
+			return $t('standby.returnDiscard.started');
+		}, 'standby.return.failed');
+	}
+
+	async function checkEmmc() {
+		await act(async () => {
+			await returnToEmmc({ dryRun: true });
+			return $t('standby.emmc.checkPassed');
+		}, 'standby.emmc.checkFailed');
 	}
 
 	async function discard() {
@@ -211,18 +236,50 @@
 		}, 'standby.apps.moveFailed');
 	}
 
+	// The pool return (system.sd-standby-failback): its dry run first, for the MiB the copy writes.
 	async function returnApps() {
-		const model = card?.model ?? '';
+		busy = true;
+		let mib: number;
+		try {
+			const planned = await returnCriticalApps(true);
+			mib = planned.apps.reduce((sum, app) => sum + (app.mib ?? 0), 0);
+		} catch (e) {
+			toast.error(messageOf(e), { title: $t('standby.apps.returnFailed') });
+			busy = false;
+			await reload();
+			return;
+		}
+		busy = false;
 		const asked = await confirm({
 			title: $t('standby.apps.returnTitle'),
 			message: $t('standby.apps.returnMessage'),
+			consequences: [
+				$t('standby.apps.returnMib', { size: formatSize(mib * 1024 * 1024, $intlLocale, $t) }),
+				$t('standby.apps.returnBackup'),
+				$t('standby.apps.returnLeft')
+			],
 			confirmLabel: $t('standby.apps.returnConfirm'),
+			tone: 'warning'
+		});
+		if (!asked) return;
+		await act(async () => {
+			const answer = await returnCriticalApps();
+			return $t('standby.apps.returned', { n: answer.apps.length });
+		}, 'standby.apps.returnFailed');
+	}
+
+	async function discardApps() {
+		const model = card?.model ?? '';
+		const asked = await confirm({
+			title: $t('standby.apps.discardTitle'),
+			message: $t('standby.apps.discardMessage'),
+			confirmLabel: $t('standby.apps.discardConfirm'),
 			typeToConfirm: model,
 			focusCancel: true
 		});
 		if (!asked) return;
 		await act(async () => {
-			const answer = await returnCriticalApps(model);
+			const answer = await discardCriticalApps(model);
 			return $t('standby.apps.returned', { n: answer.apps.length });
 		}, 'standby.apps.returnFailed');
 	}
@@ -303,8 +360,17 @@
 
 		{#if status.armed}
 			<StandbyStatusCard {status} {zone} {syncing} {savingTime} onsync={syncNow} onsavetime={saveTime} />
-			<StandbyDrillsCard {status} {busy} ondrill={drill} onreturn={returnBack} ondiscard={discard} />
-			<StandbyAppsCard {status} {zone} {busy} onmove={moveApps} onreturn={returnApps} />
+			<StandbyDrillsCard
+				{status}
+				{zone}
+				{busy}
+				ondrill={drill}
+				onreturn={returnBack}
+				onreturndiscard={returnDiscarding}
+				oncheck={checkEmmc}
+				ondiscard={discard}
+			/>
+			<StandbyAppsCard {status} {zone} {busy} onmove={moveApps} onreturn={returnApps} ondiscard={discardApps} />
 			{#if status.root !== 'card'}
 				{@render removeCard()}
 			{/if}

@@ -6,24 +6,34 @@
 	import { formatDateTime } from '$lib/time';
 
 	// The card's space by part and the critical apps of the SD standby (ADR-0500): each app's interval,
-	// its copy and whether it runs from the card; Move the critical apps to the card (a drill) and
-	// Return to the pool, discarding the card's changes, which the page asks first. An app moved for a
-	// repair of its pool is offered back once the pool is mounted again (its return_blocked is null).
+	// its copy and whether it runs from the card; Move the critical apps to the card (a drill), and the
+	// way back (system.sd-standby-failback): Return to the pool with what the apps changed on the card,
+	// or, as the other choice, discarding it; the page asks first. An app moved for a repair of its pool
+	// is offered back once the pool is mounted again (its return_blocked is null).
 	type Props = {
 		status: StandbyStatus;
 		zone: string | undefined;
 		busy: boolean;
 		onmove: () => void;
 		onreturn: () => void;
+		ondiscard: () => void;
 	};
 
-	let { status, zone, busy, onmove, onreturn }: Props = $props();
+	let { status, zone, busy, onmove, onreturn, ondiscard }: Props = $props();
 
 	const size = (bytes: number | null | undefined) => (bytes == null ? '—' : formatSize(bytes, $intlLocale, $t));
 	const space = $derived(status.space);
 	const moved = $derived(status.apps.filter((app) => app.moved));
 	const returnable = $derived(moved.filter((app) => app.return_blocked === null));
+	// Once a return with the card's changes began to copy an app, only that return is offered for it.
+	const discardable = $derived(returnable.length > 0 && returnable.every((app) => !app.moved?.copy_started));
 	const movable = $derived(status.apps.filter((app) => !app.moved));
+	const STEPS: Record<string, string> = {
+		stop: 'standby.apps.step.stop',
+		copy: 'standby.apps.step.copy',
+		containers: 'standby.apps.step.containers',
+		record: 'standby.apps.step.record'
+	};
 	const REASONS: Record<string, string> = {
 		pool_failed: 'standby.apps.reason.pool_failed',
 		pool_read_only: 'standby.apps.reason.pool_read_only',
@@ -91,6 +101,14 @@
 							{#if app.return_blocked}
 								<p class="text-sm text-secondary">{$t('standby.apps.blocked', { why: app.return_blocked })}</p>
 							{/if}
+							{#if app.moved.return_failed}
+								<p class="text-sm text-status-error break-words" data-testid="standby-app-return-failed">
+									{$t('standby.apps.returnFailedAt', {
+										step: $t(STEPS[app.moved.return_failed.step ?? ''] ?? 'standby.apps.step.other'),
+										error: app.moved.return_failed.error ?? ''
+									})}
+								</p>
+							{/if}
 						{/if}
 						{#if app.error}
 							<p class="text-sm text-status-error break-words">{$t('standby.apps.error', { error: app.error })}</p>
@@ -109,9 +127,14 @@
 				<Button variant="secondary" disabled={busy} onclick={onmove}>{$t('standby.apps.move')}</Button>
 			{/if}
 			{#if returnable.length > 0}
-				<Button variant="warning" disabled={busy} onclick={onreturn}>
+				<Button variant="primary" disabled={busy} onclick={onreturn}>
 					{$t('standby.apps.return', { n: returnable.length })}
 				</Button>
+				{#if discardable}
+					<Button variant="secondary" disabled={busy} onclick={ondiscard}>
+						{$t('standby.apps.discard', { n: returnable.length })}
+					</Button>
+				{/if}
 			{/if}
 		</div>
 		<HelpText class="mt-3" text={$t('standby.apps.help')} />

@@ -640,13 +640,14 @@ class TestTheMovesOfTheStandbyTab:
             moved = api.post("/api/v1/system/standby/apps/move", json={"reason": "drill"})
             status = api.get("/api/v1/system/standby").json()
         assert moved.status_code == 200, moved.text
-        assert moved.json()["apps"] == [{"app": "jellyfin", "has_copy": True, "age": "0 h", "error": None}]
+        assert moved.json()["apps"] == [{"app": "jellyfin", "has_copy": True, "age": "0 h", "error": None, "mib": None,
+                                         "backup": None}]
         assert [(a["app"], a["moved"]["reason"], a["return_blocked"]) for a in status["apps"]] == [("jellyfin", "drill", None)]
         # What the app changed on the card is discarded by the return.
         standby.files[f"{CARD_DIR}/@app-jellyfin-run/data/config/new.xml"] = "card only"
         with Client() as api:
-            wrong = api.post("/api/v1/system/standby/apps/return", json={"model": "nope"})
-            back = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G"})
+            wrong = api.post("/api/v1/system/standby/apps/return", json={"model": "nope", "discard": True})
+            back = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G", "discard": True})
         assert wrong.status_code == 409
         assert back.status_code == 200, back.text
         assert binds(docker, "jellyfin")["/config"] == (f"{FOLDER}/config", False)
@@ -665,7 +666,7 @@ class TestTheMovesOfTheStandbyTab:
         run(standby_apps.move(["jellyfin"], "drill", request=None, username="admin"))
         pools["usb"] = pool_info(mounted=False, health="unmounted", mountpoint=None)
         with Client() as api:
-            answer = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G"})
+            answer = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G", "discard": True})
             status = api.get("/api/v1/system/standby").json()
         assert answer.status_code == 409
         assert "the pool usb is not mounted" in answer.json()["detail"]
@@ -678,7 +679,7 @@ class TestTheMovesOfTheStandbyTab:
         del standby.files[f"{POOL}/media/film.mkv"]
         standby.dirs.discard(f"{POOL}/media")
         with Client() as api:
-            answer = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G"})
+            answer = api.post("/api/v1/system/standby/apps/return", json={"model": "SC32G", "discard": True})
         assert answer.status_code == 409 and f"{POOL}/media is not there" in answer.json()["detail"]
         # Nothing changed: the app runs from the card.
         assert binds(docker, "jellyfin")["/config"][0] == f"{CARD_DIR}/@app-jellyfin-run/data/config"

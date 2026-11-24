@@ -3205,9 +3205,22 @@ or more, and rsync, dosfstools and sfdisk on the host.
   again and starts Docker. Before you unmount that pool by hand, stop it:
   `systemctl stop unos-standby-watch.service`.
 - **Drills** prove it: each makes the next boot take the card and reboots the
-  NAS at once. On the card, **Return to the eMMC** removes the mark and reboots
-  from the eMMC; the changes made on the card stay on the card. Back on the
-  eMMC, **Return through the standby** or **Discard the standby's changes**.
+  NAS at once.
+- On the card, **Return to the eMMC** brings UNOS back with the changes made
+  on the card (ADR-0501). It is offered only while the eMMC reads and its root
+  passes `fsck.ext4 -n`, checked when UNOS starts on the card and again with
+  **Check the eMMC again**; otherwise the tab says that the card stays the
+  system disk and that no standby is left. Confirmed, UNOS stops (shares and
+  apps too), the card's system and UNOS's data are copied to the eMMC (UNOS's
+  volumes into Docker's on the data pool, each file they replace kept beside
+  them in `volumes.before-failback-<time>`), the copy is checked, and the NAS
+  reboots to the eMMC; the next sync writes a new copy. Until the copy is
+  complete and checked the card stays bootable: a return that fails leaves
+  UNOS on the card, and the tab names the step that failed; a power cut during
+  it boots the card again. Critical apps that run from the card stay there until their
+  pool's return. **Return without the card's changes** reboots to the eMMC as
+  it was; back on the eMMC, **Return through the standby** or **Discard the
+  standby's changes**.
 - **Remove the standby** wipes the card and offers it as a free card again. A
   removal that stopped midway (a power cut) shows the standby as set up with
   its card missing: run **Remove the standby** again. Without the card in its
@@ -3242,14 +3255,22 @@ awake, and a sync that finds nothing changed writes nothing.
   critical app removes its mark and its copy on the card.
 - **System → SD Standby** shows the card's space by part and the critical apps;
   **Move the critical apps to the card** is a drill of the same (each app is
-  synced once more first), and **Return
-  to the pool, discarding the card's changes** (type the card's model) creates
-  the apps again on their pools once those are mounted and healthy: what the
-  apps changed on the card is lost.
+  synced once more first).
+- **Return to the pool** brings the apps back once their pool is mounted,
+  writable and healthy (ADR-0501): it first says how many MiB the copy writes,
+  then stops the apps, copies what they changed on the card into their folders
+  on the pool (not their caches or the copies updates keep), keeps every file it
+  replaces or deletes in `{pool}/apps/<app>.before-failback-<time>/`, and
+  creates their containers on the pool again. A return that fails names its
+  step, leaves the app stopped and its copy on the card as it was; run it
+  again. **Return, discarding the card's changes** (type the card's model)
+  creates the apps on their pools as before the move: what they changed on the
+  card is lost.
 - To repair a pool, unmount or remove it on the Storage page: when critical
   apps use it, the dialog offers to move them to the card first, and the
   unmount goes on unless another app still uses the pool. Once the pool is
-  mounted again, the SD Standby tab offers to bring the apps back.
+  mounted again, the SD Standby tab offers to bring the apps back, with what
+  they changed on the card meanwhile.
 - On the standby, only the critical apps are there, and the Apps page says so:
   each runs from its pool when that pool is mounted and healthy, else from its
   copy on the card, as last synced.

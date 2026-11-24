@@ -20,9 +20,9 @@ or at a manual move (the reason drill) or before a planned repair (the reason pl
 recreates the app's current containers on a writable snapshot ``@app-<app>-run`` of its generation:
 the binds under ``{pool}/apps/<app>/`` on its ``data/``, a cache on a tmpfs of 256 MiB, every other
 pool bind on an empty read-only folder of the card; those that ran start. ``state.json`` records it
-(``apps.<app>.failed_over``), and the problem ``apps_on_standby`` names the apps. The discarding
-return (``return_to_pool``) recreates the pool-bound containers from the definitions saved at the
-move and deletes the run copy. At every start, before the supervisor serves, ``reapply`` moves again
+(``apps.<app>.failed_over``), and the problem ``apps_on_standby`` names the apps. The pool return
+(``failback.py``) copies the card's changes back into the pool; the discarding return (``return_app``)
+recreates the pool-bound containers from the definitions saved at the move and deletes the run copy. At every start, before the supervisor serves, ``reapply`` moves again
 a pool-bound container of an app that state.json records as moved; on the standby's root
 ``start_on_standby`` loads the critical apps' images and creates their networks and containers.
 """
@@ -998,6 +998,13 @@ def _record_move(app: str, reason: str, pool: str, number: int | None, running: 
     update_app_record(app, lambda record: {**record, "pool": pool, "failed_over": entry})
 
 
+def copy_started(moved: dict[str, Any]) -> bool:
+    """Whether a pool return of the move ``moved`` got past the stop of the app: its copy may have written the
+    pool (system.sd-standby-failback)."""
+    returning = moved.get("returning")
+    return isinstance(returning, dict) and returning.get("step") != "stop"
+
+
 def _missing_pool_sources(ops: StandbyHost, defs: dict[str, Any]) -> list[str]:
     """The bind sources below the pools' folder that the host lacks: a container with one is never made."""
     missing = []
@@ -1030,6 +1037,9 @@ def return_app(app: str, *, dry_run: bool = False) -> None:
         why = pool_unfit(pool)
         if why:
             raise StandbyAppsError(f"{app} cannot return: {why}")
+        if copy_started(moved):
+            raise StandbyAppsError(f"A return with the card's changes began to copy {app} to its pool: return it with "
+                                   "the card's changes again; discarding them now would start it on a mix of both")
         ops = StandbyHost(dry_run=dry_run)
         run = run_path(app)
         text = ops.read_file(f"{run}/{DEFINITIONS}") if moved.get("copy") else None
@@ -1127,7 +1137,47 @@ def reapply(critical: set[str]) -> list[str]:
             done.append(app)
         except Exception:
             logger.exception("The move of %s to the SD standby could not be applied again", app)
+    for app, record in stored_apps().items():
+        if app in critical and not isinstance(record.get("failed_over"), dict):
+            try:
+                if _returned_elsewhere(app, record):
+                    done.append(app)
+            except Exception:
+                logger.exception("The return of %s to its pool could not be applied", app)
     return done
+
+
+def _returned_elsewhere(app: str, record: dict[str, Any]) -> bool:
+    """An app whose containers this Docker holds on the card while state.json records no move: it returned to
+    its pool on the other system (the standby's root returned it, then UNOS came back to the eMMC), and its
+    run copy is gone. Its pool-bound containers are created again from its copy's definitions, those that
+    ran started, once its pool can take it (system.sd-standby-failback). Whether it did."""
+    from ..apps import stacks
+
+    client = _client()
+    with stacks.app_lock(app, app):
+        group = installed(client, app)
+        found = list(group.containers) if group is not None else []
+        if not found or not all(bound_to_card(c) for c in found):
+            return False
+        number = record.get("generation")
+        ops = StandbyHost()
+        text = ops.read_file(f"{generation_path(app, number)}/{DEFINITIONS}") if isinstance(number, int) else None
+        if text is None:
+            logger.error("%s runs from the card without a record of its move, and its copy has no definitions", app)
+            return False
+        defs = json.loads(text)
+        pool = str(defs.get("pool") or "")
+        why = pool_unfit(pool) if pool else "it keeps no data on a pool"
+        missing = _missing_pool_sources(ops, defs)
+        if why or missing:
+            logger.error("%s returned to its pool elsewhere but cannot here: %s", app, why or ", ".join(missing))
+            return False
+        running = {c.name for c in found if _should_run(c.attrs or {})}
+        _remove_containers(group)
+        _recreate(client, app, defs, card=False, running=running)
+    logger.warning("%s returned to its pool on the other system: its containers were created on the pool again", app)
+    return True
 
 
 def start_on_standby(critical: set[str]) -> list[str]:
@@ -1225,7 +1275,7 @@ async def _on_pools_read(pools: list[Any], managed: set[str] | None, changing: f
     global _passed
     service = _service()
     if host.runs_locally() or not (service._state.armed or service._state.root == "card") \
-            or not service._state.card_present:
+            or not service._state.card_present or service._state.emmc_returning:
         return
     _passed = True
     critical = await marks()
@@ -1444,7 +1494,7 @@ def problems_found(critical: dict[str, Mark]) -> list[tuple[str, str, str, str, 
         found.append(("apps_on_standby", "error", ", ".join(sorted(moved)), "Critical apps run from the SD standby",
                       f"These apps run from the SD standby's card since their pool failed or they were moved: "
                       f"{', '.join(parts)}. Changes made now are on the card only; System > Standby returns them to "
-                      "their pool, discarding the card's changes."))
+                      "their pool with the card's changes."))
     now = utc_now()
     for app, mark in sorted(critical.items()):
         # Until the first pass of the RAID monitor since the start, whose check of each app is kept in RAM.
