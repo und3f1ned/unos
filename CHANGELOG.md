@@ -42,11 +42,13 @@ manager, encrypted backup uploads, health checks, CI checks).
   unit marks it and reboots to the card. There UNOS starts from the copy, says why on the banner
   and refuses app installs, updates and uninstalls. Drills (mark, an unreadable eMMC, a missing
   root) and the ways back (Return to the eMMC, Return through the standby, Discard the standby's
-  changes) are on the tab; **Remove the standby** wipes the card and leaves nothing of it on the
-  eMMC. The card is in no list of disks, pools or off-device copy targets. Every action has a dry
+  changes) are on the tab; **Remove the standby** wipes the card first and then leaves nothing of it
+  on the eMMC (a Remove that stopped shows as set up and runs again; without the card in its slot
+  it keeps the unit that sets the card's counter back, ADR-0490). The card is in no list of disks, pools or off-device copy targets. Every action has a dry
   run (`"dry_run": true`) that answers the host's commands; the problems `standby_sync_failed`,
   `standby_copy_old`, `standby_card_missing`, `standby_not_in_boot_path` (from the first boot after
-  the setup), `running_on_standby` and `standby_has_changes` reach the channels and the banner.
+  the setup), `running_on_standby`, `standby_has_changes` and `standby_leftover` (a boot through the
+  chooser of a card whose standby is not set up) reach the channels and the banner.
   Elsewhere the tab names the unmet conditions. `/api/v1/system/standby`; `install.sh` installs
   rsync, dosfstools and fdisk (ADR-0471, ADR-0481, ADR-0488).
 - **The SD standby on the BPI-F3** (SpacemiT K1): its card gets SpacemiT's official SD layout,

@@ -48,7 +48,8 @@ export interface StandbyStatus {
 	conditions: StandbyCondition[];
 	profile: string | null;
 	armed: boolean;
-	/** Not set up, but a card holds the standby's partitions: a setup that failed midway. */
+	/** Not set up, but a card holds the standby's partitions: a setup that stopped midway, or a card that was
+	 * not in its slot when the standby was removed. */
 	leftover: boolean;
 	card: StandbyCardInfo | null;
 	card_present: boolean | null;

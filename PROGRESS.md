@@ -825,6 +825,28 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-24: A stopped Remove of the SD standby leaves no chooser that counts boots (system.sd-standby-remove-interrupted, ADR-0490)
+
+- On the branch `system.sd-standby-remove-interrupted` from origin/main 80fe1f51, at the lead's brief.
+  Cause of the defect recorded the same day: Remove dropped UNOS's fstab lines and took away the
+  eMMC's units before it wiped the card, so a Remove that stopped in between left a card whose
+  chooser ran at every boot; with nothing to set the counter back, three boots of the eMMC counted
+  1, 2 and 3, and the fourth and every later one started the card's root, an old copy of the system,
+  with `unos.reason=tries`. Set up (the chooser before the units), a sync (a missing chooser before
+  missing units) and a Remove without the card (the card back later) had the same window.
+- Fixed (ADR-0490): Remove unmounts and wipes the card first, then takes away the units, the mount
+  points and the folders, and drops UNOS's fstab lines last, so that a Remove that stopped shows as
+  set up with its card missing and runs again to its end; a failed Remove reads the state again, so
+  that the tab offers that Remove without a model to type. Set up writes the chooser after it enabled
+  the units, a sync writes and enables missing units (and a disabled boot-ok unit) before the chooser,
+  Remove with no SD card in the slot keeps the boot-ok unit for the card that may come back, and a
+  boot through the chooser of a card whose standby is not set up here is the error `standby_leftover`.
+- Tests stop Set up and Remove on the fake W3 and F3, and a sync on the W3, before each of their
+  changes (`supervisor/tests/standby_fake.py`) and run Remove again; all but three (the second
+  Remove's and the leftover's two negative cases) failed on the code before. A fresh-context review
+  found six gaps, all fixed (the ledger entry's notes). The device check, for the lead after the
+  batch's deploy, is in the ledger entry; until it passes the entry stays `passes: false`.
+
 ### 2026-11-24: The SD standby passes on the BPI-W3 and the BPI-F3 (system.sd-standby-boot, system.sd-standby-bpi-f3)
 
 - The last step of both entries, at the owner's hands: both cards pulled from the running boards, both

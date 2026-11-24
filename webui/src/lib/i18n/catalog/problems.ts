@@ -48,6 +48,8 @@ export const en = {
 	'problems.kind.standby_not_in_boot_path':
 		"This boot did not pass the SD standby's chooser on {subject}: an eMMC failure would not switch to the card",
 	'problems.kind.standby_has_changes': 'The SD standby {subject} ran and holds changes that the eMMC lacks',
+	'problems.kind.standby_leftover':
+		'The SD card {subject} holds a standby that is not set up, and its chooser counts the boots: remove it',
 	'problems.kind.running_on_standby': 'UNOS runs from the SD standby ({subject})',
 	// A kind that this web UI does not know yet.
 	'problems.kind.other': 'A problem with {subject}'
@@ -91,6 +93,8 @@ export const ru: Translation<typeof en> = {
 	'problems.kind.standby_not_in_boot_path':
 		'Эта загрузка прошла мимо выбора резерва на SD {subject}: при отказе eMMC переключения на карту не будет',
 	'problems.kind.standby_has_changes': 'Резерв на SD {subject} работал и хранит изменения, которых нет на eMMC',
+	'problems.kind.standby_leftover':
+		'На карте SD {subject} резерв, который не настроен, а его выбор загрузки считает загрузки: удалите его',
 	'problems.kind.running_on_standby': 'UNOS работает с резерва на SD ({subject})',
 	'problems.kind.other': 'Проблема: {subject}'
 };

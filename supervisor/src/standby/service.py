@@ -10,7 +10,8 @@ The system's copy is synced (``generation.sync``) at the supervisor's start, dai
 the Standby tab sets (04:00 host time by default), 10 minutes after the last audited change (each
 change restarts the wait) and at Sync now; never while UNOS runs from the card or after the standby
 ran. Problems of the source ``standby`` (ADR-0332): standby_sync_failed, standby_copy_old,
-standby_card_missing, standby_not_in_boot_path, running_on_standby and standby_has_changes.
+standby_card_missing, standby_not_in_boot_path, running_on_standby, standby_has_changes and standby_leftover
+(a boot through the chooser of a card whose standby is not set up here, ADR-0490).
 
 When the eMMC's monitor finds ``system_disk_failed`` and the standby is set up, in this boot's path
 and holds a complete generation, ``on_system_disk_failed`` stops a sync, writes the mark, alerts the
@@ -123,8 +124,8 @@ class StandbyStatus(BaseModel):
     profile: str | None = Field(description="The board's profile, such as BPI-W3; null when it has none.")
     armed: bool = Field(description="Whether the standby is set up (UNOS's lines in the host's fstab).")
     leftover: bool = Field(default=False, description=(
-        "Not set up, but a card holds the standby's partitions (a setup that failed midway): Remove the standby "
-        "wipes it."))
+        "Not set up, but a card holds the standby's partitions (a setup that stopped midway, a card that was not "
+        "in its slot when the standby was removed): Remove the standby wipes it."))
     card: StandbyCard | None = Field(description="The standby's card when set up, else the free card that would become it.")
     card_present: bool | None = Field(description="Whether the standby's card is in its slot and mounted; null when not set up.")
     in_boot_path: bool | None = Field(description=(
@@ -190,6 +191,8 @@ class _State:
     run_recorded_at: float | None = None
     # The result of the last sync that found nothing changed: in RAM only, as nothing was written.
     memory_sync: dict[str, Any] | None = None
+    # Not set up, but a card holds the standby's partitions: its device is card_device (ADR-0490).
+    leftover: bool = False
 
 
 _state = _State()
@@ -264,6 +267,18 @@ def booted_since_setup() -> bool:
     return _state.boot_id != armed
 
 
+def _read_leftover(state: _State) -> None:
+    """Whether a card holds the standby's partitions while the standby is not set up, and its device: at
+    the start, after each action and, while one is known, at each check of the card (ADR-0490)."""
+    left = None
+    if not host.runs_locally():
+        try:
+            left = next((item.path for item in conditions.read_cards() if conditions.is_standby_card(item)), None)
+        except Exception as e:  # lsblk or its reads: no leftover is known
+            logger.warning("The SD cards cannot be read for a leftover standby: %s", e)
+    state.leftover, state.card_device = left is not None, left
+
+
 def refresh() -> None:
     """Read the standby's state (blocking): at the start and after each action."""
     ops = StandbyHost()
@@ -276,12 +291,14 @@ def refresh() -> None:
     root = values.get("unos.root") if state.chooser else None
     state.root = root if root in ("emmc", "card") else None
     state.reason = values.get("unos.reason") or None
+    state.leftover = False
     if state.armed or state.root == "card":
         _refresh_card(ops, state)
     else:
         state.card_present, state.card_device, state.stored, state.current = None, None, {}, None
         state.marked = state.drill = False
         state.mark_reason = None
+        _read_leftover(state)
     if state.root == "card" and state.reason == "marked" and state.mark_reason:
         # The chooser took the card for the mark: the mark says why (a drill, a failed eMMC or pool).
         state.reason = state.mark_reason
@@ -479,11 +496,16 @@ def _found() -> dict[str, problems.Problem]:
             "made now are on the card only. System > Standby offers the return to the eMMC.", about=reason)
         return found
     if not state.armed:
+        if state.leftover and state.root == "emmc":
+            add("standby_leftover", "error", "An SD card holds a standby that is not set up",
+                "This boot passed the chooser of an SD card that holds a standby, but no standby is set up here. The "
+                "chooser counts every boot, and when nothing sets its counter back, the boot after the third starts "
+                "the card's old copy of the system. Remove the standby on System > Standby wipes the card.")
         return found
     if state.card_present is False:
         add("standby_card_missing", "error", "The SD standby's card is missing",
             "The standby is set up, but its card is not in its slot or not mounted: a failure of the eMMC has no "
-            "standby. Put the card back.")
+            "standby. Put the card back, or, after a Remove of the standby that stopped, Remove it again.")
     elif state.card_present and not state.chooser and booted_since_setup():
         add("standby_not_in_boot_path", "error", "The SD standby is not in the boot path",
             "This boot did not pass the card's chooser (unos.chooser=card is not on the kernel's command line): the "
@@ -659,6 +681,15 @@ async def remove(model: str, *, dry_run: bool, request: Request, username: str) 
             if isinstance(e, StandbyFailed):
                 logger.error("Removing the SD standby failed: %s", e)
                 await _audit(AuditAction.STANDBY_REMOVED, request, username, f"Failed: {e}", success=False)
+                if not dry_run:
+                    # The card may be unmounted or wiped by now: the state as the host has it, so that the
+                    # Standby tab offers the Remove that ends it (ADR-0490).
+                    _state.stored, _state.current, _state.last_complete_at = {}, None, None
+                    try:
+                        await asyncio.to_thread(refresh)
+                        await update_problems()
+                    except Exception:
+                        logger.exception("The SD standby's state could not be read after the failed Remove")
             raise _http(e) from None
         if dry_run:
             return StandbyAction(dry_run=True, plan=plan, message="Remove the standby: a dry run")
@@ -962,6 +993,8 @@ async def standby_loop() -> None:
         try:
             if passes and passes % CARD_CHECK_EVERY == 0 and (_state.armed or _state.root == "card"):
                 await asyncio.to_thread(_refresh_card, StandbyHost(), _state)
+            elif passes and passes % CARD_CHECK_EVERY == 0 and _state.leftover:
+                await asyncio.to_thread(_read_leftover, _state)
             await _correct_run_time()
             await _due_syncs()
             await update_problems()

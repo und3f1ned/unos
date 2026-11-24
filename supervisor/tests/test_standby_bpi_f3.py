@@ -27,7 +27,7 @@ from src.standby import bootscript, card, conditions, generation, profiles, serv
 from src.standby.hostops import BOOT_DIR, CARD_DIR
 from tests.standby_fake import (
     CARD_UUID, F3_APPEND, F3_CMDLINE_THROUGH_CHOOSER, F3_EXTLINUX, F3_LOADER_DIR, F3_SD_SIZE, SETUP_BOOT_ID,
-    StandbyFakeF3, install,
+    StandbyFakeF3, install, stopped_at_each_step,
 )
 from tests.uboot_fake import SECTOR, Board, run
 
@@ -205,7 +205,8 @@ class TestTheSetup:
             BOOT_INFO_WRITTEN,
         ]
         enabled = done.index("systemctl enable unos-standby-boot-ok.service unos-standby-watch.service")
-        assert done.index(f"write {BOOT_DIR}/boot.scr") < enabled < done.index(BOOT_INFO_CLEARED, 1)
+        # The chooser after the eMMC's units that set its counter back (ADR-0490).
+        assert enabled < done.index(f"write {BOOT_DIR}/boot.scr") < done.index(BOOT_INFO_CLEARED, 1)
         assert done[-1] == BOOT_INFO_WRITTEN
         # The UUIDs are read right after the filesystems are made, before the counter's write to the whole
         # card makes udev re-read its table.
@@ -408,6 +409,31 @@ class TestTheSync:
         assert not [cmd for cmd in done[:done.index(BOOT_INFO_CLEARED)] if "/dev/mmcblk0" in cmd]
         assert not [cmd for cmd in fake.changes if any("mmcblk2" in part for part in cmd)]
         assert fake.raw == {} and fake.sectors == {}
+
+    def test_a_setup_or_removal_stopped_at_any_step_leaves_no_chooser_without_its_reset(self, fake, monkeypatch):
+        """After three boots that count a try nothing resets, the fourth would boot the card's root (ADR-0490).
+        A second Remove ends one that stopped."""
+        def made() -> StandbyFakeF3:
+            return install(monkeypatch, StandbyFakeF3())
+
+        def prepared() -> StandbyFakeF3:
+            new = made()
+            card.prepare("SC64G", dry_run=False)
+            new.changes.clear()
+            return new
+
+        for stopped in stopped_at_each_step(made, lambda: card.prepare("SC64G", dry_run=False)):
+            assert not stopped.counts_tries_unanswered(), commands(stopped)
+        for stopped in stopped_at_each_step(prepared, lambda: card.remove("SC64G", dry_run=False, running_on_card=False)):
+            assert not stopped.counts_tries_unanswered(), commands(stopped)
+            install(monkeypatch, stopped)
+            left = [item for item in stopped.cards if conditions.is_standby_card(item)]
+            if card.is_armed(stopped.files["/etc/fstab"]) or left:
+                card.remove(left[0].model if left else "", dry_run=False, running_on_card=False)
+            assert not card.is_armed(stopped.files["/etc/fstab"]) and stopped.enabled == set()
+            # The boot info goes first of all: a stop anywhere later leaves none (ADR-0489).
+            assert stopped.raw == {} and conditions.card_refusal(stopped.cards[0]) is None
+            assert not stopped.counts_tries_unanswered()
 
     async def test_remove_clears_the_boot_info_first_also_when_the_board_cannot_be_read(self, fake):
         synced_once(fake)
