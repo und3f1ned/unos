@@ -1,14 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-11-23
 area: architecture
 decided-by: agent
 supersedes: [ADR-0468]
+superseded-by: ADR-0490
 ---
 
 # ADR-0478: The pages' slowest reads ask Docker only for the images they show and run the host reads that do not depend on each other at once
 
 ## Context
+
+Superseded by ADR-0490: the SMB reads start no Samba tool while passdb is unchanged, and the pool list leaves the SD standby's card out.
 
 ADR-0468 had the container list ask Docker for its list of every image, for the images' tags. On
 the BPI-W3 (Docker 29.9.3, containerd image store, 117 images, 104 of them untagged leftovers of

@@ -7,7 +7,7 @@
 	// Restart SMB, which closes every open SMB connection: the dialog says so first. Always
 	// mounted: the card asks with open().
 	type Props = {
-		/** The interfaces as the server reports them, with the open sessions; null before they are read. */
+		/** The interfaces as the server reports them, with the open connections; null before they are read. */
 		current: SmbInterfaces | null;
 		/** smbd restarted: the server's answer. */
 		onrestarted: (answer: SmbInterfaces) => void;

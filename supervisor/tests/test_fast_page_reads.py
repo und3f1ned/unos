@@ -24,12 +24,15 @@ from src.audit import router as audit_router
 from src.auth.utils import verify_token
 from src.containers import docker as docker_module
 from src.main import app
+from src.shares import accounts
 from src.storage import pools
 
 from .test_pool_persistence import MEDIA_UUID
 from .test_smb_integration import API, cycle, pool_cycle  # noqa: F401  (fixtures)
 from .test_smb_interfaces import IP, SMBD_RESET, SS, SmbdHost
 from .test_volumes import DATA_UUID, api, host  # noqa: F401  (fixtures)
+
+CARD_UUID = "8d2cd491-3763-4a27-af9f-e31a1991ec57"  # the SD standby's btrfs (UNOS-STANDBY)
 
 
 # --- Docker ----------------------------------------------------------------------------------------
@@ -469,32 +472,69 @@ def _get(c, path: str) -> dict | list:
     return response.json()
 
 
-def test_the_smb_interfaces_read_the_host_at_once(pool_cycle, overlap):  # noqa: F811  (fixtures)
-    """ip, ss and smbstatus: one command's time, not three (on the dev device 130 ms for the page)."""
+def test_the_smb_interfaces_read_the_host_at_once_without_smbstatus(pool_cycle, overlap):  # noqa: F811
+    """ip and ss, one command's time: the open connections are what ss prints with the listeners,
+    not smbstatus, which takes 75 to 165 ms on the dev device to start (ADR-0490)."""
     c = pool_cycle
-    recorder = overlap(SmbdHost(SimpleNamespace(run=host_module.run_on_host), c.conf).run)
+    smbd = SmbdHost(SimpleNamespace(run=host_module.run_on_host), c.conf)
+    recorder = overlap(smbd.run)
 
-    _get(c, "/shares/smb-interfaces")
+    state = _get(c, "/shares/smb-interfaces")
 
-    assert recorder.commands() == sorted([" ".join(IP[:3]), " ".join(SS[:3]), "smbstatus --json"])
+    assert state["sessions"] == smbd.sessions == 2
+    assert recorder.commands() == sorted([" ".join(IP[:3]), " ".join(SS[:3])])
     assert recorder.depth() == 1
     assert SMBD_RESET not in [cmd for _, _, cmd in recorder.spans]
 
 
+TOOL_CHECK = "/bin/sh -c for c do command -v -- \"$c\" >/dev/null 2>&1 || printf \"%s\\n\" \"$c\"; done"
+SMB_STATUS_READS = [TOOL_CHECK, "getent group unos-smb", "getent passwd", "getent group 70000",
+                    "cat -- /etc/fstab", " ".join(accounts.PASSDB_STAMP[:3])]
+
+
 def test_the_smb_status_reads_the_host_in_two_rounds(pool_cycle, overlap):  # noqa: F811  (fixtures)
-    """The Samba tools' check, the gid's group and the fstab, then the group, the accounts and
-    Samba's passdb: two commands' time instead of six."""
+    """The Samba tools' check, passdb.tdb's stat, the gid's group and the fstab, then the group, the
+    accounts and Samba's passdb: two commands' time instead of six."""
     c = pool_cycle
     recorder = overlap()
 
     status = _get(c, "/shares/smb-status")
 
     assert status["group_ok"] is True and status["samba_tools_missing"] == []
-    assert recorder.commands() == sorted([
-        "/bin/sh -c for c do command -v -- \"$c\" >/dev/null 2>&1 || printf \"%s\\n\" \"$c\"; done",
-        "getent group unos-smb", "getent passwd", "pdbedit -L", "getent group 70000", "cat -- /etc/fstab",
-    ])
+    assert recorder.commands() == sorted([*SMB_STATUS_READS, "pdbedit -L"])
     assert recorder.depth() == 2
+
+
+def test_the_smb_status_lists_samba_passdb_again_only_when_passdb_tdb_changed(pool_cycle, overlap):  # noqa: F811
+    """pdbedit starts in 50 to 165 ms on the dev device (ADR-0490): while passdb.tdb's stat is the
+    same, the status answers the names that pdbedit listed for it; a change of passdb lists them
+    again, and so does a passdb.tdb that changed within the last PASSDB_SETTLE seconds."""
+    c = pool_cycle
+    c.fake.add_passdb("bob")  # an entry made on the host by hand
+    assert _get(c, "/shares/smb-status")["unmanaged_samba_users"] == ["bob"]
+
+    recorder = overlap()
+    assert _get(c, "/shares/smb-status")["unmanaged_samba_users"] == ["bob"]
+    assert recorder.commands() == sorted(SMB_STATUS_READS)
+    assert recorder.depth() == 2
+
+    c.fake.add_passdb("carol")
+    assert _get(c, "/shares/smb-status")["unmanaged_samba_users"] == ["bob", "carol"]
+    assert c.fake.commands("pdbedit", "-L")[-1:] and recorder.commands().count("pdbedit -L") == 1
+
+    c.fake.passdb_changed_at = time.time()  # the stat may not tell the next change from this one
+    for expected in (1, 2):
+        assert _get(c, "/shares/smb-status")["unmanaged_samba_users"] == ["bob", "carol"]
+        assert recorder.commands().count("pdbedit -L") == 1 + expected
+
+
+def test_the_smb_status_lists_samba_passdb_each_time_without_its_stat(pool_cycle, overlap):  # noqa: F811
+    c = pool_cycle
+    c.fake.fail[tuple(accounts.PASSDB_STAMP[:2])] = (1, "stat: cannot statx: No such file or directory")
+    recorder = overlap()
+    for _ in range(2):
+        assert _get(c, "/shares/smb-status")["unmanaged_samba_users"] == []
+    assert recorder.commands().count("pdbedit -L") == 2
 
 
 def test_the_pool_list_reads_the_host_in_two_rounds(pool_cycle, overlap):  # noqa: F811  (fixtures)
@@ -516,6 +556,32 @@ def test_the_pool_list_reads_the_host_in_two_rounds(pool_cycle, overlap):  # noq
         + ["btrfs filesystem usage", "btrfs device stats"] * 2
     )
     assert recorder.depth() == 2
+
+
+def test_the_pool_list_leaves_the_sd_standbys_card_out_without_reading_its_disks(pool_cycle, overlap):  # noqa: F811
+    """The BPI-W3 with its SD standby: the card's btrfs (UNOS-STANDBY, ADR-0488) is no pool, so the
+    pool list does not check its devices with lsblk, findmnt, swapon and the kernel's command line,
+    a third round on the dev device (ADR-0490)."""
+    c = pool_cycle
+    c.pool_host.add_disk("mmcblk1", rota=False, size=31_914_983_424)
+    c.pool_host.add_partition("mmcblk1", "mmcblk1p1", fstype="vfat", label="UNOS-BOOT")
+    c.pool_host.add_partition("mmcblk1", "mmcblk1p2", fstype="btrfs", label="UNOS-STANDBY", uuid=CARD_UUID)
+    c.pool_host.add_btrfs("UNOS-STANDBY", CARD_UUID, ["/dev/mmcblk1p2"])
+    c.pool_host.add_mount("/mnt/.unos-standby/card", "/dev/mmcblk1p2", "btrfs", CARD_UUID)
+    recorder = overlap()
+
+    listed = _get(c, "/storage/pools")
+
+    assert [p["name"] for p in listed] == ["data"]
+    assert recorder.commands() == sorted(
+        ["btrfs filesystem show", "findmnt -J -l", "cat -- /etc/fstab", "btrfs filesystem usage", "btrfs device stats"])
+    assert recorder.depth() == 2
+    # Nor is it a pool by its name: no read, mount or unmount of it.
+    assert c.client.get(f"{API}/storage/pools/UNOS-STANDBY", headers=c.admin).status_code == 404
+    for action in ("mount", "unmount"):
+        response = c.client.post(f"{API}/storage/pools/UNOS-STANDBY/{action}", headers=c.admin)
+        assert response.status_code == 404, response.text
+    assert not [cmd for cmd in c.pool_host.calls if cmd[0] in ("mount", "umount")]
 
 
 def test_the_disk_list_reads_the_host_in_three_rounds(pool_cycle, overlap):  # noqa: F811  (fixtures)

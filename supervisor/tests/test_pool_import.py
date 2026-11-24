@@ -322,6 +322,12 @@ class TestImport:
         assert labels(host)[OLD_UUID] == "media"
         assert response.json()["name"] == "media"
 
+    def test_the_sd_standbys_label_is_no_pool_name(self, api, host):
+        """The pool list leaves a filesystem labelled UNOS-STANDBY out (ADR-0490)."""
+        response = import_as(api, FOREIGN_UUID, "UNOS-STANDBY")
+        assert response.status_code == 400 and "SD card standby" in response.json()["detail"]
+        assert labels(host)[FOREIGN_UUID] is None
+
     def test_one_of_two_filesystems_with_one_label_is_imported_under_another_name(self, api, host):
         # The disks of two other UNOS hosts, whose pools were both named 'backup'.
         host.add_disk("sdc")

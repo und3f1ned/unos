@@ -1777,6 +1777,36 @@ def test_api_cli_timeout_reaches_the_request(device):
     assert json.loads((device.log / "stdin").read_text())["timeout"] == 150
 
 
+def test_api_cli_repeat_prints_the_times_of_the_reads_on_the_device(device):
+    """--repeat N: the relay reads the path once and then N times more, timing each read on the
+    device itself, through Caddy and without SSH (architecture.fast-page-reads, ADR-0490); the
+    CLI prints their p50 and p95 by the nearest rank, not the body."""
+    times = [float(ms) for ms in range(60, 35, -1)]  # 25 reads: 36 to 60 ms
+    (device.log / "reply").write_text(json.dumps(
+        {"status": 200, "body": json.dumps({"token": JWT}), "times": times, "statuses": [200]}))
+    result = device.run(DEV / "api.py", "--repeat", "25", "GET", "/shares/smb-status")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "HTTP 200\nGET /shares/smb-status: 25 reads, p50 48 ms, p95 59 ms, min 36 ms, max 60 ms\n"
+    assert json.loads((device.log / "stdin").read_text())["repeat"] == 25
+
+
+@pytest.mark.parametrize(("first", "timed", "shown"), [(200, [200, 503], "HTTP 200, 503"), (401, [200], "HTTP 200, 401")])
+def test_api_cli_repeat_fails_when_a_read_was_not_answered_2xx(device, first, timed, shown):
+    """Also the first read, which is not timed."""
+    (device.log / "reply").write_text(json.dumps(
+        {"status": first, "body": "{}", "times": [10.0, 12.0], "statuses": timed}))
+    result = device.run(DEV / "api.py", "--repeat", "2", "GET", "/shares/smb-status")
+    assert result.returncode == 1 and result.stdout.startswith(shown + "\n")
+
+
+@pytest.mark.parametrize("argv", [["--repeat", "5", "POST", "/shares/smb"], ["--repeat", "0", "GET", "/health"],
+                                  ["--repeat", "501", "GET", "/health"]])
+def test_api_cli_repeats_only_reads_and_up_to_500(device, argv):
+    result = device.run(DEV / "api.py", *argv)
+    assert result.returncode == 2 and "--repeat" in result.stderr
+    assert not (device.log / "argv").exists()
+
+
 @pytest.mark.parametrize("value", ["0", "-5", "ten"])
 def test_api_cli_refuses_a_timeout_that_is_not_a_positive_number(device, value):
     result = device.run(DEV / "api.py", "--timeout", value, "GET", "/apps/installed")
@@ -1939,6 +1969,17 @@ def test_the_relay_keeps_the_token_private_and_signs_in_only_when_needed(relay):
     assert not cache.exists()
     client.forget_token()  # nothing left to delete
     assert not any(fake.password in path for _, path, _ in fake.requests)
+
+
+def test_the_relay_times_repeated_reads_with_the_kept_token(relay):
+    """--repeat: one read first, which signs in when the kept token is refused, then the timed
+    reads, each with the same token and no new login."""
+    client, fake, cache = relay
+    answer, times, statuses = client.timed_get("/system/info", {"all": ["true"]}, repeat=4)
+    assert answer.status_code == 200 and statuses == [200] and len(times) == 4
+    assert all(ms >= 0 for ms in times)
+    assert fake.logins == 1 and fake.tokens_sent() == ["Bearer token-1"] * 5
+    assert {path for _, path, _ in fake.requests if path != "/api/v1/auth/login"} == {"/api/v1/system/info?all=true"}
 
 
 def test_as_user_signs_in_as_that_user_with_a_token_cache_of_its_own(relay):

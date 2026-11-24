@@ -26,7 +26,7 @@ from src import host as host_module
 from src.config import get_settings
 from src.main import app
 from src.security import validators
-from src.shares import service, smb, smbconf
+from src.shares import accounts, service, smb, smbconf
 from src.storage import disks, pools
 from src.storage import router as storage_router
 from src.storage.disks import HostMount
@@ -504,7 +504,7 @@ class PoolsAndSambaHost:
     SAMBA = frozenset({"getent", "groupadd", "useradd", "userdel", "smbpasswd", "pdbedit", "smbstatus",
                        "smbcontrol", "testparm"})
     SAMBA_ARGVS = (["mkdir", "-p", "-m", "0755", smb.CACHE_DIRECTORY], ["systemctl", "reload", "smbd"],
-                   ["sync", "/etc"])
+                   ["sync", "/etc"], accounts.PASSDB_STAMP)
 
     def __init__(self, samba: FakeSambaHost, pool_host) -> None:
         self.samba, self.pool_host = samba, pool_host

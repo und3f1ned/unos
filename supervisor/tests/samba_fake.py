@@ -8,7 +8,7 @@ and a command it does not know fails the test.
 
 It emulates the account commands of shares/accounts.py (getent, groupadd, useradd,
 userdel, usermod -l, smbpasswd, pdbedit -L, -x and the account policy of -P, smbstatus,
-smbcontrol <pid> shutdown, sync), the
+smbcontrol <pid> shutdown, sync, the stat of passdb.tdb), the
 smb.conf commands of an apply (mkdir /run/samba, testparm, smbcontrol
 reload-config and close-share, systemctl reload smbd), ``cat -- /etc/fstab``
 and the tool check of ``host.missing_host_binaries``. ``findmnt`` and
@@ -18,6 +18,8 @@ and the tool check of ``host.missing_host_binaries``. ``findmnt`` and
 
 from __future__ import annotations
 
+import hashlib
+import itertools
 import json
 import subprocess
 import threading
@@ -25,7 +27,7 @@ from collections.abc import Iterable
 
 from src import host as host_module
 from src.host import HostCommandError, HostResult
-from src.shares.accounts import HostAccount
+from src.shares.accounts import PASSDB_STAMP, HostAccount
 
 DATA_UUID = "3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d"
 DEFAULT_FSTAB = (
@@ -54,6 +56,11 @@ SMB_CONF_KEYS = frozenset({
     "shadow:mountpoint", "shadow:snapdir", "shadow:snapprefix", "shadow:delimiter", "shadow:format",
 })
 
+# passdb.tdb's inode: one of its own for each fake, so that no fake's stat is another's.
+_INODES = itertools.count(956960)
+# When the passdb.tdb of a fake last changed: long before the tests ran.
+PASSDB_CHANGED_AT = 1_700_000_000.0
+
 # The script of host.missing_host_binaries (the tool check).
 _TOOL_CHECK = 'for c do command -v -- "$c" >/dev/null 2>&1 || printf "%s\\n" "$c"; done'
 
@@ -66,7 +73,7 @@ class FakeSambaHost:
     """In-memory host accounts, groups, Samba passdb and smbd sessions."""
 
     # Commands that only read (mutating_calls() leaves them out).
-    READS = ("getent", "testparm", "smbstatus", "cat")
+    READS = ("getent", "testparm", "smbstatus", "cat", "stat")
 
     def __init__(self) -> None:
         self.passwd: dict[str, HostAccount] = {}
@@ -87,6 +94,10 @@ class FakeSambaHost:
         }
         # lower-cased name -> {"name": stored name, "password": str, "uid": int}
         self.passdb: dict[str, dict] = {}
+        # passdb.tdb's stat (PASSDB_STAMP): its inode, and the time of its last change, to which a
+        # change of passdb adds a second for each entry (only what changes counts).
+        self.passdb_inode = next(_INODES)
+        self.passdb_changed_at = PASSDB_CHANGED_AT
         # Samba's account policies (pdbedit -P), with Samba's defaults: a fresh host keeps no
         # password history and locks no account (the lockout's times are 30 minutes each).
         self.policies: dict[str, int] = {"password history": 0, "lockout duration": 30, "reset count minutes": 30,
@@ -245,6 +256,8 @@ class FakeSambaHost:
             return self._result()
         if argv == ["cat", "--", "/etc/fstab"]:
             return self._result(stdout=self.fstab)
+        if argv == PASSDB_STAMP:
+            return self._result(stdout=self._passdb_stat())
         if argv == ["mkdir", "-p", "-m", "0755", "/run/samba"]:
             self._mutation(argv)
             return self._result()
@@ -255,6 +268,14 @@ class FakeSambaHost:
             self.reloads += 1
             return self._result()
         raise AssertionError(f"unexpected host command: {argv}")
+
+    def _passdb_stat(self) -> str:
+        """What ``stat --format='%d %i %s %.9Y %.9Z'`` prints for passdb.tdb: its size and times
+        change with every change of passdb, as tdbsam's writes change them."""
+        content = json.dumps(sorted(self.passdb.items()), sort_keys=True).encode()
+        size = 421888 + 4096 * len(self.passdb)
+        changed = self.passdb_changed_at + int.from_bytes(hashlib.sha256(content).digest()[:3], "big") / 1e6
+        return f"45825 {self.passdb_inode} {size} {changed:.9f} {changed:.9f}\n"
 
     # -- accounts -------------------------------------------------------------
 

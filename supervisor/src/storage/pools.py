@@ -586,6 +586,10 @@ def _is_system_filesystem(fs: BtrfsFilesystem, mounts: list[disks.HostMount] | N
 
 
 def _pool_filesystems(name: str, mounts: list[disks.HostMount] | None) -> list[BtrfsFilesystem]:
+    """The filesystems labelled ``name`` that can be the pool of that name: none for a label of
+    the SD standby's card (disks.STANDBY_LABELS, ADR-0490), which no pool action reads or mounts."""
+    if name in disks.STANDBY_LABELS:
+        return []
     return [
         fs
         for fs in btrfs_filesystems()
@@ -613,7 +617,9 @@ def _pool_choices(
     """The pool of each name: name -> the filesystem that is the pool (ADR-0283).
 
     A pool is a btrfs filesystem of the host, other than its system
-    filesystem, whose label is a valid pool name. Of several with one label,
+    filesystem and the SD standby's card (its labels, disks.STANDBY_LABELS:
+    never a data disk, ADR-0488; left out before lsblk could be asked about
+    its devices, ADR-0490), whose label is a valid pool name. Of several with one label,
     the pool is the one mounted at the pool's mountpoint, or else the one
     that UNOS manages under the name; when neither tells them apart, the
     name has no pool, and each of them is found on the disks
@@ -622,7 +628,12 @@ def _pool_choices(
     """
     by_label: dict[str, list[BtrfsFilesystem]] = {}
     for fs in filesystems:
-        if fs.label and POOL_NAME_PATTERN.fullmatch(fs.label) and not _is_system_filesystem(fs, mounts):
+        if (
+            fs.label
+            and POOL_NAME_PATTERN.fullmatch(fs.label)
+            and fs.label not in disks.STANDBY_LABELS
+            and not _is_system_filesystem(fs, mounts)
+        ):
             by_label.setdefault(fs.label, []).append(fs)
     chosen: dict[str, BtrfsFilesystem] = {}
     for name, candidates in by_label.items():
@@ -1711,6 +1722,15 @@ def _new_filesystem_uuid(mkfs_output: str, device: str) -> str:
     return _check_uuid(result.stdout.strip())
 
 
+def _new_pool_name(name: str) -> str:
+    """validate_pool_name for a pool's new label: also not one of the SD standby's labels, which
+    disks.py takes for its card and the pool list leaves out (ADR-0488, ADR-0490). ValueError."""
+    name = validate_pool_name(name)
+    if name in disks.STANDBY_LABELS:
+        raise ValueError(f"'{name}' is a label of the SD card standby: choose another pool name")
+    return name
+
+
 def create_pool(pool: PoolCreate) -> PoolInfo:
     """Create a btrfs pool, mount it on the host and make the mount persistent.
 
@@ -1719,7 +1739,7 @@ def create_pool(pool: PoolCreate) -> PoolInfo:
     before mkfs runs. A step after mkfs that fails raises PoolFormattedError
     (HTTP 500), with the step's message.
     """
-    name = validate_pool_name(pool.name)
+    name = _new_pool_name(pool.name)
     if pool.confirm_name != name:
         raise ValueError("confirm_name must match the pool name")
     if pool.raid_level not in PROFILE_MAP:
@@ -2012,7 +2032,7 @@ def import_pool(uuid: str, name: str) -> PoolInfo:
     page or at the next boot.
     """
     uuid = validate_filesystem_uuid(uuid)
-    name = validate_pool_name(name)
+    name = _new_pool_name(name)
     with _lock:
         fs = _check_import(uuid, name)
         _mount_and_persist(name, uuid, already_mounted=False, relabel=True)

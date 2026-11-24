@@ -603,12 +603,12 @@ def _positionals(args: list, value_options: set) -> list:
 
 # The options of scripts/dev/api.py that take a value (its argparse parser, which also takes a
 # long option by a unique abbreviation: --par for --param).
-_API_VALUE_OPTIONS = ("--param", "--timeout")
+_API_VALUE_OPTIONS = ("--param", "--timeout", "--repeat")
 
 
 def _api_positionals(args: list) -> list:
     """METHOD, PATH and the body of scripts/dev/api.py as its parser reads them: the value of
-    --param KEY=VALUE or --timeout SECONDS is not the method."""
+    --param KEY=VALUE, --timeout SECONDS or --repeat N is not the method."""
     value_options = {arg for arg in args
                      if len(arg) > 2 and "=" not in arg and any(o.startswith(arg) for o in _API_VALUE_OPTIONS)}
     return _positionals(args, value_options)

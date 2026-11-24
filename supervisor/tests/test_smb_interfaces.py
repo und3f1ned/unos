@@ -4,7 +4,8 @@ The rendering (pure), then the API with the fixture of test_share_api.py and ``S
 host's interfaces as ``ip -j addr show`` reports them, and an smbd that binds as Samba 4.22 does
 when it starts: with ``interfaces`` and ``bind interfaces only = yes`` the addresses of the named
 interfaces that are up and broadcast-capable (or the loopback), IPv6 link-local ones excepted,
-and otherwise every address; a reload binds nothing new. Its listeners are what ``ss`` prints.
+and otherwise every address; a reload binds nothing new. Its listeners, and the clients' open
+connections to its port, are what ``ss`` prints (ADR-0490).
 """
 
 import json
@@ -27,7 +28,7 @@ from .test_share_api import api as share_api  # noqa: F401  (a fixture: the shar
 
 URL = f"{API}/smb-interfaces"
 IP = ["ip", "-j", "addr", "show"]
-SS = ["ss", "-H", "-l", "-n", "-t", "-p"]
+SS = ["ss", "-H", "-n", "-t", "-p", "state", "listening", "state", "established", "(", "sport", "=", ":445", ")"]
 SMBD_RESET = ["systemctl", "reset-failed", "smbd"]
 SMBD_RESTART = ["timeout", "60", "systemctl", "restart", "smbd"]
 RELOAD = ["smbcontrol", "all", "reload-config"]
@@ -66,9 +67,9 @@ def default_links() -> dict[str, dict]:
 
 
 class SmbdHost:
-    """The host's interfaces, smbd's listening sockets and sessions, and its restart; every other
-    command goes to the share API's fake (``inner``). ``fail`` maps an argv prefix to a HostResult
-    or an exception."""
+    """The host's interfaces, smbd's listening sockets and the clients' open connections to them
+    (``sessions``), and its restart; every other command goes to the share API's fake (``inner``).
+    ``fail`` maps an argv prefix to a HostResult or an exception."""
 
     def __init__(self, inner, conf: Path) -> None:
         self.inner = inner
@@ -120,16 +121,19 @@ class SmbdHost:
             return HostResult(0, json.dumps(entries), "")
         if cmd == SS:
             lines = ['LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=600,fd=3))',
-                     'LISTEN 0 64 0.0.0.0:3702 0.0.0.0:* users:(("wsdd2",pid=700,fd=7))']
+                     'LISTEN 0 64 0.0.0.0:3702 0.0.0.0:* users:(("wsdd2",pid=700,fd=7))',
+                     # An administrator's SSH session, and the host's own SMB client on another NAS.
+                     'ESTAB 0 0 10.1.1.5:22 10.1.1.40:50122 users:(("sshd",pid=601,fd=4))',
+                     "ESTAB 0 0 10.1.1.5:40112 10.1.1.9:445"]
             for address in sorted(self.listeners) if self.running else ():
                 shown = f"[{address}]" if ":" in address else address
                 lines.append(f'LISTEN 0 50 {shown}:445 {"[::]" if ":" in address else "0.0.0.0"}:* '
                              f'users:(("smbd",pid=900,fd={30 + len(lines)}))')
+            for index in range(self.sessions if self.running else 0):
+                # Each client's connection is served by an smbd process of its own, named after it.
+                lines.append(f'ESTAB 0 0 [::ffff:10.1.1.5]:445 [::ffff:10.1.1.{50 + index}]:5{index}000 '
+                             f'users:(("smbd[10.1.1.{50 + index}]",pid={4000 + index},fd=35))')
             return HostResult(0, "".join(f"{line}\n" for line in lines), "")
-        if cmd == ["smbstatus", "--json"]:
-            sessions = {str(index): {"session_id": str(index), "server_id": {"pid": str(4000 + index)},
-                                     "username": "alice"} for index in range(self.sessions)}
-            return HostResult(0, json.dumps({"sessions": sessions, "tcons": {}}), "")
         if cmd == SMBD_RESET:
             return HostResult(0, "", "")
         if cmd == SMBD_RESTART:
@@ -253,17 +257,30 @@ class TestList:
         assert state["host_error"] == "The host's network interfaces could not be read: Cannot open netlink socket"
         assert state["interfaces"] == []
 
-    def test_how_ss_writes_smbds_listeners(self, net):
+    def test_how_ss_writes_smbds_listeners_and_connections(self, net):
         """IPv6 in brackets, with a zone after the bracket, the dual-stack wildcard *, and a socket
-        whose program ss does not name; another program's port 445 is not smbd's."""
+        whose program ss does not name; another program's port 445 is not smbd's. The connections
+        are the established ones to the host's port 445, whatever ss names their process."""
         net.host.fail[tuple(SS)] = HostResult(0, (
             'LISTEN 0 50 [fe80::5]%eth0:445 [::]:* users:(("smbd",pid=900,fd=30))\n'
             "LISTEN 0 50 192.168.7.20:445 0.0.0.0:*\n"
             'LISTEN 0 50 10.8.0.2:445 0.0.0.0:* users:(("nc",pid=901,fd=3))\n'
             'LISTEN 0 50 *:445 *:* users:(("smbd",pid=900,fd=31))\n'
             'LISTEN 0 50 10.1.1.5:4450 0.0.0.0:* users:(("smbd",pid=900,fd=32))\n'
+            'ESTAB 0 0 192.168.7.20:445 192.168.7.31:50110 users:(("smbd[192.168.7.",pid=950,fd=35))\n'
+            "ESTAB 0 0 [fd00::5]:445 [fd00::31]:50111\n"
+            'ESTAB 0 0 10.1.1.5:4450 10.1.1.31:50112 users:(("smbd",pid=951,fd=35))\n'
+            "ESTAB 0 0 10.1.1.5:40112 10.1.1.9:445\n"
         ), "")
-        assert listen.read_listeners() == ["0.0.0.0", "192.168.7.20", "::", "fe80::5"]
+        assert listen.read_smbd_sockets() == (["0.0.0.0", "192.168.7.20", "::", "fe80::5"], 2)
+
+    def test_the_open_connections_are_what_ss_prints_without_smbstatus(self, net):
+        """smbstatus starts in 75 to 165 ms on the BPI-W3 (ADR-0490): the page counts the
+        connections that a restart closes from the ss that lists the listeners."""
+        net.host.sessions = 3
+        net.host.calls.clear()
+        assert get(net)["sessions"] == 3
+        assert sorted(cmd[0] for cmd in net.host.calls) == ["ip", "ss"]
 
     def test_smbds_listeners_cannot_be_read(self, net):
         net.host.fail[tuple(SS)] = HostResult(1, "", "ss: command failed")
@@ -432,7 +449,7 @@ class TestRestart:
         assert "10.1.1.6" in response.json()["listening"] and response.json()["restart_needed"] is False
         (entry,) = [e for e in net.api.audit_entries() if e["action"] == "smb_restarted"]
         assert (entry["severity"], entry["resource_type"], entry["details"]) == (
-            "warning", "smb", "Restarted smbd: 2 open SMB sessions ended")
+            "warning", "smb", "Restarted smbd: 2 open SMB connections ended")
 
     def test_a_listener_outside_the_choice_asks_for_a_restart(self, net):
         net.api.sql("INSERT INTO smb_bind_interfaces (name) VALUES ('eth0')")

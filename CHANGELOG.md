@@ -2025,6 +2025,14 @@ manager, encrypted backup uploads, health checks, CI checks).
   took 700 to 750 ms and the container list 836 ms instead of 77. The answers are the same, but
   for an image tagged in several repositories, which shows the first tag of the repository its
   container was created from, in the list and in a single container's answer alike.
+- The Shares page's SMB reads no longer wait for Samba's tools, which take 50 to 165 ms each to
+  start on the BPI-W3 (ADR-0490, which supersedes ADR-0478): `GET /shares/smb-interfaces` counts
+  the open SMB connections, `sessions`, from the `ss` that lists smbd's listeners (the established
+  TCP connections to port 445, what a restart closes) instead of `smbstatus`, and
+  `GET /shares/smb-status` lists Samba's passdb with `pdbedit -L` only when passdb.tdb's stat
+  changed. The Storage page's pool list no longer checks the disks of the SD standby's card, whose
+  btrfs it leaves out by its label; `UNOS-STANDBY` and `UNOS-BOOT` name no pool (404 for a read,
+  mount or unmount, 400 for a create or import under them).
 - Removing or unmounting a pool no longer alerts that it is not mounted (ADR-0479, which supersedes
   ADR-0332): after **Remove pool**, whose disks keep the pool, the RAID monitor sent "RAID Pool
   '<name>' UNMOUNTED", a change from healthy of a pool that UNOS no longer manages. The RAID status
