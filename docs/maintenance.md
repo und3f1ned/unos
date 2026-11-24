@@ -105,6 +105,37 @@ and proposes the changes, and the owner reviews them.
     QEMU image of `.github/workflows/release.yml` (`tonistiigi/binfmt`), in both of its "Set up
     QEMU" steps (ADR-0458).
 
+## Once the repository is public
+
+The owner makes the repository public after the release v0.1.2 (ADR-0498), then turns these on
+in its **Settings**, once:
+
+1. **Branch protection of `main`**, as `ci.branch-protection` in `feature-list.json` gives it: a
+   pull request required, with every job of `.github/workflows/test.yml` as a required check
+   (Unit Tests, Lint and Audit (Python), Frontend Checks, Docs and Ledger, Commit Messages, Secret
+   Scan, Build Check; GitHub counts a job that its condition skipped, ADR-0467, as passed), and
+   force pushes and deletion refused. GitHub's Free plan allows it for a public repository only
+   (ADR-0229).
+2. **Advanced Security**: Secret scanning, with Push protection; Dependabot alerts and Dependabot
+   security updates (Dependabot's version updates run already, `.github/dependabot.yml`); Private
+   vulnerability reporting, the channel of [SECURITY.md](../SECURITY.md), which the issue chooser
+   and [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) link.
+3. **Actions, General**: "Approval for running fork pull request workflows from contributors" set
+   to "Require approval for all external contributors" (the outside collaborators of older
+   versions of the page), so that no workflow of a fork runs before the owner has read it; and
+   "Require actions to be pinned to a full-length commit SHA", which the workflows already do
+   (ADR-0423).
+4. **General, Features**: Wikis off; the docs live in the repository (ADR-0201). Discussions
+   stay off, and the issue chooser links none.
+
+The history stays as it is (ADR-0208): it still holds the two passwords that an old CLAUDE.md
+published, the dev device's root password and the UNOS administrator's. Both were rotated on
+2026-11-07 and are used nowhere (ADR-0226), and `make secret-scan` lets exactly their commits pass
+(`.gitleaks.toml`). A rewrite would change every commit that the ADRs, the ledger and the journal
+cite, and would not reach the copies made before it. The current tree holds no address of the
+owner's LAN and no hardware identifier of the dev device, which
+`supervisor/tests/test_repo_tooling.py` checks (ADR-0498).
+
 ## At each release
 
 The owner releases (ADR-0050, ADR-0455):

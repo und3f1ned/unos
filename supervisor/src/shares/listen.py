@@ -39,8 +39,8 @@ HOST_TIMEOUT = 15
 IP_COMMAND = ["ip", "-j", "addr", "show"]
 SMB_PORT = "445"  # smb ports of the rendered [global] (ADR-0275)
 # The host's listening and established TCP sockets of its port 445, without a header, with numeric
-# addresses and their programs: "LISTEN 0 50 10.1.1.5:445 0.0.0.0:* users:(("smbd",pid=900,fd=31))",
-# "ESTAB 0 0 10.1.1.5:445 10.1.1.50:50112 users:(("smbd[10.1.1.50]",pid=4001,fd=35))".
+# addresses and their programs: "LISTEN 0 50 192.0.2.5:445 0.0.0.0:* users:(("smbd",pid=900,fd=31))",
+# "ESTAB 0 0 192.0.2.5:445 192.0.2.50:50112 users:(("smbd[192.0.2.50]",pid=4001,fd=35))".
 SS_COMMAND = ["ss", "-H", "-n", "-t", "-p", "state", "listening", "state", "established",
               "(", "sport", "=", f":{SMB_PORT}", ")"]
 _PROGRAM = re.compile(r'users:\(\("([^"]*)"')
@@ -227,7 +227,7 @@ def read_host_interfaces() -> list[HostInterface]:
 
 
 def _local_addresses(column: str) -> tuple[list[str], str] | None:
-    """(addresses, port) of ss's local address column: 10.1.1.5:445, [fd00::5]:445, [fe80::5]%eth0:445,
+    """(addresses, port) of ss's local address column: 192.0.2.5:445, [fd00::5]:445, [fe80::5]%eth0:445,
     and *:445, an IPv6 socket on every address that also takes IPv4 (not IPV6_V6ONLY)."""
     address, sep, port = column.rpartition(":")
     if not sep:

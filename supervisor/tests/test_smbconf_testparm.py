@@ -53,7 +53,7 @@ def test_global_section(tmp_path, guest):
     assert "[global]" in output
 
 
-@pytest.mark.parametrize("interfaces", [("eth0",), ("enx00e04c680001", "eth0", "wlan0"), ()])
+@pytest.mark.parametrize("interfaces", [("eth0",), ("enx00005e005301", "eth0", "wlan0"), ()])
 def test_the_chosen_interfaces(tmp_path, interfaces):
     """Both lines of a choice of interfaces (ADR-0391), with names that the host may lack: testparm
     reads the list, and smbd skips a name that is not on the host when it starts."""

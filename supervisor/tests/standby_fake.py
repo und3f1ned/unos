@@ -24,7 +24,7 @@ from src.standby import conditions
 from src.standby.hostops import BOOT_DIR, CARD_DIR
 from src.storage.disks import MmcCard
 
-ROOT_UUID = "1ccf0051-691b-4a89-92cc-4294a651e3ed"
+ROOT_UUID = "3a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 BOOT_UUID = "6A1B-2C3D"
 CARD_UUID = "9f8e7d6c-5b4a-4321-8765-0fedcba98765"
 POOL_UUID = "0d1e2f30-4152-6374-8596-a7b8c9d0e1f2"

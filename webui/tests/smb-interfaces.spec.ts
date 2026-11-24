@@ -146,14 +146,14 @@ test.describe('The network interfaces of SMB', () => {
       entry.name === NIC ? { ...entry, addresses: ['192.168.10.5/24', '192.168.10.6/24', ...entry.addresses.slice(1)] } : entry,
     );
     const fake = await fakeSmbApi(page, {
-      interfaces: { chosen: [NIC, 'enx00e04c680001'], host, late: ['192.168.10.6'], sessions: 2 },
+      interfaces: { chosen: [NIC, 'enx00005e005301'], host, late: ['192.168.10.6'], sessions: 2 },
     });
     await page.goto('/shares');
 
-    await expect(card(page)).toContainText(interfaceNotOnHost('enx00e04c680001'));
+    await expect(card(page)).toContainText(interfaceNotOnHost('enx00005e005301'));
     await expect(card(page)).toContainText(notListening('192.168.10.6', NIC));
     const dialog = await openDialog(page);
-    await expect(box(dialog, 'enx00e04c680001')).toBeChecked();
+    await expect(box(dialog, 'enx00005e005301')).toBeChecked();
     await expect(dialog.getByText('Not on the NAS now')).toBeVisible();
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
@@ -173,7 +173,7 @@ test.describe('The network interfaces of SMB', () => {
     await expect(card(page)).toContainText('192.168.10.6');
     await expect(card(page)).not.toContainText(notListening('192.168.10.6', NIC));
     // The missing adapter stays chosen: a restart cannot bring it.
-    await expect(card(page)).toContainText(interfaceNotOnHost('enx00e04c680001'));
+    await expect(card(page)).toContainText(interfaceNotOnHost('enx00005e005301'));
     await expect(card(page).getByRole('button', { name: 'Restart SMB…' })).toHaveCount(0);
   });
 

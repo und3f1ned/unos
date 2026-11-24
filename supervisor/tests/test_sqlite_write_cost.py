@@ -41,7 +41,7 @@ path = database.settings.db_path
 
 async def sign_in():
     async with database.async_session() as db:  # the session of every request (get_db)
-        db.add(LoginAttempt(username="admin", ip_address="10.1.1.21", user_agent=AGENT, success=True))
+        db.add(LoginAttempt(username="admin", ip_address="192.0.2.21", user_agent=AGENT, success=True))
         await db.commit()
 
 
@@ -117,7 +117,7 @@ from src.security.models import LoginAttempt
 async def run():
     async with main.lifespan(main.app):  # a start and a clean stop of the supervisor
         async with database.async_session() as db:
-            db.add(LoginAttempt(username="admin", ip_address="10.1.1.21", success=True))
+            db.add(LoginAttempt(username="admin", ip_address="192.0.2.21", success=True))
             await db.commit()
 
 

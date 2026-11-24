@@ -130,8 +130,26 @@ make check   # the gate that CI runs: backend tests, lint, svelte-check, the bui
 [CONTRIBUTING.md](CONTRIBUTING.md) describes how work flows from an issue to a pull request,
 [AGENTS.md](AGENTS.md) the commands and rules for developers and coding agents, and
 [docs/TESTING.md](docs/TESTING.md) the tests, the local stand-in and CI. Problems go to the
-[issue tracker](https://github.com/und3f1ned/unos/issues).
+[issue tracker](https://github.com/und3f1ned/unos/issues), vulnerabilities privately as
+[SECURITY.md](SECURITY.md) describes. Everyone who takes part follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-[GPL-3.0-or-later](LICENSE): the GNU General Public License, version 3 or any later version.
+Copyright (c) 2024–2026 UNOS Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+[LICENSE](LICENSE) holds the text of the GNU General Public License, version 3: UNOS is
+GPL-3.0-or-later.

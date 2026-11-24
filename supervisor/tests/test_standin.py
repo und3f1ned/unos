@@ -527,22 +527,22 @@ ACCEPTED_TARGETS = [
 
 # (BASE_URL, HTTP_URL, the variable that playwright.config.ts refuses).
 REFUSED_TARGETS = [
-    ("https://10.1.1.103", None, "BASE_URL"),  # the dev device
+    ("https://192.0.2.103", None, "BASE_URL"),  # the dev device
     ("https://nas.local", None, "BASE_URL"),
     ("https://localhost.evil.example", None, "BASE_URL"),  # a host name that starts with localhost
-    ("https://127.0.0.1@10.1.1.103", None, "BASE_URL"),  # user info: the host is the device
+    ("https://127.0.0.1@192.0.2.103", None, "BASE_URL"),  # user info: the host is the device
     ("localhost:46443", None, "BASE_URL"),  # no scheme: no host
     ("not a url", None, "BASE_URL"),
-    (None, "http://10.1.1.103", "HTTP_URL"),
+    (None, "http://192.0.2.103", "HTTP_URL"),
     ("https://localhost:3443", "http://nas.local", "HTTP_URL"),
 ]
 
 # What scripts/standin/e2e.sh refuses (exit 2) and lets through. The stand-in
 # runs on this machine, so e2e.sh refuses webui, the test stack's name, too.
 E2E_SH_REFUSED = [
-    ("BASE_URL", "https://10.1.1.103"),
-    ("HTTP_URL", "http://10.1.1.103"),
-    ("BASE_URL", "https://127.0.0.1@10.1.1.103"),
+    ("BASE_URL", "https://192.0.2.103"),
+    ("HTTP_URL", "http://192.0.2.103"),
+    ("BASE_URL", "https://127.0.0.1@192.0.2.103"),
     ("BASE_URL", "https://localhost.evil.example"),
     ("BASE_URL", "https://webui"),
     ("BASE_URL", "not a url"),
@@ -985,7 +985,8 @@ class TestSpecsAndRunner:
     def test_config_uses_the_checked_target(self):
         config = (REPO / "webui" / "playwright.config.ts").read_text(encoding="utf-8")
         assert re.search(r"^const baseURL = targetUrl\(\);$", config, re.M)
-        assert "10.1.1.103" not in config
+        # The target is checked, not written in: no address but the loopback.
+        assert re.findall(r"\d{1,3}(?:\.\d{1,3}){3}", config) == ["127.0.0.1"]
         target = (REPO / "webui" / "tests" / "target.ts").read_text(encoding="utf-8")
         hosts = re.search(r"LOCAL_HOSTS: readonly string\[\] = \[(.*?)\];", target)
         assert hosts and re.findall(r"'([^']*)'", hosts[1]) == ["localhost", "127.0.0.1", "[::1]", "webui"]

@@ -501,7 +501,7 @@ const POWER = {
   '/api/v1/power/wol': {
     interfaces: [
       { name: 'enp1s0', mac_address: '02:42:ac:11:00:02', supported: true, wol: 'g', enabled: true },
-      { name: 'enx00e04c680a1b', mac_address: '00:e0:4c:68:0a:1b', supported: false, wol: '', enabled: false },
+      { name: 'enx00005e00531b', mac_address: '00:00:5e:00:53:1b', supported: false, wol: '', enabled: false },
     ],
   },
 };
@@ -1114,7 +1114,7 @@ const VIEWS: View[] = [
     name: 'Shares (SMB)',
     path: '/shares',
     fake: (page) =>
-      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00e04c680001'] } }),
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00005e005301'] } }),
     shows: (page) => page.getByText('family_photos_and_videos').first(),
   },
   {
@@ -1431,7 +1431,7 @@ const VIEWS: View[] = [
     name: 'System: Power',
     path: '/system/power',
     fake: (page) => serve(page, POWER),
-    shows: (page) => page.getByText('enx00e04c680a1b').first(),
+    shows: (page) => page.getByText('enx00005e00531b').first(),
   },
   {
     name: 'System: Remote access',
@@ -1759,7 +1759,7 @@ const VIEWS: View[] = [
     name: 'Dialog: the network interfaces of SMB',
     path: '/shares',
     fake: (page) =>
-      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00e04c680001'] } }),
+      fakeSmbApi(page, { users: USERS, shares: SHARES, interfaces: { chosen: ['enP4p65s0', 'enx00005e005301'] } }),
     open: (page) => page.getByRole('button', { name: /^(Choose interfaces…|Выбрать интерфейсы…)$/ }).click(),
     shows: (page) => page.getByRole('dialog').getByText('2001:db8:1234:5678:9abc:def0:1234:5678/64'),
     start: dialogTitle,

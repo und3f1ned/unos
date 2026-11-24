@@ -52,6 +52,7 @@ and this index, and `make check-fast` runs it.
 | [0211](0211-executable-guardrails-for-agents.md) | A committed settings file and a PreToolUse guard block risky agent commands | accepted | 2026-11-07 |
 | [0335](0335-every-background-command-of-an-agent-has-a-deadline.md) | Every background command of an agent has a deadline | accepted | 2026-11-11 |
 | [0465](0465-a-script-removes-the-clean-worktrees-and-local-branches-of-merged-work-and-changes-nothing-on-github.md) | A script removes the clean worktrees and local branches of merged work, and changes nothing on GitHub | accepted | 2026-11-23 |
+| [0498](0498-the-repository-goes-public-with-its-history-as-it-is-and-a-tree-that-holds-no-address-or-hardware-identifier-of-the-owner.md) | The repository goes public with its history as it is, and a tree that holds no address or hardware identifier of the owner | accepted | 2026-11-24 |
 
 ## Architecture
 

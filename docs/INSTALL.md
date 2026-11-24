@@ -1079,7 +1079,7 @@ script again finishes it.
 
 - **Documentation:** [docs/](.)
 - **Issues:** [GitHub Issues](https://github.com/und3f1ned/unos/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/und3f1ned/unos/discussions)
+- **Vulnerabilities:** privately, as [SECURITY.md](../SECURITY.md) describes
 
 ---
 

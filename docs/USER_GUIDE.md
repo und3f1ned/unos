@@ -4056,8 +4056,9 @@ If you encounter issues:
 1. Check **System** → **System Logs** for errors (administrators)
 2. Review [Troubleshooting](INSTALL.md#troubleshooting); when the NAS does not
    boot or nobody can sign in, see [Recovery](RECOVERY.md)
-3. Search [GitHub Issues](https://github.com/und3f1ned/unos/issues)
-4. Ask in [Discussions](https://github.com/und3f1ned/unos/discussions)
+3. Search [GitHub Issues](https://github.com/und3f1ned/unos/issues), and open one with the bug
+   or enhancement template
+4. Report a vulnerability privately, as [SECURITY.md](../SECURITY.md) describes
 
 ---
 

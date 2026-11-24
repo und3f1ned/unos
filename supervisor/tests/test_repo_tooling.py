@@ -2522,8 +2522,8 @@ def test_published_passwords_are_found_by_their_digest():
 
 @pytest.mark.parametrize("line, shape", [
     # The secret-shaped lines are put together here, so that this file holds none of them.
-    ("ssh" + "pass -p wq7-Kp2 ssh root@10.1.1.103", "sshpass with a password"),
-    ("ssh" + "pass -e -pwq7-Kp2 ssh root@10.1.1.103", "sshpass with a password"),
+    ("ssh" + "pass -p wq7-Kp2 ssh root@192.0.2.103", "sshpass with a password"),
+    ("ssh" + "pass -e -pwq7-Kp2 ssh root@192.0.2.103", "sshpass with a password"),
     ("mysql --pass" + "word=wq7-Kp2", "a password option with a value"),
     ("gh auth login --with-tok" + "en=wq7-Kp2", "a password option with a value"),
     ("git clone https://user:wq7-Kp2" + "@example.org/x.git", "a password in a URL"),
@@ -2557,7 +2557,7 @@ def test_the_secret_scan_finds_mappings_in_yaml_and_json_only(line, name):
 
 
 @pytest.mark.parametrize("line", [
-    'sshpass -p "$UNOS_DEV_SSH_PASSWORD" ssh root@10.1.1.103',
+    'sshpass -p "$UNOS_DEV_SSH_PASSWORD" ssh root@192.0.2.103',
     "secrets on command lines (`sshpass -p`, `curl -u user:password`, `--password=...`)",
     "docker login --password-stdin < token.txt",
     "UNOS_DEV_SSH_PASSWORD=",
@@ -2595,6 +2595,199 @@ def test_a_test_value_passes_only_in_the_files_that_hold_it():
     assert secret_shapes(line, "supervisor/tests/test_repo_tooling.py", used) == []
     assert used == {("hunter2", "supervisor/tests/test_repo_tooling.py")}
     assert secret_shapes(line, "docs/USER_GUIDE.md") == [(1, "a secret assignment")]
+
+
+# --- what a public repository may show (process.public-repository, ADR-0498) ---------------
+
+# The owner's LAN and the dev device's hardware stay out of the files (ADR-0498): tests, fakes,
+# comments and docs use the documentation addresses (RFC 5737, RFC 3849) and MAC addresses
+# (RFC 7042) or locally administered ones, and made-up serials. Like the published passwords, the
+# real values are kept here only as SHA-256 digests, so that no file spells them out. They are no
+# secrets: the dev subnet is a private /24 that anyone can find by hashing every one.
+# The dev subnet, as a.b.c.0/24, found by the first three numbers of any address that starts
+# there: a.b.c.d, a.b.c.0/24, a.b.c/24, ::ffff:a.b.c.d, a.b.c.{n} in a format string, host-a-b-c-d,
+# and the reverse zones d.c.b.a.in-addr.arpa and c.b.a.in-addr.arpa.
+DEV_SUBNET_DIGESTS = frozenset({"4a724f4fb551f3ed2e6391948173d4dcf9780021239854bf9399e0c7efec7d2b"})
+_SUBNET_PREFIX = re.compile(r"(?<!\d)(?=(\d{1,3})([.-])(\d{1,3})\2(\d{1,3})(?:\2|/))")
+_REVERSE_ZONE = re.compile(r"(?i)(?<![\d.])((?:\d{1,3}\.){3,4})in-addr\.arpa")
+# Identifiers of the dev device's hardware and system, compared in lower case: the serials of its
+# disks, with and without their vendor's prefix, and the UUID of its root file system. Tokens as
+# the published passwords' scan reads them.
+DEVICE_IDENTIFIER_DIGESTS = frozenset({
+    "b750d4310e00f0f09e0be8837a9d918981151a30e3e97e4a68be736c285559cc",
+    "2f586ed6c2881762f7f1e63167935c383d17669e17c9d5a4cac274773654041f",
+    "92a0801048e6df6692abe79b2d5c4b5942967e953d174284a9a519fac4efb743",
+    "46c139709be4017689adb0fb4ab35bf69ea60d09af8d118873f42a92ddb0329a",
+    "90c97572771db2dd9fc076b646603e2d5c39474be1653bd79eeb73a3a6371a8b",
+})
+# A MAC address: six pairs of hex digits joined by one separator, or three groups of four joined
+# by dots, not part of a longer run such as a fingerprint; and one in an interface name that udev
+# derives from it (enx<12 hex digits>, wlx<12 hex digits>).
+_MAC_ADDRESS = re.compile(r"(?i)(?<![\w:.-])((?:[0-9a-f]{2}([:-]))(?:[0-9a-f]{2}\2){4}[0-9a-f]{2}"
+                          r"|[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4})(?![\w:.-])")
+_MAC_INTERFACE = re.compile(r"(?i)(?<![\w])(?:enx|wlx)([0-9a-f]{12})(?![\w])")
+DOCUMENTATION_MAC = "00005e0053"  # RFC 7042's block 00:00:5e:00:53:00/24
+
+
+def dev_subnet_lines(text: str, digests=DEV_SUBNET_DIGESTS) -> list:
+    """The numbers of the lines of a text that hold an address of a /24 whose a.b.c.0/24 has one of
+    `digests` as its SHA-256."""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        prefixes = [(match[1], match[3], match[4]) for match in _SUBNET_PREFIX.finditer(line)]
+        for match in _REVERSE_ZONE.finditer(line):
+            parts = match[1].rstrip(".").split(".")
+            prefixes.append(tuple(reversed(parts[-3:])))
+        for prefix in prefixes:
+            network = ".".join(str(int(part)) for part in prefix) + ".0/24"
+            if hashlib.sha256(network.encode()).hexdigest() in digests:
+                found.append(number)
+                break
+    return found
+
+
+def device_identifier_lines(text: str, digests=DEVICE_IDENTIFIER_DIGESTS) -> list:
+    """The numbers of the lines of a text that hold a token whose lower case has one of `digests`
+    as its SHA-256."""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        tokens = {match.group().lower() for pattern in PASSWORD_TOKENS for match in pattern.finditer(line)}
+        if any(hashlib.sha256(token.encode()).hexdigest() in digests for token in tokens):
+            found.append(number)
+    return found
+
+
+def hardware_mac_lines(text: str) -> list:
+    """(line number, MAC) of every MAC address of a text, also inside enx<mac> and wlx<mac>, that
+    is universally administered: not RFC 7042's documentation block, not locally administered,
+    not a group address (multicast, broadcast), not all zeros. A locally administered address
+    passes, as made-up and virtual cards use them (Docker's 02:42:...)."""
+    found = []
+    for number, line in enumerate(text.splitlines(), 1):
+        macs = [match.group(1) for match in _MAC_ADDRESS.finditer(line)]
+        macs += [match.group(1) for match in _MAC_INTERFACE.finditer(line)]
+        for mac in macs:
+            digits = re.sub(r"[:.-]", "", mac).lower()
+            first = int(digits[:2], 16)
+            if digits.startswith(DOCUMENTATION_MAC) or first & 0x03 or digits == "0" * 12:
+                continue
+            found.append((number, mac))
+    return found
+
+
+def test_no_address_of_the_dev_subnet_in_the_repository():
+    found = [f"{name}:{line}" for name, text in _repository_text_files() for line in dev_subnet_lines(text)]
+
+    assert found == [], "an address of the owner's LAN: use RFC 5737's 192.0.2.0/24, 198.51.100.0/24 or " \
+                        "203.0.113.0/24, or a placeholder (ADR-0498)"
+
+
+def test_no_hardware_identifier_of_the_dev_device_in_the_repository():
+    files = dict(_repository_text_files())
+    identifiers = [f"{name}:{line}" for name, text in files.items() for line in device_identifier_lines(text)]
+    macs = [f"{name}:{line}: {mac}" for name, text in files.items() for line, mac in hardware_mac_lines(text)]
+
+    assert identifiers == [], "a serial or UUID of the dev device: use a made-up one (ADR-0498)"
+    assert macs == [], "a MAC address that can name a network card: use RFC 7042's 00:00:5e:00:53:xx or a " \
+                       "locally administered one, and the enx name to match (ADR-0498)"
+
+
+def test_the_scans_find_the_owners_subnet_identifiers_and_macs():
+    digests = {hashlib.sha256(b"203.0.113.0/24").hexdigest()}
+    text = ("ssh root@203.0.113.7\n"
+            '"hostname": "ipv4:203.0.113.20:50122"\n'
+            "ESTAB 0 0 [::ffff:203.0.113.5]:445\n"
+            "f'[::ffff:203.0.113.{50 + index}]:445'\n"
+            "exports for 203.0.113.0/24, and 203.000.113.9\n"
+            "the LAN 203.0.113/24\n"
+            "ip-203-0-113-7.example.com\n"
+            "7.113.0.203.in-addr.arpa and the zone 113.0.203.in-addr.arpa\n"
+            "v203.0.113.1 host_203.0.113.4\n"
+            "203.0.112.7 2203.0.113.7 198.51.100.7 1.2.203.0.113 203.0.113 2026-11-24 112.0.203.in-addr.arpa\n")
+
+    assert dev_subnet_lines(text, digests) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert len(DEV_SUBNET_DIGESTS) == 1 and len(DEVICE_IDENTIFIER_DIGESTS) == 5
+    assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in DEV_SUBNET_DIGESTS | DEVICE_IDENTIFIER_DIGESTS)
+    identifiers = {hashlib.sha256(word.encode()).hexdigest() for word in ("wd-wxexample01", "0x0badcafe")}
+    assert device_identifier_lines("sda's data (WD-WXEXAMPLE01, PASSED)\nother\nserial 0X0BADCAFE, not system\n"
+                                   "0x0badcafe1 and wd-wxexample012\n", identifiers) == [1, 3]
+    # The addresses of made-up cards are put together here, so that this file holds none of them.
+    assert hardware_mac_lines("mac_address: '00:12:34" ":56:78:9a'\n"
+                              "name: 'enx001234" "56789b' and wlx001234" "56789d\n"
+                              "00-12-34" "-56-78-9C and 0012.3456" ".789e\n"
+                              "00:00:5e:00:53:1b enx00005e005301 02:42:ac:11:00:02 aa:bb:cc:dd:ee:ff\n"
+                              "ff:ff:ff:ff:ff:ff 01:00:5e:00:00:fb 33:33:00:00:00:01 00:00:00:00:00:00\n"
+                              "sha256 3F:9A:0C:41:7E:22:B8:5D:90:6A:1F:C4:3B:E8 00:12:34:56:78:9a:bc 1.2.3.4\n") == [
+        (1, "00:12:34" ":56:78:9a"), (2, "00123456789b"), (2, "00123456789d"), (3, "00-12-34" "-56-78-9C"),
+        (3, "0012.3456" ".789e")]
+
+
+# The text of the GNU GPL version 3 as the FSF publishes it (gnu.org/licenses/gpl-3.0.txt), by its
+# SHA-256: GitHub names a repository's license only when LICENSE holds that text and nothing else.
+GPL_3_SHA256 = "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+SECURITY_ADVISORIES = "https://github.com/und3f1ned/unos/security/advisories/new"
+
+
+def _words(path: Path) -> str:
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def test_license_is_the_plain_gpl_3_and_readme_holds_the_notice():
+    readme = _words(REPO_ROOT / "README.md")
+    package = json.loads((REPO_ROOT / "webui" / "package.json").read_text(encoding="utf-8"))
+
+    assert hashlib.sha256((REPO_ROOT / "LICENSE").read_bytes()).hexdigest() == GPL_3_SHA256
+    assert "Copyright (c) 2024–2026 UNOS Contributors" in readme
+    assert ("either version 3 of the License, or (at your option) any later version" in readme
+            and "WITHOUT ANY WARRANTY" in readme and "](LICENSE)" in readme)
+    assert package["license"] == "GPL-3.0-or-later"
+    lock = json.loads((REPO_ROOT / "webui" / "package-lock.json").read_text(encoding="utf-8"))
+    assert lock["packages"][""]["license"] == package["license"]  # as npm writes it
+
+
+def test_security_policy_and_code_of_conduct():
+    security = _words(REPO_ROOT / "SECURITY.md")
+    conduct = _words(REPO_ROOT / "CODE_OF_CONDUCT.md")
+    contacts = yaml.safe_load((REPO_ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml").read_text())["contact_links"]
+
+    assert SECURITY_ADVISORIES in security and "latest release" in security
+    assert [link["url"] for link in contacts] == [SECURITY_ADVISORIES]
+    assert "Contributor Covenant" in conduct and "version 2.1" in conduct
+    assert "https://www.contributor-covenant.org/version/2/1/code_of_conduct.html" in conduct
+    assert SECURITY_ADVISORIES in conduct and "https://github.com/und3f1ned" in conduct
+    # No e-mail address: reports go through GitHub only.
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", security + conduct)
+
+
+def test_the_journal_tells_no_past_weakness_of_the_dev_network():
+    journal = (REPO_ROOT / "PROGRESS.md").read_text(encoding="utf-8")
+    device = " ".join(journal.split("\n## Dev device\n", 1)[1].split("\n## Log\n", 1)[0].split())
+
+    assert "- Network: the inbound IPv6 filter is in place since 2026-11-08 (ADR-0301)." in device
+    # The tunnel's provider, the open port, the unfiltered family, the unconfined smbd (ADR-0498).
+    for detail in ("Hurricane", "tunnel prefix", "51413", "not filtered", "unconfined"):
+        assert detail not in device, detail
+
+
+def test_how_to_work_names_no_stale_base_and_no_discussions():
+    for name in ("AGENTS.md", "CONTRIBUTING.md", ".github/ISSUE_TEMPLATE/config.yml", "docs/INSTALL.md",
+                 "docs/USER_GUIDE.md"):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        assert "phase1-broken-flows" not in text and "discussions" not in text.lower(), name
+
+
+def test_maintenance_lists_the_settings_of_the_public_repository():
+    text = (REPO_ROOT / "docs" / "maintenance.md").read_text(encoding="utf-8")
+    section = re.search(r"^## Once the repository is public\n(.*?)(?=^## )", text, re.M | re.S)
+
+    assert section, "docs/maintenance.md has the section 'Once the repository is public'"
+    words = " ".join(section[1].split())
+    for setting in ("ci.branch-protection", "Secret scanning", "Push protection", "Dependabot alerts",
+                    "Dependabot security updates", "Private vulnerability reporting",
+                    "Require approval for all external contributors", "full-length commit SHA", "Wikis"):
+        assert setting in words, setting
+    # The history stays as it is, and why.
+    assert "ADR-0208" in words and "ADR-0226" in words and "ADR-0498" in words
 
 
 # --- .gitignore ------------------------------------------------------------------------------
