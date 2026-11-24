@@ -314,7 +314,11 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the fixes of `system.sd-standby-boot` (the working tree of 2026-11-24 of their branch, committed
+- Runs `main` 082b67e2 (`mvp.batch-22` with the fixes of `system.sd-standby-boot`, ADR-0488) since
+  2026-11-24, deployed with `scripts/dev/deploy.sh all` at the owner's standing permission for the W3.
+  SD MiB, its eMMC: sync 4.387, build-supervisor 0.500, build-webui 0.211, up 0.098, check 0.016;
+  total 5.211. check: OK; GET /system/standby: every condition met, armed.
+- Before it the fixes of `system.sd-standby-boot` (the working tree of 2026-11-24 of their branch, committed
   after the device check) since 2026-11-24 00:12 UTC, deployed with `scripts/dev/deploy.sh all` six times
   during the device check of `system.sd-standby-boot` at the owner's standing permission for the
   W3; the last: SD MiB sync 0.270, build-supervisor 0.406, build-webui 0.199, up 0.016, check 0.000;
