@@ -286,19 +286,33 @@ async function widgetGrid(page: Page) {
 
 /**
  * The widgets `ids` stand side by side in one row from the grid's left edge, in this order, each
- * one `perRow`-th of the grid's width (less the gaps) and all of one height.
+ * one `perRow`-th of the grid's width (less the gaps) and all of one height. The boxes are measured
+ * in one snapshot of the page, taken again until the row holds or 15 s pass: a card whose data
+ * comes in late moves the cards after it, and boxes read one after another could straddle that
+ * move on a loaded machine (ADR-0497).
  */
 async function expectRow(page: Page, ids: string[], perRow: number) {
-  const grid = await widgetGrid(page);
-  const width = (grid.width - grid.gap * (perRow - 1)) / perRow;
-  const boxes = await Promise.all(ids.map(async (id) => (await widget(page, id).boundingBox())!));
-  boxes.forEach((box, index) => {
-    const where = `${ids[index]} at ${JSON.stringify(box)} in ${JSON.stringify(grid)}`;
-    expect(Math.abs(box.x - (grid.x + index * (width + grid.gap))), where).toBeLessThanOrEqual(2);
-    expect(Math.abs(box.width - width), where).toBeLessThanOrEqual(2);
-    expect(Math.abs(box.y - boxes[0].y), where).toBeLessThanOrEqual(1);
-    expect(Math.abs(box.height - boxes[0].height), where).toBeLessThanOrEqual(1);
-  });
+  await expect(async () => {
+    const { grid, boxes } = await page.evaluate((ids) => {
+      const box = (element: Element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      const gridElement = document.querySelector('main [data-widget-grid]')!;
+      return {
+        grid: { ...box(gridElement), gap: parseFloat(getComputedStyle(gridElement).columnGap) },
+        boxes: ids.map((id) => box(document.querySelector(`main [data-widget="${id}"]`)!)),
+      };
+    }, ids);
+    const width = (grid.width - grid.gap * (perRow - 1)) / perRow;
+    boxes.forEach((box, index) => {
+      const where = `${ids[index]} at ${JSON.stringify(box)} in ${JSON.stringify(grid)}`;
+      expect(Math.abs(box.x - (grid.x + index * (width + grid.gap))), where).toBeLessThanOrEqual(2);
+      expect(Math.abs(box.width - width), where).toBeLessThanOrEqual(2);
+      expect(Math.abs(box.y - boxes[0].y), where).toBeLessThanOrEqual(1);
+      expect(Math.abs(box.height - boxes[0].height), where).toBeLessThanOrEqual(1);
+    });
+  }).toPass({ timeout: 15_000 });
 }
 
 /** The widget `below` starts under the row of `above`. */

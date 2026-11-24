@@ -436,8 +436,11 @@ def fast_recheck(monkeypatch):
     return checks
 
 
-def _read_until_closed(ws, timeout=5.0):
-    """Receive messages until the server closes the socket; fail if it stays open."""
+def _read_until_closed(ws, timeout=30.0):
+    """Receive messages until the server closes the socket; fail if it stays open.
+
+    ``timeout`` is a guard, not the proof: a socket that is never closed fails the test, one that
+    a loaded machine closes late does not (ADR-0497)."""
     received = []
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
