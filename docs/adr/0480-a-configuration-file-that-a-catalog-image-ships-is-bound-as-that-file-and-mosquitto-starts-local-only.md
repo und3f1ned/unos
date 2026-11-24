@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: superseded
+superseded-by: ADR-0490
 date: 2026-11-23
 area: apps
 decided-by: agent
@@ -8,6 +9,9 @@ decided-by: agent
 # ADR-0480: A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only
 
 ## Context
+
+Superseded by ADR-0490: Mosquitto listens on 1883 and 9001 for clients that sign in with the
+password of its install; the rules of file volumes with a content stay.
 
 The catalog bound an empty folder of the pool over `/mosquitto/config`, which hid the
 `mosquitto.conf` that the eclipse-mosquitto image ships there, so on the BPI-W3 on 2026-11-23

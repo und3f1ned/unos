@@ -1984,6 +1984,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   supervisor container's `/var/log`) and `DELETE /api/v1/logs/clear/{source}`, which did nothing:
   no page called them, and they answer 404 (ADR-0416, ADR-0207). `/data/firewall_rules.json` is
   gone with UNOS's own list of firewall rules.
+- Authelia from the App Store (ADR-0491): its image wrote a template configuration into the empty
+  folder that the catalog bound, then refused it at every start and restarted in a loop. A working
+  Authelia needs a domain served over HTTPS, a reverse proxy that asks it about every request and
+  its users, which only the administrator can choose; set it up by hand beside your proxy.
 - Readarr from the App Store: the project is retired and its image's tag names an empty index, which
   no host could install (ADR-0410).
 - `GET /api/v1/monitor/cpu`, `/monitor/memory`, `/monitor/processes`,
@@ -2026,16 +2030,24 @@ manager, encrypted backup uploads, health checks, CI checks).
   and a pool managed at the previous check whose fstab entry is gone is not alerted as not mounted.
   A managed pool that falls off is alerted once, as before, and a pool that turns to not mounted
   while the fstab cannot be read is alerted.
+- Mosquitto serves MQTT clients on a fresh install (ADR-0490, which supersedes ADR-0480): its
+  `mosquitto.conf` had no listener, so Mosquitto ran in its local-only mode, port 9001 was
+  published with nothing listening, and neither the LAN nor Zigbee2MQTT reached port 1883. It now
+  listens on 1883 (MQTT) and 9001 (MQTT over WebSockets) for clients that sign in with the user
+  name `mqtt` and the **MOSQUITTO_PASSWORD** that its install asks for, and refuses anonymous
+  ones; the container's command makes the password file in RAM at every start. Zigbee2MQTT gets
+  **ZIGBEE2MQTT_CONFIG_MQTT_USER** (`mqtt`) and **ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD**. A
+  `mosquitto.conf` that an earlier install wrote is kept: remove it before you install Mosquitto
+  again.
 - Mosquitto and Prometheus start on a fresh install (ADR-0480): the catalog bound an empty folder
   over the folder of the configuration file their images ship (`/mosquitto/config/mosquitto.conf`,
   `/etc/prometheus/prometheus.yml`), so they found none and restarted in a loop (Mosquitto wrote
   about 1 MiB in 10 s to the BPI-W3's system disk). Each is now bound as that file, read-only,
   which the install, and a start, write on the pool when it is missing (`content` of a template's
   file volume, also in the catalog API); an existing file is kept. Prometheus's is the image's
-  example. Mosquitto's sets nothing, so it listens only inside its container until you add a
-  listener and its authentication: the image's own file would open port 1883 to anonymous
-  clients. An app installed before keeps its folder bind until its next update; install
-  Mosquitto again.
+  example, Mosquitto's takes only clients that sign in (the entry above, ADR-0490): the image's
+  own file would open port 1883 to anonymous clients. An app installed before keeps its folder
+  bind until its next update; install Mosquitto again.
 - `install.sh` starts the `unos` unit as it enables it (`systemctl enable --now`): it stayed
   inactive until the first reboot, so `systemctl stop unos` did nothing and the first shutdown
   ran no `docker compose down`. The manual installation of `docs/INSTALL.md` does the same.

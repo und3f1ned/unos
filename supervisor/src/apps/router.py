@@ -1075,6 +1075,10 @@ def _build_environment(
                 f"{var.name} must not be a placeholder like '{value.strip()}'; "
                 "choose a unique value"
             )
+        # A password, token or key is one line; Mosquitto's command hands its password to
+        # mosquitto_passwd as a line, and a line break would fail every start (ADR-0490).
+        elif var.secret and ("\n" in value or "\r" in value):
+            problems.append(f"{var.name} must be one line")
         environment[var.name] = value
     if problems:
         raise HTTPException(400, "; ".join(problems))

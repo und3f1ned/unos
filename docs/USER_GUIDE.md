@@ -1932,13 +1932,22 @@ by the estimate that the install's space check counts.
 Open WebUI reaches Ollama, and Zigbee2MQTT reaches its MQTT broker, through
 `host.docker.internal`, which names the NAS in their containers: Open WebUI
 the Ollama app's port 11434, and Zigbee2MQTT the Mosquitto app's port 1883
-(**ZIGBEE2MQTT_CONFIG_MQTT_SERVER** names another broker). Mosquitto takes
-connections from other containers only once its `mosquitto.conf`, in
-`apps/mosquitto/config` on its pool, has a listener on port 1883 and its
-authentication. The install writes that file when it is missing: it sets
-nothing, so Mosquitto listens only inside its container, and its comments say
-what to add (the container sees that file, not the rest of its folder: keep a
-password file in `apps/mosquitto/data`). The install of Prometheus writes its
+(**ZIGBEE2MQTT_CONFIG_MQTT_SERVER** names another broker).
+
+The install of Mosquitto asks for **MOSQUITTO_PASSWORD**: MQTT clients, on
+the network and in other apps, sign in with the user name `mqtt`
+(**MOSQUITTO_USERNAME**) and that password, on port 1883 (MQTT) and port 9001
+(MQTT over WebSockets); Mosquitto refuses clients that do not sign in. Give
+Zigbee2MQTT the same password in **ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD** (its
+**ZIGBEE2MQTT_CONFIG_MQTT_USER** is `mqtt` already). MQTT is not encrypted:
+keep these ports inside your network, or add TLS. To change the password,
+uninstall Mosquitto and install it again with the new one (its folders are
+kept). The install writes Mosquitto's
+`mosquitto.conf` in `apps/mosquitto/config` on its pool when it is missing,
+and its comments say how to add users or keep retained messages (the
+container sees that file, not the rest of its folder: keep another password
+file in `apps/mosquitto/data`, which then replaces UNOS's and must hold `mqtt`
+too for Zigbee2MQTT). The install of Prometheus writes its
 `prometheus.yml` in `apps/prometheus/config` the same way, the image's example.
 An existing file is kept; edit it and restart the app. With the firewall on (**System** > **Security**), it must let
 Docker's networks reach those ports of the NAS.

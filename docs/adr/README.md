@@ -334,7 +334,9 @@ and this index, and `make check-fast` runs it.
 | [0410](0410-every-catalog-image-is-pinned-by-a-version-tag-and-digest-and-a-weekly-audit-reports-moved-tags.md) | Every image of the catalog is pinned by a version tag and its index digest, and a weekly audit reports the tags that moved | accepted | 2026-11-18 |
 | [0415](0415-bookstack-paperless-ngx-and-linkwarden-install-with-their-database-or-broker-as-companions.md) | BookStack, Paperless-ngx and Linkwarden install with their database or broker as companions, their secrets as generated files and their databases awaited by a command | accepted | 2026-11-18 |
 | [0426](0426-the-catalogs-linuxserver-images-are-pinned-and-pulled-from-ghcr-io-not-lscr-io.md) | The catalog's LinuxServer images are pinned and pulled from ghcr.io, not lscr.io | accepted | 2026-11-19 |
-| [0480](0480-a-configuration-file-that-a-catalog-image-ships-is-bound-as-that-file-and-mosquitto-starts-local-only.md) | A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only | accepted | 2026-11-23 |
+| [0480](0480-a-configuration-file-that-a-catalog-image-ships-is-bound-as-that-file-and-mosquitto-starts-local-only.md) | A configuration file that a catalog image ships is bound as that file, written when missing, and Mosquitto starts local-only | superseded by [0490](0490-mosquitto-listens-on-its-published-ports-only-for-clients-that-sign-in-with-the-password-of-its-install.md) | 2026-11-23 |
+| [0490](0490-mosquitto-listens-on-its-published-ports-only-for-clients-that-sign-in-with-the-password-of-its-install.md) | Mosquitto listens on its published ports only for clients that sign in with the password of its install | accepted | 2026-11-24 |
+| [0491](0491-authelia-leaves-the-catalog-because-it-needs-a-domain-a-reverse-proxy-and-users-that-only-the-administrator-can-choose.md) | Authelia leaves the catalog because it needs a domain, a reverse proxy and users that only the administrator can choose | accepted | 2026-11-24 |
 
 ## Backup
 
