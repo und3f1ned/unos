@@ -55,7 +55,10 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
-  runs `main` 20e6754f (`mvp.batch-22` with `system.sd-standby-bpi-f3`, ADR-0489) since 2026-11-24,
+  runs `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
+  eMMC: 2.180 in all; check: OK), the standby removed and set up again, its NVMe once lost at a warm
+  reboot and back at the next (Log). Before it `main` 20e6754f (`mvp.batch-22` with
+  `system.sd-standby-bpi-f3`, ADR-0489) since 2026-11-24,
   deployed with `scripts/dev/deploy.sh all` at the owner's standing permission (SD MiB, its eMMC: sync
   1.617, build-supervisor 0.219, build-webui 0.145, up 0.398, check 0.000; check: OK), with the SD
   standby set up on its card SC64G, every condition met, every boot through its chooser (Log);
@@ -320,7 +323,10 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs `main` 082b67e2 (`mvp.batch-22` with the fixes of `system.sd-standby-boot`, ADR-0488) since
+- Runs `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24, deployed with
+  `scripts/dev/deploy.sh all` at the owner's standing permission (SD MiB, its eMMC: 2.004 in all; check:
+  OK), with the SD standby removed and set up again (generation 1) and two reboots through its chooser (Log).
+- Before it `main` 082b67e2 (`mvp.batch-22` with the fixes of `system.sd-standby-boot`, ADR-0488) since
   2026-11-24, deployed with `scripts/dev/deploy.sh all` at the owner's standing permission for the W3.
   SD MiB, its eMMC: sync 4.387, build-supervisor 0.500, build-webui 0.211, up 0.098, check 0.016;
   total 5.211. check: OK; GET /system/standby: every condition met, armed.
@@ -824,6 +830,40 @@ Open owner actions:
     GB on the eMMC).
 
 ## Log
+
+### 2026-11-24: The twenty-third batch on both boards; Remove of the SD standby waits for udev before each wipe
+
+- `mvp.batch-23` (ADR-0490 to ADR-0496) merged into `main` ed871d6d, `make check` and `make e2e-local`
+  green (11994 and 1269 passed), deployed on the BPI-W3 (SD MiB 7.988 in all, check: OK) and the BPI-F3.
+- `architecture.fast-page-reads` passes on the W3 (`scripts/dev/api.py GET --repeat`, p50/p95 in ms):
+  containers 203/251, share paths 51/85, smb-interfaces 59/101, smb-status 42/45, pools 55/71,
+  disks 56/66, each below its p50 before; 0.023 MiB to the eMMC.
+- `apps.catalog-start-defects` passes on the W3: Authelia 404; Mosquitto installed with a password
+  (0.000 MiB), RestartCount 0 and listening on 1883 and 9001; anonymous and wrong-password clients
+  refused (CONNACK 5), `mqtt` accepted (0) on 127.0.0.1 and the bridge's gateway, the WebSocket 101;
+  the same after a reboot; uninstalled with its folders kept.
+- The App Store's free-space check (ADR-0493) measures `/mnt/pools/data/.containerd`, the pool `data`,
+  on the W3; the catalog answers `images_bytes`.
+- `system.sd-standby-remove-interrupted` (ADR-0494): Remove answered 500 on both boards, wipefs
+  EBUSY right after the unmounts, while udev probed the card. Fixed on the batch (29ccd7e2, now
+  `main`): udev settles before each wipefs, and a wipe that still finds the card busy tries again, up to
+  3 times; the two new tests failed first with the device's message. With it deployed (W3 2.004 MiB,
+  F3 2.180 MiB, check: OK), Remove and Set up again answered 200 on both boards: W3 0.449 and 0.746 MiB
+  to the eMMC, 16 and 1665 MiB to the card, F3 0.258 and 0.508 MiB, 16 and 1696 MiB, generation 1.
+  The W3 rebooted through its chooser (83 s, `unos.chooser=card unos.root=emmc`), check: OK, and its
+  boot-ok unit set the counter back to 0 (`unos_tries=0`).
+- The F3 also rebooted through its chooser (352 s), but its NVMe did not answer the kernel's probe
+  (`I/O tag 27 QID 0 timeout`, `probe with driver nvme failed with error -4`): the pool `data` stayed
+  unmounted, Docker and UNOS stayed down, `multi-user.target` was never reached, and the boot-ok unit
+  did not run, so the card's counter stayed at 1, as ADR-0486 and ADR-0494 intend (two more such boots
+  would start the card's root). A PCI rescan found the controller again, but it failed the same way
+  (`Identify Controller failed`). A second warm reboot through the API brought it back
+  (`nvme0: 8/0/0 default/read/poll queues`): the pool mounted, Docker active, `unos.chooser=card
+  unos.root=emmc`, the counter back to 0, check: OK, the standby armed with no problem. Both
+  `system.sd-standby-remove-interrupted` and the boot part of `system.docker-root-on-pool` step 6
+  (without the pool's disk UNOS stays down, the chooser counts the boot) are seen on the board.
+- Open: `system.alert-events` needs a USB stick on the W3 for a scratch pool made and removed between
+  two RAID passes.
 
 ### 2026-11-24: The btrfs CI, stats and network tests hold under load; a hung test ends its worker (testing.btrfs-ci-under-load, ADR-0492)
 
