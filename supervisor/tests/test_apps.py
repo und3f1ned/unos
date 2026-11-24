@@ -74,6 +74,8 @@ POOLS = "/api/v1/apps/pools"
 INSTALLED = "/api/v1/apps/installed"
 # Transmission installs only with its web login (USER and PASS, see the catalog).
 TRANSMISSION = {"template_id": "transmission", "env_overrides": {"USER": "e2e", "PASS": "k7-Unique-pass"}}
+# Mosquitto installs only with the password that its clients sign in with (ADR-0490).
+MOSQUITTO = {"template_id": "mosquitto", "env_overrides": {"MOSQUITTO_PASSWORD": "k7-Unique-pass"}}
 
 
 def _fd_path(fd: int) -> Path:
@@ -1096,7 +1098,7 @@ class TestShippedConfiguration:
         template = get_app_by_id(app_id)
         target = SHIPPED_CONFIGURATION[template.image.split(":")[0]]
 
-        response = install(api, {"template_id": app_id})
+        response = install(api, MOSQUITTO if app_id == "mosquitto" else {"template_id": app_id})
 
         assert response.status_code == 200, response.text
         mounts = _mounts(docker_client)
@@ -1106,13 +1108,23 @@ class TestShippedConfiguration:
         assert stat.S_IMODE(source.stat().st_mode) == 0o644  # readable by the image's user
         assert os.path.dirname(target) not in mounts
 
-    def test_mosquitto_starts_in_its_local_only_mode(self):
-        """Not with the image's own file, whose listener on port 1883 takes anonymous clients:
-        Mosquitto listens inside its container until a listener and its authentication are added
-        (ADR-0480)."""
-        [conf] = [v.content for v in get_app_by_id("mosquitto").volumes if v.container.endswith("mosquitto.conf")]
-        settings = [line for line in conf.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-        assert settings == []
+    def test_mosquitto_listens_on_the_ports_it_publishes_only_for_clients_that_sign_in(self):
+        """Not with the image's own file, whose listener on port 1883 takes anonymous clients, nor
+        in the local-only mode of a file without a listener, in which the published ports and
+        Zigbee2MQTT reach nothing (ADR-0490): MQTT on 1883 and MQTT over WebSockets on 9001, both
+        with the password file that its command makes in RAM."""
+        template = get_app_by_id("mosquitto")
+        [conf] = [v.content for v in template.volumes if v.container.endswith("mosquitto.conf")]
+        settings = [line.split() for line in conf.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+        assert settings == [
+            ["listener", "1883"],
+            ["listener", "9001"], ["protocol", "websockets"],
+            ["allow_anonymous", "false"],
+            ["password_file", catalog_module.MOSQUITTO_PASSWORDS],
+        ]
+        assert sorted(p.container for p in template.ports) == [1883, 9001]
+        assert os.path.dirname(catalog_module.MOSQUITTO_PASSWORDS) in template.tmpfs
 
     def test_prometheus_has_its_images_example(self):
         [conf] = [v.content for v in get_app_by_id("prometheus").volumes if v.container.endswith("prometheus.yml")]
@@ -1147,6 +1159,104 @@ class TestShippedConfiguration:
                 assert not hiding, f"{template.id}: {hiding} hides {shipped}"
                 [bound] = [v for v in spec.volumes if v.container == shipped]
                 assert bound.is_file and bound.content, f"{template.id}: {shipped} has no content"
+
+
+class TestMosquittoSignIn:
+    """Mosquitto's clients sign in with the user name that UNOS sets and the password of the
+    install, which its command writes into a password file in RAM at every start (ADR-0490)."""
+
+    def test_the_password_is_required_and_no_placeholder(self, api, pools, docker_client):
+        missing = install(api, {"template_id": "mosquitto"})
+        placeholder = install(api, {"template_id": "mosquitto", "env_overrides": {"MOSQUITTO_PASSWORD": "changeme"}})
+
+        assert missing.status_code == 400 and "MOSQUITTO_PASSWORD is required" in missing.json()["detail"]
+        assert placeholder.status_code == 400 and "placeholder" in placeholder.json()["detail"]
+        docker_client.api.post.assert_not_called()
+
+    @pytest.mark.parametrize("password", ["k7-Unique\npass", "k7-Unique-pass\r"])
+    def test_the_password_is_one_line(self, api, pools, docker_client, password):
+        # mosquitto_passwd reads it as a line, and then its check as the next one: a line break
+        # in it would fail every start.
+        response = install(api, {"template_id": "mosquitto", "env_overrides": {"MOSQUITTO_PASSWORD": password}})
+
+        assert response.status_code == 400
+        assert "MOSQUITTO_PASSWORD must be one line" in response.json()["detail"]
+        docker_client.api.post.assert_not_called()
+
+    def test_the_user_name_is_set_by_unos(self, api, pools, docker_client):
+        # mosquitto_passwd refuses a name with ':', and a start that fails restarts in a loop.
+        response = install(api, {**MOSQUITTO, "env_overrides": {
+            **MOSQUITTO["env_overrides"], "MOSQUITTO_USERNAME": "a:b",
+        }})
+
+        assert response.status_code == 400
+        assert "MOSQUITTO_USERNAME is set by UNOS" in response.json()["detail"]
+        docker_client.api.post.assert_not_called()
+
+    def test_the_install_runs_the_command_with_the_password_and_its_file_in_ram(self, api, pools, docker_client):
+        response = install(api, MOSQUITTO)
+
+        assert response.status_code == 200, response.text
+        create = docker_client.containers.create.call_args.kwargs
+        assert create["environment"] == {"MOSQUITTO_USERNAME": "mqtt", "MOSQUITTO_PASSWORD": "k7-Unique-pass"}
+        assert create["command"] == ["sh", "-c", catalog_module.MOSQUITTO_COMMAND]
+        assert create["tmpfs"] == {"/run/mosquitto": "size=1m"}
+        # The image's entrypoint runs the command, which ends in the pinned image's CMD.
+        assert catalog_module.APP_IMAGES["mosquitto"].cmd == (
+            "/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf",
+        )
+        assert sorted(create["ports"]) == ["1883/tcp", "9001/tcp"]
+
+    def test_the_command_hands_the_password_to_mosquitto_passwd_on_its_input(self, tmp_path):
+        """The command as the image's shell runs it, with mosquitto_passwd, chown and Mosquitto
+        replaced by scripts that record their arguments, input and environment: the password
+        reaches mosquitto_passwd twice on its input (its prompt and its check), never an
+        argument, and Mosquitto starts without it in its environment."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        record = tmp_path / "record"
+        for name, body in {
+            "mosquitto_passwd": f'echo "passwd $*" >> {record}; cat >> {record}; : > "$2"',
+            "chown": f'echo "chown $*" >> {record}',
+            "mosquitto": f'echo "start $*" >> {record}; env >> {record}',
+        }.items():
+            (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+            (bin_dir / name).chmod(0o755)
+        passwords = tmp_path / "run/passwords"
+        passwords.parent.mkdir()
+        command = catalog_module.MOSQUITTO_COMMAND.replace(
+            catalog_module.MOSQUITTO_PASSWORDS, str(passwords)
+        ).replace("exec /usr/sbin/mosquitto", "exec mosquitto")
+        password = "k7 Unique:pass$1 'x\""
+
+        done = subprocess.run(
+            ["sh", "-c", command], capture_output=True, text=True, timeout=10, check=False,
+            env={"PATH": f"{bin_dir}:/usr/bin:/bin", "MOSQUITTO_USERNAME": "mqtt", "MOSQUITTO_PASSWORD": password},
+        )
+
+        assert done.returncode == 0, done.stderr
+        lines = record.read_text().splitlines()
+        assert lines[:5] == [
+            f"passwd -c {passwords} mqtt", password, password,
+            f"chown mosquitto:mosquitto {passwords}",
+            "start -c /mosquitto/config/mosquitto.conf",
+        ]
+        assert not [line for line in lines[5:] if line.startswith("MOSQUITTO_PASSWORD=")]
+        assert stat.S_IMODE(passwords.stat().st_mode) == 0o600
+
+    def test_zigbee2mqtt_signs_in_to_mosquitto(self):
+        """Zigbee2MQTT's broker is the Mosquitto app (ADR-0415), on a port that it listens on, with
+        its user name; the administrator gives it the password of Mosquitto's install."""
+        mosquitto = get_app_by_id("mosquitto")
+        zigbee2mqtt = {var.name: var for var in get_app_by_id("zigbee2mqtt").environment}
+        user = next(var.value for var in mosquitto.environment if var.name == "MOSQUITTO_USERNAME")
+
+        assert zigbee2mqtt["ZIGBEE2MQTT_CONFIG_MQTT_SERVER"].value == "mqtt://host.docker.internal:1883"
+        assert any(p.host == 1883 and p.container == 1883 for p in mosquitto.ports)
+        assert zigbee2mqtt["ZIGBEE2MQTT_CONFIG_MQTT_USER"].value == user
+        password = zigbee2mqtt["ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD"]
+        assert (password.value, password.secret, password.required) == ("", True, False)
+        assert "MOSQUITTO_PASSWORD" in password.description
 
 
 class TestFileVolumes:
@@ -3628,9 +3738,12 @@ FLOATING_TAG = re.compile(
     r"(latest|stable|main|master|develop|dev|nightly|edge|beta|lts|sts|next|rolling|unstable)([-_].*)?|v?\d{1,3}",
     re.IGNORECASE,
 )
-# Readarr's project is retired and LinuxServer's image of it is deprecated: its tag names an empty
-# index, which no host can pull, so it has no image to pin (ADR-0410).
-RETIRED_TEMPLATES = ("readarr",)
+# The apps that left the catalog. Readarr's project is retired and LinuxServer's image of it is
+# deprecated: its tag names an empty index, which no host can pull, so it has no image to pin
+# (ADR-0410). Authelia needs a domain served over HTTPS, a reverse proxy that asks it about every
+# request and its users, which only the administrator can choose: without them it restarted in a
+# loop on a fresh install (ADR-0491).
+LEFT_THE_CATALOG = ("readarr", "authelia")
 # The variables of Immich's server that UNOS sets to reach its companions and its password.
 IMMICH_WIRING = {
     "DB_HOSTNAME", "DB_USERNAME", "DB_DATABASE_NAME", "DB_PASSWORD_FILE", "REDIS_HOSTNAME",
@@ -3865,8 +3978,8 @@ class TestStackCatalog:
         assert containers["database"]["hardware"] == containers["redis"]["hardware"] == []
         assert containers[""]["image"] == catalog_module.IMMICH_SERVER.ref
 
-    @pytest.mark.parametrize("app_id", RETIRED_TEMPLATES)
-    def test_the_apps_that_lack_an_image_are_not_in_the_catalog(
+    @pytest.mark.parametrize("app_id", LEFT_THE_CATALOG)
+    def test_the_apps_that_left_the_catalog_are_not_in_it(
         self, api, pools, docker_client, app_id
     ):
         assert get_app_by_id(app_id) is None

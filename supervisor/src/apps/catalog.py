@@ -25,7 +25,7 @@ Volume host paths:
   start) writes when the file is missing: a bind of an empty folder there hides
   it, and the app restarts in a loop (Mosquitto's mosquitto.conf). The content
   is the image's own, unless that opens the app to the network without
-  authentication (ADR-0480).
+  authentication (ADR-0490).
 - Never put a pool path inside another app's (or the same app's) writable
   pool path, e.g. {pool}/downloads/watch next to {pool}/downloads. Docker
   resolves bind sources again on every start and follows symbolic links, so
@@ -112,6 +112,7 @@ a template gives its copy one with model_copy, and a container has at most one
 profile with an image.
 """
 
+import shlex
 from dataclasses import dataclass
 
 from .schemas import (
@@ -445,6 +446,7 @@ APP_IMAGES: dict[str, PinnedImage] = {
     "mosquitto": PinnedImage(
         "eclipse-mosquitto", "2.1.4-alpine",
         "sha256:fa12172a051310efe5bcb7a6a11b77bd5faacb82cbacd7742aa758bf024fd8e4", 54_000_000, ("/mosquitto/data", "/mosquitto/log"),
+        cmd=("/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"),
     ),
     "zigbee2mqtt": PinnedImage(
         "koenkk/zigbee2mqtt", "2.14.3",
@@ -522,10 +524,6 @@ APP_IMAGES: dict[str, PinnedImage] = {
         "vaultwarden/server", "1.37.5",
         "sha256:4fe17f415f90087377d37c755e0ea3cf189dcc6794e49cdd2a9adbb4937d9e1f", 372_000_000, ("/data",),
     ),
-    "authelia": PinnedImage(
-        "authelia/authelia", "4.39.28",
-        "sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54", 114_000_000, (),
-    ),
     "crowdsec": PinnedImage(
         "crowdsecurity/crowdsec", "v1.8.2",
         "sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4", 686_000_000, (),
@@ -598,23 +596,49 @@ LINKWARDEN_COMMAND = (
 # reads from files (FILE__*, *_FILE) among them: in RAM, where s6 must be able to run its scripts.
 S6_RUN = {"/run": "exec,size=16m"}
 
-# Mosquitto's configuration on a fresh install (ADR-0480): none of the settings of the image's own
-# file, which opens an MQTT listener on port 1883 to anonymous clients, so Mosquitto listens only
-# inside its container, its local-only mode, until the administrator adds a listener and its
-# authentication.
-MOSQUITTO_CONF = """\
+# Mosquitto's clients sign in (ADR-0490): with the user name that UNOS sets, MOSQUITTO_USERNAME, and
+# the password of the install, MOSQUITTO_PASSWORD. Mosquitto reads only a password file of hashes,
+# which its container's command makes at every start: printf, a builtin of the image's shell, hands
+# the password twice to mosquitto_passwd on its input (its prompt and its check), so it is in no
+# command line; the file is in RAM (the template's tmpfs), mode 0600 and owned by the user that
+# Mosquitto runs as, which reads it after it drops root. Then the command runs the pinned image's
+# CMD, without the password in its environment. The name is fixed: mosquitto_passwd refuses one
+# with ':', and a start that fails restarts in a loop.
+MOSQUITTO_USER = "mqtt"
+MOSQUITTO_PASSWORDS = "/run/mosquitto/passwords"
+MOSQUITTO_COMMAND = (
+    'umask 077 && printf "%s\\n%s\\n" "$MOSQUITTO_PASSWORD" "$MOSQUITTO_PASSWORD"'
+    f' | mosquitto_passwd -c {MOSQUITTO_PASSWORDS} "$MOSQUITTO_USERNAME" > /dev/null'
+    f' && chown mosquitto:mosquitto {MOSQUITTO_PASSWORDS} && unset MOSQUITTO_PASSWORD'
+    f' && exec {shlex.join(APP_IMAGES["mosquitto"].cmd)}'
+)
+
+# Mosquitto's configuration on a fresh install (ADR-0490): none of the image's own file, which opens
+# port 1883 to anonymous clients, nor the local-only mode of a file without a listener, in which
+# the ports that the app publishes, and Zigbee2MQTT, reach nothing. MQTT on 1883 and MQTT over
+# WebSockets on 9001, both only for clients that sign in.
+MOSQUITTO_CONF = f"""\
 # Eclipse Mosquitto's configuration, which UNOS wrote at the install because it was missing.
 # UNOS does not write it again: edit it here, then restart the app.
 #
-# It sets nothing, so Mosquitto listens only inside its container: no other container or host
-# can connect. To let them, add a listener and its authentication, such as:
-#
-#   listener 1883
-#   password_file /mosquitto/data/passwords
-#
+# MQTT on port 1883 and MQTT over WebSockets on port 9001, the ports that the app publishes on the
+# NAS, both only for clients that sign in: with the user name {MOSQUITTO_USER} (MOSQUITTO_USERNAME) and the
+# password of the app's install (MOSQUITTO_PASSWORD), which UNOS writes into the password file
+# below at every start, in RAM. The traffic is not encrypted: add TLS (certfile, keyfile) before
+# you open these ports beyond your network.
+listener 1883
+
+listener 9001
+protocol websockets
+
+allow_anonymous false
+password_file {MOSQUITTO_PASSWORDS}
+
 # The container sees this file and the app's folders data (/mosquitto/data) and log
-# (/mosquitto/log), not the rest of this folder: make the passwords file in the data folder with
-# mosquitto_passwd. To keep retained messages across restarts, and to log to the log folder:
+# (/mosquitto/log), not the rest of this folder. For more users, make a password file in the data
+# folder with mosquitto_passwd, owned by uid 1883 and mode 0600, and name it in password_file in
+# place of UNOS's: it then holds every user, {MOSQUITTO_USER} too if Zigbee2MQTT signs in with it.
+# To keep retained messages across restarts, and to log to the log folder:
 #
 #   persistence true
 #   persistence_location /mosquitto/data/
@@ -2022,6 +2046,7 @@ APP_CATALOG: list[AppTemplate] = [
         documentation="https://mosquitto.org/documentation/",
         min_memory="32m",
         recommended_memory="128m",
+        # MQTT and MQTT over WebSockets, the listeners of MOSQUITTO_CONF.
         ports=[
             PortMapping(host=1883, container=1883),
             PortMapping(host=9001, container=9001),
@@ -2034,6 +2059,19 @@ APP_CATALOG: list[AppTemplate] = [
             VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/data", container="/mosquitto/data"),
             VolumeMapping(host=f"{APPS_DATA_PATH}/mosquitto/log", container="/mosquitto/log"),
         ],
+        environment=[
+            # Read by MOSQUITTO_COMMAND, not by the image (ADR-0490).
+            EnvVar(
+                name="MOSQUITTO_USERNAME", value=MOSQUITTO_USER, editable=False,
+                description="The user name that MQTT clients, such as Zigbee2MQTT and Home Assistant, sign in with",
+            ),
+            EnvVar(
+                name="MOSQUITTO_PASSWORD", value="", required=True, secret=True,
+                description="The password that MQTT clients sign in with, as MOSQUITTO_USERNAME",
+            ),
+        ],
+        command=["sh", "-c", MOSQUITTO_COMMAND],
+        tmpfs={"/run/mosquitto": "size=1m"},
     ),
 
     AppTemplate(
@@ -2058,13 +2096,20 @@ APP_CATALOG: list[AppTemplate] = [
         environment=[
             EnvVar(name="TZ", value="UTC"),
             # Its MQTT broker: the Mosquitto app of the same NAS, on the port that it publishes there
-            # (ADR-0415); Mosquitto takes connections from other hosts only with a listener in its
-            # mosquitto.conf.
+            # (ADR-0415), with Mosquitto's user name and the password of its install (ADR-0490).
+            # Zigbee2MQTT ignores an empty variable.
             EnvVar(
                 name="ZIGBEE2MQTT_CONFIG_MQTT_SERVER",
                 value="mqtt://host.docker.internal:1883",
-                description="The MQTT broker: the Mosquitto app of this NAS by default, whose mosquitto.conf needs "
-                "a listener on port 1883",
+                description="The MQTT broker: the Mosquitto app of this NAS by default",
+            ),
+            EnvVar(
+                name="ZIGBEE2MQTT_CONFIG_MQTT_USER", value=MOSQUITTO_USER,
+                description="The user name on the MQTT broker: the Mosquitto app's MOSQUITTO_USERNAME by default",
+            ),
+            EnvVar(
+                name="ZIGBEE2MQTT_CONFIG_MQTT_PASSWORD", value="", secret=True,
+                description="The password on the MQTT broker: the MOSQUITTO_PASSWORD of the Mosquitto app's install",
             ),
         ],
         privileged=True,
@@ -2618,26 +2663,6 @@ APP_CATALOG: list[AppTemplate] = [
         environment=[
             EnvVar(name="ADMIN_TOKEN", value="", description="Admin panel token (generate secure random string)", secret=True),
             EnvVar(name="SIGNUPS_ALLOWED", value="true", description="Allow new user signups"),
-        ],
-    ),
-    
-    AppTemplate(
-        id="authelia",
-        name="Authelia",
-        description="Single Sign-On and Two-Factor authentication portal",
-        icon="🛡️",
-        category=AppCategory.SECURITY,
-        source=AppSource.COMMUNITY,
-        image=APP_IMAGES["authelia"].ref,
-        version=APP_IMAGES["authelia"].tag,
-        website="https://authelia.com",
-        github="https://github.com/authelia/authelia",
-        documentation="https://www.authelia.com/docs/",
-        min_memory="128m",
-        recommended_memory="256m",
-        ports=[PortMapping(host=9091, container=9091)],
-        volumes=[
-            VolumeMapping(host=f"{APPS_DATA_PATH}/authelia/config", container="/config"),
         ],
     ),
     
