@@ -15,7 +15,7 @@ it reads the host again right before it wipes. It then writes, in this order:
 5. UNOS's fstab lines (``nofail``) and their mount points, immutable while nothing is mounted there;
 6. the mounts, the chooser ``boot.scr`` and ``unos/``;
 7. on the eMMC's system: ``unos-standby-boot-ok.service`` and ``unos-standby-watch.service`` (the
-   switch when the pool that holds Docker fails, ADR-0487) with their scripts, and systemd's hardware
+   switch when the pool that holds Docker fails, ADR-0488) with their scripts, and systemd's hardware
    watchdog (``RuntimeWatchdogSec=60s``) where the board has one, from the next boot.
 
 The first generation is the service's next step. Remove the standby unmounts the card, drops the
@@ -116,7 +116,7 @@ WantedBy=multi-user.target
 
 def emmc_units(profile: profiles.BoardProfile) -> list[tuple[str, str, str]]:
     """The standby's units on the eMMC's system and their scripts (path, text, mode): the counter back
-    to 0 after a boot that came up, and the switch when Docker's pool fails (ADR-0487)."""
+    to 0 after a boot that came up, and the switch when Docker's pool fails (ADR-0488)."""
     return [
         (BOOT_OK_SCRIPT, (HOST_SCRIPTS / "unos-standby-boot-ok.sh").read_text(encoding="utf-8"), "0755"),
         (f"{UNIT_DIR}/{BOOT_OK_UNIT}", boot_ok_unit(profile.counter_sector), "0644"),
@@ -134,7 +134,7 @@ RuntimeWatchdogSec=60s
 def partition_layout(profile: profiles.BoardProfile) -> str:
     """sfdisk's script of the card: partition 1, FAT32, from the profile's first sector, marked bootable
     for U-Boot's distro boot, and partition 2, the rest. GPT where the profile says so (the W3, whose
-    U-Boot reads no partition of an MBR card, ADR-0487), with partition 1 "Microsoft basic data",
+    U-Boot reads no partition of an MBR card, ADR-0488), with partition 1 "Microsoft basic data",
     which every computer opens."""
     start, size = profile.first_sector, profiles.BOOT_PARTITION_SECTORS
     if profile.partition_table == "gpt":
@@ -149,7 +149,7 @@ def write_loader(ops: StandbyHost, profile: profiles.BoardProfile, disk: str) ->
     of Armbian's write_uboot_platform). The first stage's header is zeroed first, the later stages are
     written, then the first stage without its first sector, and that sector last: a rewrite cut off at
     any point leaves no valid header in front of a broken stage, and the boot ROM passes over the card
-    (ADR-0487)."""
+    (ADR-0488)."""
     (first, start), later = profile.loader_images[0], profile.loader_images[1:]
     conv = ("conv=notrunc,fsync", "status=none")
     what = "The board's loader on the card"
@@ -300,7 +300,7 @@ def remove(model: str, *, dry_run: bool, running_on_card: bool) -> list[str]:
     ops.change(["rm", "-f", "--", f"{UNIT_DIR}/{BOOT_OK_UNIT}", BOOT_OK_SCRIPT, f"{UNIT_DIR}/{WATCH_UNIT}", WATCH_SCRIPT,
                 WATCHDOG_DROPIN], what="The standby's units")
     ops.change(["systemctl", "daemon-reload"], what="systemd's units")
-    # The folders that Set up made, when nothing else is in them (ADR-0487).
+    # The folders that Set up made, when nothing else is in them (ADR-0488).
     for folder in (STANDBY_DIR, SCRIPT_DIR, WATCHDOG_DROPIN.rsplit("/", 1)[0]):
         if ops.exists(folder):
             ops.change(["rmdir", "--ignore-fail-on-non-empty", "--", folder], what=f"The folder {folder}")

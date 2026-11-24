@@ -25,11 +25,11 @@ class BoardProfile:
     # Armbian's loader package: its folder, and each image with the sector that write_uboot_platform
     # of /usr/lib/u-boot/platform_install.sh writes it to, the first stage first. UNOS writes them to the
     # card itself, in the reverse order: the first stage's header last, so that a torn rewrite never
-    # leaves a valid header in front of a broken later stage (ADR-0487).
+    # leaves a valid header in front of a broken later stage (ADR-0488).
     loader_dir: str
     loader_images: tuple[tuple[str, int], ...]
     # The card's partition table: the one that both the boot ROM and the board's U-Boot read. The
-    # W3's U-Boot sees no partition of an MBR card (measured, ADR-0487); "dos" for a board whose
+    # W3's U-Boot sees no partition of an MBR card (measured, ADR-0488); "dos" for a board whose
     # loader needs an MBR.
     partition_table: Literal["gpt", "dos"]
     # How the eMMC's system boots, which decides how the chooser hands over to it: "boot.scr", Armbian's

@@ -10,7 +10,7 @@
   standby's own card;
 - ``host_tools``: rsync, mkfs.vfat (dosfstools) and sfdisk (fdisk) are on the host.
 
-Docker's data root is no condition (ADR-0486, ADR-0487): it is on a pool, and the standby takes over
+Docker's data root is no condition (ADR-0486, ADR-0488): it is on a pool, and the standby takes over
 when that pool fails too.
 
 Everything here only reads: the host's files through ``cat``, its disks through
@@ -203,7 +203,7 @@ def loader_version(ops: StandbyHost, profile: profiles.BoardProfile) -> str:
     linux-u-boot-armsom-w3-vendor installs /usr/lib/linux-u-boot-vendor-armsom-w3."""
     image = f"{profile.loader_dir}/{profile.loader_images[-1][0]}"
     # In the read-only unit: dpkg-query -S reads every package's file list, whose access times a read
-    # of the host would set on the eMMC at every sync (ADR-0487).
+    # of the host would set on the eMMC at every sync (ADR-0488).
     owner = ops.long_read(["dpkg-query", "-S", image], timeout=120)
     package = owner.stdout.split(":", 1)[0].split(",")[0].strip() if owner.ok else ""
     if not re.fullmatch(r"[a-z0-9][a-z0-9.+-]+", package):

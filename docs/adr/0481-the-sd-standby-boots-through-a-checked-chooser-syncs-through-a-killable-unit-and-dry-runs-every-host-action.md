@@ -1,6 +1,6 @@
 ---
 status: superseded
-superseded-by: ADR-0487
+superseded-by: ADR-0488
 date: 2026-11-23
 area: system
 decided-by: agent
@@ -10,7 +10,7 @@ decided-by: agent
 
 ## Context
 
-Superseded by ADR-0487: the card's partition table is the board's (GPT on the BPI-W3, whose U-Boot reads no MBR card), the syncs write nothing to the eMMC, Docker's data root is no condition and the standby also takes over when Docker's pool fails, and the BPI-F3 follows; every other decision stays as written here.
+Superseded by ADR-0488: the card's partition table is the board's (GPT on the BPI-W3, whose U-Boot reads no MBR card), the syncs write nothing to the eMMC, Docker's data root is no condition and the standby also takes over when Docker's pool fails, and the BPI-F3 follows; every other decision stays as written here.
 
 ADR-0471 designs the SD card standby and its phase 2, `system.sd-standby-boot`: the card's layout,
 the chooser's four cases and its tries counter, a generation's content, the schedule of the syncs,

@@ -16,7 +16,7 @@ When the eMMC's monitor finds ``system_disk_failed`` and the standby is set up, 
 and holds a complete generation, ``on_system_disk_failed`` stops a sync, writes the mark, alerts the
 switch, makes a last copy of the database and reboots at once (``switch``). When the pool that holds
 Docker fails, UNOS is down with Docker: the host's ``unos-standby-watch.service`` switches then
-(``host/unos-standby-watch.sh``, ADR-0487).
+(``host/unos-standby-watch.sh``, ADR-0488).
 """
 
 from __future__ import annotations
@@ -257,7 +257,7 @@ def _boot_id(ops: StandbyHost) -> str | None:
 
 def booted_since_setup() -> bool:
     """Whether this boot came after the standby was set up, so that it could have passed the card's
-    chooser: right after Set up the running boot is the setup's (ADR-0487)."""
+    chooser: right after Set up the running boot is the setup's (ADR-0488)."""
     armed = _state.stored.get("armed_boot_id")
     if _state.boot_id is None or not isinstance(armed, str):
         return True
@@ -312,7 +312,7 @@ def _daily_due(now: datetime, zone: Any) -> tuple[bool, datetime, datetime]:
     """Whether today's daily sync is due, today's time of it and when the next is. It is due once its
     time passed and no sync ran since then, whatever started it (Set up, the start, a change, Sync
     now): the last sync's time comes from RAM or state.json, so neither a start of the supervisor nor
-    the setup's own sync is followed by another (ADR-0487)."""
+    the setup's own sync is followed by another (ADR-0488)."""
     local = now.astimezone(zone)
     hour, minute = (int(part) for part in sync_time().split(":"))
     today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -914,7 +914,7 @@ async def _on_start() -> None:
     """On the card's root: record that the standby ran (time, generation, reason) once, at once, so that
     the eMMC's system knows it. The card's root starts on the clock that fake-hwclock saved at the last
     sync: a time recorded before systemd's time sync set the clock is corrected later
-    (_correct_run_time, ADR-0487)."""
+    (_correct_run_time, ADR-0488)."""
     if _state.root != "card" or ran() is not None or not _state.card_present:
         return
     stored = {**_state.stored, "standby_ran": {"at": utc_text(utc_now()),

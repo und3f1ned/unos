@@ -1,6 +1,6 @@
 ---
 status: superseded
-superseded-by: ADR-0487
+superseded-by: ADR-0488
 date: 2026-11-23
 area: system
 decided-by: owner
@@ -10,7 +10,7 @@ decided-by: owner
 
 ## Context
 
-Superseded by ADR-0487: the card's partition table is the board's (GPT on the BPI-W3, whose U-Boot reads no MBR card), the syncs write nothing to the eMMC, Docker's data root is no condition and the standby also takes over when Docker's pool fails, and the BPI-F3 follows; every other decision stays as written here.
+Superseded by ADR-0488: the card's partition table is the board's (GPT on the BPI-W3, whose U-Boot reads no MBR card), the syncs write nothing to the eMMC, Docker's data root is no condition and the standby also takes over when Docker's pool fails, and the BPI-F3 follows; every other decision stays as written here.
 
 The owner asked on 2026-11-23 (in translation): "think through a service that, if the eMMC fails
 or the pool goes down, moves the critical data to the SD card and runs from the card, containers

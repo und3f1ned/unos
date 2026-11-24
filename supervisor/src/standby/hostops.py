@@ -10,7 +10,7 @@ Long commands (rsync, docker save) run in the transient unit ``unos-standby-sync
 (``systemd-run --wait --pipe``) with a deadline of their own: ``kill_sync`` ends one at once, which
 the timeout of ``run_on_host`` could not (it ends only the command that enters the host, ADR-0258).
 The unit sees the host read-only but the card (``ProtectSystem=strict``, ``ReadWritePaths=`` the
-card's folder, ADR-0487): a read through a read-only mount sets no access time, so rsync's reads of
+card's folder, ADR-0488): a read through a read-only mount sets no access time, so rsync's reads of
 the eMMC's root write nothing to it, and no command of a sync can write the eMMC.
 """
 
@@ -30,7 +30,7 @@ BOOT_DIR = f"{STANDBY_DIR}/boot"
 CARD_DIR = f"{STANDBY_DIR}/card"
 SYNC_UNIT = "unos-standby-sync"
 # The sync's unit sees the host read-only but the card's mounts: no access time of the eMMC's files
-# and folders is written by its reads (ADR-0487).
+# and folders is written by its reads (ADR-0488).
 READ_ONLY_HOST = ("--property=ProtectSystem=strict", f"--property=ReadWritePaths=-{STANDBY_DIR}")
 SYSTEMD_RUN_GRACE = 60
 

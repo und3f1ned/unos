@@ -2132,7 +2132,7 @@ def _guard_unmanaged_pools(entries: dict[str, ManagedFstabEntry]) -> list[dict[s
         if not name or not POOL_NAME_PATTERN.fullmatch(name) or name in seen:
             continue
         if name in disks.STANDBY_LABELS:
-            continue  # the SD standby's card (ADR-0471, ADR-0487), mounted by its own fstab lines
+            continue  # the SD standby's card (ADR-0471, ADR-0488), mounted by its own fstab lines
         if _is_system_filesystem(fs, mounts):
             continue
         entry = entries.get(name)

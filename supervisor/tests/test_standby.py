@@ -295,7 +295,7 @@ class TestTheSetup:
             "wipefs -a /dev/mmcblk1",
             "dd if=/dev/zero of=/dev/mmcblk1 bs=1M count=16 conv=fsync status=none",
             # No valid header while the loader is written, the later stage first, the first stage's
-            # header last (ADR-0487).
+            # header last (ADR-0488).
             "dd if=/dev/zero of=/dev/mmcblk1 bs=512 seek=64 count=1 conv=notrunc,fsync status=none",
             "dd if=/usr/lib/linux-u-boot-vendor-armsom-w3/u-boot.itb of=/dev/mmcblk1 bs=512 seek=16384 conv=notrunc,fsync status=none",
             "dd if=/usr/lib/linux-u-boot-vendor-armsom-w3/idbloader.img of=/dev/mmcblk1 bs=512 skip=1 seek=65 conv=notrunc,fsync status=none",
@@ -314,7 +314,7 @@ class TestTheSetup:
         ]
         positions = [done.index(step) for step in order]
         assert positions == sorted(positions)
-        # GPT: the W3's U-Boot sees no partition of a card with an MBR (ADR-0487).
+        # GPT: the W3's U-Boot sees no partition of a card with an MBR (ADR-0488).
         layout = fake.inputs["sfdisk --wipe never --no-tell-kernel /dev/mmcblk1"]
         assert layout.startswith("label: gpt\n")
         assert ("start=32768, size=1048576, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, attrs=LegacyBIOSBootable"
@@ -343,7 +343,7 @@ class TestTheSetup:
 
     def test_a_board_whose_loader_needs_an_mbr_gets_one(self, fake, monkeypatch):
         """The table is the profile's: GPT on the W3, whose U-Boot reads no MBR; an MBR for a board whose
-        loader needs one (ADR-0487)."""
+        loader needs one (ADR-0488)."""
         from dataclasses import replace
 
         from src.standby import profiles
@@ -673,7 +673,7 @@ class TestTheReviewedEdges:
 
 
 # ---------------------------------------------------------------------------
-# what the first device check on the BPI-W3 found (2026-11-23, ADR-0487)
+# what the first device check on the BPI-W3 found (2026-11-23, ADR-0488)
 # ---------------------------------------------------------------------------
 
 
@@ -850,7 +850,7 @@ class TestTheFirstDeviceCheck:
 
 class TestDockerOnThePool:
     """Docker's and containerd's roots are on the pool (ADR-0486); the card's root runs both from the
-    card (ADR-0487)."""
+    card (ADR-0488)."""
 
     def test_the_copy_takes_unos_volumes_from_the_pool_and_nothing_else_of_it(self, fake):
         armed(fake, generation_number=None)
@@ -1049,7 +1049,7 @@ class TestTheBootPath:
     async def test_the_runs_time_waits_for_the_synchronized_clock(self, fake, alerts, monkeypatch):
         """Measured on the W3: the card's root starts on the clock that fake-hwclock saved at the last
         sync, and the run was recorded up to 30 minutes early. The time is corrected once systemd's
-        time sync says the clock is right (ADR-0487)."""
+        time sync says the clock is right (ADR-0488)."""
         armed(fake)
         fake.files["/proc/cmdline"] = "root=UUID=c rootfstype=btrfs unos.chooser=card unos.root=card unos.reason=tries"
         clock = [5000.0]
@@ -1374,7 +1374,7 @@ class TestTheCardIsHidden:
 
     def test_the_cards_btrfs_is_no_unmanaged_pool_at_the_start(self, monkeypatch):
         """Measured on the W3: every start of the supervisor logged the card's btrfs as a pool that is not
-        mounted, to be mounted on the Storage page (ADR-0487)."""
+        mounted, to be mounted on the Storage page (ADR-0488)."""
         from src.storage import disks, pools
 
         guarded = []
@@ -1473,7 +1473,7 @@ class TestTheHostScripts:
 
 class TestThePoolWatch:
     """unos-standby-watch.sh: the eMMC's system switches to the card when the pool that holds Docker is
-    down, since Docker and UNOS are down with it (ADR-0486, ADR-0487)."""
+    down, since Docker and UNOS are down with it (ADR-0486, ADR-0488)."""
 
     def run_watch(self, tmp_path, mounts: list[str], *, generation_ready: bool = True, marked: bool = False,
                   data_root: str = "{pools}/data/.docker", checks: int = 6, card_mounted: bool = True,
@@ -1525,7 +1525,7 @@ class TestThePoolWatch:
         assert set((tmp_path / "asked").read_text().split()) == {str(tmp_path / "pools" / "data")}
 
     def test_a_pool_mounted_late_is_mounted_and_docker_started_instead(self, tmp_path):
-        """A disk that came up after systemd gave up on its mount: no switch for it (ADR-0487)."""
+        """A disk that came up after systemd gave up on its mount: no switch for it (ADR-0488)."""
         done, log = self.run_watch(tmp_path, [self.NOT_MOUNTED, self.MOUNTED], late_mount=True)
         assert done.returncode == 0, done.stderr
         assert log.read_text() == f"mount {tmp_path}/pools/data\nsystemctl start docker.service\n"

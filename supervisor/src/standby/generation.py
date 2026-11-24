@@ -8,7 +8,7 @@ points leave out, which rsync neither copies nor deletes), UNOS's compose volume
 archives of UNOS's images under ``/var/lib/unos-standby/images`` and the fix-ups: the card's fstab,
 the eMMC's own fstab lines kept for the return, ``unos-standby.service`` with its script,
 ``unos.service`` masked, Docker's and containerd's settings with their roots on the card and without
-the drop-ins that wait for the pool (ADR-0487), and the mount points, the pools' and the standby's
+the drop-ins that wait for the pool (ADR-0488), and the mount points, the pools' and the standby's
 immutable. The card's FAT partition holds the boot folders ``unos/boot-<n>/`` (what the eMMC's boot
 script loads, links resolved, of the device trees only the board's and its overlays, and an
 armbianEnv.txt naming the card's btrfs) and the generation files.
@@ -88,7 +88,7 @@ VOLATILE = (
 # of UNOS's data volume, which Sync now itself appends to, the SMART history, to which the monitor adds
 # a reading at every start of the supervisor, and the configuration that Caddy saves at every start,
 # which it makes again from its Caddyfile: a change of these alone is no reason
-# for a new generation, and they are copied with any other change (ADR-0487). Paths as rsync itemizes
+# for a new generation, and they are copied with any other change (ADR-0488). Paths as rsync itemizes
 # them; a folder ends with /.
 ROOT_FOLLOWERS = (
     "etc/fake-hwclock.data", "etc/armbian-leds.conf", "etc/logrotate.conf", "etc/logrotate.d/",
@@ -110,12 +110,12 @@ LOADER_VERSION = f"{CARD_DIR}/loader-version"
 BOOT_SCR = f"{BOOT_DIR}/boot.scr"
 BOOT_OK_UNIT = "unos-standby-boot-ok.service"
 BOOT_OK_SCRIPT = f"{SCRIPT_DIR}/unos-standby-boot-ok.sh"
-# The eMMC's system: the switch to the card when the pool that holds Docker fails (ADR-0487).
+# The eMMC's system: the switch to the card when the pool that holds Docker fails (ADR-0488).
 WATCH_UNIT = "unos-standby-watch.service"
 WATCH_SCRIPT = f"{SCRIPT_DIR}/unos-standby-watch.sh"
 # Docker's and containerd's settings on the eMMC name their roots on a pool, and drop-ins keep them
 # down while it is not mounted (ADR-0486); on the card's root they keep their data on the card, at the
-# defaults below, and start without the pool (ADR-0487). Rendered by the fix-ups, never copied.
+# defaults below, and start without the pool (ADR-0488). Rendered by the fix-ups, never copied.
 DOCKER_CONFIG = "/etc/docker/daemon.json"
 CONTAINERD_CONFIG = "/etc/containerd/config.toml"
 CARD_DOCKER_ROOT = "/var/lib/docker"
@@ -484,7 +484,7 @@ def boot_filters(emmc_env: str) -> list[str]:
     """rsync's filter of the boot folder: of /boot/dtb only the board's device tree (armbianEnv.txt's
     fdtfile) and the overlays beside it, which Armbian's boot script loads. /boot/dtb holds every
     board's of the vendor (118 MiB on the W3), and three boot folders, which a new kernel needs beside
-    the current and the previous one, must fit the card's 512 MiB FAT partition (ADR-0487). Without a
+    the current and the previous one, must fit the card's 512 MiB FAT partition (ADR-0488). Without a
     plain fdtfile, the whole folder."""
     values = dict(line.split("=", 1) for line in emmc_env.splitlines() if "=" in line)
     fdtfile = values.get("fdtfile", "").strip()
@@ -758,7 +758,7 @@ def _free_old_mountpoints(ops: StandbyHost, new: str, points: list[str]) -> None
 
 def _volume_rsync(short: str, mountpoint: str, gen: str, *, compare: bool) -> list[str]:
     """A volume's rsync. Folders' times are neither compared nor copied: the database's copy and its
-    digest, written into the copy of unos-data, change that folder's time (ADR-0487)."""
+    digest, written into the copy of unos-data, change that folder's time (ADR-0488)."""
     options = COMPARE_OPTIONS if compare else COPY_OPTIONS
     database = [f"--exclude=/{DATABASE_NAME}*"] if short == "unos-data" else []
     return ["rsync", "-aHAX", "--numeric-ids", "--delete", "--omit-dir-times", *options, *database, f"{mountpoint}/",

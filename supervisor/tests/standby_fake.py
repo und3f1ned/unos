@@ -248,7 +248,7 @@ class StandbyFakeHost:
             data = self.files[cmd[-1]].encode("utf-8", "surrogateescape")
             return host.HostResult(0, f"{hashlib.sha256(data).hexdigest()}  {cmd[-1]}\n", "")
         if program == "dpkg-query" and cmd[1] == "-S":
-            # Armbian's loader package installs a folder of another name (ADR-0487).
+            # Armbian's loader package installs a folder of another name (ADR-0488).
             owned = cmd[2].startswith("/usr/lib/linux-u-boot-vendor-armsom-w3/") and cmd[2] in self.sizes
             return host.HostResult(0, f"{LOADER_PACKAGE}: {cmd[2]}\n", "") if owned else fail
         if program == "dpkg-query":

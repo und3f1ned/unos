@@ -1,5 +1,5 @@
 #!/bin/sh
-# UNOS: the SD card standby takes over when the pool that holds Docker fails (ADR-0486, ADR-0487).
+# UNOS: the SD card standby takes over when the pool that holds Docker fails (ADR-0486, ADR-0488).
 # Run by unos-standby-watch.service on the eMMC's system booted through the card's chooser
 # (unos.root=emmc). Docker and with it UNOS stop when their pool fails, so the supervisor cannot
 # act: this script does. Every $every seconds it finds the filesystem of Docker's data root, when

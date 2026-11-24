@@ -302,7 +302,7 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   UUID 1ccf0051-691b-4a89-92cc-4294a651e3ed) and U-Boot of Armbian's package
   `linux-u-boot-vendor-armsom-w3` (fwver uboot-rmbian 11/12/2026) at sectors 64 and 16384. UGREEN's
   partitions are wiped from it. The SD card `mmcblk1` (SD32G, 31.9 GB) holds the SD standby since
-  2026-11-23 (ADR-0471, ADR-0487): a GPT (the W3's U-Boot reads no partition of an MBR card), its
+  2026-11-23 (ADR-0471, ADR-0488): a GPT (the W3's U-Boot reads no partition of an MBR card), its
   own loader, the FAT `UNOS-BOOT` with the chooser and the btrfs `UNOS-STANDBY` with the
   generations; every boot passes its chooser, which U-Boot runs before the eMMC's script. Change
   it only through `/api/v1/system/standby`. No SPI flash. `UNOS_DEV_SYSTEM_DISK` is
@@ -871,7 +871,7 @@ Open owner actions:
   SD standby's part of step 4 (`system.sd-standby-boot`, another builder), and the App Store's
   free-space check, which still calls the place of Docker's images the system disk
   (`apps/preflight.py`). `passes` stays false.
-### 2026-11-24: The SD standby boots through its chooser on the BPI-W3, and its drills pass (ADR-0487)
+### 2026-11-24: The SD standby boots through its chooser on the BPI-W3, and its drills pass (ADR-0488)
 
 - On a branch from origin/main 8328a9e7, at the lead's brief after the
   first device check of `system.sd-standby-boot` had failed at step (4). The cause, found without a
@@ -882,7 +882,7 @@ Open owner actions:
   did not decide it. The card now gets the profile's partition table, GPT on the W3; after that, every
   boot passed the chooser. A UNOS hook `/boot/boot.scr.uimg` on the eMMC was proved to run before
   Armbian's `/boot/boot.scr` (the way for a board whose U-Boot scans the eMMC first) and removed again.
-- ADR-0487 supersedes ADR-0471 and ADR-0481 and keeps what it does not change: the profile's table and
+- ADR-0488 supersedes ADR-0471 and ADR-0481 and keeps what it does not change: the profile's table and
   board-neutral fields for the BPI-F3 (the owner: "Yes, for F3 too"; a ledger entry of its
   own), Docker's data root no condition (ADR-0486), the card's Docker and
   containerd roots on the card, `unos-standby-watch.service` for a failed Docker pool, the seven

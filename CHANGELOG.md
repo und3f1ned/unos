@@ -48,7 +48,7 @@ manager, encrypted backup uploads, health checks, CI checks).
   `standby_copy_old`, `standby_card_missing`, `standby_not_in_boot_path` (from the first boot after
   the setup), `running_on_standby` and `standby_has_changes` reach the channels and the banner.
   Elsewhere the tab names the unmet conditions. `/api/v1/system/standby`; `install.sh` installs
-  rsync, dosfstools and fdisk (ADR-0471, ADR-0481, ADR-0487).
+  rsync, dosfstools and fdisk (ADR-0471, ADR-0481, ADR-0488).
 - Notifications name the NAS that sends them by the host's name (here `nas-w3`), so that several
   NASes can be told apart: an e-mail's subject starts with `[nas-w3]`; the footer of e-mail,
   Telegram, Discord and Slack, the sender's name of Discord and Slack (unless the channel sets

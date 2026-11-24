@@ -89,14 +89,14 @@ test.describe('System > Standby', () => {
     await expect(page.getByText('The SD card standby is not offered on this NAS')).toBeVisible();
     await expect(page.getByTestId('standby-condition-profile')).toContainText(F3_PROFILE);
     await expect(page.getByTestId('standby-condition-profile')).toContainText('Not met');
-    // Docker's data root is no condition: it is on a pool, which the standby covers (ADR-0486, ADR-0487).
+    // Docker's data root is no condition: it is on a pool, which the standby covers (ADR-0486, ADR-0488).
     await expect(page.locator('[data-testid^="standby-condition-"]')).toHaveCount(5);
     await expect(page.getByTestId('standby-condition-emmc_root')).toContainText('Met');
     await expect(page.getByRole('button', { name: 'Set up the standby' })).toHaveCount(0);
   });
 
   test('sets up the standby on the free card after its model is typed', async ({ authenticatedPage: page }) => {
-    // Right after Set up this boot predates it: the chooser counts from the next boot (ADR-0487).
+    // Right after Set up this boot predates it: the chooser counts from the next boot (ADR-0488).
     const sent = await fakeStandby(page, FREE, { 'POST /arm': { ...ARMED, in_boot_path: null, switch_ready: false } });
     await page.goto('/system/standby');
     await expect(page.getByTestId('standby-free-card')).toContainText('/dev/mmcblk1 · SC32G');

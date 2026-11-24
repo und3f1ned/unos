@@ -2,7 +2,7 @@
 
 U-Boot's standard boot scans the card before the eMMC, whichever loader the boot ROM took, and
 runs ``boot.scr`` of the card's FAT partition, which the profile's partition table lets it see (GPT on
-the BPI-W3, ADR-0487): the chooser. It imports ``unos/current.txt`` (``unos/previous.txt`` when that one is
+the BPI-W3, ADR-0488): the chooser. It imports ``unos/current.txt`` (``unos/previous.txt`` when that one is
 missing or names no generation) and ``unos/drill.txt`` when present, reads the tries counter from the
 card's raw counter sector, then takes the first case that applies. An ``env import`` that names
 variables deletes those its file lacks, as U-Boot's does: the eMMC's partition is set again after the

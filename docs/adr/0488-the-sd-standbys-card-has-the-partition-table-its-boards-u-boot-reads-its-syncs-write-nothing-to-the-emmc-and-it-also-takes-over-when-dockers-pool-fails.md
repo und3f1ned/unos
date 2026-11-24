@@ -6,7 +6,7 @@ decided-by: agent
 supersedes: [ADR-0471, ADR-0481]
 ---
 
-# ADR-0487: The SD standby's card has the partition table its board's U-Boot reads, its syncs write nothing to the eMMC, and it also takes over when Docker's pool fails
+# ADR-0488: The SD standby's card has the partition table its board's U-Boot reads, its syncs write nothing to the eMMC, and it also takes over when Docker's pool fails
 
 ## Context
 

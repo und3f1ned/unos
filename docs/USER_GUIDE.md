@@ -3165,7 +3165,7 @@ NUT server on another machine).
 
 On a board whose system runs from its eMMC, an SD card in the slot can keep a
 copy of the system and boot it by itself when the eMMC, or the pool that holds
-Docker's data, fails (ADR-0471, ADR-0487). For now UNOS offers it on the BPI-W3
+Docker's data, fails (ADR-0471, ADR-0488). For now UNOS offers it on the BPI-W3
 only (the BPI-F3 follows); elsewhere the **SD Standby** tab lists its
 conditions and says which are not met: Armbian with a board profile and its
 loader package, the root filesystem ext4 on the eMMC, a free SD card of 16 GB
