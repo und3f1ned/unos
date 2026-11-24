@@ -10,6 +10,8 @@ return as the other choice, and the planned repair's return.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from docker.errors import APIError
 
@@ -243,3 +245,31 @@ class TestThePoolReturn:
             answer = api.post("/api/v1/system/standby/apps/return", json={})
         assert answer.status_code == 403
         assert standby.changes == []
+
+
+class TestThePlannedRepairsReturn:
+    def test_the_change_made_on_the_card_while_the_pool_was_unmounted_is_on_the_pool_after_the_return(
+            self, standby, docker, pools):
+        mark()
+        synced(standby)
+        with Client() as api:
+            moved = api.post("/api/v1/system/standby/apps/move", json={"reason": "planned", "pool": "usb"})
+        assert moved.status_code == 200, moved.text
+        # The pool is unmounted for its repair: no return yet.
+        pools["usb"] = pool_info(mounted=False, health="unmounted", mountpoint=None)
+        standby.files[f"{RUN}/data/config/system.xml"] = "<made while the pool was away/>"
+        with Client() as api:
+            status = api.get("/api/v1/system/standby").json()
+            early = api.post("/api/v1/system/standby/apps/return", json={})
+        assert status["apps"][0]["return_blocked"] == "the pool usb is not mounted"
+        assert early.status_code == 409
+        # Mounted again under its name, read-write and healthy: the same pool return.
+        pools["usb"] = pool_info()
+        with Client() as api:
+            status = api.get("/api/v1/system/standby").json()
+            back = api.post("/api/v1/system/standby/apps/return", json={})
+        assert status["apps"][0]["return_blocked"] is None and status["apps"][0]["moved"]["reason"] == "planned"
+        assert back.status_code == 200, back.text
+        assert standby.files[f"{FOLDER}/config/system.xml"] == "<made while the pool was away/>"
+        assert backups(standby)["config/system.xml"] == "<config/>"
+        assert json.loads(standby.files[f"{CARD_DIR}/state.json"])["apps"]["jellyfin"].get("failed_over") is None
