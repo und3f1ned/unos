@@ -43,6 +43,7 @@ power = importlib.import_module("src.power.router")
 scheduler = importlib.import_module("src.scheduler.router")
 updates = importlib.import_module("src.updates.updater")
 docker_data = importlib.import_module("src.system.docker_data")
+released = importlib.import_module("src.storage.released")
 
 SUPERVISOR = Path(__file__).resolve().parents[1]
 SRC = SUPERVISOR / "src"
@@ -238,6 +239,13 @@ def _save_volume_usage() -> None:
     volume_usage.save_unsaved()
 
 
+def _loaded_released_pools() -> dict[str, str]:
+    """The record of the released pools as it is read at its first use after a start (storage.released)."""
+    released._state = released._State()
+    with released._guard:
+        return dict(released._released())
+
+
 STATE_FILES = [
     StateFile("notifications.json", notifications, "CONFIG_FILE",
               lambda: notifications.save_configs([NotificationConfig(id="c1", name="Mail", channel="email")]),
@@ -285,6 +293,10 @@ STATE_FILES = [
     # The history of the volumes' use, written only at shutdown (storage.volume_usage).
     StateFile("volume_usage.json", volume_usage, "HISTORY_FILE", _save_volume_usage,
               lambda: volume_usage.history_of("3a1c9f6e-1234-4c3b-9b0a-8f3c2a1b4c5d", 256), []),
+    # The filesystems of the pools that Unmount and Remove Pool released (ADR-0490).
+    StateFile("released_pools.json", released, "RELEASED_FILE",
+              lambda: released.record("4b2d0a7f-2345-4d4c-8c1b-9a4d3b2c5d6e", "media"),
+              _loaded_released_pools, {}),
     # The move of Docker's data onto the first pool while it runs (ADR-0487).
     StateFile("docker_move.json", docker_data, "STATE_FILE",
               lambda: docker_data._save_record({"pool": "data", "started_at": _NOW.isoformat(), "by": "admin",

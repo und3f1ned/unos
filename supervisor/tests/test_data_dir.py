@@ -62,6 +62,8 @@ DATA_PATHS = {
     "src.scheduler.router.BACKUP_KEYS_FILE": "scheduled_backup_keys.json",
     "src.security.router.CERTS_DIR": "certs",
     "src.storage.volume_usage.HISTORY_FILE": "volume_usage.json",
+    # The filesystems of the pools that Unmount and Remove Pool released (ADR-0490).
+    "src.storage.released.RELEASED_FILE": "released_pools.json",
     "src.updates.updater.DB_FILE": "unos.db",
     # The SD card standby copies the database into its generations, and its switch a last time (ADR-0471).
     "src.standby.generation.DATABASE": "unos.db",

@@ -305,6 +305,10 @@ Avoid: array, volume, RAID.
 Only managed pools can hold shares and NFS exports (ADR-0034, ADR-0294). Avoid: mounted pool (a managed pool can
 be unmounted).
 
+**Released pool**: A pool that Unmount or Remove Pool unmounted or dropped from the host's fstab: its
+filesystem stays on its disks, unmounted, and UNOS keeps its UUID until it mounts it again, so that
+the RAID monitor does not alert it as not mounted (ADR-0490). Avoid: deleted pool (its data is kept).
+
 **Pool import**: Making a btrfs filesystem found on the host's data disks a managed pool without
 formatting it: Mount for the pool its label names, Import, under a name that becomes its label,
 for any other (ADR-0283). Boot, virtual and system devices never hold a pool. Avoid: Import alone
