@@ -24,7 +24,7 @@ another worker and finishes the run, which fails. Without workers (`TEST_WORKERS
 ends there. The limit stays above the longest timeout that a test gives a single command (600 s
 now), so that a slow command ends at its own test's timeout first, with that test's message.
 `supervisor/tests/test_repo_tooling.py` runs a test that waits forever under the suite's
-`pytest.ini` (with a limit of 2 s) and checks that the run ends naming it, and that the limit is
+`pytest.ini` (with a limit of 5 s) and checks that the run ends naming it, and that the limit is
 above every literal `timeout=` of the tests.
 
 ## Consequences
