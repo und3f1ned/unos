@@ -64,6 +64,15 @@ CHANGE_TIMEOUT = 30    # groupadd, useradd, userdel, usermod, smbpasswd, pdbedit
 SESSION_TIMEOUT = 15   # smbstatus, smbcontrol <pid> shutdown
 FLUSH_TIMEOUT = 60     # sync /etc
 
+# Samba's passdb: smb.conf's passdb backend = tdbsam (smbconf.py), in the private directory of
+# Debian's and Ubuntu's Samba. GET /shares/smb-status lists it with pdbedit again only when its
+# stat changed (status_passdb_names, ADR-0490).
+PASSDB_FILE = "/var/lib/samba/private/passdb.tdb"
+PASSDB_STAMP = ["stat", "--format=%d %i %s %.9Y %.9Z", "--", PASSDB_FILE]
+# A passdb.tdb whose last change is fewer seconds ago than this may change again within the same
+# timestamp: its stat then keeps no list.
+PASSDB_SETTLE = 2.0
+
 # userdel of a deleted user's account and usermod of a renamed one: the smbd processes that were
 # just shut down need a moment to exit.
 USERDEL_ATTEMPTS = 3
@@ -414,6 +423,46 @@ def read_passdb_names() -> dict[str, str]:
         stored = line.split(":", 1)[0]
         if stored:
             names.setdefault(stored.lower(), stored)
+    return names
+
+
+# The passdb names that GET /shares/smb-status last listed, with passdb.tdb's stat of before the
+# list (ADR-0490); only for the status: every flow lists passdb itself (ADR-0192).
+_status_passdb: tuple[str, dict[str, str]] | None = None
+
+
+def passdb_stamp() -> str | None:
+    """passdb.tdb's device, inode, size and times of change, as stat prints them, for
+    status_passdb_names; None when stat fails or prints something else, or when the file changed
+    fewer than PASSDB_SETTLE seconds ago (sync). Never raises for the host."""
+    try:
+        result = host.run_on_host(PASSDB_STAMP, timeout=LOOKUP_TIMEOUT, errors="replace")
+    except (OSError, subprocess.SubprocessError, ValueError, UnicodeError):
+        return None
+    fields = result.stdout.split()
+    if not result.ok or len(fields) != 5:
+        return None
+    try:
+        changed = max(float(fields[3]), float(fields[4]))
+    except ValueError:
+        return None
+    if changed > time.time() - PASSDB_SETTLE:
+        return None
+    return " ".join(fields)
+
+
+def status_passdb_names(stamp: str | None) -> dict[str, str]:
+    """read_passdb_names() for GET /shares/smb-status, where ``stamp`` is passdb_stamp() of before
+    this call: the names that pdbedit listed after the same stamp, else pdbedit's list (ADR-0490).
+    pdbedit's start alone takes 50 to 165 ms on the BPI-W3; every write of tdbsam changes the
+    file's times, so a list kept for a stamp is passdb's while the stamp is the same."""
+    global _status_passdb
+    kept = _status_passdb
+    if stamp is not None and kept is not None and kept[0] == stamp:
+        return dict(kept[1])
+    names = read_passdb_names()
+    if stamp is not None:
+        _status_passdb = (stamp, dict(names))
     return names
 
 
@@ -806,7 +855,9 @@ def end_smb_sessions(names: Iterable[str]) -> list[str]:
 
 def host_status() -> interfaces.AccountHostStatus:
     """Read-only host checks for the status endpoint (sync)."""
-    status = interfaces.AccountHostStatus(tools_missing=missing_samba_tools())
+    # passdb.tdb's stat before pdbedit could list it (status_passdb_names).
+    tools_missing, stamp = host.at_once(missing_samba_tools, passdb_stamp)
+    status = interfaces.AccountHostStatus(tools_missing=tools_missing)
     if status.tools_missing is None:
         return status
     missing = set(status.tools_missing)
@@ -831,7 +882,7 @@ def host_status() -> interfaces.AccountHostStatus:
         if "pdbedit" in missing:
             return None
         try:
-            return read_passdb_names()
+            return status_passdb_names(stamp)
         except SmbHostError as error:
             logger.warning("Samba's accounts could not be listed: %s", error.message)
             return None

@@ -361,7 +361,7 @@ export interface SmbInterfaces {
 	problems: string[];
 	/** A restart of smbd would make them agree. */
 	restart_needed: boolean;
-	/** Open SMB sessions, which a restart ends; null: unknown. */
+	/** Open SMB connections, which a restart ends (TCP connections to port 445); null: unknown. */
 	sessions: number | null;
 	/** Only in answers to changes: smbd was restarted. */
 	restarted: boolean;

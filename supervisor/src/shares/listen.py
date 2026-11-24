@@ -5,7 +5,8 @@ smb.conf binds smbd to the loopback and the chosen interfaces, by name (``smbcon
 and an apply that changes those lines restarts smbd (``service.install_smb_config``): smbd opens its
 listening sockets only when it starts.
 
-The host's interfaces come from ``ip -j addr show`` and smbd's listeners from ``ss``, both run on
+The host's interfaces come from ``ip -j addr show``, and smbd's listeners and the clients' open
+connections to them from ``ss`` (ADR-0490), both run on
 the host through src/host.py (ADR-0020), so in the host's network namespace, not the container's.
 What Samba 4.22 binds, read from its source: the addresses of the named interfaces that are up and
 broadcast-capable (or the loopback) when smbd reads the list, except IPv6 link-local ones.
@@ -29,17 +30,19 @@ from .. import host
 from ..audit.schemas import AuditSeverity
 from ..network import links
 from ..security.validators import INTERFACE_NAME_PATTERN
-from . import accounts, models, schemas, service, smb, smbconf
+from . import models, schemas, service, smb, smbconf
 
 logger = logging.getLogger(__name__)
 
 MAX_INTERFACES = 16
 HOST_TIMEOUT = 15
 IP_COMMAND = ["ip", "-j", "addr", "show"]
-# The host's listening TCP sockets, without a header, with numeric addresses and their programs:
-# "LISTEN 0 50 10.1.1.5:445 0.0.0.0:* users:(("smbd",pid=900,fd=31))".
-SS_COMMAND = ["ss", "-H", "-l", "-n", "-t", "-p"]
 SMB_PORT = "445"  # smb ports of the rendered [global] (ADR-0275)
+# The host's listening and established TCP sockets of its port 445, without a header, with numeric
+# addresses and their programs: "LISTEN 0 50 10.1.1.5:445 0.0.0.0:* users:(("smbd",pid=900,fd=31))",
+# "ESTAB 0 0 10.1.1.5:445 10.1.1.50:50112 users:(("smbd[10.1.1.50]",pid=4001,fd=35))".
+SS_COMMAND = ["ss", "-H", "-n", "-t", "-p", "state", "listening", "state", "established",
+              "(", "sport", "=", f":{SMB_PORT}", ")"]
 _PROGRAM = re.compile(r'users:\(\("([^"]*)"')
 WILDCARDS = ("0.0.0.0", "::")  # noqa: S104 - read from ss's lines, never bound
 
@@ -236,11 +239,17 @@ def _local_addresses(column: str) -> tuple[list[str], str] | None:
     return [address.split("%", 1)[0]], port
 
 
-def read_listeners() -> list[str]:
-    """The addresses on which smbd listens on TCP 445, sorted (sync); Unreadable when ss fails.
+def read_smbd_sockets() -> tuple[list[str], int]:
+    """The addresses on which smbd listens on TCP 445, sorted, and the open SMB connections, which
+    a restart of smbd closes: the established TCP connections to the host's port 445 (sync);
+    Unreadable when ss fails. One ss, without smbstatus, whose start alone takes 75 to 165 ms on
+    the BPI-W3 (ADR-0490).
 
-    A listener whose program ss does not name counts as smbd's: smb ports gives smbd that port."""
+    A listener whose program ss does not name counts as smbd's: smb ports gives smbd that port. A
+    connection counts whatever ss names its process: smbd serves each client in a process that
+    it names after the client."""
     found = []
+    connections = 0
     for line in _command(SS_COMMAND).splitlines():
         columns = line.split()
         if len(columns) < 4:
@@ -248,11 +257,14 @@ def read_listeners() -> list[str]:
         local = _local_addresses(columns[3])
         if local is None or local[1] != SMB_PORT:
             continue
+        if columns[0] == "ESTAB":
+            connections += 1
+            continue
         program = _PROGRAM.search(line)
-        if program is not None and program.group(1) != "smbd":
+        if columns[0] != "LISTEN" or (program is not None and program.group(1) != "smbd"):
             continue
         found.extend(local[0])
-    return sorted_addresses(found)
+    return sorted_addresses(found), connections
 
 
 def _try(read):
@@ -358,12 +370,13 @@ def describe(
 
 
 def _read_now() -> tuple[list[HostInterface] | None, str | None, list[str] | None, str | None, int | None]:
-    """The host's interfaces, smbd's listeners and its sessions, read at once, from one
+    """The host's interfaces, and smbd's listeners and open connections, read at once, from one
     worker thread."""
-    (interfaces, host_error), (listening, listeners_error), sessions = host.at_once(
-        lambda: _try(read_host_interfaces), lambda: _try(read_listeners), accounts.read_smb_sessions
+    (interfaces, host_error), (sockets, listeners_error) = host.at_once(
+        lambda: _try(read_host_interfaces), lambda: _try(read_smbd_sockets)
     )
-    return interfaces, host_error, listening, listeners_error, (len(sessions) if sessions is not None else None)
+    listening, connections = sockets if sockets is not None else (None, None)
+    return interfaces, host_error, listening, listeners_error, connections
 
 
 async def state(db: AsyncSession) -> schemas.SmbInterfaces:
@@ -463,7 +476,7 @@ async def restart(db: AsyncSession) -> Change:
     """POST /shares/smb-interfaces/restart: restart smbd now, so that it binds what the chosen
     interfaces have now (ADR-0391); every open SMB connection ends. Takes smb_lock()."""
     async with service.smb_lock():
-        sessions = await asyncio.to_thread(accounts.read_smb_sessions)
+        sockets, _ = await asyncio.to_thread(_try, read_smbd_sockets)
         failed = await asyncio.to_thread(smb._restart_smbd)
         last = service.last_apply()
         last.restart_failed = failed
@@ -477,13 +490,13 @@ async def restart(db: AsyncSession) -> Change:
             last.restart_pending = True
     if failed is not None:
         return Change(info=await state(db), details=f"smbd could not be restarted: {failed}", failed=failed)
-    if sessions is None:
-        ended = "the open SMB sessions ended"
+    if sockets is None:
+        ended = "the open SMB connections ended"
     else:
-        ended = f"{len(sessions)} open SMB session{'' if len(sessions) == 1 else 's'} ended"
+        ended = f"{sockets[1]} open SMB connection{'' if sockets[1] == 1 else 's'} ended"
     info = await state(db)
     info.restarted = True
     return Change(info=info, details=f"Restarted smbd: {ended}")
 
 
-SEVERITY = AuditSeverity.WARNING  # a restart ends every open SMB session
+SEVERITY = AuditSeverity.WARNING  # a restart ends every open SMB connection

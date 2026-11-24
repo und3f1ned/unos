@@ -3466,7 +3466,8 @@ class TestRemoveHostAccount:
         fake.fail[("/bin/sh",)] = (1, "nsenter: reassociate to namespace 'ns/mnt' failed")
 
         assert accounts.host_status() == interfaces.AccountHostStatus(tools_missing=None)
-        assert [a[0] for a in fake.argvs()] == ["/bin/sh"]
+        # passdb.tdb's stat runs at once with the check (ADR-0490); nothing after them.
+        assert sorted(a[0] for a in fake.argvs()) == ["/bin/sh", "stat"]
 
 
 # ---------------------------------------------------------------------------
