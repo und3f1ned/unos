@@ -480,6 +480,16 @@ class TestTheEmmcReturnsUnit:
         entry = audit_log()[-1]
         assert entry["action"] == "standby_returned" and "with the card's changes" in entry["details"]
 
+    def test_the_emmc_s_other_filesystems_are_left_out_of_the_copy(self, fake, data_pool):
+        ready_to_return(fake)
+        fake.files[f"{generation.LIB}/emmc-fstab"] = (f"{EMMC_OWN}UUID=0b0e0f00-0000-4000-8000-000000000002 /boot ext4 "
+                                                      "defaults 0 2\n/dev/mmcblk2p4 none swap sw 0 0\n")
+        with Client() as api:
+            assert api.post("/api/v1/system/standby/return", json={}).status_code == 200
+        excludes = fake.files[f"{RUN_DIR}/excludes"].splitlines()
+        assert "/boot" in excludes and "none" not in excludes
+        assert "UUID=0b0e0f00-0000-4000-8000-000000000002 /boot ext4" in fake.files[f"{RUN_DIR}/fstab"]
+
     def test_volumes_of_the_emmc_s_docker_on_the_emmc_go_below_its_mount_without_a_backup(self, fake, data_pool):
         ready_to_return(fake)
         fake.files[f"{generation.LIB}/emmc-volumes"] = json.dumps(

@@ -213,8 +213,12 @@ def plan(*, device: str, card_device: str, sector: int, generation: int | None, 
     fstab = emmc_fstab(card_fstab, own)
     volumes = _volumes(ops, stamp)
     mounts = conditions._parse_mountinfo(ops.read_file(conditions.MOUNTINFO) or "")
+    # The eMMC's other filesystems (a boot partition of its own, as an extlinux board may have) stay as they are.
+    others = [fields[1] for line in own.splitlines()
+              if len(fields := line.split()) >= 3 and not fields[0].startswith("#") and fields[1] != "/"
+              and fields[2] != "swap" and _PLAIN.fullmatch(fields[1])]
     excludes = [*EXCLUDES, *VOLATILE, *mountpoints(mounts, card_fstab), *_swap_files(ops), DOCKER_CONFIG,
-                CONTAINERD_CONFIG]
+                CONTAINERD_CONFIG, *others]
     stored_text = ops.read_file(STATE_FILE)
     try:
         stored = json.loads(stored_text) if stored_text else None
