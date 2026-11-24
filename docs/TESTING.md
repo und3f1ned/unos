@@ -118,7 +118,10 @@ outside its `tmp_path`, and must give every parametrized case the same id in eve
 workers compare what they collected). A Python without pytest-xdist runs the tests in one
 process, with a line that says so; `make setup` installs it. On the workstation (10 cores) the
 backend tests take about 2 minutes instead of 12, `make check` about 2.2 minutes and
-`make check-fast` about 1 minute.
+`make check-fast` about 1 minute. A test that runs longer than 900 s (`faulthandler_timeout` of
+`supervisor/pytest.ini`, above every timeout a test gives a command) prints the stack of every
+thread and ends its worker: the run fails, naming the test as the one its worker crashed on
+(ADR-0490).
 
 ## Commits and Git Hooks
 

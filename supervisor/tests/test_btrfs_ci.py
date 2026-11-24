@@ -18,6 +18,7 @@ import ast
 import importlib.util
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -50,9 +51,12 @@ btrfs_loop = _load()
 # Each fake logs its call to $LOG. losetup attaches FILE to /dev/loop90, 91, 92 in turn; findmnt finds
 # $MOUNTED mounted from /dev/loop90 (nothing when it is empty), and umount exits $UMOUNT_STATUS; uname
 # and id answer $FAKE_UNAME and $FAKE_UID. The Python is the script's argument: serve runs until it is
-# stopped, or exits 3 at once with $SERVE_ENDS, and check then waits until it is gone, or with
-# $SERVE_HANGS ignores TERM; it writes its PID to $LOG.serve. check exits $CHECK_STATUS, or with
-# $CHECK_WAITS runs until a TERM, which it logs.
+# stopped, or exits 3 at once with $SERVE_ENDS, or with $SERVE_HANGS ignores TERM; it writes its PID to
+# $LOG.serve once it is up, its trap set. check first waits for that, as the real one waits until the
+# supervisor answers (wait_for_start), and with $SERVE_ENDS until the script has reaped it: a check that
+# ended at once had the script stop the supervisor before its trap was set, under load. check then
+# exits $CHECK_STATUS, or with $CHECK_WAITS runs until a TERM, which it logs. Neither runs on for more
+# than a minute: one that the script left running ends by itself.
 FAKES = {
     "uname": 'echo "${FAKE_UNAME:-Linux}"',
     "id": 'echo "${FAKE_UID:-0}"',
@@ -73,23 +77,24 @@ FAKES = {
         shift  # the path of btrfs_loop.py
         echo "python $*" >> "$LOG"
         case "$1" in
-            serve) echo "the supervisor's line"; echo $$ > "$LOG.serve"
-                   [ -z "${SERVE_ENDS:-}" ] || exit 3
+            serve) echo "the supervisor's line"
+                   [ -z "${SERVE_ENDS:-}" ] || { echo $$ > "$LOG.serve"; exit 3; }
                    if [ -n "${SERVE_HANGS:-}" ]; then trap '' TERM; else
                        trap 'echo "serve stopped" >> "$LOG"; exit 143' TERM
                    fi
-                   while :; do sleep 0.1; done ;;
-            check) if [ -n "${SERVE_ENDS:-}" ]; then
-                       # Until the script has reaped the supervisor that ended.
-                       for _ in $(seq 400); do
-                           [ -s "$LOG.serve" ] && ! kill -0 "$(cat "$LOG.serve")" 2> /dev/null && break
-                           sleep 0.05
-                       done
-                   fi
+                   echo $$ > "$LOG.serve"
+                   for _ in $(seq 600); do sleep 0.1; done
+                   exit 97 ;;
+            check) until [ -s "$LOG.serve" ] && { [ -z "${SERVE_ENDS:-}" ] ||
+                                                  ! kill -0 "$(cat "$LOG.serve")" 2> /dev/null; }; do
+                       [ "$SECONDS" -lt 30 ] || { echo "the fake check: serve was not up after 30 s" >&2; exit 99; }
+                       sleep 0.05
+                   done
                    if [ -n "${CHECK_WAITS:-}" ]; then
                        trap 'echo "check stopped" >> "$LOG"; exit 130' TERM
                        echo "check runs" >> "$LOG"
-                       while :; do sleep 0.1; done
+                       for _ in $(seq 600); do sleep 0.1; done
+                       exit 98
                    fi
                    exit "${CHECK_STATUS:-0}" ;;
         esac
@@ -118,19 +123,44 @@ def fakes(tmp_path):
         return [line for line in log.read_text().splitlines() if not line.startswith("modprobe")]
 
     def run(extra=None, check_status=0):
-        log.write_text("")  # a run of its own: losetup counts its devices from /dev/loop90 again
+        # A run of its own: losetup counts its devices from /dev/loop90 again, and check waits for this
+        # run's serve.
+        log.write_text("")
+        Path(f"{log}.serve").unlink(missing_ok=True)
         result = subprocess.run(["bash", str(SCRIPT), str(bin_dir / "python")],
                                 env=environment({"CHECK_STATUS": str(check_status), **(extra or {})}),
                                 capture_output=True, text=True, timeout=60)
         return result, calls(), temp
 
-    run.start = lambda extra: subprocess.Popen(["bash", str(SCRIPT), str(bin_dir / "python")],
-                                               env=environment(extra), stdout=subprocess.PIPE,
-                                               stderr=subprocess.PIPE, text=True)
+    run.start = lambda extra, script=SCRIPT: subprocess.Popen(["bash", str(script), str(bin_dir / "python")],
+                                                              env=environment(extra), stdout=subprocess.PIPE,
+                                                              stderr=subprocess.PIPE, text=True)
     run.calls = calls
     run.temp = temp
-    run.served = lambda: Path(f"{log}.serve").read_text().strip()
+    run.served = lambda: Path(f"{log}.serve").read_text().strip() if Path(f"{log}.serve").exists() else ""
     return run
+
+
+def _held_before(tmp_path, line):
+    """A copy of btrfs-loop.sh held right before LINE, which keeps the PID of the process that the line
+    before it started: in a loop that ends by itself only after a minute, and between whose commands a
+    signal's trap runs. Under load the script was descheduled there while that process ran on."""
+    text, holds = re.subn(rf"^{re.escape(line)}$", f"for _ in $(seq 600); do sleep 0.1; done\n{line}",
+                          SCRIPT.read_text(), flags=re.M)
+    assert holds == 1
+    script = tmp_path / SCRIPT.name
+    script.write_text(text)
+    return script
+
+
+def _signal_when(fakes, process, ready):
+    deadline = time.monotonic() + 30
+    while not ready():
+        assert time.monotonic() < deadline and process.poll() is None
+        time.sleep(0.05)
+    process.send_signal(signal.SIGTERM)
+    stdout, _ = process.communicate(timeout=30)
+    return stdout, fakes.calls()
 
 
 @pytest.mark.parametrize("env", [
@@ -223,21 +253,33 @@ def test_the_log_names_the_status_of_a_supervisor_that_ended_early(fakes):
     assert "::group::The supervisor's log (it stopped with status 3)" in result.stdout
 
 
-def test_a_signal_goes_on_to_the_check_and_the_teardown_runs(fakes):
+@pytest.mark.parametrize("held", [False, True], ids=["as-is", "before-the-checks-pid-is-kept"])
+def test_a_signal_goes_on_to_the_check_and_the_teardown_runs(fakes, tmp_path, held):
     """A TERM that reaches the script: the check gets TERM and runs its clean-up, then the script tears
-    down and exits with the signal's status."""
-    process = fakes.start({**RUNNER, "CHECK_WAITS": "1"})
-    deadline = time.monotonic() + 30
-    while "check runs" not in fakes.calls():
-        assert time.monotonic() < deadline and process.poll() is None
-        time.sleep(0.05)
+    down and exits with the signal's status. Also when it comes after the check started but before the
+    script's next command kept its PID: the script ended without passing the signal on, and the check
+    ran on."""
+    script = _held_before(tmp_path, "checker=$!") if held else SCRIPT
+    process = fakes.start({**RUNNER, "CHECK_WAITS": "1"}, script)
 
-    process.send_signal(signal.SIGTERM)
-    process.communicate(timeout=30)
-    calls = fakes.calls()
+    _, calls = _signal_when(fakes, process, lambda: "check runs" in fakes.calls())
 
     assert process.returncode == 143
     assert calls.index("check stopped") < calls.index("serve stopped") < calls.index("losetup -d /dev/loop90")
+    assert list(fakes.temp.iterdir()) == []
+
+
+def test_a_signal_before_the_supervisors_pid_is_kept_stops_the_supervisor_before_the_teardown(fakes, tmp_path):
+    """The same for the supervisor: a TERM after it started and before the script kept its PID left it
+    running, on the loop devices that the teardown detached. No check starts."""
+    process = fakes.start(RUNNER, _held_before(tmp_path, "supervisor=$!"))
+
+    stdout, calls = _signal_when(fakes, process, fakes.served)
+
+    assert process.returncode == 143
+    assert not [call for call in calls if call.startswith("python check")]
+    assert calls.index("serve stopped") < calls.index("losetup -d /dev/loop90")
+    assert "::group::The supervisor's log (it stopped with status 143)" in stdout
     assert list(fakes.temp.iterdir()) == []
 
 

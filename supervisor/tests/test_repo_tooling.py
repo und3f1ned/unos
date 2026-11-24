@@ -195,6 +195,56 @@ def test_the_tests_run_in_workers_with_pytest_xdist_and_in_one_process_without(t
     assert ("make test: pytest-xdist is not installed" in result.stdout) == (xdist == "1")
 
 
+PYTEST_INI = REPO_ROOT / "supervisor" / "pytest.ini"
+
+
+def test_a_test_that_waits_forever_ends_its_worker_and_the_run_names_it(tmp_path):
+    """A make check stood at 99% until it was stopped by hand. With the suite's pytest.ini, a test that
+    runs longer than faulthandler_timeout (here 5 s) prints the stack of every thread and ends its worker:
+    pytest-xdist names the test, and the run ends with the other tests run in another worker (ADR-0490).
+    That it ends, not how soon: under load the workers took minutes to start."""
+    pytest.importorskip("xdist", reason="the run's workers are pytest-xdist's (make setup installs it)")
+    ini, replaced = re.subn(r"^faulthandler_timeout = \d+$", "faulthandler_timeout = 5", PYTEST_INI.read_text(),
+                            flags=re.M)
+    assert replaced == 1
+    (tmp_path / "pytest.ini").write_text(ini)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_waits.py").write_text(textwrap.dedent("""\
+        import threading
+
+
+        def test_waits_forever():
+            threading.Event().wait()
+
+
+        def test_passes():
+            pass
+    """))
+    env = {key: value for key, value in MAKE_ENV.items() if not key.startswith(("PYTEST_", "COV_", "COVERAGE_"))}
+
+    result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "1", "tests"],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=600, env=env)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "crashed while running 'tests/test_waits.py::test_waits_forever'" in result.stdout, result.stdout
+    assert "1 failed, 1 passed" in result.stdout.splitlines()[-1]
+    assert "Timeout (0:00:05)!" in result.stderr and "in test_waits_forever" in result.stderr, result.stderr
+
+
+def test_the_time_limit_of_a_test_is_above_every_timeout_that_a_test_gives_a_command():
+    """So that a slow command ends at its test's own timeout, with that test's message, before the time
+    limit ends the worker (ADR-0490). Each command's: a test that runs several commands near their
+    timeouts can still reach the limit."""
+    ini = configparser.ConfigParser(interpolation=None)
+    ini.read(PYTEST_INI)
+    timeouts = [int(seconds) for path in (REPO_ROOT / "supervisor" / "tests").rglob("*.py")
+                for seconds in re.findall(r"\btimeout=(\d+)", path.read_text(encoding="utf-8"))]
+
+    assert ini.getboolean("pytest", "faulthandler_exit_on_timeout")
+    assert timeouts
+    assert ini.getfloat("pytest", "faulthandler_timeout") > max(timeouts)
+
+
 # --- the coverage of make test and its floor (ADR-0442) -------------------------------------
 
 # pytest-cov's options in make test: the line coverage of supervisor/src, its total only.

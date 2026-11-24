@@ -2,6 +2,8 @@
 
 import os
 import pwd
+import subprocess
+import sys
 import threading
 from collections import namedtuple
 from types import SimpleNamespace
@@ -353,22 +355,35 @@ def test_the_process_list_is_taken_at_most_every_process_list_interval(monkeypat
 def test_only_the_listed_processes_are_read_in_full(monkeypatch, clock):
     """Name, memory, status and user of each of 311 processes cost a K1 0.41 s of CPU, the CPU
     share alone 0.13 s: the listing reads the CPU share of every process and the rest for the ten
-    on the Resource Monitor only (ADR-0375)."""
+    on the Resource Monitor only (ADR-0375). A process that ends between the listing and its full
+    read is left out, and the next one is read in its place: under load the busiest processes were
+    often short-lived (a compiler, a test worker), so the busiest of this listing is one that has
+    ended."""
+    ran = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended = psutil.Process(ran.pid)
+    ran.wait()
+    ended.info = {"cpu_percent": float("inf")}
     asked = []
     real = psutil.process_iter
 
     def recording(attrs=None, *args, **kwargs):
         asked.append(attrs)
-        return real(attrs, *args, **kwargs)
+        return [ended, *real(attrs, *args, **kwargs)]
 
     in_full = []
+    gone = []
     real_as_dict = psutil.Process.as_dict
 
     def as_dict(self, attrs=None, ad_value=None):
         # process_iter reads the CPU share of each process with as_dict too.
-        if set(attrs or ()) != {"cpu_percent"}:
-            in_full.append(self.pid)
-        return real_as_dict(self, attrs, ad_value)
+        if set(attrs or ()) == {"cpu_percent"}:
+            return real_as_dict(self, attrs, ad_value)
+        in_full.append(self.pid)
+        try:
+            return real_as_dict(self, attrs, ad_value)
+        except psutil.NoSuchProcess:
+            gone.append(self.pid)
+            raise
 
     monkeypatch.setattr(events.psutil, "process_iter", recording)
     monkeypatch.setattr(psutil.Process, "as_dict", as_dict)
@@ -378,7 +393,10 @@ def test_only_the_listed_processes_are_read_in_full(monkeypatch, clock):
 
     assert asked == [["cpu_percent"]]
     assert 0 < len(processes) <= 10
-    assert sorted(in_full) == sorted(proc["pid"] for proc in processes)
+    listed = [proc["pid"] for proc in processes]
+    # Read in full: the listed ones, and those that ended before their read (here the first, at least).
+    assert ended.pid in gone and ended.pid not in listed
+    assert sorted(in_full) == sorted(listed + gone)
     shares = [proc["cpu_percent"] for proc in processes]
     assert shares == sorted(shares, reverse=True)
     assert set(processes[0]) == {"pid", "name", "cpu_percent", "memory_bytes", "username"}
