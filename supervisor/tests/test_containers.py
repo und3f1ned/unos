@@ -910,7 +910,15 @@ def live_api(api):
 
 
 class TestRequestsAnsweredWhileDockerBlocks:
-    """A Docker call that blocks holds a worker thread, never the whole API (ADR-0021)."""
+    """A Docker call that blocks holds a worker thread, never the whole API (ADR-0021).
+
+    The proof is that the other requests are answered while the Docker call is still held, not
+    how fast they come: each may take ANSWER seconds, which a loaded machine needs, and the call
+    is held for HOLD, longer than both (ADR-0497).
+    """
+
+    ANSWER = 25
+    HOLD = 90
 
     @pytest.mark.parametrize(
         "method,url,blocked",
@@ -928,7 +936,7 @@ class TestRequestsAnsweredWhileDockerBlocks:
         def hold(real):
             def call(*args, **kwargs):
                 entered.set()
-                assert release.wait(20), "the blocked Docker call was never released"
+                assert release.wait(self.HOLD), "the blocked Docker call was never released"
                 return real
 
             return call
@@ -944,19 +952,20 @@ class TestRequestsAnsweredWhileDockerBlocks:
             docker_client.api.containers.side_effect = lambda *args, **kwargs: hold(None)() or listed(*args, **kwargs)
 
         answered: dict[str, int] = {}
-        slow = threading.Thread(target=lambda: answered.setdefault("slow", live_api.request(method, url, 30)))
+        slow = threading.Thread(
+            target=lambda: answered.setdefault("slow", live_api.request(method, url, self.HOLD + self.ANSWER)))
         slow.start()
         try:
-            assert entered.wait(10), f"{method} {url} did not reach Docker"
+            assert entered.wait(self.ANSWER), f"{method} {url} did not reach Docker"
             for path in ("/api/v1/health", "/api/v1/apps/catalog"):
                 try:
-                    answered[path] = live_api.request("GET", path, 5)
+                    answered[path] = live_api.request("GET", path, self.ANSWER)
                 except OSError as error:  # the timeout: the event loop is held
                     pytest.fail(f"GET {path} was not answered while {blocked} blocked in Docker: {error!r}")
             assert not release.is_set() and slow.is_alive()  # the Docker call was still in flight
         finally:
             release.set()
-            slow.join(30)
+            slow.join(self.ANSWER)
 
         assert answered == {"/api/v1/health": 200, "/api/v1/apps/catalog": 200, "slow": 200}
 

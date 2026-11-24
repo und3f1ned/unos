@@ -5889,6 +5889,33 @@
       "notes": "Built 2026-11-24 on origin/main 80fe1f51. Reproduced under load (five other builders, load average 60 to 150 on 10 cores): three loops of make test TESTS=tests/test_btrfs_ci.py beside a make check failed 29 of 33 runs, and that make check failed with two of the same tests after 19.5 minutes. Causes, all in the tests or the script, none in src: (1) test_btrfs_ci.py: the fake check with CHECK_STATUS 0 ended at once while the fake supervisor had not yet set its TERM trap or written its PID, and the script's teardown TERMed it: StopIteration (no python serve line), FileNotFoundError on log.serve, or status 143 instead of 137 with SERVE_HANGS (test_the_script_runs_the_supervisor_and_the_check..., test_a_supervisor_that_ignores_term...). The fake check now waits for the supervisor to be up, as btrfs_loop.py's wait_for_start waits for GET /health; run() removes log.serve between runs. (2) btrfs-loop.sh kept each PID one command after starting the process: a signal in between (seen by reading, then forced by holding the script there) left the check, or the supervisor, running and the test's communicate timed out; found by the fresh-context review for the supervisor. (3) test_ws_stats.py: the test counted a process as read in full before the read, and a busy process that ended between the listing and its read (events._top_processes skips it, correctly) made the counts differ (2 of 4 runs under load). (4) test_virtual_interfaces.py: virtual.py takes the revert deadline as int(time.time()) + 120 when a change starts and revert_in as the deadline less int(time.time()) when it ends, and a second that began in between gave 119 (1 of 4 runs under load). The make check that hung at 99% left no trace of its test: the guard (ADR-0492) names it next time. Each new or changed case was watched failing on the old code: the held cases on the old script (TimeoutExpired), the ended process with the old counting. Proof on afc0fed5, 2026-11-24, load average 100 to 160: 90 of 90 runs of make test TESTS=\"tests/test_btrfs_ci.py tests/test_ws_stats.py tests/test_virtual_interfaces.py\" green in three parallel loops (179 tests each), beside a make check (50 minutes instead of 2) in which the three files passed too. That make check failed on three other tests that hold a fixed margin of wall-clock time, each green when run alone: test_containers.py TestRequestsAnsweredWhileDockerBlocks (GET /health not answered within its socket timeout while a pull blocked), test_command_timeouts.py test_a_command_that_does_not_return_is_answered_and_frees_its_thread (2.59 s, not under 1 + 1.5 s) and test_notifications.py test_slow_mail_server_does_not_block_the_event_loop (5 ticks, not more than 5): not in this entry's scope, candidates for an entry of their own."
     },
     {
+      "id": "testing.timing-tests-under-load",
+      "category": "testing",
+      "description": "test_command_timeouts.py, test_notifications.py and test_containers.py pass under the load of parallel runs: they prove what went on while something was held by finding it still held, and count the waits that ran out, instead of timing answers against margins of a second",
+      "steps": [
+        "Reproduce: three copies of the three files run at once, 8 workers each, beside 60 busy loops (load average 130 to 210 on 10 cores), fail on wall-clock margins, and each file passes alone",
+        "test_command_timeouts.py: the fake processes list each wait with a timeout that ran out (waits_timed_out); a run answered at its timeout waited one and its process still hangs, a run that must not wait gets the timeout LONG (10 s) and answers within LONG / 2, and the waits for a thread or an answer are guards of GUARD (30 s); a hanging fake process fails a wait without a timeout after HANG_LIMIT (60 s)",
+        "test_notifications.py: a held write (ended) or a stalled mail server (stalled) is still held after the health check answered or the event loop went on, for HOLD (30 s) at most; one read of the host's name for three messages is counted; the single wait for a hanging read is 4 s for 5 messages, bounded by 3 waits (12 s against 20)",
+        "test_containers.py: the requests answered while Docker blocks wait up to 25 s each, the Docker call is held 90 s, and the proof stays that it was still held",
+        "Each changed check fails on its fault made into the code by hand: a turned-away run that waits its own timeout, a run that waits for its process twice, the mail, the channel write and the history writes on the event loop (ADR-0497)",
+        "Under the same load, rounds of three copies of the three files: every run green"
+      ],
+      "passes": true,
+      "verified_by": [
+        "supervisor/tests/test_command_timeouts.py",
+        "supervisor/tests/test_notifications.py",
+        "supervisor/tests/test_containers.py"
+      ],
+      "adr": [
+        "ADR-0497",
+        "ADR-0290",
+        "ADR-0021",
+        "ADR-0383",
+        "ADR-0492"
+      ],
+      "notes": "Built 2026-11-24 on main 7f069d07. Reproduced: three copies of the three files at once, 8 workers each, beside 60 busy loops (load average 130 to 210): each of the first 6 runs failed on 1 to 4 wall-clock margins (POST /health/raid/data/reset-stats answered in 3.1 to 3.7 s against TIMEOUT + 1.5, GET /health in 1.0 to 1.6 s against 1 while a write or the mail server was held); 40 busy loops alone (load 30) did not. Cause in the tests only, none in src: answers judged by how fast they came. Each changed check was shown to fail on its fault made into src by hand and reverted: run_in_container's turned-away run waiting its own timeout (13 failures of test_command_timeouts.py), a second wait for the killed process (15), _deliver_email, save_logs and _change_configs on the event loop (5 of test_notifications.py), the RAID alert's save_logs on the loop (1). Proof: 27 runs of the three copies under load average 120 to 246, all 316 tests green each time, 9 of them after the review's changes. Review in a fresh context: nothing blocking; the guards left at 5 to 10 s, HANG_LIMIT below GUARD, the answering-run test's 10 s timeout and the host-name margin were raised, and ADR-0497 names test_containers.py and every hold. Left: test_storage.py and test_scheduler_validation.py still count event-loop ticks in a fixed time."
+    },
+    {
       "id": "system.sd-standby-remove-interrupted",
       "category": "system",
       "description": "A Remove of the SD standby that stops at any step, and a Set up or sync that stops at any step, never leaves a card whose chooser counts boots that nothing sets back, so the board never boots the card's old copy by itself; a second Remove ends a Remove that stopped",

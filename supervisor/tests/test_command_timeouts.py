@@ -47,6 +47,14 @@ REAL_RUN_IN_CONTAINER = host.run_in_container
 
 # The timeout the tests give every command, in seconds.
 TIMEOUT = 1
+# The timeout of a run that must not wait for one, such as a request turned away while its command
+# still hangs: answered within LONG / 2, it waited for none, with seconds to spare on a loaded
+# machine, where TIMEOUT's own second can stretch past 2 (ADR-0497).
+LONG = 10
+# Seconds a test waits for what comes in a moment (an answer, a thread's end) before it fails: the
+# faults these tests look for hold it until the test releases the stuck processes, so no answer
+# is judged by how fast it came; the waits that ran out (FakeProcesses.waits_timed_out) are counted.
+GUARD = 30
 # The pool and the disk whose commands hang; the commands on the others answer.
 STUCK = {"data", "sda"}
 SMART_JSON = json.dumps({
@@ -61,8 +69,9 @@ SCRUB_STATUS = (
 # The process ids of FakeProcess: above every pid that Linux (at most 2**22) and macOS hand out.
 FIRST_FAKE_PID = 5_000_000
 # Seconds after which a wait without a timeout for a process that hangs fails: waiting so is
-# the fault these tests look for, and the test must fail, not hang the run.
-HANG_LIMIT = 20
+# the fault these tests look for, and the test must fail, not hang the run. Above GUARD, so that the
+# daemon thread that waits for a killed process outlasts a test on a loaded machine.
+HANG_LIMIT = 60
 ADMIN = SimpleNamespace(id=1, username="admin", is_admin=True, is_active=True)
 
 
@@ -82,6 +91,7 @@ class FakeProcess:
     """
 
     def __init__(self, processes: "FakeProcesses", args: list[str], **kwargs) -> None:
+        self.processes = processes
         self.args = args
         self.kwargs = kwargs
         self.pid = FIRST_FAKE_PID + len(processes.started)
@@ -102,6 +112,7 @@ class FakeProcess:
             return
         if timeout is None:
             raise AssertionError(f"{self.args} was waited for while it hangs in the kernel")
+        self.processes.waits_timed_out.append(self.args)
         raise subprocess.TimeoutExpired(self.args, timeout)
 
     def communicate(self, input=None, timeout=None):
@@ -141,6 +152,9 @@ class FakeProcesses:
         self.started: list[FakeProcess] = []
         self.killed: list[tuple[int, int]] = []
         self.stuck = set(STUCK)
+        # The command of each wait with a timeout that ran out: a run answered at its timeout
+        # waited one, and a run turned away at once none.
+        self.waits_timed_out: list[list[str]] = []
 
     def popen(self, args, **kwargs) -> FakeProcess:
         process = FakeProcess(self, list(args), **kwargs)
@@ -175,7 +189,7 @@ def _reapers() -> list[threading.Thread]:
     return [thread for thread in threading.enumerate() if thread.name.startswith("unos-reap")]
 
 
-def _wait_for_reapers(timeout: float = 5) -> None:
+def _wait_for_reapers(timeout: float = GUARD) -> None:
     for thread in _reapers():
         thread.join(timeout)
         assert not thread.is_alive(), f"{thread.name} still waits for its process"
@@ -265,10 +279,10 @@ class TestRealProcesses:
             with pytest.raises(subprocess.TimeoutExpired):
                 host.run_in_container(["sh", "-c", "sleep 300 & wait"], timeout=TIMEOUT,
                                       stdout=write_end, stderr=subprocess.DEVNULL)
-            assert time.monotonic() - started < TIMEOUT + 2
+            assert time.monotonic() - started < GUARD  # far from sleep's 300 s
             os.close(write_end)
             write_end = None
-            readable, _, _ = select.select([read_end], [], [], 5)
+            readable, _, _ = select.select([read_end], [], [], GUARD)
             assert readable and os.read(read_end, 1) == b"", "sh or the sleep it started still runs"
         finally:
             os.close(read_end)
@@ -298,7 +312,9 @@ class TestCommandsThatDoNotReturn:
         took = time.monotonic() - started
 
         assert (raised.value.cmd, raised.value.timeout) == (cmd, TIMEOUT)
-        assert TIMEOUT - 0.1 <= took < TIMEOUT + 1  # it waited for the timeout, not for the end
+        assert took >= TIMEOUT - 0.1
+        # It waited for the timeout, once, not for the end: the process still hangs (below).
+        assert processes.waits_timed_out == [cmd]
         (process,) = processes.started
         assert process.kwargs["start_new_session"] is True  # the group is the command's own
         assert processes.killed == [(process.pid, signal.SIGKILL)]
@@ -306,7 +322,7 @@ class TestCommandsThatDoNotReturn:
         (reaper,) = _reapers()
         assert reaper.daemon and reaper.is_alive() and process.returncode is None
         process.release()
-        reaper.join(5)
+        reaper.join(GUARD)
         assert not reaper.is_alive()
         assert process.returncode == -signal.SIGKILL
         assert process.stdout.closed and process.stderr.closed
@@ -318,12 +334,14 @@ class TestCommandsThatDoNotReturn:
 
         started = time.monotonic()
         with pytest.raises(subprocess.TimeoutExpired) as raised:
-            host.run_in_container(cmd, timeout=TIMEOUT)
+            host.run_in_container(cmd, timeout=LONG)
         with pytest.raises(subprocess.TimeoutExpired):
-            host.run_in_container(cmd, timeout=TIMEOUT)
+            host.run_in_container(cmd, timeout=LONG)
 
-        assert time.monotonic() - started < 0.5
-        assert (raised.value.cmd, raised.value.timeout) == (cmd, TIMEOUT)
+        # Turned away at once: neither waited a timeout of its own.
+        assert time.monotonic() - started < LONG / 2
+        assert processes.waits_timed_out == [cmd]
+        assert (raised.value.cmd, raised.value.timeout) == (cmd, LONG)
         assert processes.runs_of(cmd) == 1
         # Logged once for the stuck run, not for every request it turns away.
         assert caplog.text.count("Not started: smartctl -j -a /dev/sda") == 1
@@ -345,25 +363,27 @@ class TestCommandsThatDoNotReturn:
         cmd = ["btrfs", "scrub", "status", "/mnt/pools/data"]
         timed_out: dict[str, float] = {}
 
-        def run(which: str) -> None:
+        def run(which: str, timeout: float) -> None:
             try:
-                host.run_in_container(cmd, timeout=TIMEOUT)
+                host.run_in_container(cmd, timeout=timeout)
             except subprocess.TimeoutExpired:
                 timed_out[which] = time.monotonic()
 
         started = time.monotonic()
-        first = threading.Thread(target=run, args=("first",))
+        first = threading.Thread(target=run, args=("first", TIMEOUT))
         first.start()
         _wait_for(lambda: processes.runs_of(cmd) == 1)
-        second = threading.Thread(target=run, args=("second",))
+        second_started = time.monotonic()
+        second = threading.Thread(target=run, args=("second", LONG))
         second.start()
         for thread in (first, second):
-            thread.join(TIMEOUT + 5)
+            thread.join(GUARD)
 
         assert set(timed_out) == {"first", "second"}
         # The second waited for the first, which was killed at its timeout, and then gave up
         # at once: it did not give up before the first was killed, nor wait a timeout of its own.
-        assert TIMEOUT - 0.1 <= timed_out["second"] - started < TIMEOUT + 1
+        assert started + TIMEOUT - 0.1 <= timed_out["second"] < second_started + LONG / 2
+        assert processes.waits_timed_out == [cmd]
         assert processes.runs_of(cmd) == 1
         assert "Not started: btrfs scrub status /mnt/pools/data" in caplog.text
 
@@ -371,7 +391,7 @@ class TestCommandsThatDoNotReturn:
         # Two tabs of the Storage page that ask for the scrub status of a pool that answers, at
         # the same moment: the second runs btrfs once the first answered, and both get the status.
         cmd = ["btrfs", "scrub", "status", "/mnt/pools/data"]  # answers when the test releases it
-        timeout = 10  # longer than the test takes: neither run gives up
+        timeout = 2 * LONG  # longer than the test takes: neither run gives up
         answers: dict[str, str] = {}
 
         def run(which: str) -> None:
@@ -394,12 +414,12 @@ class TestCommandsThatDoNotReturn:
             processes.stuck.clear()  # the second process answers at once
             released = time.monotonic()
             processes.release()
-            second.join(timeout / 2)
+            second.join(GUARD)
 
             assert answers == {"first": SCRUB_STATUS, "second": SCRUB_STATUS}
             assert processes.runs_of(cmd) == 2
             # Woken when the first ended, not at the end of its own timeout.
-            assert time.monotonic() - released < 2
+            assert time.monotonic() - released < timeout / 2
         finally:
             processes.release()
             for thread in (first, second):
@@ -422,7 +442,7 @@ class TestCommandsThatDoNotReturn:
         assert host.run_in_container(cmd, timeout=TIMEOUT).stdout == SMART_JSON
 
 
-def _wait_for(condition, seconds: float = 5) -> None:
+def _wait_for(condition, seconds: float = GUARD) -> None:
     deadline = time.monotonic() + seconds
     while not condition():
         assert time.monotonic() < deadline, "the condition did not come true"
@@ -446,9 +466,7 @@ async def api(one_worker, monkeypatch, tmp_path):
         (tmp_path / pool).mkdir()
     # Temporary directories are not mount points; treat the pool directories as mounted.
     monkeypatch.setattr(pools, "_btrfs_mounted_at", os.path.isdir)
-    monkeypatch.setattr(pools, "SCRUB_COMMAND_TIMEOUT", TIMEOUT)
-    monkeypatch.setattr(disks, "SMARTCTL_TIMEOUT", TIMEOUT)
-    monkeypatch.setattr(health_router, "SMARTCTL_TIMEOUT", TIMEOUT)
+    _command_timeouts(monkeypatch, TIMEOUT)
     monkeypatch.setattr(health_router, "RAID_STATUS_FILE", str(tmp_path / "raid_status.json"))
     monkeypatch.setattr(health_router, "_latest_raid_status", None)
     app.dependency_overrides[verify_token] = lambda: ADMIN
@@ -459,8 +477,16 @@ async def api(one_worker, monkeypatch, tmp_path):
         app.dependency_overrides.pop(verify_token, None)
 
 
-def _not_responding(command: str, target: str) -> tuple[int, str]:
-    return 500, f"{command} did not answer within {TIMEOUT} seconds: {target} may not be responding"
+def _command_timeouts(monkeypatch, seconds: float) -> None:
+    """The timeouts of the btrfs and smartctl commands of the API and the SMART monitor."""
+    monkeypatch.setattr(pools, "SCRUB_COMMAND_TIMEOUT", seconds)
+    monkeypatch.setattr(disks, "SMARTCTL_TIMEOUT", seconds)
+    monkeypatch.setattr(health_router, "SMARTCTL_TIMEOUT", seconds)
+
+
+def _not_responding(command: str, target: str):
+    """The answer to a request whose command did not answer within the timeout it is given."""
+    return lambda seconds: (500, f"{command} did not answer within {seconds} seconds: {target} may not be responding")
 
 
 @pytest.mark.parametrize(
@@ -481,29 +507,30 @@ def _not_responding(command: str, target: str) -> tuple[int, str]:
     ],
 )
 async def test_a_command_that_does_not_return_is_answered_and_frees_its_thread(
-    api, processes, method, url, stuck, answering, timed_out
+    api, processes, monkeypatch, method, url, stuck, answering, timed_out
 ):
-    response, took = await _within(api.request(method, url.format(stuck)), TIMEOUT + 5,
-                                   f"{method} {url.format(stuck)}")
+    response, _ = await _within(api.request(method, url.format(stuck)), GUARD, f"{method} {url.format(stuck)}")
 
-    assert (response.status_code, response.json()["detail"]) == timed_out
-    assert took < TIMEOUT + 1.5
+    assert (response.status_code, response.json()["detail"]) == timed_out(TIMEOUT)
     (hanging,) = processes.started
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
-    assert hanging.returncode is None  # still in the kernel: a daemon thread waits for it
+    # Answered at its timeout, not at the command's end: one wait ran out, and the command
+    # still hangs in the kernel, where a daemon thread waits for it.
+    assert processes.waits_timed_out == [hanging.args]
+    assert hanging.returncode is None
 
     # The one worker thread is free: the same request for a pool or disk that answers is served.
-    response, took = await _within(api.request(method, url.format(answering)), 5,
-                                   f"{method} {url.format(answering)} after the timeout")
+    _command_timeouts(monkeypatch, LONG)
+    response, _ = await _within(api.request(method, url.format(answering)), GUARD,
+                                f"{method} {url.format(answering)} after the timeout")
     assert response.status_code == 200, response.text
-    assert took < TIMEOUT
 
     # The command that still hangs is not started again: the request is answered at once.
-    response, took = await _within(api.request(method, url.format(stuck)), 5,
-                                   f"{method} {url.format(stuck)} again")
-    assert (response.status_code, response.json()["detail"]) == timed_out
-    assert took < TIMEOUT
+    response, took = await _within(api.request(method, url.format(stuck)), GUARD, f"{method} {url.format(stuck)} again")
+    assert (response.status_code, response.json()["detail"]) == timed_out(LONG)
+    assert took < LONG / 2
     assert processes.runs_of(hanging.args) == 1
+    assert processes.waits_timed_out == [hanging.args]
 
 
 @pytest.mark.parametrize(
@@ -511,44 +538,48 @@ async def test_a_command_that_does_not_return_is_answered_and_frees_its_thread(
     [
         # Storage: the SMART data of a disk; a smartctl without an answer is reported in the data.
         ("/api/v1/storage/disks/{}/smart",
-         lambda r: r.status_code == 200 and r.json()["raw_data"] == {
-             "error": f"smartctl did not answer within {TIMEOUT} seconds"}),
+         lambda r, seconds: r.status_code == 200 and r.json()["raw_data"] == {
+             "error": f"smartctl did not answer within {seconds} seconds"}),
         # Disk Health: the SMART data of one disk.
         ("/api/v1/health/disk/{}",
-         lambda r: r.status_code == 500 and r.json()["detail"].startswith("Failed to get SMART data: ")),
+         lambda r, seconds: r.status_code == 500 and r.json()["detail"].startswith("Failed to get SMART data: ")),
     ],
 )
 async def test_a_read_of_smart_data_that_does_not_return_is_answered_and_frees_its_thread(
-    api, processes, url, timed_out
+    api, processes, monkeypatch, url, timed_out
 ):
-    response, took = await _within(api.get(url.format("sda")), TIMEOUT + 5, f"GET {url.format('sda')}")
+    response, _ = await _within(api.get(url.format("sda")), GUARD, f"GET {url.format('sda')}")
 
-    assert timed_out(response), response.text
-    assert took < TIMEOUT + 1.5
+    assert timed_out(response, TIMEOUT), response.text
     (hanging,) = processes.started
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
+    assert processes.waits_timed_out == [hanging.args] and hanging.returncode is None
 
-    response, took = await _within(api.get(url.format("sdb")), 5, f"GET {url.format('sdb')} after the timeout")
+    _command_timeouts(monkeypatch, LONG)
+    response, _ = await _within(api.get(url.format("sdb")), GUARD, f"GET {url.format('sdb')} after the timeout")
     assert response.status_code == 200, response.text
-    assert took < TIMEOUT
 
-    response, took = await _within(api.get(url.format("sda")), 5, f"GET {url.format('sda')} again")
-    assert timed_out(response), response.text
-    assert took < TIMEOUT
+    response, took = await _within(api.get(url.format("sda")), GUARD, f"GET {url.format('sda')} again")
+    assert timed_out(response, LONG), response.text
+    assert took < LONG / 2
     assert processes.runs_of(hanging.args) == 1
+    assert processes.waits_timed_out == [hanging.args]
 
 
-async def test_disk_health_lists_a_disk_whose_smartctl_does_not_return(api, processes):
-    response, took = await _within(api.get("/api/v1/health/disks"), TIMEOUT + 5, "GET /api/v1/health/disks")
+async def test_disk_health_lists_a_disk_whose_smartctl_does_not_return(api, processes, monkeypatch):
+    response, _ = await _within(api.get("/api/v1/health/disks"), GUARD, "GET /api/v1/health/disks")
 
     assert response.status_code == 200, response.text
     assert [(disk["device"], disk["health_status"]) for disk in response.json()["disks"]] == [
         ("/dev/sda", "UNKNOWN"), ("/dev/sdb", "PASSED")]
-    assert took < TIMEOUT + 1.5
+    (waited,) = processes.waits_timed_out  # sda's smartctl, at its timeout
+    assert waited[-1] == "/dev/sda"
 
     # The next look does not wait for sda again.
-    response, took = await _within(api.get("/api/v1/health/disks"), 5, "GET /api/v1/health/disks again")
-    assert response.status_code == 200 and took < TIMEOUT
+    _command_timeouts(monkeypatch, LONG)
+    response, took = await _within(api.get("/api/v1/health/disks"), GUARD, "GET /api/v1/health/disks again")
+    assert response.status_code == 200 and took < LONG / 2
+    assert processes.waits_timed_out == [waited]
 
 
 # ---------------------------------------------------------------------------
@@ -567,25 +598,28 @@ async def scheduled(one_worker, monkeypatch, tmp_path):
     # Temporary directories are not mount points; treat the pool directories as mounted.
     monkeypatch.setattr(scheduler, "_pool_is_mounted", scheduler._real_dir)
     monkeypatch.setattr(pools, "_btrfs_mounted_at", scheduler._real_dir)
-    monkeypatch.setattr(scheduler, "SCRUB_START_TIMEOUT", TIMEOUT)
-    monkeypatch.setattr(scheduler, "SMART_TEST_TIMEOUT", TIMEOUT)
 
-    async def run(seconds: float, **target):
+    def timeouts(seconds: float) -> None:
+        monkeypatch.setattr(scheduler, "SCRUB_START_TIMEOUT", seconds)
+        monkeypatch.setattr(scheduler, "SMART_TEST_TIMEOUT", seconds)
+
+    async def run(**target):
         task = ScheduledTask(name="Check", frequency="daily", **target)
-        return await _within(scheduler.execute_task(task), seconds, f"the scheduled {task.task_type.value}")
+        return await _within(scheduler.execute_task(task), GUARD, f"the scheduled {task.task_type.value}")
 
-    return SimpleNamespace(run=run, base=base)
+    timeouts(TIMEOUT)
+    return SimpleNamespace(run=run, base=base, timeouts=timeouts)
 
 
 @pytest.mark.parametrize(
     "task_type, stuck, answering, timed_out, done",
     [
         ("smart_test", {"target_disk": "/dev/sda"}, {"target_disk": "/dev/sdb"},
-         f"smartctl timed out: /dev/sda did not answer within {TIMEOUT} seconds. "
+         "smartctl timed out: /dev/sda did not answer within {seconds} seconds. "
          "The disk or its USB bridge may not be responding.",
          "SMART test started"),
         ("scrub", {"target_pool": "data"}, {"target_pool": "media"},
-         f"btrfs scrub start timed out: data did not answer within {TIMEOUT} seconds. "
+         "btrfs scrub start timed out: data did not answer within {seconds} seconds. "
          "The pool may not be responding.",
          "Scrub started"),
     ],
@@ -593,21 +627,22 @@ async def scheduled(one_worker, monkeypatch, tmp_path):
 async def test_a_scheduled_task_whose_command_does_not_return_fails_and_frees_its_thread(
     scheduled, processes, task_type, stuck, answering, timed_out, done
 ):
-    result, took = await scheduled.run(TIMEOUT + 5, task_type=task_type, **stuck)
+    result, _ = await scheduled.run(task_type=task_type, **stuck)
 
-    assert result == (False, timed_out)
-    assert took < TIMEOUT + 1.5
+    assert result == (False, timed_out.format(seconds=TIMEOUT))
     (hanging,) = processes.started
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
+    assert processes.waits_timed_out == [hanging.args] and hanging.returncode is None
 
-    result, took = await scheduled.run(5, task_type=task_type, **answering)
+    scheduled.timeouts(LONG)
+    result, _ = await scheduled.run(task_type=task_type, **answering)
     assert result == (True, done)
-    assert took < TIMEOUT
 
-    result, took = await scheduled.run(5, task_type=task_type, **stuck)
-    assert result == (False, timed_out)
-    assert took < TIMEOUT
+    result, took = await scheduled.run(task_type=task_type, **stuck)
+    assert result == (False, timed_out.format(seconds=LONG))
+    assert took < LONG / 2
     assert processes.runs_of(hanging.args) == 1
+    assert processes.waits_timed_out == [hanging.args]
 
 
 async def test_a_snapshot_task_whose_cleanup_does_not_return_fails_and_keeps_the_snapshots(
@@ -625,7 +660,7 @@ async def test_a_snapshot_task_whose_cleanup_does_not_return_fails_and_keeps_the
     processes.stuck = set(names)
     monkeypatch.setattr(scheduler, "SUBVOLUME_SHOW_TIMEOUT", TIMEOUT)
 
-    result, took = await scheduled.run(TIMEOUT + 5, task_type="snapshot", target_pool="data", keep_count=1)
+    result, _ = await scheduled.run(task_type="snapshot", target_pool="data", keep_count=1)
 
     snapshot, hanging = processes.started  # it stopped at the first snapshot that did not answer
     assert snapshot.args[:3] == ["btrfs", "subvolume", "snapshot"]
@@ -633,10 +668,10 @@ async def test_a_snapshot_task_whose_cleanup_does_not_return_fails_and_keeps_the
         f"Snapshot {os.path.basename(snapshot.args[-1])} created, but old snapshots were not cleaned up: "
         f"btrfs did not answer within {TIMEOUT} seconds. The pool may not be responding."
     ))
-    assert took < TIMEOUT + 1.5
     assert sorted(os.listdir(snapshots)) == names  # (the fake process made no folder for the new one)
     assert hanging.args[:3] == ["btrfs", "subvolume", "show"]
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
+    assert processes.waits_timed_out == [hanging.args] and hanging.returncode is None
 
 
 
@@ -648,20 +683,21 @@ async def test_the_smart_monitor_records_the_other_disks_past_one_that_does_not_
     history_file = tmp_path / "smart_history.json"
     monkeypatch.setattr(health_router, "SMART_HISTORY_FILE", str(history_file))
 
-    _, took = await _within(asyncio.to_thread(health_router._smart_monitor_pass), TIMEOUT + 5,
-                            "a round of the SMART monitor")
-    assert took < TIMEOUT + 1.5
+    await _within(asyncio.to_thread(health_router._smart_monitor_pass), GUARD, "a round of the SMART monitor")
     assert {serial: len(entries) for serial, entries in json.loads(history_file.read_text()).items()} == {"WD-2": 1}
     hanging, answered = processes.started
     assert (hanging.args, answered.args) == (["smartctl", "-n", "standby", "-j", "-a", "/dev/sda"],
                                              ["smartctl", "-n", "standby", "-j", "-a", "/dev/sdb"])
     assert processes.killed == [(hanging.pid, signal.SIGKILL)]
+    assert processes.waits_timed_out == [hanging.args] and hanging.returncode is None
 
     # The next round does not wait for sda again. It records WD-2 in the history in RAM; the file is
     # written only when a round changes the history, which this one does not (ADR-0269).
-    _, took = await _within(asyncio.to_thread(health_router._smart_monitor_pass), 5, "the next round")
-    assert took < TIMEOUT
+    monkeypatch.setattr(health_router, "SMARTCTL_TIMEOUT", LONG)
+    _, took = await _within(asyncio.to_thread(health_router._smart_monitor_pass), GUARD, "the next round")
+    assert took < LONG / 2
     assert {serial: len(entries) for serial, entries in health_router._smart_history.history.items()} == {
         "WD-2": 2}
     assert {serial: len(entries) for serial, entries in json.loads(history_file.read_text()).items()} == {"WD-2": 1}
     assert processes.runs_of(hanging.args) == 1
+    assert processes.waits_timed_out == [hanging.args]

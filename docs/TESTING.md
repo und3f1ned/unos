@@ -343,6 +343,16 @@ as curl does, and answers what the test sets in `FakeHost.network` (`HttpAnswer`
 of this machine to a local receiver (`UNOS_HOST_EXEC=local`), and skips it where curl is not
 installed.
 
+### Tests of What Goes On While Something Is Held
+
+The tests run beside other workers and worktrees, where a second can stretch past 2. A test that
+shows that a request, the event loop or a thread went on while a command, a write or a mail server
+was held does not time it: the fake holds for up to 30 s, and the test finds it still held
+afterwards (`FakeSMTP.stalled`, the `ended` event of `_hold_writes_of` in `tests/test_notifications.py`,
+a hanging `FakeProcess`'s `returncode`). It counts the waits that ran out
+(`FakeProcesses.waits_timed_out` of `tests/test_command_timeouts.py`), and measures "at once"
+against a long timeout (10 s, answered within 5), never against a margin of a second (ADR-0497).
+
 ### Linux-Only Tests
 
 `tests/test_share_repair.py` (Repair permissions) walks real temporary

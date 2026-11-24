@@ -831,6 +831,33 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-24: The timing tests hold under load (testing.timing-tests-under-load, ADR-0497)
+
+- On the branch `testing.timing-tests-under-load` from main 7f069d07, at the owner's word to go on
+  without them. Reproduced with three copies of `test_command_timeouts.py`, `test_notifications.py` and
+  `test_containers.py` run at once (8 workers each) beside 60 busy loops, load average 130 to 210 on
+  10 cores: each of the first 6 runs failed, on 1 to 4 wall-clock margins (a reset of the stats
+  answered in 3.1 to 3.7 s where 2.5 were allowed, the health check in 1.0 to 1.6 s where 1 was);
+  40 busy loops alone (load 30) did not reproduce it.
+- Cause, in the tests only: they judged an answer by how fast it came. Now (ADR-0497) a test finds
+  the held thing still held after the other went on (the held write's `ended`, the mail server's
+  `stalled`, the fake process's `returncode`), counts the waits that ran out
+  (`FakeProcesses.waits_timed_out`), and measures "at once" against a timeout of 10 s with a bound of
+  5; the host-name test waits once 4 s for 5 messages, bounded by 3 waits. Holds and guards are 25 to
+  90 s, so a fault fails the test there instead of passing late.
+- Each changed check fails on its fault made into `src` by hand and then reverted: a turned-away run
+  that waits its own timeout (13 failures), a run that waits for its process twice (15), the mail, the
+  channel write and the history writes on the event loop (5, and the alert's history 1).
+- Proof under the same load (load average 120 to 246): 6 rounds of three copies, then 3 more
+  after the review's changes, 27 runs of the three files (316 tests each), all green.
+- Review in a fresh context (ADR-0017): nothing blocking; each changed check still fails on its
+  fault. Fixed from it: the guards left at 5 to 10 s in `test_notifications.py` (an alert's
+  `wait_for`, the history writers' joins, the host-name read's result) wait up to HOLD; HANG_LIMIT 60
+  outlasts GUARD, so that a killed process's waiting thread does not give up during a slow test; the
+  answering-run test's timeout is 20 s with the guard as its join; the host-name wait is 4 s (12 s
+  against 20); ADR-0497 names `test_containers.py` and every hold. Left: `test_storage.py` and
+  `test_scheduler_validation.py` still count event-loop ticks in a fixed time (ADR-0497).
+
 ### 2026-11-24: The twenty-third batch on both boards; Remove of the SD standby waits for udev before each wipe
 
 - `mvp.batch-23` (ADR-0490 to ADR-0496) merged into `main` ed871d6d, `make check` and `make e2e-local`

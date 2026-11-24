@@ -560,6 +560,7 @@ and this index, and `make check-fast` runs it.
 | [0452](0452-the-compose-test-stacks-supervisor-runs-with-the-sign-in-limit-off-from-an-app-module-only-its-test-image-has.md) | The compose test stack's supervisor runs with the sign-in limit off, from an app module only its test image has | accepted | 2026-11-22 |
 | [0454](0454-a-spec-listens-for-the-file-chooser-before-the-page-can-open-it.md) | A spec listens for the file chooser before the page can open it, not just before the key press | accepted | 2026-11-22 |
 | [0492](0492-a-backend-test-that-runs-longer-than-900-s-ends-its-worker-and-the-run-fails-naming-it.md) | A backend test that runs longer than 900 s ends its worker, and the run fails naming it | accepted | 2026-11-24 |
+| [0497](0497-a-test-proves-that-something-went-on-while-another-was-held-by-finding-it-still-held-not-by-a-wall-clock-margin.md) | A test proves that something went on while another was held by finding it still held, not by a wall-clock margin | accepted | 2026-11-24 |
 
 ## CI
 

@@ -160,11 +160,18 @@ def _no_connection_from_the_container(monkeypatch, handler=None) -> list[httpx.R
     return tried
 
 
+# Seconds a held write or a stalled mail server waits for the test that holds it, at most. A test
+# shows that something else went on meanwhile by finding it still held afterwards, never by how
+# fast the other thing came: on a loaded machine a second can stretch past 2 (ADR-0497).
+HOLD = 30
+
+
 class FakeSMTP:
     """smtplib.SMTP stand-in that records the conversation and where it ran."""
 
     instances: list["FakeSMTP"] = []
-    block: threading.Event | None = None  # login waits for it when set
+    block: threading.Event | None = None  # login waits for it when set, HOLD seconds at most
+    stalled = threading.Event()  # set while a login waits for block
     fail_login: Exception | None = None
 
     def __init__(self, host, port, timeout=None):
@@ -184,7 +191,9 @@ class FakeSMTP:
     def login(self, user, password):
         self._record("login")
         if FakeSMTP.block is not None:
-            FakeSMTP.block.wait(5)
+            FakeSMTP.stalled.set()
+            FakeSMTP.block.wait(HOLD)
+            FakeSMTP.stalled.clear()
         if FakeSMTP.fail_login is not None:
             raise FakeSMTP.fail_login
 
@@ -212,6 +221,7 @@ class FakeSMTPSSL(FakeSMTP):
 def smtp(monkeypatch):
     FakeSMTP.instances = []
     FakeSMTP.block = None
+    FakeSMTP.stalled = threading.Event()
     FakeSMTP.fail_login = None
     monkeypatch.setattr(notifications.smtplib, "SMTP", FakeSMTP)
     monkeypatch.setattr(notifications.smtplib, "SMTP_SSL", FakeSMTPSSL)
@@ -276,23 +286,16 @@ class TestSendEmail:
 
     async def test_slow_mail_server_does_not_block_the_event_loop(self, smtp):
         smtp.block = threading.Event()
-        ticks = 0
-
-        async def ticker():
-            nonlocal ticks
-            while True:
-                ticks += 1
-                await asyncio.sleep(0.01)
-
-        ticking = asyncio.create_task(ticker())
         sending = asyncio.create_task(notifications.send_email(EMAIL, EVENT))
         try:
-            await asyncio.sleep(0.2)
-            assert not sending.done()  # still waiting for the mail server
-            assert ticks > 5  # while the event loop kept running
+            assert await asyncio.to_thread(smtp.stalled.wait, HOLD), "the mail never reached the server"
+            for _ in range(5):
+                await asyncio.sleep(0.01)
+            # The event loop ran on while the mail server still stalled: a login on the loop
+            # would have held it until the stall ended.
+            assert smtp.stalled.is_set() and not sending.done()
         finally:
             smtp.block.set()
-            ticking.cancel()
         assert await sending == (True, None)
 
     async def test_failures_are_reported_and_the_connection_closed(self, smtp):
@@ -937,26 +940,17 @@ class TestAlertDelivery:
     async def test_the_history_of_an_alert_is_written_off_the_event_loop(self, smtp, mail_channel, monkeypatch):
         # The write is synced to the system disk (fsync), which can take seconds on a busy SD card.
         # Before, it ran on the event loop of the monitors, logins and every request (ADR-0021).
-        writing, release = _hold_writes_of(monkeypatch, "_write_history")
-        ticks = 0
-
-        async def ticker():
-            nonlocal ticks
-            while True:
-                ticks += 1
-                await asyncio.sleep(0.01)
-
-        ticking = asyncio.create_task(ticker())
+        held = _hold_writes_of(monkeypatch, "_write_history")
         alerting = asyncio.create_task(health_router.send_raid_alert("data", "degraded", 0, "details"))
         try:
-            assert await asyncio.to_thread(writing.wait, 5), "the history was never written"
-            before = ticks
-            await asyncio.sleep(0.2)
-            assert not alerting.done()  # still writing the history
-            assert ticks - before > 5  # while the event loop kept running
+            assert await asyncio.to_thread(held.writing.wait, HOLD), "the history was never written"
+            for _ in range(5):
+                await asyncio.sleep(0.01)
+            # The event loop ran on while the write was still held: a write on the loop would
+            # have held it until the write ended.
+            assert held.writing.is_set() and not held.ended.is_set() and not alerting.done()
         finally:
-            release.set()
-            ticking.cancel()
+            held.release.set()
         await alerting
         [entry] = notifications.load_logs()
         assert (entry.event.title, entry.success) == ("RAID Pool 'data' DEGRADED", True)
@@ -1070,7 +1064,7 @@ class TestTheHostsName:
         # HOST_NAME_TIMEOUT. The next messages, such as the other channels of the same alert, go
         # out at once with the last name read, and the host is asked again after HOST_NAME_RETRY.
         monkeypatch.setattr(notifications, "HOST_NAME_REUSE", 0)
-        monkeypatch.setattr(notifications, "HOST_NAME_RETRY", 2.0)
+        monkeypatch.setattr(notifications, "HOST_NAME_RETRY", HOLD)  # not over while the test sends
         bodies = _webhook_bodies(monkeypatch)
         await notifications.send_webhook(WEBHOOK, EVENT)
         answer = host.run
@@ -1086,13 +1080,13 @@ class TestTheHostsName:
         started = time.monotonic()
         for _ in range(3):
             await notifications.send_webhook(WEBHOOK, EVENT)
-        elapsed = time.monotonic() - started
-        assert 0.4 <= elapsed < 0.9, elapsed  # a read for each message would take 1.2 s
+        assert time.monotonic() - started >= 0.4  # the first message waited for the read that failed
         assert [body["host"] for body in bodies] == ["nas-w3"] * 4
+        # One read for the three messages, the first one's: the others did not start one each.
         assert len([cmd for cmd in host.calls if cmd[0] == "hostname"]) == 2
         monkeypatch.setattr(host_module, "run_on_host", answer)
         host.hostname = "nas-w3b"
-        await asyncio.sleep(2.0 - (time.monotonic() - started) + 0.1)
+        monkeypatch.setattr(notifications, "HOST_NAME_RETRY", 0)  # its time is over
         await notifications.send_webhook(WEBHOOK, EVENT)
         assert bodies[-1]["host"] == "nas-w3b"
 
@@ -1162,7 +1156,8 @@ class TestTheHostsName:
     async def test_a_read_that_hangs_holds_up_one_wait_at_most(self, monkeypatch):
         # A hostname stuck on a failing disk: one read runs at a time, the messages wait for it
         # until HOST_NAME_WAIT after its start, and then go out with the last name read.
-        monkeypatch.setattr(notifications, "HOST_NAME_WAIT", 0.5)
+        wait = 4.0
+        monkeypatch.setattr(notifications, "HOST_NAME_WAIT", wait)
         monkeypatch.setattr(notifications, "HOST_NAME_REUSE", 0)
         bodies = _webhook_bodies(monkeypatch)
         await notifications.send_webhook(WEBHOOK, EVENT)
@@ -1170,21 +1165,23 @@ class TestTheHostsName:
 
         def hangs():
             reads.append(threading.current_thread().name)
-            release.wait(10)
+            release.wait(HOLD)
             return "nas-late"
 
         monkeypatch.setattr(notifications, "_read_host_name", hangs)
         try:
             started = time.monotonic()
-            for _ in range(3):
+            for _ in range(5):
                 assert await notifications.send_webhook(WEBHOOK, EVENT) == (True, None)
             elapsed = time.monotonic() - started
         finally:
             release.set()
-        assert 0.5 <= elapsed < 1.2, elapsed  # each message waiting its own 0.5 s would take 1.5 s
+        # One wait for the five: each message waiting its own would take 5 times as long. The
+        # margin, 3 waits, holds on a loaded machine (ADR-0497).
+        assert wait <= elapsed < 3 * wait, elapsed
         assert len(reads) == 1
-        assert [body["host"] for body in bodies] == ["nas-test"] * 4
-        assert notifications._host_name_read.result.result(timeout=5) == "nas-late"
+        assert [body["host"] for body in bodies] == ["nas-test"] * 6
+        assert notifications._host_name_read.result.result(timeout=HOLD) == "nas-late"
         await notifications.send_webhook(WEBHOOK, EVENT)  # the read ended: the next one asks again
         assert bodies[-1]["host"] == "nas-late"
         assert len(reads) == 2
@@ -1197,12 +1194,13 @@ class TestTheHostsName:
         config = NotificationConfig(channel=NotificationChannel.EMAIL, email_config=EMAIL)
         monkeypatch.setattr(health_router, "load_notification_configs", lambda: [config])
         release = threading.Event()
-        monkeypatch.setattr(notifications, "_read_host_name", lambda: release.wait(30) and "nas-late")
+        monkeypatch.setattr(notifications, "_read_host_name", lambda: release.wait(HOLD) and "nas-late")
         try:
-            await asyncio.wait_for(health_router.send_raid_alert("data", "degraded", 0, "details"), 5)
+            # Two thirds of the read's hold: an alert that waited for the read would end after it.
+            await asyncio.wait_for(health_router.send_raid_alert("data", "degraded", 0, "details"), HOLD * 2 / 3)
         finally:
             release.set()
-            notifications._host_name_read.result.result(timeout=5)  # no read left to the next test
+            notifications._host_name_read.result.result(timeout=HOLD)  # no read left to the next test
         [server] = smtp.instances
         assert email.message_from_string(server.sent[2])["Subject"] == "[UNOS] RAID Pool 'data' DEGRADED"
         [entry] = notifications.load_logs()
@@ -1270,17 +1268,14 @@ class TestEndpoints:
             sender = threading.Thread(target=send)
             sender.start()
             try:
-                deadline = time.monotonic() + 5
-                while not smtp.instances and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                assert smtp.instances, "the test notification never reached the mail server"
-                started = time.monotonic()
+                assert smtp.stalled.wait(HOLD), "the test notification never reached the mail server"
                 assert api.get("/api/v1/health").status_code == 200
-                assert time.monotonic() - started < 1
-                assert not done.is_set()
+                # Answered while the mail server still stalled: a send on the event loop would
+                # have held the health check until the stall ended.
+                assert smtp.stalled.is_set() and not done.is_set()
             finally:
                 smtp.block.set()
-                sender.join(10)
+                sender.join(HOLD)
         assert done.is_set()
 
 
@@ -1365,19 +1360,21 @@ def _full_disk(monkeypatch, folder: Path):
         monkeypatch.setattr(os, "fdopen", real_fdopen)
 
 
-def _hold_writes_of(monkeypatch, name: str) -> tuple[threading.Event, threading.Event]:
+def _hold_writes_of(monkeypatch, name: str) -> SimpleNamespace:
     """Make notifications.<name>, a write to the system disk, wait as on a busy SD card: returns
-    the event that is set when a write starts and the one that lets it go on (5 s at most)."""
-    writing, release = threading.Event(), threading.Event()
+    the events ``writing``, set when a write starts, ``release``, which lets it go on (HOLD
+    seconds at most), and ``ended``, set when the held write went on."""
+    held = SimpleNamespace(writing=threading.Event(), release=threading.Event(), ended=threading.Event())
     real = getattr(notifications, name)
 
-    def held(*args):
-        writing.set()
-        release.wait(5)
+    def holding(*args):
+        held.writing.set()
+        held.release.wait(HOLD)
+        held.ended.set()
         return real(*args)
 
-    monkeypatch.setattr(notifications, name, held)
-    return writing, release
+    monkeypatch.setattr(notifications, name, holding)
+    return held
 
 
 def _answer_while_held(api, monkeypatch, name: str, request):
@@ -1387,20 +1384,21 @@ def _answer_while_held(api, monkeypatch, name: str, request):
     (fsync), which must not hold up the event loop of every request and login (ADR-0021).
     """
     monkeypatch.setenv("UNOS_DISABLE_BACKGROUND_TASKS", "1")
-    writing, release = _hold_writes_of(monkeypatch, name)
+    held = _hold_writes_of(monkeypatch, name)
     answers = []
     with api:  # all requests on one event loop, as in the supervisor
         sender = threading.Thread(target=lambda: answers.append(request(api)))
         sender.start()
         try:
-            assert writing.wait(5), f"{name} was never called"
-            started = time.monotonic()
+            assert held.writing.wait(HOLD), f"{name} was never called"
             assert api.get("/api/v1/health").status_code == 200
-            assert time.monotonic() - started < 1, "the API waited for the write to the disk"
+            # Answered while the write was still held: a write on the event loop would have held
+            # the health check until the write ended.
+            assert not held.ended.is_set(), "the API waited for the write to the disk"
             assert sender.is_alive()  # the request still waits for its write
         finally:
-            release.set()
-            sender.join(10)
+            held.release.set()
+            sender.join(HOLD)
     [answer] = answers
     return answer
 
@@ -1663,7 +1661,7 @@ class TestChannelsThroughTheApi:
             for thread in adding:
                 thread.start()
             for thread in adding:
-                thread.join(10)
+                thread.join(HOLD)
         assert sorted(c["name"] for c in api.get(f"{API}/configs").json()) == ["Hook 0", "Hook 1"]
 
     def test_two_notifications_at_once_both_stay_in_the_history(self, monkeypatch):
@@ -1685,11 +1683,11 @@ class TestChannelsThroughTheApi:
         )
         writers = [threading.Thread(target=notifications.save_logs, args=(first,))]
         writers[0].start()
-        assert writing.wait(5)
+        assert writing.wait(HOLD)
         writers.append(threading.Thread(target=notifications.save_logs, args=(second,)))
         writers[1].start()
         for writer in writers:
-            writer.join(5)
+            writer.join(HOLD)
 
         assert [entry.event.title for entry in notifications.load_logs()] == ["first", "second"]
 
