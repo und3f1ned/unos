@@ -121,7 +121,7 @@ backend tests take about 2 minutes instead of 12, `make check` about 2.2 minutes
 `make check-fast` about 1 minute. A test that runs longer than 900 s (`faulthandler_timeout` of
 `supervisor/pytest.ini`, above every timeout a test gives a command) prints the stack of every
 thread and ends its worker: the run fails, naming the test as the one its worker crashed on
-(ADR-0490).
+(ADR-0492).
 
 ## Commits and Git Hooks
 

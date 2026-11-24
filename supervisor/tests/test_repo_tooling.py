@@ -201,7 +201,7 @@ PYTEST_INI = REPO_ROOT / "supervisor" / "pytest.ini"
 def test_a_test_that_waits_forever_ends_its_worker_and_the_run_names_it(tmp_path):
     """A make check stood at 99% until it was stopped by hand. With the suite's pytest.ini, a test that
     runs longer than faulthandler_timeout (here 5 s) prints the stack of every thread and ends its worker:
-    pytest-xdist names the test, and the run ends with the other tests run in another worker (ADR-0490).
+    pytest-xdist names the test, and the run ends with the other tests run in another worker (ADR-0492).
     That it ends, not how soon: under load the workers took minutes to start."""
     pytest.importorskip("xdist", reason="the run's workers are pytest-xdist's (make setup installs it)")
     ini, replaced = re.subn(r"^faulthandler_timeout = \d+$", "faulthandler_timeout = 5", PYTEST_INI.read_text(),
@@ -233,7 +233,7 @@ def test_a_test_that_waits_forever_ends_its_worker_and_the_run_names_it(tmp_path
 
 def test_the_time_limit_of_a_test_is_above_every_timeout_that_a_test_gives_a_command():
     """So that a slow command ends at its test's own timeout, with that test's message, before the time
-    limit ends the worker (ADR-0490). Each command's: a test that runs several commands near their
+    limit ends the worker (ADR-0492). Each command's: a test that runs several commands near their
     timeouts can still reach the limit."""
     ini = configparser.ConfigParser(interpolation=None)
     ini.read(PYTEST_INI)

@@ -825,7 +825,7 @@ Open owner actions:
 
 ## Log
 
-### 2026-11-24: The btrfs CI, stats and network tests hold under load; a hung test ends its worker (testing.btrfs-ci-under-load, ADR-0490)
+### 2026-11-24: The btrfs CI, stats and network tests hold under load; a hung test ends its worker (testing.btrfs-ci-under-load, ADR-0492)
 
 - On the branch `testing.btrfs-ci-under-load` from origin/main 80fe1f51, at the lead's brief. The
   flakes reproduced with five other builders on the workstation (load average 60 to 150 on 10
@@ -838,7 +838,7 @@ Open owner actions:
   the read of a busy process that had just ended; the network test read the wall clock across a
   second boundary (`revert_in` 119). The `make check` that hung at 99% left no trace of its test:
   `supervisor/pytest.ini` now ends a test after 900 s, printing its stack, and the run fails
-  naming it (ADR-0490).
+  naming it (ADR-0492).
 - A fresh-context review found, all fixed: the supervisor's PID had the same window as the
   check's; the first hold of the script (a `sleep 2`) could be outrun under load (a loop that the
   trap ends now); counting the read after it returned loosened the stats test (it now checks that

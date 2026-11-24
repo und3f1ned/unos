@@ -5,7 +5,7 @@ area: testing
 decided-by: agent
 ---
 
-# ADR-0490: A backend test that runs longer than 900 s ends its worker, and the run fails naming it
+# ADR-0492: A backend test that runs longer than 900 s ends its worker, and the run fails naming it
 
 ## Context
 
