@@ -847,6 +847,48 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     ]);
   });
 
+  // A planned repair (ADR-0498): critical apps of the SD standby among the containers that use the pool
+  // move to the card first, and the unmount goes on. The standby's answers are the server's fields.
+  test('an unmount refused for critical apps offers to move them to the card first, then goes on', async ({
+    authenticatedPage: page,
+  }) => {
+    let refused = 0;
+    const writes = await fakeStorageApi(page, {
+      pools: [HEALTHY_POOL],
+      poolActionResponse: () =>
+        refused++ === 0 ? { status: 409, json: { detail: USED_BY_APPS } } : undefined,
+    });
+    const moves: unknown[] = [];
+    await page.route('**/api/v1/system/standby**', async (route) => {
+      const request = route.request();
+      if (request.method() === 'GET') {
+        return route.fulfill({ json: { armed: true, card_present: true, apps: [
+          { app: 'jellyfin', pool: 'e2e_data', interval_hours: 24, generation: 3, synced_at: '2026-11-24T04:00:00Z',
+            mib_per_sync: 2.5, data_bytes: 1000, images_bytes: 2000, error: null, moved: null, return_blocked: null },
+        ] } });
+      }
+      moves.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() });
+      return route.fulfill({ json: { dry_run: false, apps: [{ app: 'jellyfin', has_copy: true, age: '6 h', error: null }],
+                                     message: '1 critical app(s) to the card' } });
+    });
+    await page.goto('/storage');
+
+    const card = poolCard(page, 'e2e_data');
+    await (await moreItem(card, 'Unmount…')).click();
+    const dialog = page.getByRole('dialog', { name: 'Unmount pool' });
+    await dialog.getByRole('button', { name: 'Unmount', exact: true }).click();
+    await expect(dialog.getByText(USED_BY_APPS)).toBeVisible();
+    await expect(dialog.getByTestId('critical-apps-offer')).toContainText('jellyfin can move to the SD standby’s card first');
+    await dialog.getByRole('button', { name: 'Move them to the card and try again' }).click();
+    await expect(dialog).toBeHidden();
+    expect(moves).toEqual([{ path: '/api/v1/system/standby/apps/move', body: { reason: 'planned', pool: 'e2e_data' } }]);
+    expect(writes).toEqual([
+      { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
+      { method: 'POST', path: '/pools/e2e_data/unmount', body: {} },
+    ]);
+    await expect(badge(card, 'Not mounted')).toBeVisible();
+  });
+
   test('a pool in use is not removed, and the dialog says why', async ({ authenticatedPage: page }) => {
     const writes = await fakeStorageApi(page, {
       pools: [HEALTHY_POOL],

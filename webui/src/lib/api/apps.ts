@@ -252,6 +252,10 @@ export interface InstalledApp {
 	update_to: string | null;
 	/** The earlier version that the app's last update kept, until a rollback or its removal. */
 	previous: AppEarlierVersion | null;
+	/** A critical app of the SD standby: kept on its card and moved there when its pool fails (ADR-0498). */
+	critical: boolean;
+	/** Its containers run from the SD standby's copy of its data, not from its pool. */
+	on_standby_card: boolean;
 }
 
 /** The earlier version of an app that its last update kept, stopped (ADR-0408). */
@@ -599,4 +603,57 @@ export function describeApiError(e: unknown, fallback: string): string {
 	// An error object stringified into the message carries no information.
 	if (!message || message.includes('[object Object]')) return fallback;
 	return message;
+}
+
+// --- The critical apps of the SD standby (ADR-0498) ---------------------------------------------------
+
+/** GET /apps/standby: whether apps can be marked critical here, and whether UNOS runs from the standby's card. */
+export interface AppsStandby {
+	offered: boolean;
+	reason: string | null;
+	running_on_standby: boolean;
+}
+
+export interface CriticalFolder {
+	path: string;
+	/** Its size in bytes; null when it is not read (a folder of another pool). */
+	bytes: number | null;
+	copied: boolean;
+	kind: 'data' | 'cache' | 'previous' | 'other_pool';
+}
+
+/** GET /apps/installed/{id}/critical: the mark's dialog. */
+export interface CriticalPlan {
+	app: string;
+	name: string;
+	pool: string | null;
+	critical: boolean;
+	interval_hours: number;
+	intervals: number[];
+	folders: CriticalFolder[];
+	copied_bytes: number;
+	images_bytes: number;
+	card_size: number | null;
+	card_free: number | null;
+	reserve: number | null;
+	needed: number;
+	fits: boolean;
+	/** The MiB its recent syncs wrote to the card, on average; null before its first sync. */
+	mib_per_sync: number | null;
+	failed_over: boolean;
+}
+
+export async function getAppsStandby(): Promise<AppsStandby> {
+	return api.get<AppsStandby>('/apps/standby');
+}
+
+export async function getCriticalPlan(app: string): Promise<CriticalPlan> {
+	return api.get<CriticalPlan>(`/apps/installed/${encodeURIComponent(app)}/critical`);
+}
+
+export async function setCritical(app: string, critical: boolean, intervalHours: number): Promise<CriticalPlan> {
+	return api.put<CriticalPlan>(`/apps/installed/${encodeURIComponent(app)}/critical`, {
+		critical,
+		interval_hours: intervalHours
+	});
 }

@@ -2,8 +2,12 @@
 	// The dialog that mounts or unmounts a pool; a Mount also imports a pool found on the disks
 	// (ADR-0283).
 	import { Alert, ConfirmDialog } from '$lib/components/ui';
+	import { ApiError } from '$lib/api/client';
 	import { mountPool, unmountPool } from '$lib/api/storage';
+	import { moveCriticalApps } from '$lib/api/standby';
 	import { t } from '$lib/i18n';
+	import CriticalAppsOffer from './CriticalAppsOffer.svelte';
+	import { criticalAppsOf } from './criticalApps';
 	import { messageOf, poolMountpoint, type PoolAction } from './pools';
 
 	type Props = {
@@ -20,11 +24,29 @@
 
 	let busy = $state(false);
 	let error = $state('');
+	// The critical apps of the pool that a refused unmount offers to move to the SD standby first (ADR-0498).
+	let critical = $state<string[]>([]);
 
 	function close() {
 		if (busy) return;
 		error = '';
+		critical = [];
 		onclose();
+	}
+
+	async function moveAndRetry() {
+		if (!action) return;
+		busy = true;
+		try {
+			await moveCriticalApps('planned', action.pool.name);
+			critical = [];
+		} catch (e) {
+			error = messageOf(e);
+			busy = false;
+			return;
+		}
+		busy = false;
+		await confirm();
 	}
 
 	async function confirm() {
@@ -44,6 +66,7 @@
 		} catch (e) {
 			// e.g. 409 "target is busy" when unmounting
 			error = messageOf(e);
+			critical = kind === 'unmount' && e instanceof ApiError && e.status === 409 ? await criticalAppsOf(pool.name) : [];
 		} finally {
 			busy = false;
 		}
@@ -84,6 +107,9 @@
 			<Alert variant="error" title={$t(action.kind === 'mount' ? 'storage.mount.failed' : 'storage.unmount.failed')}>
 				{error}
 			</Alert>
+		{/if}
+		{#if critical.length > 0}
+			<CriticalAppsOffer apps={critical} {busy} onmove={moveAndRetry} />
 		{/if}
 	{/if}
 </ConfirmDialog>

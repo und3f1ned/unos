@@ -299,7 +299,36 @@ export const en = {
 	'apps.job.keepGoing': 'Keep installing',
 	'apps.job.cancelledTitle': 'The install was cancelled',
 	'apps.detail.jobLost':
-		'UNOS restarted during the install, and its progress was lost. The Installed tab shows what it made.'
+		'UNOS restarted during the install, and its progress was lost. The Installed tab shows what it made.',
+
+	// The critical mark of an installed app on the SD standby (AppCriticalDialog, ADR-0498).
+	'apps.critical.menu': 'Critical on the SD standby…',
+	'apps.critical.badge': 'Critical',
+	'apps.critical.onCard': 'Runs from the SD card',
+	'apps.critical.title': 'Critical app: {name}',
+	'apps.critical.intro':
+		'A critical app keeps its configuration, databases and images on the SD standby: it runs from the card on the standby, and moves to the card by itself when its pool fails.',
+	'apps.critical.copied': 'Copied to the card',
+	'apps.critical.nothing': 'Nothing of it on its pool',
+	'apps.critical.images': 'Its images',
+	'apps.critical.notCopied': 'Not copied',
+	'apps.critical.kind.data': 'data',
+	'apps.critical.kind.cache': 'a cache the app makes again; on the card it is in RAM',
+	'apps.critical.kind.previous': 'the copy an update keeps',
+	'apps.critical.kind.otherPool': 'another pool folder; on the card the app sees it empty',
+	'apps.critical.card': 'The card: {free} free of {size}, {reserve} kept in reserve. A new mark needs about {needed}.',
+	'apps.critical.noRoom': 'The card has no room for this app: the mark would leave less than its reserve.',
+	'apps.critical.mark': 'Critical app',
+	'apps.critical.markHint': 'Unmarked, its copies on the card are deleted.',
+	'apps.critical.interval': 'Sync interval',
+	'apps.critical.daily': 'Daily, with the system',
+	'apps.critical.hours': { one: 'Every hour', other: 'Every {hours} hours' },
+	'apps.critical.weekly': 'About {mib} MiB written to the card a week.',
+	'apps.critical.weeklyUnknown': 'The writes to the card a week cannot be told before its first sync.',
+	'apps.critical.save': 'Save',
+	'apps.critical.onStandby.title': 'UNOS runs from the SD standby',
+	'apps.critical.onStandby.text':
+		'Only the critical apps are here, as their copies on the card were last synced; the other apps come back with the return to the eMMC.'
 };
 
 export const ru: Translation<typeof en> = {
@@ -571,5 +600,34 @@ export const ru: Translation<typeof en> = {
 	'apps.job.keepGoing': 'Продолжить установку',
 	'apps.job.cancelledTitle': 'Установка отменена',
 	'apps.detail.jobLost':
-		'UNOS перезапустился во время установки, и её ход потерян. Что она успела сделать, видно на вкладке «Установленные».'
+		'UNOS перезапустился во время установки, и её ход потерян. Что она успела сделать, видно на вкладке «Установленные».',
+
+	// The critical mark of an installed app on the SD standby (AppCriticalDialog, ADR-0498).
+	'apps.critical.menu': 'Критичное на резерве SD…',
+	'apps.critical.badge': 'Критичное',
+	'apps.critical.onCard': 'Работает с карты SD',
+	'apps.critical.title': 'Критичное приложение: {name}',
+	'apps.critical.intro':
+		'Критичное приложение хранит настройки, базы данных и образы на резерве SD: на резерве оно работает с карты и само переходит на карту, когда его пул отказывает.',
+	'apps.critical.copied': 'Копируется на карту',
+	'apps.critical.nothing': 'Ничего на его пуле',
+	'apps.critical.images': 'Его образы',
+	'apps.critical.notCopied': 'Не копируется',
+	'apps.critical.kind.data': 'данные',
+	'apps.critical.kind.cache': 'кэш, который приложение создаёт заново; на карте он в памяти',
+	'apps.critical.kind.previous': 'копия, которую хранит обновление',
+	'apps.critical.kind.otherPool': 'другая папка пула; на карте приложение видит её пустой',
+	'apps.critical.card': 'Карта: свободно {free} из {size}, {reserve} в резерве. Новой отметке нужно около {needed}.',
+	'apps.critical.noRoom': 'На карте нет места для этого приложения: отметка оставила бы меньше резерва.',
+	'apps.critical.mark': 'Критичное приложение',
+	'apps.critical.markHint': 'Без отметки его копии на карте удаляются.',
+	'apps.critical.interval': 'Интервал синхронизации',
+	'apps.critical.daily': 'Ежедневно, вместе с системой',
+	'apps.critical.hours': { one: 'Каждый час', few: 'Каждые {hours} часа', many: 'Каждые {hours} часов' },
+	'apps.critical.weekly': 'Около {mib} МиБ записи на карту в неделю.',
+	'apps.critical.weeklyUnknown': 'Запись на карту в неделю станет известна после первой синхронизации.',
+	'apps.critical.save': 'Сохранить',
+	'apps.critical.onStandby.title': 'UNOS работает с резерва на SD',
+	'apps.critical.onStandby.text':
+		'Здесь только критичные приложения, такими, какими их копии на карте были синхронизированы последний раз; остальные вернутся с возвратом на eMMC.'
 };

@@ -5,7 +5,17 @@
 	// its containers' resources. The buttons are quiet and in one place, the top right: Update,
 	// Open and Start or Stop as secondary buttons, and Restart and Uninstall, last and in red, in its
 	// ⋯ menu (ADR-0432, ADR-0437); no solid colours, which are for a confirming dialog's button.
-	import { ArrowUpCircle, ExternalLink, PackageX, Play, RotateCw, Square, Trash2, Undo2 } from 'lucide-svelte';
+	import {
+		ArrowUpCircle,
+		ExternalLink,
+		PackageX,
+		Play,
+		RotateCw,
+		ShieldCheck,
+		Square,
+		Trash2,
+		Undo2
+	} from 'lucide-svelte';
 	import { ActionMenu, Alert, Badge, Button, Card, type MenuItem } from '$lib/components/ui';
 	import type { AppTemplate, ContainerResources, InstalledApp } from '$lib/api/apps';
 	import { t } from '$lib/i18n';
@@ -27,6 +37,9 @@
 		onrollback: (app: InstalledApp) => void;
 		onremoveearlier: (app: InstalledApp) => void;
 		onlimits: (target: { container: string; resources: ContainerResources }) => void;
+		/** The SD standby is set up here: its menu offers the critical mark (ADR-0498). */
+		standbyOffered?: boolean;
+		oncritical?: (app: InstalledApp) => void;
 	};
 
 	let {
@@ -40,7 +53,9 @@
 		onuninstall,
 		onrollback,
 		onremoveearlier,
-		onlimits
+		onlimits,
+		standbyOffered = false,
+		oncritical
 	}: Props = $props();
 
 	// The group of the apps that are given share folders (ADR-0274): a name, the same in every language.
@@ -54,6 +69,9 @@
 	const more = $derived<MenuItem[]>([
 		...(app.status === 'running' && app.missing.length === 0
 			? [{ label: $t('apps.installed.restart'), icon: RotateCw, onclick: () => onrestart(app) }]
+			: []),
+		...(standbyOffered && oncritical
+			? [{ label: $t('apps.critical.menu'), icon: ShieldCheck, onclick: () => oncritical(app) }]
 			: []),
 		{ label: $t('apps.installed.uninstall'), icon: PackageX, danger: true, onclick: () => onuninstall(app) }
 	]);
@@ -87,6 +105,11 @@
 				<Badge variant={state.variant} dot>{$t(state.key)}</Badge>
 				{#if health}
 					<Badge variant={health.variant}>{$t(health.key)}</Badge>
+				{/if}
+				{#if app.on_standby_card}
+					<Badge variant="warning">{$t('apps.critical.onCard')}</Badge>
+				{:else if app.critical}
+					<Badge variant="outline">{$t('apps.critical.badge')}</Badge>
 				{/if}
 			</div>
 			<p class="text-sm text-content-secondary truncate" title={template?.description || app.template_id}>

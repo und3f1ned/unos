@@ -12,12 +12,14 @@
 		type AppTemplate,
 		type AppInstallJob,
 		type ContainerResources,
+		type AppsStandby,
 		type InstalledApp
 	} from '$lib/api/apps';
 	import { Package, RefreshCw, RotateCw, Grid3X3, CheckCircle2 } from 'lucide-svelte';
 	import { Button, Alert, EmptyState, LoadState, Skeleton, Tabs, confirm } from '$lib/components/ui';
 	import {
 		AppCatalog,
+		AppCriticalDialog,
 		AppDetailModal,
 		AppInstallJobs,
 		AppLimitsDialog,
@@ -96,6 +98,14 @@
 
 	// The installed app whose update the dialog shows (ADR-0408).
 	let updating = $state<InstalledApp | null>(null);
+	// The SD standby's critical mark (ADR-0498): whether it is offered, and the app whose dialog is open.
+	let standby = $state<AppsStandby | null>(null);
+	let criticalOf = $state<string | null>(null);
+
+	async function criticalSaved() {
+		criticalOf = null;
+		await data.loadInstalled();
+	}
 
 	/** The app's name in the catalog, or its own. */
 	function nameOf(app: InstalledApp): string {
@@ -166,6 +176,7 @@
 		() => pageData,
 		(snapshot) => {
 			data.apply(snapshot);
+			standby = snapshot.standby.ok ? snapshot.standby.value : null;
 			drawn = true;
 		}
 	);
@@ -258,6 +269,9 @@
 		</Button>
 	</div>
 
+	{#if standby?.running_on_standby}
+		<Alert variant="warning" title={$t('apps.critical.onStandby.title')}>{$t('apps.critical.onStandby.text')}</Alert>
+	{/if}
 	{#if error}
 		<Alert variant="error">{error}</Alert>
 	{/if}
@@ -387,6 +401,8 @@
 							onrollback={handleRollback}
 							onremoveearlier={handleRemoveEarlier}
 							onlimits={openLimits}
+							standbyOffered={standby?.offered ?? false}
+							oncritical={(target) => (criticalOf = target.name)}
 						/>
 					{/each}
 				</div>
@@ -403,6 +419,9 @@
 	onclose={() => (updating = null)}
 	onstarted={() => (updating = null)}
 />
+
+<!-- The critical mark of an installed app: its copy on the SD standby (ADR-0498) -->
+<AppCriticalDialog app={criticalOf} onclose={() => (criticalOf = null)} onsaved={criticalSaved} />
 
 <!-- The limits of one container of an installed app (ADR-0390) -->
 <AppLimitsDialog

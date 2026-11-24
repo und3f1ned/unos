@@ -143,7 +143,55 @@ export const en = {
 	'standby.remove.message': 'The copy of the system on the card is lost, and a failure of the eMMC has no standby.',
 	'standby.remove.confirm': 'Remove and wipe',
 	'standby.remove.done': 'The standby is removed',
-	'standby.remove.failed': 'The standby was not removed'
+	'standby.remove.failed': 'The standby was not removed',
+
+	// The critical apps (StandbyAppsCard, ADR-0498).
+	'standby.apps.title': 'Critical apps',
+	'standby.apps.none': 'No app is marked critical: the Apps page marks one in its menu.',
+	'standby.apps.daily': 'Daily, with the system',
+	'standby.apps.every': { one: 'Every hour', other: 'Every {hours} hours' },
+	'standby.apps.synced': 'copy of {time}',
+	'standby.apps.notSynced': 'no copy yet',
+	'standby.apps.mib': '{mib} MiB a sync',
+	'standby.apps.movedText': 'Runs from the card since {time}: {reason} ({pool}).',
+	'standby.apps.stoppedText': 'Stopped since {time}, without a copy: {reason} ({pool}).',
+	'standby.apps.blocked': 'Not back yet: {why}.',
+	'standby.apps.error': 'Its last sync failed: {error}',
+	'standby.apps.onCard': 'On the card',
+	'standby.apps.onPool': 'On {pool}',
+	'standby.apps.reason.pool_failed': 'its pool failed',
+	'standby.apps.reason.pool_read_only': 'its pool went read-only',
+	'standby.apps.reason.drill': 'a drill',
+	'standby.apps.reason.planned': 'a repair of its pool',
+	'standby.apps.reason.other': 'moved',
+	'standby.apps.move': 'Move the critical apps to the card',
+	'standby.apps.moveTitle': 'Move the critical apps to the card?',
+	'standby.apps.moveMessage':
+		'Their containers are created again on their copies on the card, as when their pool fails, and those that ran start. Changes since the last sync stay on the pool.',
+	'standby.apps.moveCache': 'Their caches are in RAM on the card.',
+	'standby.apps.moveOthers': 'Their folders on other pools, such as media, look empty to them.',
+	'standby.apps.moved': { one: '{n} app runs from the card', other: '{n} apps run from the card' },
+	'standby.apps.moveFailed': 'The apps could not be moved',
+	'standby.apps.return': {
+		one: 'Return to the pool, discarding the card’s changes',
+		other: 'Return {n} apps to their pools, discarding the card’s changes'
+	},
+	'standby.apps.returnTitle': 'Return the apps to their pools?',
+	'standby.apps.returnMessage':
+		'Their containers are created again on their pools as before the move. What they changed on the card is discarded.',
+	'standby.apps.returnConfirm': 'Return and discard',
+	'standby.apps.returned': { one: '{n} app is back on its pool', other: '{n} apps are back on their pools' },
+	'standby.apps.returnFailed': 'The apps could not return',
+	'standby.apps.help':
+		'An app moves to the card by itself when its pool goes read-only after an error, or at the second check in a row that finds its pool not mounted or missing a disk its profile cannot spare.',
+	'standby.space.title': 'The card ({size})',
+	'standby.space.system': "The system's copy",
+	'standby.space.unosImages': "UNOS's images",
+	'standby.space.unosVolumes': "UNOS's volumes",
+	'standby.space.app': '{name}: data and images',
+	'standby.space.loaded': "Images the standby's Docker loaded",
+	'standby.space.free': 'Free',
+	'standby.space.reserve': 'Kept in reserve'
 };
 
 export const ru: Translation<typeof en> = {
@@ -285,5 +333,63 @@ export const ru: Translation<typeof en> = {
 	'standby.remove.message': 'Копия системы на карте теряется, и при отказе eMMC резерва не будет.',
 	'standby.remove.confirm': 'Удалить и стереть',
 	'standby.remove.done': 'Резерв удалён',
-	'standby.remove.failed': 'Резерв не удалён'
+	'standby.remove.failed': 'Резерв не удалён',
+
+	// The critical apps (StandbyAppsCard, ADR-0498).
+	'standby.apps.title': 'Критичные приложения',
+	'standby.apps.none':
+		'Ни одно приложение не отмечено критичным: это делается в меню приложения на странице «Приложения».',
+	'standby.apps.daily': 'Ежедневно, вместе с системой',
+	'standby.apps.every': { one: 'Каждый час', few: 'Каждые {hours} часа', many: 'Каждые {hours} часов' },
+	'standby.apps.synced': 'копия от {time}',
+	'standby.apps.notSynced': 'копии ещё нет',
+	'standby.apps.mib': '{mib} МиБ за синхронизацию',
+	'standby.apps.movedText': 'Работает с карты с {time}: {reason} ({pool}).',
+	'standby.apps.stoppedText': 'Остановлено с {time}, копии нет: {reason} ({pool}).',
+	'standby.apps.blocked': 'Пока не может вернуться: {why}.',
+	'standby.apps.error': 'Последняя синхронизация не удалась: {error}',
+	'standby.apps.onCard': 'На карте',
+	'standby.apps.onPool': 'На {pool}',
+	'standby.apps.reason.pool_failed': 'его пул отказал',
+	'standby.apps.reason.pool_read_only': 'его пул стал только для чтения',
+	'standby.apps.reason.drill': 'учение',
+	'standby.apps.reason.planned': 'ремонт его пула',
+	'standby.apps.reason.other': 'перенесено',
+	'standby.apps.move': 'Перенести критичные приложения на карту',
+	'standby.apps.moveTitle': 'Перенести критичные приложения на карту?',
+	'standby.apps.moveMessage':
+		'Их контейнеры создаются заново на их копиях на карте, как при отказе пула, а те, что работали, запускаются. Изменения после последней синхронизации остаются на пуле.',
+	'standby.apps.moveCache': 'Их кэши на карте — в памяти.',
+	'standby.apps.moveOthers': 'Их папки на других пулах, например медиатека, видны им пустыми.',
+	'standby.apps.moved': {
+		one: '{n} приложение работает с карты',
+		few: '{n} приложения работают с карты',
+		many: '{n} приложений работают с карты'
+	},
+	'standby.apps.moveFailed': 'Не удалось перенести приложения',
+	'standby.apps.return': {
+		one: 'Вернуть в пул, отбросив изменения на карте',
+		few: 'Вернуть {n} приложения в их пулы, отбросив изменения на карте',
+		many: 'Вернуть {n} приложений в их пулы, отбросив изменения на карте'
+	},
+	'standby.apps.returnTitle': 'Вернуть приложения в их пулы?',
+	'standby.apps.returnMessage':
+		'Их контейнеры создаются заново на их пулах, как до переноса. То, что они изменили на карте, отбрасывается.',
+	'standby.apps.returnConfirm': 'Вернуть и отбросить',
+	'standby.apps.returned': {
+		one: '{n} приложение снова на своём пуле',
+		few: '{n} приложения снова на своих пулах',
+		many: '{n} приложений снова на своих пулах'
+	},
+	'standby.apps.returnFailed': 'Не удалось вернуть приложения',
+	'standby.apps.help':
+		'Приложение само переходит на карту, когда его пул после ошибки становится только для чтения, или при второй проверке подряд, которая находит пул не смонтированным или без диска, без которого его профиль не обходится.',
+	'standby.space.title': 'Карта ({size})',
+	'standby.space.system': 'Копия системы',
+	'standby.space.unosImages': 'Образы UNOS',
+	'standby.space.unosVolumes': 'Тома UNOS',
+	'standby.space.app': '{name}: данные и образы',
+	'standby.space.loaded': 'Образы, загруженные Docker резерва',
+	'standby.space.free': 'Свободно',
+	'standby.space.reserve': 'В резерве'
 };
