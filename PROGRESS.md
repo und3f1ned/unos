@@ -825,6 +825,15 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-24: The SD standby passes on the BPI-W3 and the BPI-F3 (system.sd-standby-boot, system.sd-standby-bpi-f3)
+
+- The last step of both entries, at the owner's hands: both cards pulled from the running boards, both
+  rebooted by the lead. The W3 booted its eMMC in 85 s and the F3 in 309 s, with no `unos.*`
+  argument on the command line, check: OK and 0.000 MiB on each; the Standby status named the missing
+  card (`standby_card_missing`). With the cards back, the next reboots (83 s, 300 s) went through the
+  cards' choosers again (`unos.chooser=card unos.root=emmc`), check: OK, no problem, and the start
+  syncs wrote a generation (W3 3.0 MiB, F3 2.8 MiB to the card). Both entries pass.
+
 ### 2026-11-24: The SD standby on the BPI-F3: SpacemiT's official SD layout, a booti chooser, its drills pass (ADR-0489)
 
 - On the branch `system.sd-standby-bpi-f3` from 9cc06747 of `mvp.batch-22`, at the lead's brief,
