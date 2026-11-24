@@ -54,7 +54,7 @@ significant step. Features and their state live in `feature-list.json`, decision
   job, a restore in one streaming pass, no page polling the API, and renaming a user with its SMB
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
-  BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3 (10.1.1.56)
+  BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3
   runs `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
   eMMC: 2.180 in all; check: OK), the standby removed and set up again, its NVMe once lost at a warm
   reboot and back at the next (Log). Before it `main` 20e6754f (`mvp.batch-22` with
@@ -76,7 +76,7 @@ significant step. Features and their state live in `feature-list.json`, decision
   unos.db was brought to the baseline 0001 with no warning. Before it a64f891e of `mvp.batch-18`
   (sync 5.309, build-supervisor 0.246, build-webui 0.156, up 0.344, check 0.000), and the same
   day 8297e142, deployed at the owner's request
-  with `UNOS_DEV_HOST=10.1.1.56`, an empty `UNOS_DEV_SYSTEM_DISK` and its own
+  with `UNOS_DEV_HOST` set to its address, an empty `UNOS_DEV_SYSTEM_DISK` and its own
   `UNOS_DEV_STATE_DIR=tmp/dev-f3`, after the owner allowed the pull of the pinned
   `caddy:2-alpine` base (MiB written to its eMMC: sync 18.793, build-supervisor 2.051, pull
   0.762, build-webui 0.149, up 0.344, check 0.000). Both containers healthy; The first check.sh
@@ -307,9 +307,9 @@ its address and logins are in `dev.env` (ADR-0212). This journal called it a UGR
 the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (ADR-0376).
 
 - Flash (ADR-0470, ADR-0486): the system runs from the soldered eMMC `mmcblk0`
-  (Samsung, 29.1 GB): one GPT partition `mmcblk0p1` from sector 32768 (ext4, label `armbi_emmc`,
-  UUID 1ccf0051-691b-4a89-92cc-4294a651e3ed) and U-Boot of Armbian's package
-  `linux-u-boot-vendor-armsom-w3` (fwver uboot-rmbian 11/12/2026) at sectors 64 and 16384. UGREEN's
+  (Samsung, 29.1 GB): one GPT partition `mmcblk0p1` from sector 32768 (ext4, label `armbi_emmc`)
+  and U-Boot of Armbian's package `linux-u-boot-vendor-armsom-w3` (fwver uboot-rmbian 11/12/2026)
+  at sectors 64 and 16384. UGREEN's
   partitions are wiped from it. The SD card `mmcblk1` (SD32G, 31.9 GB) holds the SD standby since
   2026-11-23 (ADR-0471, ADR-0488): a GPT (the W3's U-Boot reads no partition of an MBR card), its
   own loader, the FAT `UNOS-BOOT` with the chooser and the btrfs `UNOS-STANDBY` with the
@@ -674,12 +674,8 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   The RAM rootfs of `scripts/dev/linux-tests.sh` (560 MiB in `/dev/shm`), made again after the
   boot of 2026-11-09, 07:17 UTC, is gone since the reboot of 12:22 UTC; every reboot removes it,
   and `linux-tests.sh` prints the owner action that makes it again.
-- Network: global IPv6 from a Hurricane Electric tunnel prefix. Since 2026-11-08 the services
-  answer over IPv6 only the LAN (link-local, unique-local and the LAN's global prefix), and the
-  BitTorrent port 51413 everyone: the table `ip6 unos_ipv6_inbound`, loaded at boot by
-  `unos-ipv6-inbound.service` (ADR-0301, `scripts/dev/ipv6-filter.sh status`). IPv4 is not
-  filtered on the device. Samba admits only private, unique-local and link-local addresses.
-  smbd runs unconfined by AppArmor (ADR-0162). The NFS server runs (ADR-0303), with no export.
+- Network: the inbound IPv6 filter is in place since 2026-11-08 (ADR-0301). The NFS server runs
+  (ADR-0303), with no export.
 - SD writes on 2026-11-16 (Immich; the deploy above): Immich's install with the pull of its four
   images 3661.938 MiB, its second install with the images there 6.059; stop 2.254, start 2.785,
   restart 5.023, the uninstall 3.695; 30 idle minutes 0.547; the reads and probes of the checks
@@ -4609,7 +4605,7 @@ Open owner actions:
   run on the device (ADR-0303), 0.348 MiB. Over IPv6, 111 and 2049 answer the workstation on the
   LAN and are closed to the network outside (the namespace probe of the IPv6 filter); over IPv4
   the workstation's showmount answers.
-- `shares.nfs-exports` passes: through the API, a read-write export for 10.1.1.0/24 went into
+- `shares.nfs-exports` passes: through the API, a read-write export for the LAN's /24 network went into
   UNOS's file and exportfs; a line written by hand into /etc/exports was listed as not managed
   and kept its bytes; a client (the device itself, through its LAN address: an NFS mount on the
   workstation needs root) wrote with root squashed to nobody, and could not write once the export

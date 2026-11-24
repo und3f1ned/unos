@@ -433,8 +433,8 @@ class FakeSambaHost:
                 "gid": account.gid if account else 65534,
                 "username": session["username"],
                 "groupname": "unos-smb",
-                "remote_machine": "10.1.1.20",
-                "hostname": "ipv4:10.1.1.20:50122",
+                "remote_machine": "192.0.2.20",
+                "hostname": "ipv4:192.0.2.20:50122",
                 "session_dialect": "SMB3_11",
                 "encryption": {"cipher": "-", "degree": "none"},
                 "signing": {"cipher": "AES-128-GMAC", "degree": "full"},
@@ -443,7 +443,7 @@ class FakeSambaHost:
             for share in session["shares"]:
                 tcon_id = str(2983 + len(tcons))
                 tcons[tcon_id] = {"service": share, "server_id": server_id, "tcon_id": tcon_id,
-                                  "session_id": session_id, "machine": "10.1.1.20"}
+                                  "session_id": session_id, "machine": "192.0.2.20"}
         return json.dumps({
             "timestamp": "2026-11-06T16:20:31.512345+0100",
             "version": "4.22.6-Debian-4.22.6+dfsg-0+deb13u1",

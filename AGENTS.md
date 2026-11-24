@@ -26,11 +26,10 @@ The one exception is the web UI's Russian texts and the tests that check them (A
    its `.claude/settings.json` applies: auto memory off, secrets unreadable, the guard (ADR-0211).
 2. Read `PROGRESS.md` (Now, Dev device), `git log --oneline -10` and `git status`.
 3. One feature per worktree (ADR-0210): `git worktree add --no-track -b <id> ../unos-<id> <base>`,
-   with `<base>` the branch that holds this AGENTS.md (`origin/main` once the conversion is merged,
-   until then `origin/phase1-broken-flows`); the owner runs `make setup` in it. A worktree without
-   `AGENTS.md` or `.claude/settings.json` is a stop: ask the owner. Do not start beside uncommitted
-   work of another feature or person: ask the owner for a worktree. Only a workflow whose brief
-   assigns the files shares a checkout.
+   with `<base>` `origin/main`, or the batch branch that the owner names; the owner runs
+   `make setup` in it. A worktree without `AGENTS.md` or `.claude/settings.json` is a stop: ask
+   the owner. Do not start beside uncommitted work of another feature or person: ask the owner
+   for a worktree. Only a workflow whose brief assigns the files shares a checkout.
 4. Run `make smoke`, the baseline: the app starts and serves health, first-run setup and login.
    A red baseline goes to the owner before you change anything.
 5. Take the feature from `feature-list.json`, or the handoff in `tmp/handoff/` the owner names.

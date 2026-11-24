@@ -23,6 +23,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   card's space by part, moves the apps to the card as a drill and returns them to their pool,
   discarding the card's changes, and the Storage page's unmount or removal of a pool they use offers
   to move them first. On the standby the critical apps start from their copies (ADR-0500).
+- **A security policy and a code of conduct** (ADR-0498): `SECURITY.md` says how to report a
+  vulnerability (GitHub's private vulnerability reporting of the repository), which release gets
+  fixes and what to expect; `CODE_OF_CONDUCT.md` is the Contributor Covenant 2.1.
 - **The first pool takes Docker's data**: when an administrator makes the host's first managed pool
   and Docker's data root or containerd's root is on the system disk, UNOS moves both into the
   pool's subvolumes `.docker` and `.containerd` in the transient unit `unos-docker-move` of the host:
@@ -225,6 +228,15 @@ manager, encrypted backup uploads, health checks, CI checks).
   but a GitHub-hosted runner, and the check one with pools.
 
 ### Changed
+- The repository is ready to be public (ADR-0498): `LICENSE` holds only the text of the GNU GPL
+  version 3, so that GitHub names the license; the copyright and the notice of GPL-3.0-or-later
+  moved to README.md, and `webui/package.json` names the license. The tests, docs and notes use
+  documentation addresses and MAC addresses (RFC 5737, RFC 3849, RFC 7042), a private network
+  that is not the owner's where the code admits only private ones, and made-up serials, instead of
+  the owner's LAN and the dev device's hardware, which a test of `make test-fast` checks;
+  `dev.env.example` holds 192.0.2.103 as the device's address. `docs/maintenance.md` lists the
+  GitHub settings to turn on once the repository is public, and the issue chooser and the guides
+  no longer link Discussions.
 - The dev scripts share one SSH connection per device (ADR-0477): `scripts/dev/ssh.sh`, which
   api.py, scenario.py, check.sh, sd.sh and deploy.sh go through, opens a master connection that
   the next calls use until 300 s after its last session, its socket in a private folder of the

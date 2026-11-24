@@ -15,10 +15,9 @@ CI. Run `make setup` once per checkout; it needs the network.
    twice.
 2. **One feature per branch, worktree and pull request** (ADR-0203, ADR-0210). Each feature gets
    its own git worktree, so that the unfinished work of two features never mixes in one checkout:
-   `git worktree add --no-track -b <id> ../unos-<id> <base>`, with `<base>` the branch that holds
-   [AGENTS.md](AGENTS.md) (`origin/main` once the conversion is merged, until then
-   `origin/phase1-broken-flows`). `--no-track` leaves the new branch without an upstream, so that
-   a bare `git push` never sends it to the base. A worktree without AGENTS.md or
+   `git worktree add --no-track -b <id> ../unos-<id> <base>`, with `<base>` `origin/main`, or the
+   batch branch that the owner names. `--no-track` leaves the new branch without an upstream, so
+   that a bare `git push` never sends it to the base. A worktree without AGENTS.md or
    `.claude/settings.json` is a stop: ask the owner. A problem found on the way becomes an entry
    of its own.
 3. **A plan** of a few lines before the code: the files to change and the ADRs that bind them. A

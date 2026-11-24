@@ -34,7 +34,9 @@ SMBD_RESTART = ["timeout", "60", "systemctl", "restart", "smbd"]
 RELOAD = ["smbcontrol", "all", "reload-config"]
 EVERY = {"0.0.0.0", "::"}
 LOOPBACK = {"127.0.0.1", "::1"}
-ETH0 = {"10.1.1.5", "fd00::5", "2001:db8::5"}
+# eth0's addresses: private ones that Samba's hosts allow admits (10.0.0.0/24 and fd00::/64, the networks
+# that test_openapi.py lets examples use), and a global one; a documentation range is no LAN to hosts allow.
+ETH0 = {"10.0.0.5", "fd00::5", "2001:db8::5"}
 WLAN0 = {"192.168.7.20"}
 
 
@@ -55,7 +57,7 @@ def default_links() -> dict[str, dict]:
         "lo": {"flags": ["LOOPBACK", "UP", "LOWER_UP"], "operstate": "UNKNOWN",
                "addrs": [_inet("127.0.0.1", 8, "host"), _inet6("::1", 128, "host")]},
         "eth0": {"flags": UP, "operstate": "UP",
-                 "addrs": [_inet("10.1.1.5", 24), _inet6("fd00::5", 64), _inet6("2001:db8::5", 64),
+                 "addrs": [_inet("10.0.0.5", 24), _inet6("fd00::5", 64), _inet6("2001:db8::5", 64),
                            _inet6("fe80::5", 64, "link")]},
         "wlan0": {"flags": UP, "operstate": "UP", "addrs": [_inet("192.168.7.20", 24)]},
         "wg0": {"flags": ["POINTOPOINT", "NOARP", "UP", "LOWER_UP"], "operstate": "UNKNOWN",
@@ -123,16 +125,16 @@ class SmbdHost:
             lines = ['LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=600,fd=3))',
                      'LISTEN 0 64 0.0.0.0:3702 0.0.0.0:* users:(("wsdd2",pid=700,fd=7))',
                      # An administrator's SSH session, and the host's own SMB client on another NAS.
-                     'ESTAB 0 0 10.1.1.5:22 10.1.1.40:50122 users:(("sshd",pid=601,fd=4))',
-                     "ESTAB 0 0 10.1.1.5:40112 10.1.1.9:445"]
+                     'ESTAB 0 0 10.0.0.5:22 10.0.0.40:50122 users:(("sshd",pid=601,fd=4))',
+                     "ESTAB 0 0 10.0.0.5:40112 10.0.0.9:445"]
             for address in sorted(self.listeners) if self.running else ():
                 shown = f"[{address}]" if ":" in address else address
                 lines.append(f'LISTEN 0 50 {shown}:445 {"[::]" if ":" in address else "0.0.0.0"}:* '
                              f'users:(("smbd",pid=900,fd={30 + len(lines)}))')
             for index in range(self.sessions if self.running else 0):
                 # Each client's connection is served by an smbd process of its own, named after it.
-                lines.append(f'ESTAB 0 0 [::ffff:10.1.1.5]:445 [::ffff:10.1.1.{50 + index}]:5{index}000 '
-                             f'users:(("smbd[10.1.1.{50 + index}]",pid={4000 + index},fd=35))')
+                lines.append(f'ESTAB 0 0 [::ffff:10.0.0.5]:445 [::ffff:10.0.0.{50 + index}]:5{index}000 '
+                             f'users:(("smbd[10.0.0.{50 + index}]",pid={4000 + index},fd=35))')
             return HostResult(0, "".join(f"{line}\n" for line in lines), "")
         if cmd == SMBD_RESET:
             return HostResult(0, "", "")
@@ -208,7 +210,7 @@ class TestRendering:
 
     @pytest.mark.parametrize("name", [
         "lo", "docker0", "veth1a2b3c4", "br-0123456789ab", "eth*", "eth0 wlan0", "eth0,wlan0",
-        "eth0;options=dynamic", '"eth0"', "10.1.1.5", "a" * 16, "eth0\n[x]", "", 42,
+        "eth0;options=dynamic", '"eth0"', "10.0.0.5", "a" * 16, "eth0\n[x]", "", 42,
     ])
     def test_the_guard_never_writes_an_invalid_name(self, name):
         with pytest.raises(smb.SambaConfigError):
@@ -244,7 +246,7 @@ class TestList:
         interfaces = by_name(get(net))
         assert sorted(interfaces) == ["eth0", "wg0", "wlan0"]
         eth0 = interfaces["eth0"]
-        assert eth0["addresses"] == ["10.1.1.5/24", "fd00::5/64", "2001:db8::5/64", "fe80::5/64"]
+        assert eth0["addresses"] == ["10.0.0.5/24", "fd00::5/64", "2001:db8::5/64", "fe80::5/64"]
         assert (eth0["state"], eth0["present"], eth0["enabled"], eth0["lan"], eth0["offered"], eth0["chosen"]) == (
             "UP", True, True, True, True, False)
         # Samba skips an interface that is not broadcast-capable.
@@ -266,11 +268,11 @@ class TestList:
             "LISTEN 0 50 192.168.7.20:445 0.0.0.0:*\n"
             'LISTEN 0 50 10.8.0.2:445 0.0.0.0:* users:(("nc",pid=901,fd=3))\n'
             'LISTEN 0 50 *:445 *:* users:(("smbd",pid=900,fd=31))\n'
-            'LISTEN 0 50 10.1.1.5:4450 0.0.0.0:* users:(("smbd",pid=900,fd=32))\n'
+            'LISTEN 0 50 10.0.0.5:4450 0.0.0.0:* users:(("smbd",pid=900,fd=32))\n'
             'ESTAB 0 0 192.168.7.20:445 192.168.7.31:50110 users:(("smbd[192.168.7.",pid=950,fd=35))\n'
             "ESTAB 0 0 [fd00::5]:445 [fd00::31]:50111\n"
-            'ESTAB 0 0 10.1.1.5:4450 10.1.1.31:50112 users:(("smbd",pid=951,fd=35))\n'
-            "ESTAB 0 0 10.1.1.5:40112 10.1.1.9:445\n"
+            'ESTAB 0 0 10.0.0.5:4450 10.0.0.31:50112 users:(("smbd",pid=951,fd=35))\n'
+            "ESTAB 0 0 10.0.0.5:40112 10.0.0.9:445\n"
         ), "")
         assert listen.read_smbd_sockets() == (["0.0.0.0", "192.168.7.20", "::", "fe80::5"], 2)
 
@@ -342,16 +344,16 @@ class TestChoose:
 
     def test_a_name_not_on_the_host_is_kept_for_when_it_is_back(self, net):
         """An unplugged USB adapter keeps its place in the choice; smbd skips it until then."""
-        response = put(net, "eth0", "enx00e04c680001")
+        response = put(net, "eth0", "enx00005e005301")
 
         assert response.status_code == 200
         state = response.json()
-        assert stored(net) == ["enx00e04c680001", "eth0"]
-        assert "interfaces = lo enx00e04c680001 eth0" in global_lines(net)
-        missing = by_name(state)["enx00e04c680001"]
+        assert stored(net) == ["enx00005e005301", "eth0"]
+        assert "interfaces = lo enx00005e005301 eth0" in global_lines(net)
+        missing = by_name(state)["enx00005e005301"]
         assert (missing["present"], missing["chosen"], missing["addresses"]) == (False, True, [])
         assert state["problems"] == [
-            "enx00e04c680001 is not on the host: smbd listens on it only once it is back and SMB has restarted"]
+            "enx00005e005301 is not on the host: smbd listens on it only once it is back and SMB has restarted"]
         assert state["restart_needed"] is False
 
     def test_the_audit_entries(self, net):
@@ -379,7 +381,7 @@ class TestRefused:
         ("eth*", f"eth* {listen.NAME_RULE}"),
         ("eth0;options=dynamic", f"eth0;options=dynamic {listen.NAME_RULE}"),
         ("a" * 16, f"{'a' * 16} {listen.NAME_RULE}"),
-        ("10.1.1.5", f"10.1.1.5 {listen.NAME_RULE}"),
+        ("10.0.0.5", f"10.0.0.5 {listen.NAME_RULE}"),
     ])
     def test_names_that_are_not_offered(self, net, name, detail):
         response = put(net, "eth0", name)
@@ -391,7 +393,7 @@ class TestRefused:
                                   "addrs": [_inet("10.2.2.5", 24)]}
         net.host.links["eth2"] = {"flags": UP, "operstate": "UP", "addrs": [_inet6("fe80::7", 64, "link")]}
         net.host.links["eth3"] = {"flags": UP, "operstate": "UP", "addrs": [_inet("203.0.113.7", 24)]}
-        for names in (["enx00e04c680001"], ["eth1"], ["eth2"], ["eth3"], ["eth1", "eth2", "eth3", "enx0"]):
+        for names in (["enx00005e005301"], ["eth1"], ["eth2"], ["eth3"], ["eth1", "eth2", "eth3", "enx0"]):
             response = put(net, *names)
             assert (response.status_code, response.json()["detail"]) == (400, listen.NO_LAN), names
         assert stored(net) == [] and net.host.restarts == 0
@@ -433,20 +435,20 @@ class TestRefused:
 class TestRestart:
     def test_an_address_that_came_after_smbds_start_has_no_listener_until_a_restart(self, net):
         assert put(net, "eth0").status_code == 200
-        net.host.links["eth0"]["addrs"].append(_inet("10.1.1.6", 24))
+        net.host.links["eth0"]["addrs"].append(_inet("10.0.0.6", 24))
 
         state = get(net)
         assert state["restart_needed"] is True
         assert state["problems"] == [
-            "smbd does not listen on 10.1.1.6 of eth0: the address came after smbd started; "
+            "smbd does not listen on 10.0.0.6 of eth0: the address came after smbd started; "
             "Restart SMB makes it listen there"]
-        assert by_name(state)["eth0"]["missing"] == ["10.1.1.6"]
+        assert by_name(state)["eth0"]["missing"] == ["10.0.0.6"]
         net.host.sessions = 2  # clients connected again since the restart of the PUT
 
         response = net.client.post(f"{URL}/restart")
 
         assert response.status_code == 200, response.text
-        assert "10.1.1.6" in response.json()["listening"] and response.json()["restart_needed"] is False
+        assert "10.0.0.6" in response.json()["listening"] and response.json()["restart_needed"] is False
         (entry,) = [e for e in net.api.audit_entries() if e["action"] == "smb_restarted"]
         assert (entry["severity"], entry["resource_type"], entry["details"]) == (
             "warning", "smb", "Restarted smbd: 2 open SMB connections ended")
@@ -463,7 +465,7 @@ class TestRestart:
         state = get(net)
         assert state["restart_needed"] is True
         assert state["problems"] == [
-            "smbd listens only on 10.1.1.5, 127.0.0.1, ::1, 2001:db8::5, fd00::5, not on every address: "
+            "smbd listens only on 10.0.0.5, 127.0.0.1, ::1, 2001:db8::5, fd00::5, not on every address: "
             "Restart SMB applies the choice"]
 
     def test_smbd_that_listens_nowhere(self, net):

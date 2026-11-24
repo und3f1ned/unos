@@ -872,12 +872,14 @@ class TestTheChecks:
 
     def test_an_example_with_an_address_a_host_name_or_a_secret(self, defects):
         assert example_content_problems(defects[1]) == ["the host nas.home.lan is not a documentation domain"]
-        assert value_problems({"gateway": "192.168.1.1", "dns": "2a00:1450::1", "mac": "a8:5e:45:01:02:03",
-                               "mail": "me@mail.ru", "password": "hunter2", "token": "eyJhbGciOiJI.eyJzdWIiOiJh.x"}) == [
+        # A domain is a documentation one as a whole or by its suffix: example.com.lan is neither.
+        assert value_problems({"gateway": "192.168.1.1", "dns": "2a00:1450::1", "mac": "02:00:00:01:02:03",
+                               "mail": "me@example.com.lan", "password": "hunter2",
+                               "token": "eyJhbGciOiJI.eyJzdWIiOiJh.x"}) == [
             "the address 192.168.1.1 is outside the documentation ranges",
             "the address 2a00:1450::1 is outside 2001:db8::/32",
-            "the MAC address a8:5e:45:01:02:03 is outside 00:00:5e:00:53:00/24",
-            "the e-mail domain mail.ru is not a documentation domain",
+            "the MAC address 02:00:00:01:02:03 is outside 00:00:5e:00:53:00/24",
+            "the e-mail domain example.com.lan is not a documentation domain",
             "the secret password is not a placeholder (one with 'example' in it, or stars)",
             "a JSON Web Token",
             "the secret token is not a placeholder (one with 'example' in it, or stars)",
