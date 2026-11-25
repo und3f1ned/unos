@@ -55,8 +55,11 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3
-  runs the tree of `mvp.batch-24` 8df52c5d (v0.1.2's tree with the way back from the standby) since
-  2026-11-24 (SD MiB 3.898 in all; check: OK). Before it a234cfce (SD MiB 7.250 in all). Before
+  runs `main` 53d5dd65 (the USB stick's power read, ADR-0502, the critical apps' writes a week,
+  ADR-0503, and the start's mount check, ADR-0504) since 2026-11-25 (SD MiB 3.426 in all; check: OK;
+  568bd9c5 before it that day, 3.883). Before them the tree of `mvp.batch-24`
+  8df52c5d (v0.1.2's tree with the way back from the standby) since 2026-11-24 (SD MiB 3.898 in all;
+  check: OK). Before that a234cfce (SD MiB 7.250 in all). Before
   that `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
   eMMC: 2.180 in all; check: OK), the standby removed and set up again, its NVMe once lost at a warm
   reboot and back at the next (Log). Before it `main` 20e6754f (`mvp.batch-22` with
@@ -325,8 +328,12 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs the tree of `mvp.batch-24` 8df52c5d (v0.1.2's tree with the way back from the standby) since
-  2026-11-24, deployed with `scripts/dev/deploy.sh all` (SD MiB 3.918 in all; check: OK). Before it the
+- Runs `main` 53d5dd65 (the USB stick's power read, ADR-0502, the critical apps' writes a week,
+  ADR-0503, and the start's mount check, ADR-0504) since 2026-11-25, deployed with `scripts/dev/deploy.sh`
+  sync, build-supervisor, build-webui and up supervisor (SD MiB 2.688, 0.398, 0.176 and 0.051; check:
+  OK); 568bd9c5 (3.285) and 5372d86c (3.004) before it that day. Before them the tree of `mvp.batch-24` 8df52c5d (v0.1.2's
+  tree with the way back from the standby) since 2026-11-24, deployed with `scripts/dev/deploy.sh all`
+  (SD MiB 3.918 in all; check: OK). Before it the
   tree of a234cfce (SD MiB 7.496 in all; check: OK); before that
   `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24, deployed with
   `scripts/dev/deploy.sh all` at the owner's standing permission (SD MiB, its eMMC: 2.004 in all; check:
@@ -831,6 +838,31 @@ Open owner actions:
     GB on the eMMC).
 
 ## Log
+
+### 2026-11-25: The critical apps' and the way back's drills pass on the BPI-W3 (system.sd-standby-critical-apps, system.sd-standby-failback)
+
+- With the owner's USB stick (Transcend JetFlash 32 GB, wiped at the owner's word) as the test pool `usb` and
+  Uptime Kuma 2 on it, D0 to D7 and F0 to F6 ran on the BPI-W3; the entries' notes give each step's
+  result and its MiB (the eMMC by `sd.sh measure`, the card and the stick by field 7 of their
+  `/sys/block/<disk>/stat`). The owner took the stick out before the standby's run and put it back
+  after; every other step went through the API, `scripts/dev/ssh.sh` and the stick's SCSI layer
+  (`device/delete` and a rescan). Both entries pass.
+- Three defects found and fixed on the way, each with a test that failed first, a review in a
+  fresh context and a deploy to both boards (their own Log entries): the stick read standby, so its
+  pool was never synced (ADR-0502); the dialog put an hourly interval at 98902 MiB a week (ADR-0503);
+  the start reported a pool without its disks mounted (ADR-0504). Also a flaky update test whose fake
+  wrote its result in place (53d5dd65).
+- Seen, not fixed: a Mount of a pool whose disk came back while an app's container still held its
+  earlier mount answered 500 (new entry `storage.mount-after-a-disk-returns`); the card's root runs on
+  its generation's clock until NTP sets it, so its first log lines and `standby_ran`'s time are the
+  generation's; the return's unit logs to the card's RAM, so its journal is seen only when followed
+  live (the second run's showed check to verify).
+- `system.alert-events`: ADR-0496's device check passed (a pool created and forgotten between two
+  RAID passes, no alert, recorded as released); the entry stays open for the webhook, the banner, a
+  degraded pool, a failed SMART test and scrub errors.
+- Ended with Uptime Kuma uninstalled and the pool forgotten; its image stays on the data pool. The
+  in-app updater cannot be checked on the W3: a dev device deployed by `scripts/dev/deploy.sh` is not
+  a release (`system.in-app-updater` step 4 of its device check).
 
 ### 2026-11-25: A pool mounted at the start counts only when the host's mounts show it (storage.mount-and-unmount, ADR-0504)
 
