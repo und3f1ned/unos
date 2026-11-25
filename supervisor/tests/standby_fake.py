@@ -156,6 +156,8 @@ class StandbyFakeHost:
         self.inputs: dict[str, str] = {}
         self.reboots = 0
         self.udev_probing = False
+        # Mount points whose fstab line's nofail makes mount exit 0 and mount nothing: no partition found.
+        self.mount_finds_nothing: set[str] = set()
         # Re-reads of the card's table that find it busy even after udev settled (an event udev took
         # up after the settle).
         self.busy_rereads = 0
@@ -391,7 +393,9 @@ class StandbyFakeHost:
         elif program == "blockdev" and "--rereadpt" in cmd and (self.udev_probing or self.busy_rereads):
             self.busy_rereads = max(0, self.busy_rereads - 1)
             return host.HostResult(1, "", "blockdev: ioctl error on BLKRRPART: Device or resource busy\n")
-        if program == "mount":
+        if program == "mount" and cmd[1] in self.mount_finds_nothing:
+            pass
+        elif program == "mount":
             self.mounted.add(cmd[1])
             self.files.update(self.hidden.pop(cmd[1], {}))
         elif program == "umount":

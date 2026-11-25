@@ -1800,6 +1800,17 @@ class TestThePoolWatch:
         assert "/etc/systemd/system/unos-standby-watch.service" not in fake.files
         assert "/usr/local/lib/unos-standby/unos-standby-watch.sh" not in fake.files
 
+    @pytest.mark.parametrize("folder", [BOOT_DIR, CARD_DIR])
+    def test_a_partition_that_did_not_mount_stops_the_set_up_before_the_chooser(self, fake, folder):
+        # The card's fstab lines have nofail, so mount exits 0 and mounts nothing when it finds no partition
+        # (ADR-0504): the set-up checks the host's mounts, and stops before it enables the units and writes the
+        # chooser, which would arm a standby whose card is not mounted.
+        fake.mount_finds_nothing.add(folder)
+        with pytest.raises(StandbyFailed, match="did not mount"):
+            card.prepare("SC32G", dry_run=False)
+        assert generation.BOOT_SCR not in fake.files
+        assert ["systemctl", "enable", "unos-standby-boot-ok.service", "unos-standby-watch.service"] not in fake.changes
+
     def test_the_emmcs_own_units_are_not_copied_to_the_card(self, fake):
         """A sync that rewrote them would otherwise make the next sync write a generation."""
         armed(fake, generation_number=None)

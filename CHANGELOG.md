@@ -2050,6 +2050,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- A pool whose disks are missing at the start is no longer reported mounted (ADR-0504): `nofail` in
+  its fstab entry made `mount` succeed without mounting anything, so the start logged the pool as
+  mounted and started its apps.
 - The writes a week that the critical mark's dialog shows for an interval no longer count the
   app's first copy or the archives of its images (ADR-0503): Uptime Kuma's first sync, 588.7 MiB
   with its image, made an interval of 1 hour look like 98902 MiB a week. The estimate starts at the

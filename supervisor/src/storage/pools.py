@@ -2107,6 +2107,14 @@ def reconcile_pools() -> list[dict[str, str]]:
     return results
 
 
+# A managed entry's mount that exited 0 and mounted nothing: its ``nofail`` makes util-linux's mount succeed
+# silently when the pool's disks are not there (ADR-0504).
+NOTHING_MOUNTED = (
+    "mount exited 0 but nothing is mounted at the pool's mount point; its fstab entry has nofail, so the "
+    "pool's disks may be missing: attach them, then mount the pool on the Storage page"
+)
+
+
 def _mount_managed_entries(
     entries: dict[str, ManagedFstabEntry], mounted_targets: set[str]
 ) -> list[dict[str, str]]:
@@ -2132,12 +2140,14 @@ def _mount_managed_entries(
                 logger.warning("%s", exc)
                 hidden = []
             result = host.run_on_host(["mount", entry.target], timeout=MOUNT_TIMEOUT)
+            # nofail makes mount exit 0 without a disk: the host's mounts say whether it mounted.
+            done = result.ok and _target_mounted(entry.target)
         except Exception as exc:
             outcome.update(status="failed", error=str(exc))
             logger.error("Could not mount pool '%s' at %s: %s", entry.name, entry.target, exc)
             continue
-        if not result.ok:
-            error = result.stderr.strip() or f"exit status {result.returncode}"
+        if not done:
+            error = (result.stderr.strip() or f"exit status {result.returncode}") if not result.ok else NOTHING_MOUNTED
             outcome.update(status="failed", error=error)
             logger.error("Could not mount pool '%s' at %s: %s", entry.name, entry.target, error)
             continue

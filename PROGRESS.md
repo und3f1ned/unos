@@ -832,6 +832,23 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-25: A pool mounted at the start counts only when the host's mounts show it (storage.mount-and-unmount, ADR-0504)
+
+- Found by the critical apps' drill D6 on the BPI-W3: the SD standby, run with the test pool's USB stick
+  out, logged "Pool 'usb' was not mounted at startup; mounted it at /mnt/pools/usb" while nothing was
+  mounted there: the entry's `nofail` makes util-linux's `mount` exit 0 without the disk. The start then
+  also started the pool's apps (Uptime Kuma was created on the card by the standby's start anyway, which
+  checks the pool itself). Fixed: after `mount` the host's mounts decide; a missing pool's result is
+  failed with `pools.NOTHING_MOUNTED` and its apps are not started. `test_pool_persistence.py`
+  `test_a_pool_whose_disks_are_missing_is_not_reported_mounted` failed on 568bd9c5 first; the FakeHost's
+  `mount` honours `nofail` now, which changed the error expected for the missing pool of
+  `test_mounts_every_entry_the_host_did_not_mount` (still failed). Review in a fresh context: no blocking
+  finding; fixed its RISKs: the error names the cause as likely, not certain (`NOTHING_MOUNTED`), a mount's
+  own non-zero exit has a test again (`test_a_mount_that_fails_names_its_error`), and the standby's set-up
+  checks its card's two `nofail` mounts the same way before it enables its units and writes the chooser
+  (`test_a_partition_that_did_not_mount_stops_the_set_up_before_the_chooser`); left, as ADR-0504 says, a
+  pool that mounted while its mounts could not be read is reported failed.
+
 ### 2026-11-25: The writes a week of a critical app's interval leave out its first copy and images (ADR-0503)
 
 - Found by the critical apps' drill D2 on the BPI-W3: after Uptime Kuma's first sync (588.7 MiB, its

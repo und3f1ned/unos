@@ -1109,6 +1109,13 @@ class FakeHost:
                 return fields[0]
         return None
 
+    def _fstab_options(self, target) -> list[str]:
+        for line in self.fstab.splitlines():
+            fields = line.split()
+            if fields and not fields[0].startswith("#") and len(fields) > 3 and fields[1] == target:
+                return fields[3].split(",")
+        return []
+
     def _mount(self, cmd):
         if cmd[1] == "-t":
             # Every pool mounts with noatime alone, so btrfs keeps its default discard (ADR-0429).
@@ -1122,6 +1129,10 @@ class FakeHost:
         uuid = source[len("UUID="):] if source.startswith("UUID=") else None
         fs = next((f for f in self.filesystems if f["uuid"] == uuid), None)
         if fs is None:
+            if cmd[1] != "-t" and "nofail" in self._fstab_options(target):
+                # util-linux's mount: "nofail: Do not report errors for this device if it does not exist";
+                # it exits 0 and mounts nothing, as on the BPI-W3 for a pool whose USB stick was out.
+                return self._result()
             return self._result(32, stderr=f"mount: {target}: can't find UUID={uuid}.")
         for device in fs["devices"]:
             self._wake(device, cmd)
@@ -2363,8 +2374,7 @@ class TestReconcile:
         assert results == [
             {"pool": "data", "target": "/mnt/pools/data", "status": "mounted"},
             {"pool": "media", "target": "/mnt/pools/media", "status": "already_mounted"},
-            {"pool": "gone", "target": "/mnt/pools/gone", "status": "failed",
-             "error": f"mount: /mnt/pools/gone: can't find UUID={GONE_UUID}."},
+            {"pool": "gone", "target": "/mnt/pools/gone", "status": "failed", "error": pools.NOTHING_MOUNTED},
         ]
         assert three_pools.changes == [
             ["mkdir", "-p", "/mnt/pools/data"],
@@ -2381,6 +2391,31 @@ class TestReconcile:
         assert three_pools.fstab == fstab_before
         assert "Pool 'data' was not mounted at startup" in caplog.text
         assert "Could not mount pool 'gone'" in caplog.text
+
+    def test_a_pool_whose_disks_are_missing_is_not_reported_mounted(self, three_pools, caplog, monkeypatch):
+        # The fstab entry's nofail makes mount exit 0 and mount nothing when no disk of the pool is there:
+        # on the BPI-W3's SD standby, run with the test pool's USB stick out, the start logged "Pool 'usb'
+        # was not mounted at startup; mounted it" and counted it mounted. The host's mounts say whether it is.
+        started = []
+        monkeypatch.setattr(pools, "_start_pool_apps_later", started.append)
+        with caplog.at_level(logging.INFO, logger="src.storage.pools"):
+            results = pools.reconcile_pools()
+        gone = next(r for r in results if r["pool"] == "gone")
+        assert gone == {"pool": "gone", "target": "/mnt/pools/gone", "status": "failed", "error": pools.NOTHING_MOUNTED}
+        assert not three_pools.mounted("/mnt/pools/gone")
+        assert "Pool 'gone' was not mounted at startup; mounted it" not in caplog.text
+        assert f"Could not mount pool 'gone' at /mnt/pools/gone: {pools.NOTHING_MOUNTED}" in caplog.text
+        # Its apps are not started: only the pool that was mounted.
+        assert started == ["data"]
+
+    def test_a_mount_that_fails_names_its_error(self, three_pools, caplog):
+        # A pool whose disks are there but whose mount fails (a device of it missing) keeps mount's own error.
+        three_pools.filesystems[0]["missing"] = 1
+        with caplog.at_level(logging.INFO, logger="src.storage.pools"):
+            results = pools.reconcile_pools()
+        data = next(r for r in results if r["pool"] == "data")
+        assert data == {"pool": "data", "target": "/mnt/pools/data", "status": "failed",
+                        "error": "mount: /mnt/pools/data: wrong fs type, bad option, bad superblock"}
 
     def test_guards_a_pool_without_managed_entry_but_does_not_mount_it(self, data_pool, caplog):
         # The device after the update: 'data' was created by an older version,

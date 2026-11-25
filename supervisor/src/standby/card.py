@@ -402,6 +402,14 @@ def prepare(model: str, *, dry_run: bool) -> Prepared:
     ops.change(["systemctl", "daemon-reload"], what="systemd's mount units")
     ops.change(["mount", BOOT_DIR], what="The mount of the card's FAT partition")
     ops.change(["mount", CARD_DIR], what="The mount of the card's btrfs")
+    if not dry_run:
+        # nofail makes mount exit 0 and mount nothing when it finds no partition (ADR-0504): the host's mounts
+        # decide, before the units and the chooser arm a standby whose card is not mounted.
+        mounts = {mount.target for mount in conditions._parse_mountinfo(ops.read_file(conditions.MOUNTINFO) or "")}
+        missing = [folder for folder in (BOOT_DIR, CARD_DIR) if folder not in mounts]
+        if missing:
+            raise StandbyFailed(f"{' and '.join(missing)} did not mount: mount found no partition of the card there "
+                                "(its fstab line has nofail)")
     ops.change(["mkdir", "-p", UNOS_DIR], what="The card's unos folder")
     version = conditions.loader_version(ops, profile)
     if version:
