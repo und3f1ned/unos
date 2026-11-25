@@ -838,6 +838,22 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-25: System > Updates on a host installed from a release (system.in-app-updater, deploy.update-script)
+
+- On the arm64 Lima VM `unos-host` (v0.1.1 from install.sh; its origin set from the old mirror to
+  GitHub now that the repository is public, which a fresh install has), through the API inside the VM
+  as a test administrator of its first-run setup: the tab saw v0.1.2; Install updated to it through
+  the unit `unos-update-<time>` with the backup in `in-app-<time>`; Rollback brought v0.1.1 back with
+  the backup's database; an install whose unit was stopped while it waited for UNOS rolled back; the
+  automatic install of every hour installed v0.1.2 by itself; and after a reboot v0.1.2 started with
+  no pull or build. All of `system.in-app-updater`'s steps pass on a release host; its `passes` waits
+  for the owner's decision that its notes name.
+- `deploy.update-script` passes: `update.sh` to a release that does not answer in time (127.0.0.1:80
+  refused in the VM, `UNOS_HEALTH_TIMEOUT=20`) rolled back with the backup's database.
+- Fixed: a rolled-back update's error read "...with v0.1.2.; rolled back to v0.1.1" (361548d4).
+- Blocked: the amd64 VM (QEMU) reaches neither GitHub nor GHCR through the workstation's network
+  filter, which lets only the arm64 VM through; `deploy.release-images` step (2) on amd64 waits for it.
+
 ### 2026-11-25: A pool held by its earlier mount is freed by stopping its containers (storage.mount-after-a-disk-returns, ADR-0505)
 
 - Built from the drills' finding: a pool that the kernel still has mounted while the host mounts it

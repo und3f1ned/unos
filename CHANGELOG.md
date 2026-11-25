@@ -2054,6 +2054,9 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- An update that was rolled back no longer says "...with v0.1.2.; rolled back to v0.1.1": the
+  first error's period gives way to the rollback's clause, on the Updates tab, in its history and in
+  update.sh's result.
 - A pool whose disks are missing at the start is no longer reported mounted (ADR-0504): `nofail` in
   its fstab entry made `mount` succeed without mounting anything, so the start logged the pool as
   mounted and started its apps.
