@@ -266,10 +266,11 @@ stats card is a grey shape in its place.
 The widgets take their columns from the room the page gives them, beside the
 menu. **Storage pools**, **Containers** and **Recent activity** are three to a
 row in a browser window about 1200 pixels wide or more (a 1280-pixel laptop),
-two to a row in one of about 1100 pixels, and one below the other on a tablet
-and a phone. The stats cards are five to a row where the wide ones are three,
-three on a tablet and two on a phone. The widths are the window's after the
-display's scaling and the browser's zoom.
+two to a row in one of about 700 to 1195 pixels (a small tablet upright, a
+1024-pixel tablet on its side), and one below the other on a 768-pixel tablet,
+where the menu takes its share, and on a phone. The stats cards are five to a
+row where the wide ones are three, three on a tablet and two on a phone. The
+widths are the window's after the display's scaling and the browser's zoom.
 
 ### Arranging the Dashboard
 Each widget (the five stats cards below and, for administrators, **Storage

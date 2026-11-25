@@ -1092,8 +1092,8 @@ manager, encrypted backup uploads, health checks, CI checks).
   follows the user to another browser: `GET`, `PUT` and `DELETE
   /api/v1/auth/me/dashboard-layout`, a new table `dashboard_layouts`, written
   only when the layout changes, and the audit action
-  `dashboard_layout_changed`. The wide widgets sit two to a row from 1280 px
-  (they were from 1024 px).
+  `dashboard_layout_changed`. The wide widgets take their columns from the
+  widgets' grid: three to a row from a grid of 900 px (ADR-0484).
 - The dashboard has a **Disk I/O** card: the bytes per second read from and
   written to the host's physical disks, from the live statistics; zram, loop,
   device-mapper (LUKS, LVM) and md devices do not count (ADR-0388).

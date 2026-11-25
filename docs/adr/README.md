@@ -480,6 +480,7 @@ and this index, and `make check-fast` runs it.
 | [0474](0474-each-tab-of-system-is-a-page-of-its-own-under-system-with-its-own-load.md) | Each tab of System is a page of its own under /system, with its own load | accepted | 2026-11-23 |
 | [0483](0483-from-1536-px-the-dashboards-wide-widgets-are-three-to-a-row.md) | From 1536 px the dashboard's wide widgets are three to a row | superseded by [0484](0484-the-dashboards-widgets-take-their-columns-from-the-width-of-their-grid-three-wide-ones-to-a-row-from-900-px.md) | 2026-11-23 |
 | [0484](0484-the-dashboards-widgets-take-their-columns-from-the-width-of-their-grid-three-wide-ones-to-a-row-from-900-px.md) | The dashboard's widgets take their columns from the width of their grid, three wide ones to a row from 900 px | accepted | 2026-11-23 |
+| [0506](0506-the-pages-scroller-keeps-its-scroll-bars-room-and-the-containers-counts-fit-their-card.md) | The pages' scroller keeps its scroll bar's room, and the Containers counts fit their card | accepted | 2026-11-25 |
 
 ## Deploy
 

@@ -838,6 +838,14 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-25: The dashboard's three columns pass after their review (webui.dashboard-three-columns, ADR-0506)
+
+- The fresh-context review that the second pass (ADR-0484) left out found no blocking problem; fixed:
+  a classic scroll bar no longer makes the first load's skeleton and the page take different columns
+  (`<main>` keeps the scroll bar's room), the Containers card's counts no longer spill the Russian
+  label in its narrowest third (a spec that failed first), and the ADR's and the guide's widths.
+  `make e2e-local` passes (a change to the layout).
+
 ### 2026-11-25: System > Updates on a host installed from a release (system.in-app-updater, deploy.update-script)
 
 - On the arm64 Lima VM `unos-host` (v0.1.1 from install.sh; its origin set from the old mirror to

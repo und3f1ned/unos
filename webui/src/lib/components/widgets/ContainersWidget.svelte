@@ -102,8 +102,10 @@
 				{/each}
 			</div>
 		{:else}
-			<!-- The counts, which add up to the total: Other only when there is one. -->
-			<dl class="grid {other > 0 ? 'grid-cols-3' : 'grid-cols-2'} gap-2 mb-3">
+			<!-- The counts, which add up to the total: Other only when there is one. As many to a row as
+			     fit at 6rem, the room of the longest label (Russian Stopped): in the card's narrowest
+			     third of the dashboard Other goes below instead of squeezing the words (ADR-0484). -->
+			<dl class="grid grid-cols-[repeat(auto-fit,minmax(6rem,1fr))] gap-2 mb-3">
 				<div class="px-3 py-2 rounded-lg bg-surface-muted">
 					<dt class="text-xs text-secondary">{$t('dashboard.containers.running')}</dt>
 					<dd class="text-xl font-semibold tabular">{running}</dd>

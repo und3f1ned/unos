@@ -244,7 +244,7 @@
 		<!-- Main content -->
 		<!-- 16 px of padding below md, 24 px from md, 32 px from xl (ADR-0428). -->
 		<main
-			class="flex-1 min-w-0 overflow-auto bg-surface p-4 md:p-6 xl:p-8 scrollbar-thin"
+			class="flex-1 min-w-0 overflow-auto bg-surface p-4 md:p-6 xl:p-8 scrollbar-thin [scrollbar-gutter:stable]"
 			aria-busy={navigatingNow ? 'true' : undefined}
 		>
 			<!-- The problems of the NAS, above every page of an administrator (ADR-0332). -->

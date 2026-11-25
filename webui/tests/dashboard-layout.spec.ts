@@ -267,6 +267,42 @@ test.describe('Dashboard layout', () => {
   });
 });
 
+// The Containers card at its narrowest (a 1196 px window: a card of about 289 px), in Russian, with an Other
+// count: each count's label stays inside its box (a review of ADR-0484 found «Остановлены» spilling out of a
+// third of the card).
+test('the containers card keeps its counts inside their boxes at its narrowest, in Russian', async ({
+  authenticatedPage: page,
+}) => {
+  const container = (id: string, name: string, state: string) => ({
+    id, name, image: 'nginx:1.27', status: state, state, created: '2026-11-01T10:00:00Z', ports: [], labels: {},
+  });
+  await page.route(
+    (url) => url.pathname === '/api/v1/containers',
+    (route) =>
+      route.request().method() === 'GET'
+        ? route.fulfill({
+            json: [
+              container('0d1f2e3c4b5a', 'e2e-web', 'running'),
+              container('1a2b3c4d5e6f', 'e2e-db', 'exited'),
+              container('2b3c4d5e6f70', 'e2e-new', 'created'),
+            ],
+          })
+        : route.abort()
+  );
+  await page.setViewportSize({ width: 1196, height: 900 });
+  await page.evaluate(() => localStorage.setItem('unos-locale', 'ru'));
+  await page.goto('/');
+  const card = widget(page, 'containers');
+  await expect(card.getByText('Остановлены', { exact: true })).toBeVisible();
+  await expect(card.getByText('Другие', { exact: true })).toBeVisible();
+  const spilled = await card
+    .locator('dl > div')
+    .evaluateAll((boxes) =>
+      boxes.map((box) => [box, ...box.children].some((node) => node.scrollWidth > node.clientWidth))
+    );
+  expect(spilled).toEqual([false, false, false]);
+});
+
 // webui.dashboard-three-columns (ADR-0484): the columns follow the width of the widgets' grid, not of
 // the window. From a grid of 900 px (a 1196 px window beside the sidebar, without a scroll bar) Storage pools, Containers
 // and Recent activity are three to a row and the stats cards five; from 640 px the wide ones are two
