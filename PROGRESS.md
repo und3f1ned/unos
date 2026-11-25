@@ -55,9 +55,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3
-  runs `main` b7effb45 (a pool held by its earlier mount, ADR-0505) since 2026-11-25 (SD MiB 3.945
-  in all; check: OK); 53d5dd65 (3.426) and 568bd9c5 (3.883) before it that day. Before them the tree
-  of `mvp.batch-24`
+  runs `main` 8038359d (the dashboard's scroll bar room, ADR-0506) since 2026-11-25 (SD MiB 3.746
+  in all; check: OK); b7effb45 (3.945), 53d5dd65 (3.426) and 568bd9c5 (3.883) before it that day.
+  Before them the tree of `mvp.batch-24`
   8df52c5d (v0.1.2's tree with the way back from the standby) since 2026-11-24 (SD MiB 3.898 in all;
   check: OK). Before that a234cfce (SD MiB 7.250 in all). Before
   that `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
@@ -328,9 +328,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs `main` b7effb45 (a pool held by its earlier mount, ADR-0505) since 2026-11-25, deployed with
-  `scripts/dev/deploy.sh all` (SD MiB 4.426 in all; check: OK); 53d5dd65 (by steps, 3.313), 568bd9c5
-  (3.285) and 5372d86c (3.004) before it that day. Before them the tree of `mvp.batch-24` 8df52c5d (v0.1.2's
+- Runs `main` 8038359d (the dashboard's scroll bar room, ADR-0506) since 2026-11-25, deployed with
+  `scripts/dev/deploy.sh all` (SD MiB 3.637 in all; check: OK); b7effb45 (4.426), 53d5dd65 (by steps,
+  3.313), 568bd9c5 (3.285) and 5372d86c (3.004) before it that day. Before them the tree of `mvp.batch-24` 8df52c5d (v0.1.2's
   tree with the way back from the standby) since 2026-11-24, deployed with `scripts/dev/deploy.sh all`
   (SD MiB 3.918 in all; check: OK). Before it the
   tree of a234cfce (SD MiB 7.496 in all; check: OK); before that
