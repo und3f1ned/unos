@@ -55,9 +55,9 @@ significant step. Features and their state live in `feature-list.json`, decision
   account. `main` is 7827340 and its tree runs on the dev device.
 - On 2026-11-13 (Log), merged by the owner on 2026-11-15 as #81 (e80e2d5): UNOS for the Banana Pi
   BPI-F3 (SpacemiT K1, riscv64), ADR-0370, ADR-0372 and ADR-0373. The owner's BPI-F3
-  runs `main` 53d5dd65 (the USB stick's power read, ADR-0502, the critical apps' writes a week,
-  ADR-0503, and the start's mount check, ADR-0504) since 2026-11-25 (SD MiB 3.426 in all; check: OK;
-  568bd9c5 before it that day, 3.883). Before them the tree of `mvp.batch-24`
+  runs `main` b7effb45 (a pool held by its earlier mount, ADR-0505) since 2026-11-25 (SD MiB 3.945
+  in all; check: OK); 53d5dd65 (3.426) and 568bd9c5 (3.883) before it that day. Before them the tree
+  of `mvp.batch-24`
   8df52c5d (v0.1.2's tree with the way back from the standby) since 2026-11-24 (SD MiB 3.898 in all;
   check: OK). Before that a234cfce (SD MiB 7.250 in all). Before
   that `main` 29ccd7e2 (`mvp.batch-23` with the fix of Remove's wipe) since 2026-11-24 (SD MiB, its
@@ -328,10 +328,9 @@ the UGREEN firmware on its eMMC, until the owner set that right on 2026-11-15 (A
   `root-on-pool.conf`); the eMMC's root uses 3.1 GiB of 29.
 - SSH by key only, root by the workstation's key `~/.ssh/unos_dev_ed25519`; root's and the UNOS
   administrator's passwords were rotated and live only in `dev.env` (ADR-0226).
-- Runs `main` 53d5dd65 (the USB stick's power read, ADR-0502, the critical apps' writes a week,
-  ADR-0503, and the start's mount check, ADR-0504) since 2026-11-25, deployed with `scripts/dev/deploy.sh`
-  sync, build-supervisor, build-webui and up supervisor (SD MiB 2.688, 0.398, 0.176 and 0.051; check:
-  OK); 568bd9c5 (3.285) and 5372d86c (3.004) before it that day. Before them the tree of `mvp.batch-24` 8df52c5d (v0.1.2's
+- Runs `main` b7effb45 (a pool held by its earlier mount, ADR-0505) since 2026-11-25, deployed with
+  `scripts/dev/deploy.sh all` (SD MiB 4.426 in all; check: OK); 53d5dd65 (by steps, 3.313), 568bd9c5
+  (3.285) and 5372d86c (3.004) before it that day. Before them the tree of `mvp.batch-24` 8df52c5d (v0.1.2's
   tree with the way back from the standby) since 2026-11-24, deployed with `scripts/dev/deploy.sh all`
   (SD MiB 3.918 in all; check: OK). Before it the
   tree of a234cfce (SD MiB 7.496 in all; check: OK); before that
@@ -853,6 +852,11 @@ Open owner actions:
   over, the texts say "most likely" and that Docker may not have answered; left, as ADR-0505 says, the
   lock held during the stops, a holder bound through a link not found, and the narrow race with a
   critical app's move. `make check` and `storage.spec.ts` pass.
+- Device check on the BPI-W3 (b7effb45): the stick deleted under a running Uptime Kuma and found again
+  through its SCSI host as sdc; the pool listed `held_by` uptime-kuma, Mount answered 409, Mount with
+  `stop_holders` stopped it, mounted the pool and started it again (each step 0.016 MiB on the eMMC);
+  the same after a reboot. `storage.mount-after-a-disk-returns` and `storage.hot-plugged-disks` (the
+  stick listed within 2 seconds, before and after the reboot) pass.
 
 ### 2026-11-25: The critical apps' and the way back's drills pass on the BPI-W3 (system.sd-standby-critical-apps, system.sd-standby-failback)
 
