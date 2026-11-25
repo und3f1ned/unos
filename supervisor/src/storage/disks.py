@@ -114,6 +114,11 @@ _HDPARM_STATES: dict[str, PowerState] = {
     "sleeping": "standby",
     "NVcache_spindown": "standby",
 }
+# What hdparm (sgio.c) prints on stderr when the sense data of its ATA PASS-THROUGH holds no ATA
+# status return descriptor: a USB stick or bridge that refuses the command, or fixed-format sense.
+# hdparm then reads the mode from the sense data's other bytes and exits 0 (a refusing stick reads
+# as standby), so its drive state is not taken: smartctl -n idle asks again (ADR-0502).
+_NO_ATA_STATUS = ("bad/missing sense data", "questionable sense data")
 # The exit status of the host's timeout(1) when it cannot find the program: the host has no hdparm.
 _NOT_FOUND = 127
 # The exit status of the host's timeout(1) when it ended the program with TERM. When TERM does not
@@ -776,7 +781,8 @@ def power_state(device: str) -> PowerState:
 
     A disk that answers with a power condition that hdparm does not name (it prints "unknown" and
     exits 0), as an EPC disk's idle_a, idle_b, idle_c and standby_y, is asked again with smartctl
-    (_epc_power_state). A disk whose last read timed out is not asked again while that hdparm still
+    (_epc_power_state), and so is one whose answer held no ATA status (_NO_ATA_STATUS: a USB stick
+    that refuses ATA PASS-THROUGH, which smartctl cannot open either, is unknown, ADR-0502). A disk whose last read timed out is not asked again while that hdparm still
     runs on the host (_hdparm_power_read).
 
     On a host without hdparm (an optional host tool), and for an NVMe disk, which hdparm cannot ask
@@ -798,6 +804,8 @@ def power_state(device: str) -> PowerState:
     found = _DRIVE_STATE.search(result.stdout)
     if not result.ok or found is None:  # also when the host's timeout ended it (124, or killed)
         return "unknown"
+    if any(text in result.stderr for text in _NO_ATA_STATUS):
+        return _epc_power_state(device)
     state = _HDPARM_STATES.get(found[1])
     return state if state is not None else _epc_power_state(device)
 

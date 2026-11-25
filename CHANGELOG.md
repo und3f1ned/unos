@@ -2050,6 +2050,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- A pool on a USB stick that refuses ATA commands no longer looks asleep (ADR-0502): `hdparm -C`
+  printed such a stick's power as standby after "bad/missing sense data", so the SD standby never
+  synced the critical apps of its pool. smartctl now asks such a disk again; the stick reads unknown,
+  which counts as awake.
 - The supervisor builds on ARMv7 (ADR-0499): cffi and greenlet, which publish no armv7l wheel,
   stopped the build of `supervisor/Dockerfile` for linux/arm/v7 (libffi's headers and a C++ compiler
   were missing). Its new build stage `arm-wheels` compiles wheels of the requirements with gcc, g++,

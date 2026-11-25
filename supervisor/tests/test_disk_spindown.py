@@ -1329,6 +1329,46 @@ def test_the_power_state_is_read_with_hdparm_c_on_the_host(monkeypatch):
     assert (disks.POWER_CHECK_TIMEOUT, disks.POWER_CHECK_KILL_AFTER) == (15, 5)
 
 
+def test_a_mode_hdparm_read_without_the_disk_s_ata_status_is_asked_again_with_smartctl(monkeypatch):
+    # A USB stick or bridge that refuses ATA PASS-THROUGH answers with fixed-format sense data (70h,
+    # ILLEGAL REQUEST, invalid opcode) instead of the ATA status return descriptor. hdparm 9.65 says
+    # so on stderr, reads the mode from another byte of the sense data, prints standby and exits 0, as
+    # on the dev device's Transcend JetFlash (8564:1000), whose pool the SD standby then never synced
+    # since it seemed to sleep. A bridge that answers fixed-format sense with the registers makes
+    # hdparm say so too. Such a mode is not taken: smartctl -n idle asks again, as for an EPC disk,
+    # and the stick, which smartctl cannot open, is unknown, which counts as awake (ADR-0502).
+    refused = ("SG_IO: bad/missing sense data, sb[]:  70 00 05 00 00 00 00 0a 00 00 00 00 20 00 00 00 3a f9 00 00"
+               " 00 00 00 00 00 00 00 00 00 00 00 00\n")
+    answers = {
+        "/dev/sdb": (0, "\n/dev/sdb:\n drive state is:  standby\n", refused),
+        "/dev/sdc": (0, "\n/dev/sdc:\n drive state is:  unknown\n", refused),
+        "/dev/sdd": (0, "\n/dev/sdd:\n drive state is:  active/idle\n",
+                     "SG_IO: questionable sense data, results may be incorrect\n"),
+        "/dev/sde": (0, "\n/dev/sde:\n drive state is:  standby\n", ""),
+    }
+
+    def run_on_host(cmd, **kwargs):
+        return host_module.HostResult(*answers[cmd[-1]])
+
+    unknown_bridge = json.dumps({"smartctl": {"messages": [
+        {"string": "/dev/sdb: Unknown USB bridge [0x8564:0x1000 (0x1100)]", "severity": "error"}], "exit_status": 1}})
+    standby = json.dumps({"smartctl": {"messages": [
+        {"string": "Device is in STANDBY mode, exit(2)", "severity": "information"}], "exit_status": 2}})
+    smartctl_answers = {"/dev/sdb": (1, unknown_bridge), "/dev/sdc": (2, standby), "/dev/sdd": (2, standby)}
+    asked = []
+
+    def smartctl(cmd, **kwargs):
+        assert cmd[:-1] == EPC_READ, cmd
+        asked.append(cmd[-1])
+        return subprocess.CompletedProcess(cmd, *smartctl_answers[cmd[-1]], "")
+
+    monkeypatch.setattr(host_module, "run_on_host", run_on_host)
+    monkeypatch.setattr(host_module, "run_in_container", smartctl)
+    assert {c: disks.power_state(f"/dev/sd{c}") for c in "bcde"} == {
+        "b": "unknown", "c": "standby", "d": "standby", "e": "standby"}
+    assert asked == ["/dev/sdb", "/dev/sdc", "/dev/sdd"]
+
+
 def test_without_hdparm_the_power_state_is_read_with_smartctl_n_standby(monkeypatch):
     # The host's timeout finds no hdparm (exit status 127): smartctl -n standby -i in the container,
     # which leaves a sleeping disk alone but asks an awake one IDENTIFY, which restarts its timer.

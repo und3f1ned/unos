@@ -832,6 +832,22 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-25: A USB stick's power is asked again, not read as standby (storage.disk-spindown, ADR-0502)
+
+- Found by the critical apps' drill D1 on the BPI-W3 (system.sd-standby-critical-apps): the pool `usb`
+  on the owner's USB stick (Transcend JetFlash, USB ID 8564:1000) was never synced after Uptime Kuma
+  was marked critical, since GET /storage/disks read the stick as standby: it refuses ATA
+  PASS-THROUGH, and hdparm 9.65 prints `SG_IO: bad/missing sense data` on stderr, then the zeroed
+  sector count as `drive state is:  standby`, with exit status 0. `spindown.pool_sleeps` then passed
+  over the pool at every RAID pass.
+- Fixed (ADR-0502): a mode that `hdparm -C` prints beside that text, or beside `questionable sense
+  data`, is asked again with `smartctl -n idle`, as an EPC disk's; the stick, which smartctl cannot
+  open, is unknown (counted as awake). `test_disk_spindown.py`
+  `test_a_mode_hdparm_read_without_the_disk_s_ata_status_is_asked_again_with_smartctl` failed on
+  04987148 first. Review in a fresh context: no blocking finding; its RISK, that answering unknown at
+  once would wake a sleeping disk behind a bridge that answers fixed-format sense (which smartctl
+  read before), is why smartctl asks again; its NITs (the second text, the ADR's wording) fixed.
+
 ### 2026-11-24: v0.1.2 released; the way back from the SD standby on both boards (ADR-0501)
 
 - v0.1.2, tagged on main ed9ff7ea after its CI passed (131 commits since v0.1.1): `release.yml`
