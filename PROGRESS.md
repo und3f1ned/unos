@@ -854,8 +854,8 @@ Open owner actions:
   the unit `unos-update-<time>` with the backup in `in-app-<time>`; Rollback brought v0.1.1 back with
   the backup's database; an install whose unit was stopped while it waited for UNOS rolled back; the
   automatic install of every hour installed v0.1.2 by itself; and after a reboot v0.1.2 started with
-  no pull or build. All of `system.in-app-updater`'s steps pass on a release host; its `passes` waits
-  for the owner's decision that its notes name.
+  no pull or build. All of `system.in-app-updater`'s steps pass on a release host, and at the owner's
+  decision the same day it passes.
 - `deploy.update-script` passes: `update.sh` to a release that does not answer in time (127.0.0.1:80
   refused in the VM, `UNOS_HEALTH_TIMEOUT=20`) rolled back with the backup's database.
 - Fixed: a rolled-back update's error read "...with v0.1.2.; rolled back to v0.1.1" (361548d4).
