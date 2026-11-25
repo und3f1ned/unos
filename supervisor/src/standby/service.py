@@ -197,7 +197,9 @@ class StandbyAppStatus(BaseModel):
     interval_hours: int = Field(description="Its sync interval in hours; 24 syncs it with the system's daily sync.")
     generation: int | None = Field(description="Its copy's generation on the card; null before its first sync.")
     synced_at: str | None = Field(description="When its copy was last written, in UTC.")
-    mib_per_sync: float | None = Field(description="The MiB its recent syncs wrote to the card, on average.")
+    mib_per_sync: float | None = Field(description=(
+        "The MiB its recent syncs of its changes wrote to the card, on average, without its first copy and its images' "
+        "archives (ADR-0503); null before its second sync."))
     data_bytes: int | None = Field(description="What its copied folders take on the card.")
     images_bytes: int | None = Field(description="What its images' archives take on the card.")
     error: str | None = Field(description="Why its last sync failed; null when it did not.")

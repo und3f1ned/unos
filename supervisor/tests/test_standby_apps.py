@@ -402,6 +402,37 @@ class TestTheSync:
         assert stored()["apps"]["jellyfin"]["generation"] == 2
         assert ["btrfs", "subvolume", "snapshot", f"{CARD_DIR}/@app-jellyfin-1", f"{CARD_DIR}/@app-jellyfin-2"] in standby.changes
 
+    def test_the_writes_a_week_count_neither_the_first_copy_nor_the_image_archives(self, standby, docker):
+        # The first sync copies the whole folder and archives the images, and an update archives its new
+        # image once, whatever the interval: neither is what each sync of an interval writes. On the dev
+        # device the first copy of Uptime Kuma wrote 588.7 MiB, which made the dialog offer an interval of
+        # 1 hour at 98902 MiB a week (ADR-0503).
+        mark()
+        assert standby_apps.sync_app("jellyfin").result == "wrote"
+        # Before the copy and after it: the first copy is not measured, so no flush follows its rsync at once.
+        assert standby.changes.count(["sync", "-f", CARD_DIR]) == 2
+        standby.changes.clear()
+        assert stored()["apps"]["jellyfin"]["mib"] == []
+        with Client() as api:
+            assert api.get("/api/v1/apps/installed/jellyfin/critical").json()["mib_per_sync"] is None
+        standby.compare["app:jellyfin"] = [">f.st...... config/system.xml"]
+        assert standby_apps.sync_app("jellyfin").result == "wrote"
+        data_only = stored()["apps"]["jellyfin"]["mib"]
+        assert len(data_only) == 1 and data_only[0] > 0
+        standby.changes.clear()
+        # An update: the same change of the folder and a new image, whose archive the sync writes.
+        updated = "sha256:" + "e" * 64
+        docker.containers_["jellyfin"].attrs["Image"] = updated
+        docker.pulled(updated)
+        outcome = standby_apps.sync_app("jellyfin")
+        archive = f"{CARD_DIR}/@app-jellyfin-3/images/{'e' * 64}.tar.gz"
+        assert outcome.result == "wrote" and standby.files.get(archive) == "archive"
+        assert standby.changes.count(["sync", "-f", CARD_DIR]) == 2 + 2  # and before and after the archives
+        recent = stored()["apps"]["jellyfin"]["mib"]
+        assert recent == [data_only[0], data_only[0]]
+        # The sync's own answer still counts everything it wrote.
+        assert outcome.mib is not None and outcome.mib > data_only[0]
+
     def test_a_failed_copy_keeps_the_complete_generation(self, standby):
         mark()
         synced(standby)

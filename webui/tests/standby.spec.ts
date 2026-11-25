@@ -314,7 +314,7 @@ test.describe('System > Standby', () => {
     await expect(space).toContainText('Kept in reserve');
     const app = page.getByTestId('standby-app-jellyfin');
     await expect(app).toContainText('Every 6 hours');
-    await expect(app).toContainText('2.5 MiB a sync');
+    await expect(app).toContainText('2.5 MiB a sync of its changes');
     await expect(app.locator('.badge', { hasText: 'On usb' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Move the critical apps to the card' }).click();

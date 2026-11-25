@@ -432,6 +432,7 @@ and this index, and `make check-fast` runs it.
 | [0496](0496-problems-are-kept-in-ram-alerted-once-to-every-channel-and-shown-in-a-banner-and-a-pool-unos-released-is-not-alerted.md) | The problems of the NAS are kept in RAM by source, alerted once to every enabled channel, and shown to administrators in a banner, and a pool that UNOS released is not alerted as not mounted | accepted | 2026-11-24 |
 | [0500](0500-critical-apps-are-copied-from-a-snapshot-into-card-generations-and-move-to-the-card-as-recreated-containers.md) | Critical apps are copied from a pool snapshot into generations on the card and move to the card as containers created again from their definitions | accepted | 2026-11-24 |
 | [0501](0501-the-way-back-from-the-sd-standby-copies-the-cards-changes-to-the-pool-and-the-emmc-keeping-the-card-bootable-until-the-copy-is-checked.md) | The way back from the SD standby copies the card's changes to the pool and to the eMMC, and keeps the card bootable until the copy is checked | accepted | 2026-11-24 |
+| [0503](0503-the-writes-a-week-of-a-critical-apps-interval-leave-out-its-first-copy-and-its-image-archives.md) | The writes a week of a critical app's interval leave out its first copy and its image archives | accepted | 2026-11-25 |
 
 ## Web UI
 

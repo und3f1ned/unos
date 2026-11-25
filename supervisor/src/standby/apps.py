@@ -78,9 +78,12 @@ LAST_COPY_SECONDS = 300
 # the second pass in a row of the RAID monitor that finds it so.
 FAILED_PASSES = 2
 COPY_OLD = timedelta(days=3)
-# The MiB of an app's recent syncs that wrote, for the writes a week of an interval.
+# The MiB of an app's recent syncs that wrote, for the writes a week of an interval: not its first copy,
+# nor the archives of its images (ADR-0503).
 RECENT_SYNCS = 8
 RSYNC_TIMEOUT = 2 * 3600
+# A flush of what a sync wrote to the card, which may be hundreds of MiB at an SD card's speed.
+FLUSH_TIMEOUT = 600
 SAVE_TIMEOUT = 3600
 STOP_SECONDS = 30
 READY_SECONDS = 180
@@ -449,8 +452,8 @@ class CriticalPlan(BaseModel):
     needed: int = Field(description="What a new mark needs on the card: its copy and twice its images.")
     fits: bool = Field(description="Whether a new mark leaves the reserve free; always true for a marked app.")
     mib_per_sync: float | None = Field(description=(
-        "The MiB that its recent syncs wrote to the card, on average; null before its first sync: the writes a week "
-        "of an interval cannot be told yet."))
+        "The MiB that its recent syncs of its changes wrote to the card, on average, without its first copy and its "
+        "images' archives (ADR-0503); null before its second sync: the writes a week of an interval cannot be told yet."))
     failed_over: bool = Field(description="Whether it runs from the card now.")
 
 
@@ -689,31 +692,41 @@ def sync_app(app: str, *, dry_run: bool = False, last_copy: bool = False, deadli
                         what=f"The copy of {app}'s folder", timeout=remaining(RSYNC_TIMEOUT))
         wanted = {image.split(":", 1)[1] for image in images}
         listing = ops.read(["ls", "-1", "--", f"{new}/images"])
-        for name in listing.stdout.split():
-            if name.endswith(".tar.gz") and name[: -len(".tar.gz")] not in wanted:
-                ops.change(["rm", "-f", "--", f"{new}/images/{name}"], what="An archive of an image no longer used")
-        for image in images:
-            archive = f"{new}/images/{image.split(':', 1)[1]}.tar.gz"
-            if ops.exists(archive) and not dry_run:
-                continue
+        unused = [name for name in listing.stdout.split() if name.endswith(".tar.gz") and name[: -len(".tar.gz")] not in wanted]
+        archives = [(image, f"{new}/images/{image.split(':', 1)[1]}.tar.gz") for image in images]
+        archives = [(image, archive) for image, archive in archives if dry_run or not ops.exists(archive)]
+        # The archives change once an image, whatever the interval: their sectors are left out of the MiB
+        # that the writes a week are told from (ADR-0503).
+        # The first copy's MiB are not recorded (below), so it is not measured: no flush right after its rsync.
+        measure = before is not None and gen is not None and bool(archives or unused)
+        archives_from = _flushed_sectors(ops, card_disk) if measure else None
+        for name in unused:
+            ops.change(["rm", "-f", "--", f"{new}/images/{name}"], what="An archive of an image no longer used")
+        for image, archive in archives:
             ops.long_change(["bash", "-c", 'set -o pipefail; docker save "$1" | gzip -1 > "$2.tmp" && mv -f "$2.tmp" "$2"',
                              "unos-standby", image, archive], what=f"The archive of {app}'s image", timeout=remaining(SAVE_TIMEOUT))
+        archives_to = _flushed_sectors(ops, card_disk) if archives_from is not None else None
         ops.write_file(f"{new}/{DEFINITIONS}", text, what=f"The definitions of {app}")
         ops.change(["sync", "-f", CARD_DIR], what="The flush of the new copy")
         measured = sizes(ops, [f"{new}/{COPY}", f"{new}/images"]) if not dry_run else {}
-        mib = None
+        mib = per_sync = None
         if not dry_run and before is not None and card_disk:
             from .generation import _sectors_written
 
             after = _sectors_written(card_disk)
             mib = round((after - before) * 512 / 1024 / 1024, 1) if after is not None else None
+            archived = (archives_to - archives_from if archives_from is not None and archives_to is not None
+                        else 0 if not measure else None)
+            # The first copy writes the whole folder: a later sync writes what changed (ADR-0503).
+            if after is not None and archived is not None and gen is not None:
+                per_sync = round((after - before - archived) * 512 / 1024 / 1024, 1)
         if not dry_run:
             at = utc_text(utc_now())
 
             def complete(record: dict[str, Any]) -> dict[str, Any]:
                 recent = [v for v in record.get("mib", []) if isinstance(v, (int, float))]
-                if mib is not None:
-                    recent = [*recent, mib][-RECENT_SYNCS:]
+                if per_sync is not None:
+                    recent = [*recent, per_sync][-RECENT_SYNCS:]
                 return {**{k: v for k, v in record.items() if k != "error"}, "generation": number, "synced_at": at,
                         "mib": recent, "pool": pool,
                         "bytes": {"data": measured.get(f"{new}/{COPY}"), "images": measured.get(f"{new}/images")}}
@@ -739,6 +752,17 @@ def sync_app(app: str, *, dry_run: bool = False, last_copy: bool = False, deadli
             logger.warning("The old copy of %s could not be deleted: %s", app, e)
     ops.plan.extend(tidy.plan)
     return AppOutcome(result="wrote", generation=number, mib=mib, plan=ops.plan)
+
+
+def _flushed_sectors(ops: StandbyHost, card_disk: str | None) -> int | None:
+    """The card's sectors written so far, after a flush of what the sync wrote before; None when they
+    cannot be read."""
+    if not card_disk:
+        return None
+    from .generation import _sectors_written
+
+    ops.change(["sync", "-f", CARD_DIR], what="A flush within the sync", timeout=FLUSH_TIMEOUT)
+    return _sectors_written(card_disk)
 
 
 # --- creating the containers again -------------------------------------------------------------------------

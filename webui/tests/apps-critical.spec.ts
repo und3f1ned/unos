@@ -83,8 +83,10 @@ test.describe('The critical mark of an app', () => {
     await expect(notCopied).toContainText('a cache the app makes again; on the card it is in RAM');
     await expect(notCopied).toContainText('another pool folder; on the card the app sees it empty');
     await expect(dialog.getByTestId('app-critical-card')).toContainText('kept in reserve');
-    // Before its first sync the writes a week cannot be told.
-    await expect(dialog).toContainText('The writes to the card a week cannot be told before its first sync.');
+    // Before its second sync the writes a week cannot be told: the first copies the whole app (ADR-0503).
+    await expect(dialog).toContainText(
+      'The writes to the card a week can be told after its second sync: the first copies the whole app.'
+    );
     await choose(page, 'Sync interval', 'Every 6 hours');
     await dialog.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(dialog).toBeHidden();
@@ -98,9 +100,13 @@ test.describe('The critical mark of an app', () => {
     await page.getByRole('menuitem', { name: 'Critical on the SD standby…' }).click();
     const dialog = page.getByRole('dialog', { name: 'Critical app: jellyfin' });
     // 4 MiB a sync, daily: 28 MiB a week; hourly: 672.
-    await expect(dialog).toContainText('About 28 MiB written to the card a week.');
+    await expect(dialog).toContainText(
+      'About 28 MiB written to the card a week, and the archive of a new image once after an update.'
+    );
     await choose(page, 'Sync interval', 'Every hour');
-    await expect(dialog).toContainText('About 672 MiB written to the card a week.');
+    await expect(dialog).toContainText(
+      'About 672 MiB written to the card a week, and the archive of a new image once after an update.'
+    );
   });
 
   test('a host without a standby does not offer the mark', async ({ authenticatedPage: page }) => {

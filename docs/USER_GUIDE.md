@@ -3238,8 +3238,9 @@ database that an update keeps, and its folders on other pools, such as media.
 It shows the size of its images and the card's free space; a mark that would
 leave the card less than its reserve (10% of the card, at least 2 GiB) is
 refused. The sync interval is 1, 2, 4, 6, 12 or 24 hours (24: with the
-system's daily sync); after the first syncs the dialog shows what the interval
-writes to the card a week. An app is synced only while its pool's disks are
+system's daily sync); from its second sync on, the dialog shows what the interval
+writes to the card a week, besides the archive of a new image once after an
+update (the first sync copies the whole app). An app is synced only while its pool's disks are
 awake, and a sync that finds nothing changed writes nothing.
 
 - When btrfs makes the app's pool read-only after an error, UNOS copies the

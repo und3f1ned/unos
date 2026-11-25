@@ -323,8 +323,10 @@ export const en = {
 	'apps.critical.interval': 'Sync interval',
 	'apps.critical.daily': 'Daily, with the system',
 	'apps.critical.hours': { one: 'Every hour', other: 'Every {hours} hours' },
-	'apps.critical.weekly': 'About {mib} MiB written to the card a week.',
-	'apps.critical.weeklyUnknown': 'The writes to the card a week cannot be told before its first sync.',
+	'apps.critical.weekly':
+		'About {mib} MiB written to the card a week, and the archive of a new image once after an update.',
+	'apps.critical.weeklyUnknown':
+		'The writes to the card a week can be told after its second sync: the first copies the whole app.',
 	'apps.critical.save': 'Save',
 	'apps.critical.onStandby.title': 'UNOS runs from the SD standby',
 	'apps.critical.onStandby.text':
@@ -624,8 +626,10 @@ export const ru: Translation<typeof en> = {
 	'apps.critical.interval': 'Интервал синхронизации',
 	'apps.critical.daily': 'Ежедневно, вместе с системой',
 	'apps.critical.hours': { one: 'Каждый час', few: 'Каждые {hours} часа', many: 'Каждые {hours} часов' },
-	'apps.critical.weekly': 'Около {mib} МиБ записи на карту в неделю.',
-	'apps.critical.weeklyUnknown': 'Запись на карту в неделю станет известна после первой синхронизации.',
+	'apps.critical.weekly':
+		'Около {mib} МиБ записи на карту в неделю, плюс архив нового образа один раз после обновления.',
+	'apps.critical.weeklyUnknown':
+		'Запись на карту в неделю станет известна после второй синхронизации: первая копирует приложение целиком.',
 	'apps.critical.save': 'Сохранить',
 	'apps.critical.onStandby.title': 'UNOS работает с резерва на SD',
 	'apps.critical.onStandby.text':

@@ -279,7 +279,9 @@ class StandbyFakeHost:
         if self.cut_at is not None and len(self.changes) >= self.cut_at:
             raise PowerCut(cmd)
         self.changes.append(cmd)
-        if any(part.startswith(("/mnt/.unos-standby", f"of=/dev/{self.card}", f"/dev/{self.card}")) for part in cmd):
+        # A flush writes what the changes before it wrote, which they counted already.
+        if cmd[0] != "sync" and any(part.startswith(("/mnt/.unos-standby", f"of=/dev/{self.card}", f"/dev/{self.card}"))
+                                    for part in cmd):
             self.card_sectors_written += 2048
 
     def _answer(self, cmd: list[str], input: str | None) -> host.HostResult:

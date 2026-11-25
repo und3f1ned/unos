@@ -2050,6 +2050,10 @@ manager, encrypted backup uploads, health checks, CI checks).
   installed once, under its id, and a request with `name` answers 422.
 
 ### Fixed
+- The writes a week that the critical mark's dialog shows for an interval no longer count the
+  app's first copy or the archives of its images (ADR-0503): Uptime Kuma's first sync, 588.7 MiB
+  with its image, made an interval of 1 hour look like 98902 MiB a week. The estimate starts at the
+  second sync; the dialog says that an update writes its new image once.
 - A pool on a USB stick that refuses ATA commands no longer looks asleep (ADR-0502): `hdparm -C`
   printed such a stick's power as standby after "bad/missing sense data", so the SD standby never
   synced the critical apps of its pool. smartctl now asks such a disk again; the stick reads unknown,

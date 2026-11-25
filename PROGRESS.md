@@ -832,6 +832,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-25: The writes a week of a critical app's interval leave out its first copy and images (ADR-0503)
+
+- Found by the critical apps' drill D2 on the BPI-W3: after Uptime Kuma's first sync (588.7 MiB, its
+  image's archive 586 of them), its dialog put an interval of 1 hour at 98902 MiB a week, since every
+  sync's sectors went into the average. Fixed: the record's `mib` leaves out the first copy and the
+  sectors of the archives' step (flushed and read at both ends); the sync's own MiB still counts
+  everything. The dialog says that an update writes its image once. `test_standby_apps.py`
+  `test_the_writes_a_week_count_neither_the_first_copy_nor_the_image_archives` failed on 5372d86c
+  first; the fake card no longer counts a flush as a write. Review in a fresh context: no blocking
+  finding; fixed its RISKs, the first copy is no longer measured (no flush right after its rsync) and
+  the flushes around the archives may take 600 s, and the API's and the Standby tab's texts of the
+  average ("a sync of its changes"); left, as the ADR says, a sample that spans more than one
+  interval. The BPI-W3's record of Uptime Kuma keeps its first sync's 588.7 MiB until 8 newer samples
+  replace it (no migration, ADR-0207). NITs fixed: the ADR's wording, the Russian text.
+
 ### 2026-11-25: A USB stick's power is asked again, not read as standby (storage.disk-spindown, ADR-0502)
 
 - Found by the critical apps' drill D1 on the BPI-W3 (system.sd-standby-critical-apps): the pool `usb`
