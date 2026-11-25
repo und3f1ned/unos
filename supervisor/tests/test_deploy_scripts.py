@@ -1209,6 +1209,18 @@ class TestUpdateScriptInApp:
         assert outcome == "failed"
         assert "UNOS did not answer" in message and "the rollback to v1.2.0 failed too" in message
 
+    def test_an_interrupted_switch_whose_rollback_fails_names_both_in_one_sentence(self, sandbox):
+        # The first error is a sentence; its period gives way to the rollback's clause (the BPI-W3's Lima VM
+        # showed "Interrupted while UNOS was restarting with v0.1.2.; the rollback to v0.1.1 failed too").
+        _run_update(sandbox, args=["--fetch", NEWER])
+
+        result, _, result_file = self._switch(sandbox, "update", NEWER, "interrupt-at-up", "signal=TERM",
+                                              overrides="wait_for_health() { false; }")
+
+        assert result.returncode == 1
+        assert _result(result_file) == ("failed", f"Interrupted while UNOS was restarting with {NEWER}; the "
+                                                  "rollback to v1.2.0 failed too: UNOS did not come back")
+
     def test_an_update_while_another_runs_changes_nothing_and_says_why(self, sandbox):
         backup = _in_app_backup(sandbox)
 

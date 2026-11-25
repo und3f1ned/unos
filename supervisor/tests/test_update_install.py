@@ -312,7 +312,9 @@ class TestInstallUpdate:
 
         assert progress.status == UpdateStatus.FAILED
         assert progress.rolled_back is True
-        assert progress.error == ("UNOS did not answer within 300 seconds after the update.; "
+        # update.sh's sentence and the rollback's clause, without the sentence's period between them (the
+        # BPI-W3's Lima VM showed "....; rolled back to").
+        assert progress.error == ("UNOS did not answer within 300 seconds after the update; "
                                   f"rolled back to {INSTALLED}")
         # The backup's database is back: no rollback to offer.
         assert progress.can_rollback is False
@@ -614,7 +616,7 @@ class TestTheJobPassesToTheNextSupervisor:
         progress = await _until_done(world, updater=updater)
         assert progress.status == UpdateStatus.FAILED
         assert progress.rolled_back is True
-        assert progress.error == f"UNOS did not answer within 300 seconds after the update.; rolled back to {INSTALLED}"
+        assert progress.error == f"UNOS did not answer within 300 seconds after the update; rolled back to {INSTALLED}"
         assert progress.can_rollback is False
         [entry] = await updater.get_update_history()
         assert (entry.status, entry.error) == ("failed", progress.error)
@@ -1165,7 +1167,7 @@ class TestTheAuditLog:
         await _job_ended(world.updater)
 
         assert _audited() == [update_started(), update_failed(
-            f"UNOS did not answer within 300 seconds after the update.; rolled back to {INSTALLED}")]
+            f"UNOS did not answer within 300 seconds after the update; rolled back to {INSTALLED}")]
 
     async def test_a_switch_that_failed_on_the_host_is_audited_as_failed(self, world, api):
         world.installer.outcome = ("failed", "Another update.sh is running. Nothing was changed.")
@@ -1202,7 +1204,7 @@ class TestTheAuditLog:
         await _job_ended(updater)
 
         assert _audited() == [update_started(), update_failed(
-            f"UNOS did not answer within 300 seconds after the update.; rolled back to {INSTALLED}")]
+            f"UNOS did not answer within 300 seconds after the update; rolled back to {INSTALLED}")]
 
     async def test_a_unit_that_ended_without_a_result_is_audited_as_failed(self, world, api):
         world.installer.outcome = None

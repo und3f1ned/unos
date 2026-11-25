@@ -171,9 +171,9 @@ write_result() {
     elif [ "$ROLLBACK_RESULT" = ok ]; then
         outcome=rolled-back
     elif [ -n "$DATABASE_PROBLEM" ]; then
-        message="$message; the rollback to $CURRENT_VERSION failed too: $DATABASE_PROBLEM"
+        message="${message%.}; the rollback to $CURRENT_VERSION failed too: $DATABASE_PROBLEM"
     elif [ "$ROLLBACK_RESULT" = failed ]; then
-        message="$message; the rollback to $CURRENT_VERSION failed too: UNOS did not come back"
+        message="${message%.}; the rollback to $CURRENT_VERSION failed too: UNOS did not come back"
     fi
     [ "$status" -eq 0 ] || [ -n "$message" ] || message="update.sh ended with status $status"
     (

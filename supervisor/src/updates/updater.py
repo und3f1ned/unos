@@ -687,7 +687,8 @@ class Updater:
             await self._audit(AuditAction.SYSTEM_UPDATE_COMPLETED, f"Updated from {handover.from_version} to {version}")
             return
         if outcome == "rolled-back":
-            error = f"{message}; rolled back to {handover.from_version}"
+            # update.sh's first error is a sentence: its period gives way to the rollback's clause.
+            error = f"{message.rstrip().removesuffix('.')}; rolled back to {handover.from_version}"
             self._progress.rolled_back = True
             self._progress.can_rollback = False
             self._update_progress(UpdateStatus.FAILED, 100, "Update failed, rolled back", error=error)
