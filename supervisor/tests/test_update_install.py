@@ -102,7 +102,11 @@ class FakeInstaller:
         switch = self.switches[-1]
         if outcome == "success":
             self.monkeypatch.setenv("UNOS_VERSION", switch.tag)
-        Path(switch.result).write_text(f"{outcome}\n{message}\n")
+        # As update.sh's write_result: a partial file renamed over the result, so that a read never finds
+        # it empty (a read between the truncation and the write failed the job under load).
+        partial = Path(f"{switch.result}.partial")
+        partial.write_text(f"{outcome}\n{message}\n")
+        os.replace(partial, switch.result)
         self.running.discard(switch.unit)
 
     async def switch_running(self, unit: str) -> bool:
