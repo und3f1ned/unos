@@ -302,6 +302,13 @@ class PoolInfo(BaseModel):
         description="Mounted read-write, but btrfs made it read-only after a serious error (health is error, "
         "read_only true).",
     )
+    held_by: list[str] | None = Field(
+        default=None,
+        description="Not mounted on the host, but the kernel still has its earlier mount: the running containers "
+        "that keep it in their mount namespaces after its disk went away and came back ([] when none does, or "
+        "Docker cannot tell). Mount with stop_holders stops them, mounts and starts them again (ADR-0505). Null "
+        "otherwise.",
+    )
 
 
 class PoolCreated(PoolInfo):

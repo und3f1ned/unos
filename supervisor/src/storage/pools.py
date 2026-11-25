@@ -61,6 +61,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
@@ -116,6 +117,10 @@ DOCKER_TIMEOUT = 15
 # timeout of its own: a disk that mounts but then stops answering would block
 # them for good.
 APP_CHECK_TIMEOUT = 60
+# A container stopped to free a pool's earlier mount gets this long to exit; then the kernel gets
+# RELEASE_WAIT seconds to drop the filesystem (ADR-0505).
+HOLDER_STOP_SECONDS = 30
+RELEASE_WAIT = 30
 # Name (prefix) of the background threads that start the apps of a mounted pool.
 _APP_THREAD_NAME = "unos-pool-apps"
 
@@ -173,6 +178,11 @@ class DeviceSafetyError(PoolConflictError):
 
 class PoolBusyError(PoolConflictError):
     """The pool cannot be unmounted because it is in use (HTTP 409)."""
+
+
+class PoolHeldError(PoolConflictError):
+    """The pool cannot be mounted: the kernel still has its earlier mount, which running containers keep in
+    their mount namespaces after its disk went away and came back (HTTP 409, ADR-0505)."""
 
 
 class PoolLeftUnmountedError(PoolBusyError):
@@ -703,6 +713,7 @@ def _pool_info(
         if usage is not None:
             total_size, used_size, raid_level = usage
     entry = (managed or {}).get(name)
+    held_by = _held_by(fs, target, mounts) if mounted is False else None
     return PoolInfo(
         name=name,
         uuid=fs.uuid,
@@ -723,7 +734,45 @@ def _pool_info(
         device_errors=device_errors or 0,
         read_only=any(m.read_only for m in here),
         forced_read_only=forced_read_only,
+        held_by=held_by,
     )
+
+
+def _held(fs: BtrfsFilesystem, mounts: list[disks.HostMount] | None) -> bool:
+    """Whether the kernel still has the pool's filesystem mounted while the host mounts it nowhere: its
+    earlier mount, which a container's mount namespace keeps after the pool's disk went away (ADR-0505).
+    False when the host's mounts are not known."""
+    if mounts is None or not fs.uuid:
+        return False
+    uuid = fs.uuid.lower()
+    if any(m.fstype == "btrfs" and (m.uuid or "").lower() == uuid for m in mounts):
+        return False
+    return _filesystem_active(uuid)
+
+
+def _holders(name: str, target: str) -> list[str]:
+    """The running containers with a mount from the pool's mount point, or labelled with the pool, by name:
+    what keeps a held pool's earlier mount. Docker errors are raised."""
+    with _docker_api() as api:
+        running, bound = _running_containers(api)
+    return sorted({
+        _container_name(container)
+        for container in running
+        if any(_points_into(path, target) for path in _container_paths(container, bound))
+        or (container.get("Labels") or {}).get(APP_POOL_LABEL) == name
+    })
+
+
+def _held_by(fs: BtrfsFilesystem, target: str, mounts: list[disks.HostMount] | None) -> list[str] | None:
+    """PoolInfo.held_by: None while the pool is not held; else its holders, [] when no running container
+    holds it or Docker cannot be asked."""
+    if not _held(fs, mounts):
+        return None
+    try:
+        return _holders(fs.label or "", target)
+    except Exception as exc:
+        logger.warning("Could not ask Docker which containers hold pool '%s': %s", fs.label, exc)
+        return []
 
 
 def list_pools(*, scan: bool = True) -> list[PoolInfo]:
@@ -1071,8 +1120,11 @@ def _finished_within(
     return True
 
 
-def _start_pool_apps(name: str) -> list[str]:
+def _start_pool_apps(name: str, restart: frozenset[str] = frozenset()) -> list[str]:
     """Start the pool's apps that Docker could not start at boot; never raises.
+
+    ``restart``: the containers that the Mount stopped to free the pool's earlier mount (ADR-0505), started
+    again whatever Docker recorded; one that is no app of the pool is started without the app checks.
 
     Docker starts containers with restart policy always/unless-stopped when
     it starts. If the pool was not mounted yet, the start fails (the bind
@@ -1088,12 +1140,17 @@ def _start_pool_apps(name: str) -> list[str]:
     DOCKER_TIMEOUT. Runs in the background (:func:`_start_pool_apps_later`).
     """
     started: list[str] = []
+    apps: set[str] = set()
     try:
         # Imported here so that loading the storage modules does not load the apps package.
         from ..apps.router import prepare_app_start
 
         with _docker_api() as api:
-            for summary in api.containers(all=True, filters={"label": f"{APP_POOL_LABEL}={name}"}):
+            summaries = api.containers(all=True, filters={"label": f"{APP_POOL_LABEL}={name}"})
+            # All of the pool's apps, also those that a timed-out check leaves unstarted below: none of them
+            # is started without its checks.
+            apps = {_container_name(summary) for summary in summaries}
+            for summary in summaries:
                 container = _container_name(summary)
                 try:
                     if summary.get("State") == "running":
@@ -1101,9 +1158,9 @@ def _start_pool_apps(name: str) -> list[str]:
                     details = api.inspect_container(summary["Id"])
                     state = details.get("State") or {}
                     policy = ((details.get("HostConfig") or {}).get("RestartPolicy") or {}).get("Name")
-                    if state.get("Running") or not state.get("Error"):
+                    if state.get("Running"):
                         continue
-                    if policy not in _BOOT_RESTART_POLICIES:
+                    if container not in restart and (not state.get("Error") or policy not in _BOOT_RESTART_POLICIES):
                         continue
                     if not _finished_within(
                         APP_CHECK_TIMEOUT,
@@ -1129,17 +1186,29 @@ def _start_pool_apps(name: str) -> list[str]:
                     logger.warning("Could not start app %s of pool '%s': %s", container, name, exc)
                     continue
                 started.append(container)
-                logger.warning(
-                    "Started app %s, which Docker could not start before pool '%s' was mounted",
-                    container,
-                    name,
-                )
+                if container in restart:
+                    logger.info("Started %s again, which held the earlier mount of pool '%s'", container, name)
+                else:
+                    logger.warning(
+                        "Started app %s, which Docker could not start before pool '%s' was mounted",
+                        container,
+                        name,
+                    )
+            # A container of the Containers page that held the pool: no app checks.
+            for container in sorted(restart - apps):
+                try:
+                    api.start(container)
+                except Exception as exc:
+                    logger.warning("Could not start %s again after pool '%s' was mounted: %s", container, name, exc)
+                    continue
+                started.append(container)
+                logger.info("Started %s again, which held the earlier mount of pool '%s'", container, name)
     except Exception as exc:
         logger.warning("Could not start the apps of pool '%s': %s", name, exc)
     return started
 
 
-def _start_pool_apps_later(name: str) -> None:
+def _start_pool_apps_later(name: str, restart: frozenset[str] = frozenset()) -> None:
     """Start, in a background thread, the apps of a pool that was just mounted; never raises.
 
     Their checks read the pool's files and can hang on a failing disk, so
@@ -1149,7 +1218,7 @@ def _start_pool_apps_later(name: str) -> None:
     """
     try:
         threading.Thread(
-            target=_start_pool_apps, args=(name,), name=f"{_APP_THREAD_NAME}:{name}", daemon=True
+            target=_start_pool_apps, args=(name, restart), name=f"{_APP_THREAD_NAME}:{name}", daemon=True
         ).start()
     except RuntimeError as exc:  # no thread could be started
         logger.warning("Could not start the apps of pool '%s': %s", name, exc)
@@ -1527,12 +1596,17 @@ def mount_pool(name: str) -> PoolInfo:
     return mount_pool_changed(name)[0]
 
 
-def mount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
+def mount_pool_changed(name: str, *, stop_holders: bool = False) -> tuple[PoolInfo, bool, list[str]]:
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
     With whether it changed anything: it mounted the pool or wrote the fstab entry; a pool that
     was mounted and kept in the fstab is left as it is (its audit entry is written for a real
-    change only, ADR-0402).
+    change only, ADR-0402). And the containers it stopped to free the pool's earlier mount.
+
+    A pool that the kernel still has mounted while the host mounts it nowhere (_held: its disk went
+    away and came back while containers used it) is refused with PoolHeldError naming them; with
+    ``stop_holders`` they are stopped, the filesystem is waited for (RELEASE_WAIT) and the pool is
+    mounted, after which they are started again in the background with its apps (ADR-0505).
 
     This imports a pool found on the disks, too (ADR-0283), so a pool with a
     member on a boot or virtual device or on the system disk is refused
@@ -1543,6 +1617,7 @@ def mount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
     """
     name = validate_pool_name(name)
     target = pool_mountpoint(name)
+    stopped: list[str] = []
     with _lock:
         mounts = disks.host_mounts()
         candidates = _pool_filesystems(name, mounts)
@@ -1571,10 +1646,79 @@ def mount_pool_changed(name: str) -> tuple[PoolInfo, bool]:
             if problem:
                 raise PoolConflictError(f"Pool '{name}' cannot be mounted: {problem}.")
             _refuse_hidden_files(target)
-        changed = _mount_and_persist(name, _check_uuid(fs.uuid), already_mounted=bool(mounted_here))
+            # Last before the mount, so that no other refusal follows a stop of the holders (ADR-0505).
+            if _held(fs, mounts):
+                stopped = _free_held_pool(name, target, _check_uuid(fs.uuid), stop_holders=stop_holders)
+        try:
+            changed = _mount_and_persist(name, _check_uuid(fs.uuid), already_mounted=bool(mounted_here))
+        except Exception as exc:
+            if stopped:
+                raise _with_stopped(exc, stopped, f"{exc} {', '.join(stopped)}, stopped to free the pool's earlier "
+                                    "mount, stay stopped: start them again once the pool is mounted.") from exc
+            raise
     if not mounted_here:
-        _start_pool_apps_later(name)  # after releasing the lock; never raises
-    return get_pool(name), changed
+        _start_pool_apps_later(name, frozenset(stopped))  # after releasing the lock; never raises
+    return get_pool(name), changed, stopped
+
+
+def _with_stopped(exc: Exception, stopped: list[str], message: str) -> Exception:
+    """An error of the same HTTP status as ``exc`` with ``message``, carrying the containers that the Mount
+    stopped (``stopped``), which the router audits (ADR-0505)."""
+    kind: type[Exception] = RuntimeError
+    for base in (PoolNotFoundError, PoolConflictError, DockerUnavailableError, ValueError):
+        if isinstance(exc, base):
+            kind = base
+            break
+    error = kind(message)
+    error.stopped = list(stopped)  # type: ignore[attr-defined]  # read by the router's audit entry
+    return error
+
+
+def _free_held_pool(name: str, target: str, uuid: str, *, stop_holders: bool) -> list[str]:
+    """For a held pool (_held): PoolHeldError naming its holders, or with ``stop_holders`` stop them and wait for
+    the kernel to drop the filesystem; returns the containers stopped. A failure after a stop names the containers
+    stopped so far, which stay stopped (_with_stopped, ADR-0505)."""
+    try:
+        holders = _holders(name, target)
+    except Exception as exc:
+        raise DockerUnavailableError(
+            f"Pool '{name}' is still held by its earlier mount, and Docker did not answer which containers hold "
+            f"it ({exc}); nothing changed."
+        ) from exc
+    if not holders:
+        raise PoolHeldError(
+            f"Pool '{name}' is still held by its earlier mount, but no running container keeps it: something on "
+            "the host does (a process's open file or working folder there). Restart the host to free it."
+        )
+    names = ", ".join(holders)
+    if not stop_holders:
+        raise PoolHeldError(
+            f"Pool '{name}' is still held by its earlier mount, which {names} still use: most likely its disk went "
+            "away and came back while they ran, and they still see the old disk. Stop them and mount (they are "
+            "started again), or stop them on the Apps or Containers page and mount again."
+        )
+    stopped: list[str] = []
+    try:
+        with _docker_api() as api:
+            for container in holders:
+                try:
+                    api.stop(container, timeout=HOLDER_STOP_SECONDS)
+                except docker.errors.NotFound:
+                    continue  # gone meanwhile (an app moved to the SD standby is created again): it holds nothing
+                stopped.append(container)
+                logger.info("Stopped %s, which held the earlier mount of pool '%s'", container, name)
+    except Exception as exc:
+        left = f" {', '.join(stopped)} stopped and stay stopped: start them again once the pool is mounted." if stopped else ""
+        raise _with_stopped(DockerUnavailableError(str(exc)), stopped,
+                            f"Pool '{name}' is still held: stopping its holders failed ({exc}).{left}") from exc
+    deadline = time.monotonic() + RELEASE_WAIT
+    while _filesystem_active(uuid):
+        if time.monotonic() >= deadline:
+            raise _with_stopped(PoolHeldError(""), stopped, (
+                f"Pool '{name}' is still held after {', '.join(stopped) or names} stopped: something else keeps its "
+                "earlier mount. They stay stopped: restart the host, mount the pool, then start them again."))
+        time.sleep(0.5)
+    return stopped
 
 
 def unmount_pool(name: str) -> PoolInfo:

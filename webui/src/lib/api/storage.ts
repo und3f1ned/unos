@@ -102,6 +102,12 @@ export interface Pool {
 	 * serious error such as an aborted transaction (health "error").
 	 */
 	forced_read_only: boolean;
+	/**
+	 * Not mounted, but the kernel still has its earlier mount: the running containers that keep it after
+	 * its disk went away and came back ([] when none does, or Docker cannot tell); null otherwise
+	 * (ADR-0505).
+	 */
+	held_by: string[] | null;
 }
 
 /**
@@ -358,9 +364,14 @@ export async function deletePool(name: string): Promise<void> {
 	return api.delete(`/storage/pools/${name}`);
 }
 
-/** Mount on the host at /mnt/pools/{name} and keep the managed fstab entry. */
-export async function mountPool(name: string): Promise<Pool> {
-	return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/mount`, {});
+/**
+ * Mount on the host at /mnt/pools/{name} and keep the managed fstab entry. With `stopHolders`, the
+ * containers that hold the pool's earlier mount (held_by) are stopped first and started again after it
+ * (ADR-0505).
+ */
+export async function mountPool(name: string, stopHolders = false): Promise<Pool> {
+	const query = stopHolders ? '?stop_holders=true' : '';
+	return api.post<Pool>(`/storage/pools/${encodeURIComponent(name)}/mount${query}`, {});
 }
 
 /**

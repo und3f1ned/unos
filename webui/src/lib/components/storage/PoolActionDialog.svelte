@@ -63,7 +63,8 @@
 		critical = [];
 		try {
 			if (kind === 'mount') {
-				await mountPool(pool.name);
+				// The containers that hold the pool's earlier mount stop first and start again (ADR-0505).
+				await mountPool(pool.name, (pool.held_by?.length ?? 0) > 0);
 			} else {
 				await unmountPool(pool.name);
 			}
@@ -99,6 +100,15 @@
 			</p>
 			<!-- Also how a pool found on the disks is imported (ADR-0283). -->
 			<p class="text-sm text-secondary">{$t('storage.mount.kept')}</p>
+			{#if action.pool.held_by}
+				<Alert variant="warning" title={$t('storage.pool.heldTitle')}>
+					<span data-testid="mount-held">
+						{action.pool.held_by.length > 0
+							? $t('storage.mount.stopsHolders', { containers: action.pool.held_by.join(', ') })
+							: $t('storage.pool.heldByHost')}
+					</span>
+				</Alert>
+			{/if}
 		{:else}
 			<p>
 				{$t('storage.unmount.question')}

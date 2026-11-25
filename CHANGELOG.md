@@ -12,6 +12,10 @@ features (SMB access per user and per share, volumes, copy and move in the file
 manager, encrypted backup uploads, health checks, CI checks).
 
 ### Added
+- **A pool held by its earlier mount**: when a pool's disk went away and came back while an app used
+  it, the pool's card names the containers that still hold the old disk, and **Mount…** stops them,
+  mounts the pool and starts them again; Mount had failed with "fsconfig() failed: File exists"
+  (ADR-0505).
 - **The way back from the SD standby with the card's changes**: **Return to the pool** copies what
   the critical apps changed on the card into their folders on the pool, without their caches and
   update copies, keeps every file it replaces in `{pool}/apps/<app>.before-failback-<time>/`,

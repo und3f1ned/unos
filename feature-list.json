@@ -986,17 +986,21 @@
       "category": "storage",
       "description": "A pool whose disk went away and came back while an app's container still used it can be mounted again, or the Storage page says what holds it",
       "steps": [
-        "When Mount on the Storage page fails because the pool's earlier mount is still held (mount: 'fsconfig() failed: File exists' after its disk came back under another name), the answer is 409 naming the containers that use the pool's mount point and what to do, not 500",
-        "The containers that hold a pool whose disk is gone are named on the Storage page while the pool is not mounted",
-        "After the named containers stop, Mount succeeds and starts the pool's apps as after a boot"
+        "A pool that the kernel still has mounted while the host mounts it nowhere (its disk went away and came back while an app's container used it) lists the running containers that hold it (held_by), and the Storage page names them on the pool's card",
+        "Mount of such a pool answers 409 naming them and changes nothing; with stop_holders, which the Storage page's Mount dialog sends and says so, it stops them, waits for the kernel to drop the earlier mount, mounts the pool and starts them again, audited",
+        "A held pool that no running container holds, or that stays held after they stopped, answers 409 saying so; containers it stopped stay stopped and are named"
       ],
-      "verified_by": [],
+      "verified_by": [
+        "supervisor/tests/test_pool_persistence.py",
+        "webui/tests/storage.spec.ts"
+      ],
       "passes": false,
       "adr": [
         "ADR-0034",
-        "ADR-0504"
+        "ADR-0504",
+        "ADR-0505"
       ],
-      "notes": "Found 2026-11-25 on the BPI-W3 (system.sd-standby-critical-apps): the test pool's USB stick deleted from the SCSI layer (echo 1 > /sys/block/sdb/device/delete) while Uptime Kuma ran from it; systemd unmounted the pool on the host, but the container's own mount namespace kept the btrfs filesystem of the old device, and the app kept answering. A rescan brought the stick back as sdc; Mount answered 500 'Mounting /mnt/pools/usb failed: mount: /mnt/pools/usb: fsconfig() failed: File exists' after 'btrfs device scan failed on /dev/sdc: File exists'. Stopping the app on the Apps page, then Mount and Start brought it back. For a critical app the RAID monitor's failover replaces the container after two passes, which frees the filesystem. Not built."
+      "notes": "Found 2026-11-25 on the BPI-W3 (system.sd-standby-critical-apps): the test pool's USB stick deleted from the SCSI layer (echo 1 > /sys/block/sdb/device/delete) while Uptime Kuma ran from it; systemd unmounted the pool on the host, but the container's own mount namespace kept the btrfs filesystem of the old device, and the app kept answering. A rescan brought the stick back as sdc; Mount answered 500 'Mounting /mnt/pools/usb failed: mount: /mnt/pools/usb: fsconfig() failed: File exists' after 'btrfs device scan failed on /dev/sdc: File exists'. Stopping the app on the Apps page, then Mount and Start brought it back. For a critical app the RAID monitor's failover replaces the container after two passes, which frees the filesystem. Built (ADR-0505): pools._held, _holders and PoolInfo.held_by; Mount's stop_holders (_free_held_pool), the restart of the stopped containers with the pool's apps (_start_pool_apps); the pool card's notice and the Mount dialog's (PoolCard, PoolActionDialog). Tests: test_pool_persistence.py TestAPoolHeldByItsEarlierMount (its FakeHost refuses a held filesystem's mount on another device as btrfs does: each test failed first with the device's 500), storage.spec.ts 'a pool held by its earlier mount names its containers, and Mount stops them first'. Device check (ADR-0018), without the owner: with an app on a test pool of the USB stick, echo 1 > /sys/block/<stick>/device/delete, then a rescan of its SCSI host: GET /storage/pools names the app in held_by, Mount answers 409, Mount with stop_holders mounts the pool and the app answers from it; the eMMC's MiB of each step; then a reboot check."
     },
     {
       "id": "storage.pool-health",

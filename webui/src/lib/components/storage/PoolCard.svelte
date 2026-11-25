@@ -73,6 +73,16 @@
 	// Reads $t where the markup calls it: the texts follow the language.
 	function issues(): Issue[] {
 		const list: Issue[] = [];
+		if (pool.held_by) {
+			list.push({
+				tone: 'warning',
+				title: $t('storage.pool.heldTitle'),
+				text:
+					pool.held_by.length > 0
+						? $t('storage.pool.held', { containers: pool.held_by.join(', ') })
+						: $t('storage.pool.heldByHost')
+			});
+		}
 		if (pool.missing_devices > 0) {
 			list.push({
 				tone: 'error',

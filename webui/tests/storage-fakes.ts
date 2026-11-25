@@ -70,6 +70,8 @@ export interface FakePool {
   device_errors: number;
   read_only: boolean;
   forced_read_only: boolean;
+  /** Not mounted, while running containers keep its earlier mount (ADR-0505); left out: null. */
+  held_by?: string[] | null;
 }
 
 // As GET /storage/pools reports them: raid_level is only known for mounted
@@ -430,7 +432,7 @@ function mountedPool(pool: FakePool, raidLevel: string, deviceErrors: number): F
   return {
     ...pool, mounted: true, persistent: true, mountpoint: `/mnt/pools/${pool.name}`, raid_level: raidLevel,
     health: deviceErrors > 0 ? 'error' : 'healthy', device_errors: deviceErrors, read_only: false,
-    forced_read_only: false,
+    forced_read_only: false, held_by: null,
   };
 }
 
@@ -683,6 +685,15 @@ export async function fakeStorageApi(page: Page, options: FakeStorageOptions = {
         if (index < 0 && method === 'DELETE') return route.fulfill({ json: { status: 'deleted' } });
         if (index < 0) return route.fulfill({ status: 404, json: { detail: `Pool '${name}' not found` } });
         const pool = pools[index];
+        // A pool whose earlier mount containers still hold is mounted only with stop_holders (ADR-0505).
+        const stopHolders = new URL(request.url()).searchParams.get('stop_holders') === 'true';
+        if (action[2] === 'mount' && !pool.mounted && pool.held_by?.length && !stopHolders) {
+          const detail =
+            `Pool '${name}' is still held by its earlier mount, which ${pool.held_by.join(', ')} still use: most ` +
+            'likely its disk went away and came back while they ran, and they still see the old disk. Stop them ' +
+            'and mount (they are started again), or stop them on the Apps or Containers page and mount again.';
+          return route.fulfill({ status: 409, json: { detail } });
+        }
         if (action[2] === 'mount' && !pool.mounted && pool.missing_devices > 0) {
           const detail =
             `Pool '${name}' is missing ${pool.missing_devices} device(s) and cannot be mounted. ` +

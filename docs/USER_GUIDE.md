@@ -614,6 +614,11 @@ pool, you can:
   it after confirming; the data on the disks is not touched. Mounting is
   refused when the pool's filesystem mounts a subvolume other than its top
   level by default (see [Importing an Existing Pool](#importing-an-existing-pool)).
+  When a pool's disk went away and came back while an app or container used
+  it, the kernel keeps the earlier mount in that container, which still sees
+  the old disk: the pool's card says **Still held by its earlier mount** and
+  names the containers, and **Mount…** stops them, mounts the pool and starts
+  them again. When nothing but the host holds it, restart the host.
   An unmounted pool shows **Not mounted**, its fstab entry is removed, and its
   empty mountpoint is write-protected, so that nothing lands on the system
   disk there. Unmounting is refused while a running app or container uses the

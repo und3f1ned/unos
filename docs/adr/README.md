@@ -184,6 +184,7 @@ and this index, and `make check-fast` runs it.
 | [0472](0472-an-sd-card-or-emmc-that-holds-no-part-of-the-running-system-is-a-data-disk.md) | An SD card or eMMC that holds no part of the running system is a data disk | accepted | 2026-11-23 |
 | [0502](0502-a-power-mode-that-hdparm-reads-without-the-disks-ata-status-is-asked-again-with-smartctl.md) | A power mode that hdparm reads without the disk's ATA status is asked again with smartctl | accepted | 2026-11-25 |
 | [0504](0504-a-pool-mounted-at-the-start-is-mounted-only-when-the-hosts-mounts-show-it.md) | A pool mounted at the start is mounted only when the host's mounts show it | accepted | 2026-11-25 |
+| [0505](0505-a-pool-held-by-its-earlier-mount-is-freed-by-stopping-its-containers-before-the-mount.md) | A pool held by its earlier mount is freed by stopping its containers before the Mount | accepted | 2026-11-25 |
 
 ## Shares
 

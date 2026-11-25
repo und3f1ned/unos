@@ -1,9 +1,10 @@
 import asyncio
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import Annotated, Any, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from ..audit.changes import audit_change
 from ..audit.schemas import AuditAction, AuditSeverity
@@ -399,12 +400,21 @@ async def import_filesystem_endpoint(
         409: "Several filesystems have the pool's label, another filesystem is mounted at its mountpoint, a disk "
              "is missing or is a boot, virtual or system disk, the mountpoint holds files or is in a host fstab "
              "line that UNOS does not manage, or the filesystem mounts another subvolume than its top level "
-             "(it is unmounted again).",
+             "(it is unmounted again); or the kernel still has the pool's earlier mount (held_by), and "
+             "stop_holders was not given, no running container holds it, or it stays held after they stopped.",
         500: "The host's mount table or filesystems cannot be read, or the mount or another host command fails.",
+        503: "The pool is held by its earlier mount and Docker cannot be asked which containers hold it.",
     }),
 )
 @limiter.limit("10/minute")
-async def mount_pool_endpoint(request: Request, name: PoolName, user: User = Depends(verify_token)):
+async def mount_pool_endpoint(
+    request: Request,
+    name: PoolName,
+    stop_holders: bool = Query(default=False, description=(
+        "For a pool whose earlier mount running containers still hold (held_by): stop them, mount the pool and "
+        "start them again (ADR-0505).")),
+    user: User = Depends(verify_token),
+):
     """Mount a pool on the host by UUID and keep its managed fstab entry.
 
     This imports a pool found on the host's disks, too. A pool that is
@@ -419,11 +429,28 @@ async def mount_pool_endpoint(request: Request, name: PoolName, user: User = Dep
     """
     validated_name = validate_pool_name(name)
 
-    info, changed = await _change_pools(pools.mount_pool_changed, validated_name)
+    try:
+        info, changed, stopped = await _change_pools(
+            partial(pools.mount_pool_changed, stop_holders=stop_holders), validated_name)
+    except HTTPException as exc:
+        # Containers stopped to free the pool's earlier mount before a failure stay stopped: audited (ADR-0505).
+        held = getattr(exc.__cause__, "stopped", None)
+        if held:
+            await audit_change(
+                AuditAction.POOL_MOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
+                details=f"Stopped {', '.join(held)} to free the earlier mount of the pool {validated_name}; "
+                        f"then: {exc.detail}",
+                success=False,
+            )
+        raise
     if changed:
+        details = f"Mounted the pool {validated_name}"
+        if stopped:
+            details += (f" after stopping {', '.join(stopped)}, which held its earlier mount; they are being "
+                        "started again")
         await audit_change(
             AuditAction.POOL_MOUNTED, request, user.username, resource_type="pool", resource_id=validated_name,
-            details=f"Mounted the pool {validated_name}",
+            details=details,
         )
     # The iSCSI targets of the pool's volumes, not served while it was not mounted (ADR-0418).
     if iscsi.pool_user(validated_name):

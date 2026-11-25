@@ -24,7 +24,7 @@ import stat
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +37,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from src import host as host_module
+from src.apps.stacks import APP_POOL_LABEL
+from src.audit import router as audit_router
 from src.auth.utils import verify_token
 from src.config import get_settings
 from src.host import HostCommandError, HostResult
@@ -45,6 +47,7 @@ from src.shares import service as shares_service
 from src.storage import disks as disks_module
 from src.storage import pools
 from src.storage.schemas import PoolInfo
+from tests.audit_helpers import audit_entries
 from datetime import UTC
 
 apps_router = importlib.import_module("src.apps.router")
@@ -159,6 +162,9 @@ class FakeDocker:
         self.containers_: list[dict] = []  # inspect format: Id, Name, Config.Labels, State, ...
         self.volumes: dict[str, dict] = {}  # name -> `docker volume inspect` format
         self.started: list[str] = []
+        self.stopped: list[str] = []
+        # What a container's stop releases: a kernel mount that its mount namespace still held.
+        self.on_stop: dict[str, Callable[[], None]] = {}
         self.unavailable = False
 
     def add_volume(self, name, *, driver="local", options=None) -> dict:
@@ -225,10 +231,21 @@ class FakeDocker:
             raise docker.errors.NotFound(f"get {name}: no such volume")
         return self.volumes[name]
 
+    def _by_name_or_id(self, container):
+        return next(c for c in self.containers_ if container in (c["Id"], c["Name"].lstrip("/")))
+
     def start(self, container_id):
-        container = self.inspect_container(container_id)
+        container = self._by_name_or_id(container_id)
         container["State"].update(Status="running", Running=True, Error="")
         self.started.append(container["Name"].lstrip("/"))
+
+    def stop(self, container_id, timeout=None):
+        container = self._by_name_or_id(container_id)
+        container["State"].update(Status="exited", Running=False, Error="")
+        name = container["Name"].lstrip("/")
+        self.stopped.append(name)
+        if name in self.on_stop:
+            self.on_stop.pop(name)()
 
 
 class FakeHost:
@@ -261,6 +278,9 @@ class FakeHost:
         # no mount table shows them (e.g. a mount namespace that no process is in):
         # only sysfs knows (pools._filesystem_active).
         self.held: set[str] = set()
+        # Of those, the ones whose disk came back as another device: btrfs refuses to mount the new one
+        # while the kernel keeps the filesystem on the old (ADR-0505).
+        self.held_on_another_device: set[str] = set()
         # The mount namespaces of host processes other than the host's (PID 1's), by
         # the PID that lsns names for each: their mount tables, as findmnt --task
         # prints them. A systemd service with sandboxing keeps a copy of a pool's
@@ -1127,6 +1147,10 @@ class FakeHost:
             if source is None:
                 return self._result(1, stderr=f"mount: {target}: can't find in /etc/fstab.")
         uuid = source[len("UUID="):] if source.startswith("UUID=") else None
+        if uuid in self.held_on_another_device and uuid in self.held:
+            # The kernel still has the filesystem mounted in a container's namespace, on the device it
+            # had before its disk went away: btrfs refuses its new device (ADR-0505).
+            return self._result(32, stderr=f"mount: {target}: fsconfig() failed: File exists.")
         fs = next((f for f in self.filesystems if f["uuid"] == uuid), None)
         if fs is None:
             if cmd[1] != "-t" and "nofail" in self._fstab_options(target):
@@ -3017,6 +3041,124 @@ class TestPoolHealth:
 def api(fake_host):
     with admin_client() as client:
         yield client
+
+
+@pytest.fixture
+def held_pool(data_pool):
+    """The pool 'data' as after its disk went away and came back while the app photos ran from it: managed,
+    not mounted on the host, its filesystem still mounted in the kernel (the container's namespace keeps its
+    bind of the earlier mount) and the container running."""
+    data_pool.files["/etc/fstab"] = BASE_FSTAB + marker("data") + entry("data", DATA_UUID)
+    data_pool.held.add(DATA_UUID)
+    data_pool.held_on_another_device.add(DATA_UUID)
+    data_pool.docker.add("photos", sources=["/mnt/pools/data/apps/photos/library"], labels={APP_POOL_LABEL: "data"})
+    data_pool.docker.on_stop["photos"] = lambda: data_pool.held.discard(DATA_UUID)
+    return data_pool
+
+
+class TestAPoolHeldByItsEarlierMount:
+    """storage.mount-after-a-disk-returns (ADR-0505): the BPI-W3's test pool, whose USB stick was deleted from
+    the SCSI layer and found again as another device while Uptime Kuma ran from it, answered Mount with 500
+    'fsconfig() failed: File exists'."""
+
+    def test_the_pool_names_what_holds_it(self, api, held_pool):
+        pool = api.get("/api/v1/storage/pools/data").json()
+        assert (pool["mounted"], pool["held_by"]) == (False, ["photos"])
+        held_pool.held.clear()
+        assert api.get("/api/v1/storage/pools/data").json()["held_by"] is None
+
+    def test_a_mounted_pool_is_not_held(self, api, data_pool):
+        pools.mount_pool("data")
+        assert api.get("/api/v1/storage/pools/data").json()["held_by"] is None
+
+    def test_mount_answers_409_naming_the_containers_and_changes_nothing(self, api, held_pool):
+        fstab = held_pool.fstab
+        response = api.post("/api/v1/storage/pools/data/mount")
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert "still held by its earlier mount" in detail and "photos" in detail
+        assert not held_pool.mounted("/mnt/pools/data")
+        assert held_pool.fstab == fstab
+        assert held_pool.docker.stopped == [] and held_pool.docker.started == []
+        assert not any(cmd[0] == "mount" for cmd in held_pool.changes)
+
+    def test_stop_holders_stops_them_mounts_and_starts_them_again(self, api, held_pool, app_checks):
+        # A container of the Containers page with a folder of the pool holds it too: started without the app checks.
+        held_pool.docker.add("backup", sources=["/mnt/pools/data/backups"])
+        assert api.get("/api/v1/storage/pools/data").json()["held_by"] == ["backup", "photos"]
+        response = api.post("/api/v1/storage/pools/data/mount", params={"stop_holders": "true"})
+        assert response.status_code == 200, response.text
+        assert response.json()["mounted"] is True and response.json()["held_by"] is None
+        wait_for_app_starts()
+        assert held_pool.docker.stopped == ["backup", "photos"]
+        assert sorted(held_pool.docker.started) == ["backup", "photos"]
+        assert app_checks.seen == ["photos"] and app_checks.pool_mounted == [True]
+        assert held_pool.mounted("/mnt/pools/data")
+        [entry_] = [e for e in audit_entries(Path(audit_router.AUDIT_FILE)) if e["action"] == "pool_mounted"]
+        assert entry_["details"] == ("Mounted the pool data after stopping backup, photos, which held its earlier "
+                                     "mount; they are being started again")
+
+    def test_a_pool_held_by_no_container_cannot_be_freed_here(self, api, held_pool):
+        held_pool.docker.containers_.clear()
+        for params in ({}, {"stop_holders": "true"}):
+            response = api.post("/api/v1/storage/pools/data/mount", params=params)
+            assert response.status_code == 409, response.text
+            assert "no running container" in response.json()["detail"]
+        assert not held_pool.mounted("/mnt/pools/data")
+
+    def test_holders_that_do_not_free_it_stay_stopped_and_are_named(self, api, held_pool, monkeypatch):
+        held_pool.docker.on_stop.clear()  # something else holds it too
+        monkeypatch.setattr(pools, "RELEASE_WAIT", 0.2)
+        response = api.post("/api/v1/storage/pools/data/mount", params={"stop_holders": "true"})
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert "still held after photos stopped" in detail and "start them again" in detail
+        assert held_pool.docker.stopped == ["photos"] and held_pool.docker.started == []
+        assert not held_pool.mounted("/mnt/pools/data")
+
+    def test_other_refusals_come_before_any_stop(self, api, held_pool):
+        held_pool.nonempty.add("/mnt/pools/data")  # files on the system disk below the mount point
+        response = api.post("/api/v1/storage/pools/data/mount", params={"stop_holders": "true"})
+        assert response.status_code == 409, response.text
+        assert "still held" not in response.json()["detail"]
+        assert held_pool.docker.stopped == []
+
+    def test_a_stop_that_fails_names_the_containers_it_stopped(self, api, held_pool):
+        held_pool.docker.add("backup", sources=["/mnt/pools/data/backups"])
+
+        def refuse(container_id, timeout=None):
+            if container_id == "photos":
+                raise docker.errors.APIError("500 Server Error: cannot stop container")
+            return FakeDocker.stop(held_pool.docker, container_id, timeout)
+
+        held_pool.docker.stop = refuse
+        response = api.post("/api/v1/storage/pools/data/mount", params={"stop_holders": "true"})
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert "cannot stop container" in detail and "backup stopped and stay stopped" in detail
+        [entry_] = [e for e in audit_entries(Path(audit_router.AUDIT_FILE)) if e["action"] == "pool_mounted"]
+        assert entry_["success"] is False and entry_["details"].startswith(
+            "Stopped backup to free the earlier mount of the pool data; then: ")
+
+    def test_a_holder_gone_meanwhile_is_passed_over(self, api, held_pool, app_checks):
+        held_pool.docker.add("backup", sources=["/mnt/pools/data/backups"])
+        real = held_pool.docker.stop
+
+        def gone(container_id, timeout=None):
+            if container_id == "backup":
+                raise docker.errors.NotFound("No such container: backup")
+            return real(container_id, timeout)
+
+        held_pool.docker.stop = gone
+        response = api.post("/api/v1/storage/pools/data/mount", params={"stop_holders": "true"})
+        assert response.status_code == 200, response.text
+        wait_for_app_starts()
+        assert held_pool.docker.stopped == ["photos"] and held_pool.docker.started == ["photos"]
+
+    def test_a_pool_mounted_elsewhere_on_the_host_is_not_held(self, api, data_pool):
+        data_pool.dirs.add("/srv/elsewhere")
+        data_pool.add_mount("/srv/elsewhere", "/dev/sda", "btrfs", DATA_UUID)
+        assert api.get("/api/v1/storage/pools/data").json()["held_by"] is None
 
 
 class TestPoolEndpoints:

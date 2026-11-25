@@ -166,6 +166,11 @@ export const en = {
 	'storage.pool.notMounted': 'Not mounted',
 	'storage.pool.missingTitle': { one: '{n} disk is missing', other: '{n} disks are missing' },
 	'storage.pool.missing': 'Reconnect or replace it before the remaining redundancy is lost.',
+	'storage.pool.heldTitle': 'Still held by its earlier mount',
+	'storage.pool.held':
+		'These containers still use its earlier mount: {containers}. Most likely its disk went away and came back while they ran, and they still see the old disk. Mount stops them, mounts the pool and starts them again.',
+	'storage.pool.heldByHost':
+		'No running container holds its earlier mount (or Docker did not answer): something on the host does. Restart the host to free it.',
 	'storage.pool.forcedReadOnlyTitle': 'Read-only after an error',
 	'storage.pool.forcedReadOnly': 'Writes to the pool fail; the kernel log (dmesg) names the cause.',
 	'storage.pool.readOnlyTitle': 'Mounted read-only',
@@ -333,6 +338,8 @@ export const en = {
 	'storage.mount.kept':
 		'The disks are not formatted: the data on them is kept. UNOS also adds an /etc/fstab entry so the pool is mounted again after a reboot.',
 	'storage.mount.failed': 'Mount failed',
+	'storage.mount.stopsHolders':
+		"These containers still use the pool's earlier mount: {containers}. Mount stops them first and starts them again once the pool is mounted.",
 	'storage.unmount.title': 'Unmount pool',
 	// The question of the dialog, before the pool's name: "Unmount "<name>"?"
 	'storage.unmount.question': 'Unmount',
@@ -579,6 +586,11 @@ export const ru: Translation<typeof en> = {
 		many: 'Не хватает {n} дисков'
 	},
 	'storage.pool.missing': 'Подключите или замените недостающее, пока не потеряна оставшаяся избыточность.',
+	'storage.pool.heldTitle': 'Всё ещё занят прежним монтированием',
+	'storage.pool.held':
+		'Его прежнее монтирование всё ещё используют контейнеры: {containers}. Скорее всего, его диск пропадал и вернулся, пока они работали, и они по-прежнему видят старый диск. Монтирование остановит их, смонтирует пул и снова их запустит.',
+	'storage.pool.heldByHost':
+		'Его прежнее монтирование не держит ни один работающий контейнер (или Docker не ответил): его держит что-то на хосте. Перезагрузите хост, чтобы освободить его.',
 	'storage.pool.forcedReadOnlyTitle': 'Только для чтения после ошибки',
 	'storage.pool.forcedReadOnly': 'Запись в пул не удаётся; причина указана в журнале ядра (dmesg).',
 	'storage.pool.readOnlyTitle': 'Смонтирован только для чтения',
@@ -746,6 +758,8 @@ export const ru: Translation<typeof en> = {
 	'storage.mount.kept':
 		'Диски не форматируются: данные на них сохраняются. UNOS также добавит запись в /etc/fstab, чтобы пул снова монтировался после перезагрузки.',
 	'storage.mount.failed': 'Не удалось смонтировать пул',
+	'storage.mount.stopsHolders':
+		'Прежнее монтирование пула всё ещё используют контейнеры: {containers}. Монтирование сначала остановит их, а когда пул будет смонтирован, снова запустит.',
 	'storage.unmount.title': 'Отмонтировать пул',
 	'storage.unmount.question': 'Отмонтировать',
 	'storage.unmount.before': 'Общие папки, приложения и задачи по расписанию теряют доступ к',

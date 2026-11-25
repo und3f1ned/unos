@@ -839,6 +839,21 @@ Open owner actions:
 
 ## Log
 
+### 2026-11-25: A pool held by its earlier mount is freed by stopping its containers (storage.mount-after-a-disk-returns, ADR-0505)
+
+- Built from the drills' finding: a pool that the kernel still has mounted while the host mounts it
+  nowhere lists its holders (`held_by`), its card names them, and Mount answers 409, or with
+  `stop_holders` (the Mount dialog) stops them, waits for the kernel, mounts and starts them again.
+  The FakeHost refuses a held filesystem's mount on another device as btrfs does, so each new test
+  failed first with the device's 500. Review in a fresh context: BLOCKING fixed, the holders were
+  stopped before the Mount's other refusals, which then left them stopped and unnamed (the held check
+  now comes last), and a `docker stop` that failed midway lost the names of those already stopped (now
+  503 naming them, and a failed pool_mounted audit entry for any failure after a stop); RISKs fixed: a
+  timed-out app check no longer lets later holders start unchecked, a holder gone meanwhile is passed
+  over, the texts say "most likely" and that Docker may not have answered; left, as ADR-0505 says, the
+  lock held during the stops, a holder bound through a link not found, and the narrow race with a
+  critical app's move. `make check` and `storage.spec.ts` pass.
+
 ### 2026-11-25: The critical apps' and the way back's drills pass on the BPI-W3 (system.sd-standby-critical-apps, system.sd-standby-failback)
 
 - With the owner's USB stick (Transcend JetFlash 32 GB, wiped at the owner's word) as the test pool `usb` and

@@ -847,6 +847,37 @@ test.describe('Pool unmount, mount and removal (fake data)', () => {
     ]);
   });
 
+  // A pool whose disk went away and came back while an app used it (ADR-0505): the kernel keeps its earlier
+  // mount in the app's container, the card names the containers, and Mount stops them, mounts the pool and
+  // starts them again. On the BPI-W3 the Mount had answered 500 'fsconfig() failed: File exists'.
+  test('a pool held by its earlier mount names its containers, and Mount stops them first', async ({
+    authenticatedPage: page,
+  }) => {
+    const held = {
+      ...HEALTHY_POOL, mounted: false, mountpoint: null, raid_level: null, health: 'unmounted',
+      held_by: ['photos', 'backup'],
+    };
+    const writes = await fakeStorageApi(page, { pools: [held] });
+    await page.goto('/storage');
+    const card = poolCard(page, 'e2e_data');
+    await expect(card).toContainText('Still held by its earlier mount');
+    await expect(card).toContainText(
+      'These containers still use its earlier mount: photos, backup. Most likely its disk went away and came ' +
+        'back while they ran, and they still see the old disk.'
+    );
+    await card.getByRole('button', { name: 'Mount…', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Mount pool' });
+    await expect(dialog.getByTestId('mount-held')).toHaveText(
+      "These containers still use the pool's earlier mount: photos, backup. Mount stops them first and starts " +
+        'them again once the pool is mounted.'
+    );
+    await dialog.getByRole('button', { name: 'Mount', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(writes).toEqual([{ method: 'POST', path: '/pools/e2e_data/mount', body: {} }]);
+    await expect(badge(card, 'Mounted at boot')).toBeVisible();
+    await expect(card).not.toContainText('Still held by its earlier mount');
+  });
+
   // A planned repair (ADR-0500): critical apps of the SD standby among the containers that use the pool
   // move to the card first, and the unmount goes on. The standby's answers are the server's fields.
   test('an unmount refused for critical apps offers to move them to the card first, then goes on', async ({
