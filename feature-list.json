@@ -950,13 +950,13 @@
         "supervisor/tests/test_storage.py",
         "webui/tests/storage.spec.ts"
       ],
-      "passes": false,
+      "passes": true,
       "adr": [
         "ADR-0011",
         "ADR-0034",
         "ADR-0035"
       ],
-      "notes": "Not run on the dev device: it needs a spare disk. Open: the device check and the re-check after a reboot (ADR-0018). Device check 2026-11-23 on the BPI-W3 (main a955e04b, the system on its eMMC), with its wiped SD card mmcblk1 as the spare disk at the owner's word ('use the SD'), first whole, then split into three partitions so that one warm reboot from the API (17:37:42 UTC, boot 17:38:49) re-checked every state; MiB on the eMMC: refusals: raid5 422, a mismatched name confirmation 400 (0.039), mmcblk0 400 'boot or virtual device', sda 409 'Mounted at /mnt/pools/data', a changed serial 409 'no longer the disk that was selected… Reload'; a pool made on the card mounted by UUID with its fstab entry and listed healthy (0.613), mounted again after the reboot. Open: the 409 for a disk with data without force (the card was blank) and the UI's disabled buttons."
+      "notes": "Not run on the dev device: it needs a spare disk. Open: the device check and the re-check after a reboot (ADR-0018). Device check 2026-11-23 on the BPI-W3 (main a955e04b, the system on its eMMC), with its wiped SD card mmcblk1 as the spare disk at the owner's word ('use the SD'), first whole, then split into three partitions so that one warm reboot from the API (17:37:42 UTC, boot 17:38:49) re-checked every state; MiB on the eMMC: refusals: raid5 422, a mismatched name confirmation 400 (0.039), mmcblk0 400 'boot or virtual device', sda 409 'Mounted at /mnt/pools/data', a changed serial 409 'no longer the disk that was selected… Reload'; a pool made on the card mounted by UUID with its fstab entry and listed healthy (0.613), mounted again after the reboot. Open: the 409 for a disk with data without force (the card was blank) and the UI's disabled buttons. 2026-11-25 on the BPI-W3 (main b7effb45, after the reboot of 15:20 UTC), with the owner's USB stick sdb holding the btrfs filesystem 'usb' of the day's checks: Create Pool 'nodata' on it with force false answered 409 '/dev/sdb contains data (btrfs 'usb'). Set force to erase it and create the pool anyway.', and nothing changed (the label still usb, no fstab line, no mount point; 0 MiB to the eMMC, the card and the stick). Earlier that day the same stick was made the pool usb with force (the eMMC 2.992 with man-db's timer, 0.559 alone; listed healthy, mounted at /mnt/pools/usb by UUID with its fstab entry, and mounted again after reboots). Step 2, Create disabled until the name is typed and the erase confirmed, is the web UI's: storage.spec.ts 'create pool stays disabled until name and erase are confirmed'. Every step has passed."
     },
     {
       "id": "storage.mount-and-unmount",
